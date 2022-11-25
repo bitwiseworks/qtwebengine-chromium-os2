@@ -17,28 +17,34 @@
 
 #include "dawn_native/dawn_platform.h"
 
+#include "common/ityp_bitset.h"
 #include "dawn_native/Error.h"
+
+#include "dawn_native/EnumClassBitmasks.h"
 
 #include <array>
 
 namespace dawn_native {
 
+    enum class Aspect : uint8_t;
     class DeviceBase;
+
+    struct TexelBlockInfo {
+        uint32_t blockByteSize;
+        uint32_t blockWidth;
+        uint32_t blockHeight;
+    };
 
     // The number of formats Dawn knows about. Asserts in BuildFormatTable ensure that this is the
     // exact number of known format.
-    static constexpr size_t kKnownFormatCount = 52;
+    static constexpr size_t kKnownFormatCount = 53;
+
+    struct Format;
+    using FormatTable = std::array<Format, kKnownFormatCount>;
 
     // A wgpu::TextureFormat along with all the information about it necessary for validation.
     struct Format {
-        enum Aspect {
-            Color,
-            Depth,
-            Stencil,
-            DepthStencil,
-        };
-
-        enum Type {
+        enum class Type {
             Float,
             Sint,
             Uint,
@@ -51,12 +57,8 @@ namespace dawn_native {
         // A format can be known but not supported because it is part of a disabled extension.
         bool isSupported;
         bool supportsStorageUsage;
-        Aspect aspect;
         Type type;
-
-        uint32_t blockByteSize;
-        uint32_t blockWidth;
-        uint32_t blockHeight;
+        Aspect aspects;
 
         static Type TextureComponentTypeToFormatType(wgpu::TextureComponentType componentType);
         static wgpu::TextureComponentType FormatTypeToTextureComponentType(Type type);
@@ -67,14 +69,20 @@ namespace dawn_native {
         bool HasDepthOrStencil() const;
         bool HasComponentType(Type componentType) const;
 
+        TexelBlockInfo GetTexelBlockInfo(wgpu::TextureAspect aspect) const;
+        TexelBlockInfo GetTexelBlockInfo(Aspect aspect) const;
+
         // The index of the format in the list of all known formats: a unique number for each format
         // in [0, kKnownFormatCount)
         size_t GetIndex() const;
+
+      private:
+        TexelBlockInfo blockInfo;
+
+        friend FormatTable BuildFormatTable(const DeviceBase* device);
     };
 
     // Implementation details of the format table in the device.
-
-    using FormatTable = std::array<Format, kKnownFormatCount>;
 
     // Returns the index of a format in the FormatTable.
     size_t ComputeFormatIndex(wgpu::TextureFormat format);

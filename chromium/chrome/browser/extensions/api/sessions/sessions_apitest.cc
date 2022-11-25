@@ -35,6 +35,7 @@
 #include "components/sync/test/engine/mock_model_type_worker.h"
 #include "components/sync_sessions/session_store.h"
 #include "components/sync_sessions/session_sync_service.h"
+#include "content/public/test/browser_test.h"
 #include "extensions/browser/api_test_utils.h"
 #include "extensions/common/extension_builder.h"
 
@@ -296,9 +297,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionSessionsTest, GetDevicesListEmpty) {
   EXPECT_EQ(0u, devices->GetSize());
 }
 
-// Flaky timeout: http://crbug.com/278372
-IN_PROC_BROWSER_TEST_F(ExtensionSessionsTest,
-                       DISABLED_RestoreForeignSessionWindow) {
+IN_PROC_BROWSER_TEST_F(ExtensionSessionsTest, RestoreForeignSessionWindow) {
   CreateSessionModels();
 
   std::unique_ptr<base::DictionaryValue> restored_window_session(

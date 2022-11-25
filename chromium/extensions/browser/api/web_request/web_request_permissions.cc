@@ -19,6 +19,7 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/extensions_browser_client.h"
+#include "extensions/browser/process_map.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_urls.h"
@@ -109,7 +110,6 @@ PermissionsData::PageAccess CanExtensionAccessURLInternal(
   switch (host_permissions_check) {
     case WebRequestPermissions::DO_NOT_CHECK_HOST:
       return PermissionsData::PageAccess::kAllowed;
-      break;
     case WebRequestPermissions::REQUIRE_HOST_PERMISSION_FOR_URL: {
       PermissionsData::PageAccess access =
           GetHostAccessForURL(*extension, url, tab_id);
@@ -131,7 +131,6 @@ PermissionsData::PageAccess CanExtensionAccessURLInternal(
           access = PermissionsData::PageAccess::kAllowed;
       }
       return access;
-      break;
     }
     case WebRequestPermissions::REQUIRE_HOST_PERMISSION_FOR_URL_AND_INITIATOR: {
       PermissionsData::PageAccess request_access =
@@ -174,13 +173,11 @@ PermissionsData::PageAccess CanExtensionAccessURLInternal(
       // crbug.com/851722.
 
       return GetHostAccessForURL(*extension, initiator->GetURL(), tab_id);
-      break;
     }
     case WebRequestPermissions::REQUIRE_ALL_URLS:
       return extension->permissions_data()->HasEffectiveAccessToAllHosts()
                  ? PermissionsData::PageAccess::kAllowed
                  : PermissionsData::PageAccess::kDenied;
-      break;
   }
 
   NOTREACHED();
@@ -203,7 +200,7 @@ bool IsSensitiveGoogleClientUrl(const extensions::WebRequestInfo& request) {
 
   base::StringPiece host = url.host_piece();
 
-  while (host.ends_with("."))
+  while (base::EndsWith(host, "."))
     host.remove_suffix(1u);
 
   // Check for "clients[0-9]*.google.com" hosts.

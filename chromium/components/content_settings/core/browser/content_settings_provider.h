@@ -11,6 +11,7 @@
 #include <string>
 
 #include "base/values.h"
+#include "components/content_settings/core/browser/content_settings_constraints.h"
 #include "components/content_settings/core/browser/content_settings_rule.h"
 #include "components/content_settings/core/common/content_settings.h"
 
@@ -22,7 +23,7 @@ class RuleIterator;
 
 class ProviderInterface {
  public:
-  virtual ~ProviderInterface() {}
+  virtual ~ProviderInterface() = default;
 
   // Returns a |RuleIterator| over the content setting rules stored by this
   // provider. If |incognito| is true, the iterator returns only the content
@@ -32,10 +33,23 @@ class ProviderInterface {
   // (including |GetRuleIterator|) for the same provider until the
   // |RuleIterator| is destroyed.
   // Returns nullptr to indicate the RuleIterator is empty.
+  //
+  // This method needs to be thread-safe and continue to work after
+  // |ShutdownOnUIThread| has been called.
   virtual std::unique_ptr<RuleIterator> GetRuleIterator(
       ContentSettingsType content_type,
       const ResourceIdentifier& resource_identifier,
       bool incognito) const = 0;
+
+  // Returns a |RuleIterator| over the discarded content setting rules stored
+  // by this provider. If |incognito| is true, the iterator returns only the
+  // content settings which are applicable to the incognito mode. Otherwise,
+  // it returns the content settings which are applicable only to the normal
+  // mode.
+  virtual std::unique_ptr<RuleIterator> GetDiscardedRuleIterator(
+      ContentSettingsType content_type,
+      const ResourceIdentifier& resource_identifier,
+      bool incognito) const;
 
   // Asks the provider to set the website setting for a particular
   // |primary_pattern|, |secondary_pattern|, |content_type| tuple. If the
@@ -50,7 +64,8 @@ class ProviderInterface {
       const ContentSettingsPattern& secondary_pattern,
       ContentSettingsType content_type,
       const ResourceIdentifier& resource_identifier,
-      std::unique_ptr<base::Value>&& value) = 0;
+      std::unique_ptr<base::Value>&& value,
+      const ContentSettingConstraints& constraints) = 0;
 
   // Resets all content settings for the given |content_type| and empty resource
   // identifier to CONTENT_SETTING_DEFAULT.

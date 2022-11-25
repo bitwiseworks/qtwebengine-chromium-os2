@@ -19,6 +19,7 @@
 #include "components/crx_file/id_util.h"
 #include "extensions/common/extension_api.h"
 #include "extensions/common/features/feature_channel.h"
+#include "extensions/common/features/feature_flags.h"
 #include "extensions/common/features/feature_provider.h"
 #include "extensions/common/manifest_handlers/background_info.h"
 #include "extensions/common/switches.h"
@@ -33,7 +34,7 @@ struct AllowlistInfo {
   AllowlistInfo()
       : hashed_id(HashedIdInHex(
             base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-                switches::kWhitelistedExtensionID))) {}
+                switches::kAllowlistedExtensionID))) {}
   std::string hashed_id;
 };
 // A singleton copy of the --whitelisted-extension-id so that we don't need to
@@ -309,11 +310,12 @@ std::string SimpleFeature::GetAvailabilityMessage(
               extension_types_.begin(), extension_types_.end())).c_str(),
           GetDisplayName(type).c_str());
     case INVALID_CONTEXT:
+      DCHECK(contexts_);
       return base::StringPrintf(
-          "'%s' is only allowed to run in %s, but this is a %s",
-          name().c_str(),
-          ListDisplayNames(std::vector<Context>(
-              contexts_.begin(), contexts_.end())).c_str(),
+          "'%s' is only allowed to run in %s, but this is a %s", name().c_str(),
+          ListDisplayNames(
+              std::vector<Context>(contexts_->begin(), contexts_->end()))
+              .c_str(),
           GetDisplayName(context).c_str());
     case INVALID_LOCATION:
       return base::StringPrintf(
@@ -355,6 +357,11 @@ std::string SimpleFeature::GetAvailabilityMessage(
       return base::StringPrintf(
           "'%s' requires the '%s' command line switch to be enabled.",
           name().c_str(), command_line_switch_->c_str());
+    case FEATURE_FLAG_DISABLED:
+      DCHECK(feature_flag_);
+      return base::StringPrintf(
+          "'%s' requires the '%s' feature flag to be enabled.", name().c_str(),
+          feature_flag_->c_str());
   }
 
   NOTREACHED();
@@ -536,6 +543,10 @@ void SimpleFeature::set_extension_types(
   extension_types_ = types;
 }
 
+void SimpleFeature::set_feature_flag(base::StringPiece feature_flag) {
+  feature_flag_ = feature_flag.as_string();
+}
+
 void SimpleFeature::set_session_types(
     std::initializer_list<FeatureSessionType> types) {
   session_types_ = types;
@@ -580,6 +591,9 @@ Feature::Availability SimpleFeature::GetEnvironmentAvailability(
       !IsCommandLineSwitchEnabled(command_line, *command_line_switch_)) {
     return CreateAvailability(MISSING_COMMAND_LINE_SWITCH);
   }
+
+  if (feature_flag_ && !IsFeatureFlagEnabled(*feature_flag_))
+    return CreateAvailability(FEATURE_FLAG_DISABLED);
 
   if (!MatchesSessionTypes(session_type))
     return CreateAvailability(INVALID_SESSION_TYPE, session_type);
@@ -640,7 +654,7 @@ Feature::Availability SimpleFeature::GetContextAvailability(
   // extension API calls, since there's no guarantee that the extension is
   // "active" in current renderer process when the API permission check is
   // done.
-  if (!contexts_.empty() && !base::Contains(contexts_, context))
+  if (contexts_ && !base::Contains(*contexts_, context))
     return CreateAvailability(INVALID_CONTEXT, context);
 
   // TODO(kalman): Consider checking |matches_| regardless of context type.

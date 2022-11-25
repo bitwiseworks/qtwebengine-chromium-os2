@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// TODO(crbug.com/1085633): Inline enums need to be cleaned up in the source
+// specification before we can autogenerate this.
+
 /**
  * @typedef {{
  *   since: (number|undefined)
@@ -438,6 +441,18 @@ NewWindowEvent.prototype.initialHeight;
 NewWindowEvent.prototype.name;
 
 
+/**
+ * @typedef {{
+ *   url: string,
+ *   isTopLevel: boolean,
+ *   code: number,
+ *   reason: string
+ * }}
+ * @see https://developer.chrome.com/apps/tags/webview#event-loadabort
+ */
+var WebviewLoadAbortEventData;
+
+
 /** @type {!ChromeEvent} */
 WebView.prototype.close;
 
@@ -456,7 +471,7 @@ WebView.prototype.exit;
 /** @type {!ChromeEvent} */
 WebView.prototype.findupdate;
 
-/** @type {!ChromeEvent} */
+/** @type {!ChromeBaseEvent<WebviewLoadAbortEventData>} */
 WebView.prototype.loadabort;
 
 /** @type {!ChromeEvent} */
@@ -470,6 +485,20 @@ WebView.prototype.loadstart;
 
 /** @type {!ChromeEvent} */
 WebView.prototype.loadstop;
+
+/**
+ * "newwindow" event object properties.
+ * @typedef{{
+ *   window: NewWindow,
+ *   targetUrl: string,
+ *   initialWidth: number,
+ *   initialHeight: number,
+ *   name: string,
+ *   windowOpenDisposition: string
+ * }}
+ * @see https://developer.chrome.com/apps/tags/webview#event-newwindow
+ */
+var NewWindowProperties;
 
 /** @type {!ChromeEvent} */
 WebView.prototype.newwindow;

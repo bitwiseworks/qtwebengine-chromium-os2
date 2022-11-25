@@ -60,6 +60,8 @@ bool Touch::HasStylusDelegate() const {
 // ui::EventHandler overrides:
 
 void Touch::OnTouchEvent(ui::TouchEvent* event) {
+  seat_->SetLastPointerLocation(event->root_location_f());
+
   bool send_details = false;
 
   const int touch_pointer_id = event->pointer_details().id;
@@ -95,7 +97,7 @@ void Touch::OnTouchEvent(ui::TouchEvent* event) {
       delegate_->OnTouchDown(target, event->time_stamp(), touch_pointer_id,
                              location);
       if (stylus_delegate_ && event->pointer_details().pointer_type !=
-                                  ui::EventPointerType::POINTER_TYPE_TOUCH) {
+                                  ui::EventPointerType::kTouch) {
         stylus_delegate_->OnTouchTool(touch_pointer_id,
                                       event->pointer_details().pointer_type);
       }
@@ -162,8 +164,8 @@ void Touch::OnTouchEvent(ui::TouchEvent* event) {
       minor = major;
     delegate_->OnTouchShape(touch_pointer_id, major, minor);
 
-    if (stylus_delegate_ && event->pointer_details().pointer_type !=
-                                ui::EventPointerType::POINTER_TYPE_TOUCH) {
+    if (stylus_delegate_ &&
+        event->pointer_details().pointer_type != ui::EventPointerType::kTouch) {
       if (!std::isnan(event->pointer_details().force)) {
         stylus_delegate_->OnTouchForce(event->time_stamp(), touch_pointer_id,
                                        event->pointer_details().force);

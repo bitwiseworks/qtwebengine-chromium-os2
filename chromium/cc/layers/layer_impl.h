@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/memory/ptr_util.h"
 #include "cc/base/region.h"
 #include "cc/base/synced_property.h"
@@ -41,7 +41,7 @@
 
 namespace viz {
 class ClientResourceProvider;
-class RenderPass;
+class CompositorRenderPass;
 }
 
 namespace cc {
@@ -51,7 +51,6 @@ struct LayerDebugInfo;
 class LayerTreeImpl;
 class MicroBenchmarkImpl;
 class PrioritizedTile;
-class ScrollbarLayerImplBase;
 class SimpleEnclosedRegion;
 class Tile;
 
@@ -132,7 +131,7 @@ class CC_EXPORT LayerImpl {
   // the layer is destroyed.
   virtual bool WillDraw(DrawMode draw_mode,
                         viz::ClientResourceProvider* resource_provider);
-  virtual void AppendQuads(viz::RenderPass* render_pass,
+  virtual void AppendQuads(viz::CompositorRenderPass* render_pass,
                            AppendQuadsData* append_quads_data) {}
   virtual void DidDraw(viz::ClientResourceProvider* resource_provider);
 
@@ -149,7 +148,9 @@ class CC_EXPORT LayerImpl {
 
   virtual void NotifyTileStateChanged(const Tile* tile) {}
 
-  virtual ScrollbarLayerImplBase* ToScrollbarLayer();
+  virtual bool IsScrollbarLayer() const;
+
+  bool IsScrollerOrScrollbar() const;
 
   // Returns true if this layer has content to draw.
   void SetDrawsContent(bool draws_content);
@@ -166,19 +167,18 @@ class CC_EXPORT LayerImpl {
   // non-opaque color.  Tries to return background_color(), if possible.
   SkColor SafeOpaqueBackgroundColor() const;
 
+  // See Layer::SetContentsOpaque() and SetContentsOpaqueForText() for the
+  // relationship between the two flags.
   void SetContentsOpaque(bool opaque);
   bool contents_opaque() const { return contents_opaque_; }
+  void SetContentsOpaqueForText(bool opaque);
+  bool contents_opaque_for_text() const { return contents_opaque_for_text_; }
 
   float Opacity() const;
 
   // Stable identifier for clients. See comment in cc/trees/element_id.h.
   void SetElementId(ElementId element_id);
   ElementId element_id() const { return element_id_; }
-
-  void SetFrameElementId(ElementId frame_element_id) {
-    frame_element_id_ = frame_element_id;
-  }
-  ElementId frame_element_id() const { return frame_element_id_; }
 
   bool IsAffectedByPageScale() const;
 
@@ -207,8 +207,6 @@ class CC_EXPORT LayerImpl {
     return performance_properties_;
   }
 
-  bool CanUseLCDText() const;
-
   // Setter for draw_properties_.
   void set_visible_layer_rect(const gfx::Rect& visible_rect) {
     draw_properties_.visible_layer_rect = visible_rect;
@@ -224,8 +222,8 @@ class CC_EXPORT LayerImpl {
     return draw_properties_.screen_space_transform_is_animating;
   }
   gfx::Rect clip_rect() const { return draw_properties_.clip_rect; }
-  gfx::Rect drawable_content_rect() const {
-    return draw_properties_.drawable_content_rect;
+  gfx::Rect visible_drawable_content_rect() const {
+    return draw_properties_.visible_drawable_content_rect;
   }
   gfx::Rect visible_layer_rect() const {
     return draw_properties_.visible_layer_rect;
@@ -360,10 +358,6 @@ class CC_EXPORT LayerImpl {
     return contributes_to_drawn_render_surface_;
   }
 
-  bool is_scrollbar() const { return is_scrollbar_; }
-
-  void set_is_scrollbar(bool is_scrollbar) { is_scrollbar_ = is_scrollbar; }
-
   void set_may_contain_video(bool yes) { may_contain_video_ = yes; }
   bool may_contain_video() const { return may_contain_video_; }
 
@@ -392,11 +386,6 @@ class CC_EXPORT LayerImpl {
 
   void NoteLayerPropertyChanged();
   void NoteLayerPropertyChangedFromPropertyTrees();
-
-  void SetHasWillChangeTransformHint(bool has_will_change);
-  bool has_will_change_transform_hint() const {
-    return has_will_change_transform_hint_;
-  }
 
   ElementListType GetElementTypeForAnimation() const;
 
@@ -430,11 +419,11 @@ class CC_EXPORT LayerImpl {
   // Get the color and size of the layer's debug border.
   virtual void GetDebugBorderProperties(SkColor* color, float* width) const;
 
-  void AppendDebugBorderQuad(viz::RenderPass* render_pass,
+  void AppendDebugBorderQuad(viz::CompositorRenderPass* render_pass,
                              const gfx::Rect& quad_rect,
                              const viz::SharedQuadState* shared_quad_state,
                              AppendQuadsData* append_quads_data) const;
-  void AppendDebugBorderQuad(viz::RenderPass* render_pass,
+  void AppendDebugBorderQuad(viz::CompositorRenderPass* render_pass,
                              const gfx::Rect& quad_rect,
                              const viz::SharedQuadState* shared_quad_state,
                              AppendQuadsData* append_quads_data,
@@ -482,6 +471,7 @@ class CC_EXPORT LayerImpl {
 
   bool may_contain_video_ : 1;
   bool contents_opaque_ : 1;
+  bool contents_opaque_for_text_ : 1;
   bool should_check_backface_visibility_ : 1;
   bool draws_content_ : 1;
   bool contributes_to_drawn_render_surface_ : 1;
@@ -507,16 +497,13 @@ class CC_EXPORT LayerImpl {
 
   DrawMode current_draw_mode_;
   EffectTree& GetEffectTree() const;
-
- private:
   PropertyTrees* GetPropertyTrees() const;
   ClipTree& GetClipTree() const;
   ScrollTree& GetScrollTree() const;
   TransformTree& GetTransformTree() const;
 
+ private:
   ElementId element_id_;
-  // Element ID of the document containing this layer.
-  ElementId frame_element_id_;
   // Rect indicating what was repainted/updated during update.
   // Note that plugin layers bypass this and leave it empty.
   // This is in the layer's space.
@@ -533,9 +520,7 @@ class CC_EXPORT LayerImpl {
   // |touch_action_region_|.
   mutable std::unique_ptr<Region> all_touch_action_regions_;
 
-  bool has_will_change_transform_hint_ : 1;
   bool needs_push_properties_ : 1;
-  bool is_scrollbar_ : 1;
   bool scrollbars_hidden_ : 1;
 
   // The needs_show_scrollbars_ bit tracks a pending request from Blink to show

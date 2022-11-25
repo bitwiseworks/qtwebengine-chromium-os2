@@ -5,8 +5,6 @@
 #include "third_party/blink/renderer/modules/peerconnection/rtc_rtp_receiver.h"
 
 #include "media/media_buildflags.h"
-#include "third_party/blink/public/platform/web_media_stream.h"
-#include "third_party/blink/public/platform/web_media_stream_track.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_rtc_insertable_streams.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_rtc_rtcp_parameters.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_rtc_rtp_capabilities.h"
@@ -14,6 +12,7 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_rtc_rtp_decoding_parameters.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_rtc_rtp_header_extension_capability.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_rtc_rtp_header_extension_parameters.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/streams/readable_stream.h"
 #include "third_party/blink/renderer/core/streams/writable_stream.h"
@@ -92,31 +91,20 @@ void RTCRtpReceiver::setPlayoutDelayHint(base::Optional<double> hint,
   receiver_->SetJitterBufferMinimumDelay(playout_delay_hint_);
 }
 
-double RTCRtpReceiver::playoutDelayHint(bool& is_null) {
-  is_null = !playout_delay_hint_.has_value();
-  return playout_delay_hint_.value_or(0.0);
-}
-
-void RTCRtpReceiver::setPlayoutDelayHint(double value,
-                                         bool is_null,
-                                         ExceptionState& exception_state) {
-  base::Optional<double> hint =
-      is_null ? base::nullopt : base::Optional<double>(value);
-  if (hint && *hint < 0.0) {
-    exception_state.ThrowTypeError("playoutDelayHint can't be negative");
-    return;
+HeapVector<Member<RTCRtpSynchronizationSource>>
+RTCRtpReceiver::getSynchronizationSources(ScriptState* script_state,
+                                          ExceptionState& exception_state) {
+  if (!script_state->ContextIsValid()) {
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      "Window is detached");
+    return HeapVector<Member<RTCRtpSynchronizationSource>>();
   }
 
-  playout_delay_hint_ = hint;
-  receiver_->SetJitterBufferMinimumDelay(playout_delay_hint_);
-}
-
-HeapVector<Member<RTCRtpSynchronizationSource>>
-RTCRtpReceiver::getSynchronizationSources() {
   UpdateSourcesIfNeeded();
 
-  Document* document = Document::From(pc_->GetExecutionContext());
-  DocumentLoadTiming& time_converter = document->Loader()->GetTiming();
+  LocalDOMWindow* window = LocalDOMWindow::From(script_state);
+  DocumentLoadTiming& time_converter =
+      window->GetFrame()->Loader().GetDocumentLoader()->GetTiming();
 
   HeapVector<Member<RTCRtpSynchronizationSource>> synchronization_sources;
   for (const auto& web_source : web_sources_) {
@@ -143,11 +131,19 @@ RTCRtpReceiver::getSynchronizationSources() {
 }
 
 HeapVector<Member<RTCRtpContributingSource>>
-RTCRtpReceiver::getContributingSources() {
+RTCRtpReceiver::getContributingSources(ScriptState* script_state,
+                                       ExceptionState& exception_state) {
+  if (!script_state->ContextIsValid()) {
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      "Window is detached");
+    return HeapVector<Member<RTCRtpContributingSource>>();
+  }
+
   UpdateSourcesIfNeeded();
 
-  Document* document = Document::From(pc_->GetExecutionContext());
-  DocumentLoadTiming& time_converter = document->Loader()->GetTiming();
+  LocalDOMWindow* window = LocalDOMWindow::From(script_state);
+  DocumentLoadTiming& time_converter =
+      window->GetFrame()->Loader().GetDocumentLoader()->GetTiming();
 
   HeapVector<Member<RTCRtpContributingSource>> contributing_sources;
   for (const auto& web_source : web_sources_) {
@@ -179,6 +175,15 @@ ScriptPromise RTCRtpReceiver::getStats(ScriptState* script_state) {
       WTF::Bind(WebRTCStatsReportCallbackResolver, WrapPersistent(resolver)),
       GetExposedGroupIds(script_state));
   return promise;
+}
+
+RTCInsertableStreams* RTCRtpReceiver::createEncodedStreams(
+    ScriptState* script_state,
+    ExceptionState& exception_state) {
+  if (track_->kind() == "audio")
+    return createEncodedAudioStreams(script_state, exception_state);
+  DCHECK_EQ(track_->kind(), "video");
+  return createEncodedVideoStreams(script_state, exception_state);
 }
 
 RTCInsertableStreams* RTCRtpReceiver::createEncodedAudioStreams(
@@ -258,7 +263,7 @@ void RTCRtpReceiver::SetContributingSourcesNeedsUpdating() {
   web_sources_needs_updating_ = true;
 }
 
-void RTCRtpReceiver::Trace(Visitor* visitor) {
+void RTCRtpReceiver::Trace(Visitor* visitor) const {
   visitor->Trace(pc_);
   visitor->Trace(track_);
   visitor->Trace(transport_);
@@ -402,10 +407,12 @@ void RTCRtpReceiver::InitializeEncodedAudioStreams(ScriptState* script_state) {
           /*is_receiver=*/true);
   // The high water mark for the readable stream is set to 0 so that frames are
   // removed from the queue right away, without introducing a new buffer.
-  encoded_audio_streams_->setReadableStream(
+  ReadableStream* readable_stream =
       ReadableStream::CreateWithCountQueueingStrategy(
           script_state, audio_from_depacketizer_underlying_source_,
-          /*high_water_mark=*/0));
+          /*high_water_mark=*/0);
+  encoded_audio_streams_->setReadableStream(readable_stream);
+  encoded_audio_streams_->setReadable(readable_stream);
 
   // Set up writable.
   audio_to_decoder_underlying_sink_ =
@@ -421,10 +428,12 @@ void RTCRtpReceiver::InitializeEncodedAudioStreams(ScriptState* script_state) {
               WrapWeakPersistent(this)));
   // The high water mark for the stream is set to 1 so that the stream seems
   // ready to write, but without queuing frames.
-  encoded_audio_streams_->setWritableStream(
+  WritableStream* writable_stream =
       WritableStream::CreateWithCountQueueingStrategy(
           script_state, audio_to_decoder_underlying_sink_,
-          /*high_water_mark=*/1));
+          /*high_water_mark=*/1);
+  encoded_audio_streams_->setWritableStream(writable_stream);
+  encoded_audio_streams_->setWritable(writable_stream);
 }
 
 void RTCRtpReceiver::OnAudioFrameFromDepacketizer(
@@ -470,10 +479,12 @@ void RTCRtpReceiver::InitializeEncodedVideoStreams(ScriptState* script_state) {
                     WrapWeakPersistent(this)));
   // The high water mark for the readable stream is set to 0 so that frames are
   // removed from the queue right away, without introducing a new buffer.
-  encoded_video_streams_->setReadableStream(
+  ReadableStream* readable_stream =
       ReadableStream::CreateWithCountQueueingStrategy(
           script_state, video_from_depacketizer_underlying_source_,
-          /*high_water_mark=*/0));
+          /*high_water_mark=*/0);
+  encoded_video_streams_->setReadableStream(readable_stream);
+  encoded_video_streams_->setReadable(readable_stream);
 
   // Set up writable.
   video_to_decoder_underlying_sink_ =
@@ -486,13 +497,16 @@ void RTCRtpReceiver::InitializeEncodedVideoStreams(ScriptState* script_state) {
                                       ->GetEncodedVideoStreamTransformer()
                                 : nullptr;
               },
-              WrapWeakPersistent(this)));
+              WrapWeakPersistent(this)),
+          webrtc::TransformableFrameInterface::Direction::kReceiver);
   // The high water mark for the stream is set to 1 so that the stream seems
   // ready to write, but without queuing frames.
-  encoded_video_streams_->setWritableStream(
+  WritableStream* writable_stream =
       WritableStream::CreateWithCountQueueingStrategy(
           script_state, video_to_decoder_underlying_sink_,
-          /*high_water_mark=*/1));
+          /*high_water_mark=*/1);
+  encoded_video_streams_->setWritableStream(writable_stream);
+  encoded_video_streams_->setWritable(writable_stream);
 }
 
 void RTCRtpReceiver::OnVideoFrameFromDepacketizer(

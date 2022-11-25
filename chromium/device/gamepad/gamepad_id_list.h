@@ -33,14 +33,19 @@ enum XInputType {
 enum class GamepadId : uint32_t {
   // ID value representing an unknown gamepad or non-gamepad.
   kUnknownGamepad = 0,
-
+  // Fake IDs for devices which report as 0x0000 0x0000
+  kPowerALicPro = 0x0000ff00,
   // ID values for supported devices.
   kAsusTekProduct4500 = 0x0b054500,
+  kBroadcomProduct8502 = 0x0a5c8502,
   kDragonRiseProduct0006 = 0x00790006,
   kDragonRiseProduct0011 = 0x00790011,
+  kElecomProduct200f = 0x056e200f,
+  kElecomProduct2010 = 0x056e2010,
   kGoogleProduct2c40 = 0x18d12c40,
   kGoogleProduct9400 = 0x18d19400,
   kGreenAsiaProduct0003 = 0x0e8f0003,
+  kHoriProduct00c1 = 0x0f0d00c1,
   kLakeviewResearchProduct0005 = 0x09250005,
   kLakeviewResearchProduct8866 = 0x09258866,
   kLogitechProductc216 = 0x046dc216,
@@ -103,7 +108,9 @@ class DEVICE_GAMEPAD_EXPORT GamepadIdList {
   // Returns a GamepadId value suitable for identifying a specific model of
   // gamepad. If the gamepad is not contained in the list of known gamepads,
   // returns kUnknownGamepad.
-  GamepadId GetGamepadId(uint16_t vendor_id, uint16_t product_id) const;
+  GamepadId GetGamepadId(base::StringPiece product_name,
+                         uint16_t vendor_id,
+                         uint16_t product_id) const;
 
   // Return the XInput flavor (Xbox, Xbox 360, or Xbox One) for the device with
   // the specified |vendor_id| and |product_id|, or kXInputTypeNone if the

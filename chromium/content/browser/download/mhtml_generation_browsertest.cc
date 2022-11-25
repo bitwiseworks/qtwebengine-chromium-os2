@@ -14,7 +14,6 @@
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/post_task.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
@@ -31,6 +30,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/common/mhtml_generation_params.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -256,8 +256,8 @@ class RespondAndDisconnectMockWriter
   }
 
   void TaskY() {
-    base::PostTask(
-        FROM_HERE, {BrowserThread::UI},
+    GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE,
         base::BindOnce(&RespondAndDisconnectMockWriter::TaskZ,
                        scoped_refptr<RespondAndDisconnectMockWriter>(this)));
   }
@@ -359,18 +359,14 @@ class MHTMLGenerationTest
       return;
 
     // Loads the generated file to check if it is well formed.
-    WebContentsDelegate* old_delegate = shell()->web_contents()->GetDelegate();
-    ConsoleObserverDelegate console_delegate(shell()->web_contents(),
-                                             "Malformed multipart archive: *");
-    shell()->web_contents()->SetDelegate(&console_delegate);
+    WebContentsConsoleObserver console_observer(shell()->web_contents());
+    console_observer.SetPattern("Malformed multipart archive: *");
 
     EXPECT_TRUE(
         NavigateToURL(shell(), net::FilePathToFileURL(params.file_path)))
         << "Error navigating to the generated MHTML file";
-    EXPECT_EQ(0U, console_delegate.message().length())
+    EXPECT_TRUE(console_observer.messages().empty())
         << "The generated MHTML file is malformed";
-
-    shell()->web_contents()->SetDelegate(old_delegate);
   }
 
   void TwoStepSyncTestFor(const TaskOrder order);
@@ -870,8 +866,8 @@ class OrderedTaskMockWriter : public MockWriterBase {
   // Posts the quit closure to the UI thread to unblock the serialization Job
   // after receiving the first task complete notification.
   void PostClosure() {
-    base::PostTask(FROM_HERE, {BrowserThread::UI},
-                   std::move(first_run_loop_closure_));
+    GetUIThreadTaskRunner({})->PostTask(FROM_HERE,
+                                        std::move(first_run_loop_closure_));
   }
 
   base::OnceClosure first_run_loop_closure_;

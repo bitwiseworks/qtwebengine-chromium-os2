@@ -4,9 +4,18 @@
 
 # Avoids the need for a custom root variable.
 use_relative_paths = True
-use_relative_hooks = True
+
+gclient_gn_args_file = 'build/config/gclient_args.gni'
+gclient_gn_args = [
+  'mac_xcode_version',
+]
 
 vars = {
+  # This can be overridden, e.g. with custom_vars, to download a nonstandard
+  # Xcode version in build/mac_toolchain.py instead of downloading the
+  # prebuilt pinned revision.
+  'mac_xcode_version': 'default',
+
   'android_git': 'https://android.googlesource.com',
   'chromium_git': 'https://chromium.googlesource.com',
   'chrome_internal_git': 'https://chrome-internal.googlesource.com',
@@ -19,68 +28,113 @@ vars = {
   'checkout_angle_internal': False,
 
   # Version of Chromium our Chromium-based DEPS are mirrored from.
-  'chromium_revision': 'fa9d5805c421133e9d13cf698c4502d13398b2ce',
+  'chromium_revision': '5efa84e265f7c919226d9e3f96606487505ea9c1',
+  # We never want to checkout chromium,
+  # but need a dummy DEPS entry for the autoroller
+  'dummy_checkout_chromium': False,
 
   # Current revision of VK-GL-CTS (a.k.a dEQP).
-  'vk_gl_cts_revision': 'a6b249819f7177821d4b7eefff36af07fef71825',
+  'vk_gl_cts_revision': '02da53e45d9e700234873dc4449f816390c0d55d',
 
   # Current revision of glslang, the Khronos SPIRV compiler.
-  'glslang_revision': '0b66fa3b62cb36a3bc86f5018cf92a5211b27156',
+  'glslang_revision': 'bacaef3237c515e40d1a24722be48c0a0b30f75f',
 
   # Current revision of googletest.
   # Note: this dep cannot be auto-rolled b/c of nesting.
-  'googletest_revision': 'f2fb48c3b3d79a75a88a99fba6576b25d42ec528',
+  'googletest_revision': '4fe018038f87675c083d0cfb6a6b57c274fb1753',
+
+  # Current revision of Chrome's third_party googletest directory. This
+  # repository is mirrored as a separate repository, with separate git hashes
+  # that don't match the external googletest repository or Chrome. Mirrored
+  # patches will have a different git hash associated with them.
+  # To roll, first get the new hash for chromium_googletest_revision from the
+  # mirror of third_party/googletest located here:
+  # https://chromium.googlesource.com/chromium/src/third_party/googletest/
+  # Then get the new hash for googletest_revision from the root Chrome DEPS
+  # file: https://source.chromium.org/chromium/chromium/src/+/master:DEPS
+  'chromium_googletest_revision': 'c20c5a3085ab4d90fdb403e3ac98e7991317dd27',
 
   # Current revision of jsoncpp.
   # Note: this dep cannot be auto-rolled b/c of nesting.
   'jsoncpp_revision': '645250b6690785be60ab6780ce4b58698d884d11',
+
+  # Current revision of Chrome's third_party jsoncpp directory. This repository
+  # is mirrored as a separate repository, with separate git hashes that
+  # don't match the external JsonCpp repository or Chrome. Mirrored patches
+  # will have a different git hash associated with them.
+  # To roll, first get the new hash for chromium_jsoncpp_revision from the
+  # mirror of third_party/jsoncpp located here:
+  # https://chromium.googlesource.com/chromium/src/third_party/jsoncpp/
+  # Then get the new hash for jsoncpp_revision from the root Chrome DEPS file:
+  # https://source.chromium.org/chromium/chromium/src/+/master:DEPS
+  'chromium_jsoncpp_revision': '30a6ac108e24dabac7c2e0df4d33d55032af4ee7',
 
   # Current revision of patched-yasm.
   # Note: this dep cannot be auto-rolled b/c of nesting.
   'patched_yasm_revision': '720b70524a4424b15fc57e82263568c8ba0496ad',
 
   # Current revision of spirv-cross, the Khronos SPIRV cross compiler.
-  'spirv_cross_revision': 'fd5aa3ad51ece55a1b51fe6bfb271db6844ae291',
+  'spirv_cross_revision': 'f38cbeb814c73510b85697adbe5e894f9eac978f',
 
   # Current revision fo the SPIRV-Headers Vulkan support library.
-  'spirv_headers_revision': 'f8bf11a0253a32375c32cad92c841237b96696c0',
+  'spirv_headers_revision': '3fdabd0da2932c276b25b9b4a988ba134eba1aa6',
 
   # Current revision of SPIRV-Tools for Vulkan.
-  'spirv_tools_revision': 'f20c0d7971c6705a99b91d7a0278eabbc5d91195',
+  'spirv_tools_revision': '615fbe6cbc78463f6b58cecdb155dad0534d22b4',
 
   # Current revision of Khronos Vulkan-Headers.
-  'vulkan_headers_revision': '0e78ffd1dcfc3e9f14a966b9660dbc59bd967c5c',
+  'vulkan_headers_revision': 'e1ba543c67893e13c7dae9bd38d3e5cba4ecb7c0',
 
   # Current revision of Khronos Vulkan-Loader.
-  'vulkan_loader_revision': 'ba07fa0be82cf1e3e7e8c2e0e01f5109a5847d3a',
+  'vulkan_loader_revision': '0c0ac2c6c458acdb8ca28902fc990342902fc0a3',
 
   # Current revision of Khronos Vulkan-Tools.
-  'vulkan_tools_revision': '7844b9b4e180612c7ca35bcb07ce7f86610b22c4',
+  'vulkan_tools_revision': 'c5c6265c026e4d6cc2826aedf86f5eb352dc470d',
 
   # Current revision of Khronos Vulkan-ValidationLayers.
-  'vulkan_validation_revision': '499f6df688c94b087610285c4a8a6e03098810cc',
+  'vulkan_validation_revision': '7a78cc629cca4830f1a5d7531cacf03a6e0a3914',
 
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling catapult
   # and whatever else without interference from each other.
   'catapult_revision': '1b3fb455bf1849f1e6187e1eaeaef32b9f30d3c5',
+
+  # Three lines of non-changing comments so that
+  # the commit queue can handle CLs rolling luci-go
+  # and whatever else without interference from each other.
+  'luci_go': 'git_revision:83c3df996b224edf5061840744395707a0e513e7',
 }
 
 deps = {
 
   'build': {
-    'url': '{chromium_git}/chromium/src/build.git@a1cbf6469a5400f2b455ffba2e95ea47a1b47c94',
+    'url': '{chromium_git}/chromium/src/build.git@83b9c33a0b14ff19a0cd340d46c283f6e06bba8d',
     'condition': 'not build_with_chromium',
   },
 
   'buildtools': {
-    'url': '{chromium_git}/chromium/src/buildtools.git@4164a305626786b1912d467003acf4c4995bec7d',
+    'url': '{chromium_git}/chromium/src/buildtools.git@4be464e050b3d05060471788f926b34c641db9fd',
     'condition': 'not build_with_chromium',
   },
 
   'testing': {
-    'url': '{chromium_git}/chromium/src/testing@3e21eec53c1688302ebc26e975d0163256bd1a15',
+    'url': '{chromium_git}/chromium/src/testing@66ad7ae0990a258c4ecb68f2b8d9b65f215df281',
     'condition': 'not build_with_chromium',
+  },
+
+  'third_party/abseil-cpp': {
+    'url': '{chromium_git}/chromium/src/third_party/abseil-cpp@3187b54c0ca3a17d4de6dfe7aeb37ceab8f1cfae',
+    'condition': 'not build_with_chromium',
+  },
+
+  'third_party/android_ndk': {
+    'url': '{chromium_git}/android_ndk.git@27c0a8d090c666a50e40fceb4ee5b40b1a2d3f87',
+    'condition': 'checkout_android and not build_with_chromium',
+  },
+
+  'third_party/catapult': {
+    'url': '{chromium_git}/catapult.git@{catapult_revision}',
+    'condition': 'checkout_android and not build_with_chromium',
   },
 
   # Cherry is a dEQP/VK-GL-CTS management GUI written in Go. We use it for viewing test results.
@@ -89,8 +143,11 @@ deps = {
     'condition': 'not build_with_chromium',
   },
 
-  'third_party/VK-GL-CTS/src': {
-    'url': '{chromium_git}/external/github.com/KhronosGroup/VK-GL-CTS@{vk_gl_cts_revision}',
+  # We never want to checkout chromium,
+  # but need a dummy DEPS entry for the autoroller
+  'third_party/dummy_chromium': {
+    'url': '{chromium_git}/chromium/src.git@{chromium_revision}',
+    'condition': 'dummy_checkout_chromium',
   },
 
   'third_party/fuchsia-sdk': {
@@ -115,13 +172,13 @@ deps = {
   },
 
   'third_party/googletest': {
-    'url': '{chromium_git}/chromium/src/third_party/googletest@c96dc321101e7c9f5ba16d957afd49ee4db30548',
+    'url': '{chromium_git}/chromium/src/third_party/googletest@{chromium_googletest_revision}',
     'condition': 'not build_with_chromium',
   },
 
   # libjpeg_turbo is used by glmark2.
   'third_party/libjpeg_turbo': {
-    'url': '{chromium_git}/chromium/deps/libjpeg_turbo.git@ce0e57e8e636f5132fe6f0590a4dba91f92fd935',
+    'url': '{chromium_git}/chromium/deps/libjpeg_turbo.git@d5148db386ceb4a608058320071cbed890bd6ad2',
     'condition': 'not build_with_chromium',
   },
 
@@ -131,12 +188,17 @@ deps = {
   },
 
   'third_party/jsoncpp': {
-    'url': '{chromium_git}/chromium/src/third_party/jsoncpp@493c9385c91023c3819b51ee0de552d52229a1e5',
+    'url': '{chromium_git}/chromium/src/third_party/jsoncpp@{chromium_jsoncpp_revision}',
     'condition': 'not build_with_chromium',
    },
 
+  'third_party/nasm': {
+    'url': '{chromium_git}/chromium/deps/nasm.git@19f3fad68da99277b2882939d3b2fa4c4b8d51d9',
+    'condition': 'not build_with_chromium',
+  },
+
   'third_party/Python-Markdown': {
-    'url': '{chromium_git}/chromium/src/third_party/Python-Markdown@36657c103ce5964733bbbb29377085e9cc1a9472',
+    'url': '{chromium_git}/chromium/src/third_party/Python-Markdown@ad4fc19d612de0a3f6ea19441af703ff5a5223f3',
     'condition': 'not build_with_chromium',
   },
 
@@ -182,8 +244,12 @@ deps = {
   },
 
   'third_party/SwiftShader': {
-    'url': '{swiftshader_git}/SwiftShader@cb58662302c8e73845116fc5f14acaa08c037cb2',
+    'url': '{swiftshader_git}/SwiftShader@5e947adaf26eee51de47e406a9f7943afd1a882f',
     'condition': 'not build_with_chromium',
+  },
+
+  'third_party/VK-GL-CTS/src': {
+    'url': '{chromium_git}/external/github.com/KhronosGroup/VK-GL-CTS@{vk_gl_cts_revision}',
   },
 
   'third_party/vulkan-headers/src': {
@@ -194,6 +260,11 @@ deps = {
     'url': '{chromium_git}/external/github.com/KhronosGroup/Vulkan-Loader@{vulkan_loader_revision}',
   },
 
+  'third_party/vulkan_memory_allocator': {
+    'url': '{chromium_git}/external/github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator@065e739079d9d58bef28ccd793cbf512261f09ed',
+    'condition': 'not build_with_chromium',
+  },
+
   'third_party/vulkan-tools/src': {
     'url': '{chromium_git}/external/github.com/KhronosGroup/Vulkan-Tools@{vulkan_tools_revision}',
   },
@@ -202,18 +273,13 @@ deps = {
     'url': '{chromium_git}/external/github.com/KhronosGroup/Vulkan-ValidationLayers@{vulkan_validation_revision}',
   },
 
-  'third_party/yasm': {
-    'url': '{chromium_git}/chromium/src/third_party/yasm@8e4e548d0b199df58740336024c1b3baf7c0abd7',
-    'condition': 'not build_with_chromium',
-  },
-
   'third_party/zlib': {
-    'url': '{chromium_git}/chromium/src/third_party/zlib@156be8c52f80cde343088b4a69a80579101b6e67',
+    'url': '{chromium_git}/chromium/src/third_party/zlib@26211a5a8e7e28286fc28a84a0e102cc96bf0f0b',
     'condition': 'not build_with_chromium',
   },
 
   'tools/clang': {
-    'url': '{chromium_git}/chromium/src/tools/clang.git@d60a6a8084300eb8de99e56b559369dcde4cffa4',
+    'url': '{chromium_git}/chromium/src/tools/clang.git@921f37180791fb9cf8e4bdeb3794a8d113c78340',
     'condition': 'not build_with_chromium',
   },
 
@@ -228,24 +294,71 @@ deps = {
     'dep_type': 'cipd',
   },
 
+  'tools/luci-go': {
+    'packages': [
+      {
+        'package': 'infra/tools/luci/isolate/${{platform}}',
+        'version': Var('luci_go'),
+      },
+      {
+        'package': 'infra/tools/luci/isolated/${{platform}}',
+        'version': Var('luci_go'),
+      },
+      {
+        'package': 'infra/tools/luci/swarming/${{platform}}',
+        'version': Var('luci_go'),
+      },
+    ],
+    'condition': 'not build_with_chromium',
+    'dep_type': 'cipd',
+  },
+
+  'tools/mb': {
+    'url': '{chromium_git}/chromium/src/tools/mb@410285a57eae11398c1a2b6fd53511b2b5963b3a',
+    'condition': 'not build_with_chromium',
+  },
+
   'tools/md_browser': {
-    'url': '{chromium_git}/chromium/src/tools/md_browser@0bfd826f8566a99923e64a782908faca72bc457c',
+    'url': '{chromium_git}/chromium/src/tools/md_browser@60141af3603925d99bf3fb22fdfca138416339b1',
     'condition': 'not build_with_chromium',
   },
 
   'tools/memory': {
-    'url': '{chromium_git}/chromium/src/tools/memory@89552acb6e60f528fe3c98eac7b445d4c34183ee',
+    'url': '{chromium_git}/chromium/src/tools/memory@ee1e2448132431e7519c2a72ff612e079f13a9d6',
     'condition': 'not build_with_chromium',
   },
 
-  'third_party/catapult': {
-    'url': '{chromium_git}/catapult.git@{catapult_revision}',
-    'condition': 'not build_with_chromium',
+  'tools/skia_goldctl/linux': {
+      'packages': [
+        {
+          'package': 'skia/tools/goldctl/linux-amd64',
+          'version': 'dMvix4BkhDJmKBK1tudaxlOMub1Dif3ZPcqzSY72-ZAC',
+        },
+      ],
+      'dep_type': 'cipd',
+      'condition': 'checkout_linux and not build_with_chromium',
   },
 
-  'third_party/android_ndk': {
-    'url': '{chromium_git}/android_ndk.git@27c0a8d090c666a50e40fceb4ee5b40b1a2d3f87',
-    'condition': 'not build_with_chromium',
+  'tools/skia_goldctl/win': {
+      'packages': [
+        {
+          'package': 'skia/tools/goldctl/windows-amd64',
+          'version': 'cLgS219WFD65Hr6NfoCQYA5KEE2FfO3FBl30KYhpTFoC',
+        },
+      ],
+      'dep_type': 'cipd',
+      'condition': 'checkout_win and not build_with_chromium',
+  },
+
+  'tools/skia_goldctl/mac': {
+      'packages': [
+        {
+          'package': 'skia/tools/goldctl/mac-amd64',
+          'version': 'xJncEfNMb0HaDG9EglMx2YNbKAxqk6qJbckhfn0BXb8C',
+        },
+      ],
+      'dep_type': 'cipd',
+      'condition': 'checkout_mac and not build_with_chromium',
   },
 }
 
@@ -417,12 +530,9 @@ hooks = [
     'name': 'restricted_traces',
     'pattern': '\\.sha1',
     'condition': 'checkout_angle_internal',
-    'action': [ 'download_from_google_storage',
-                '--directory',
-                '--recursive',
-                '--extract',
-                '--bucket', 'chrome-angle-capture-binaries',
-                'src/tests/perf_tests/restricted_traces',
+    'action': [ 'python',
+                'src/tests/restricted_traces/download_restricted_traces.py',
+                'src/tests/restricted_traces',
     ]
   }
 ]
@@ -432,5 +542,4 @@ recursedeps = [
   'buildtools',
   'third_party/googletest',
   'third_party/jsoncpp',
-  'third_party/yasm',
 ]

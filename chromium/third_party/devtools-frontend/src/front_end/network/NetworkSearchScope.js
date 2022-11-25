@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as SDK from '../sdk/sdk.js';           // eslint-disable-line no-unused-vars
 import * as Search from '../search/search.js';  // eslint-disable-line no-unused-vars
+import * as TextUtils from '../text_utils/text_utils.js';  // eslint-disable-line no-unused-vars
 
 /**
  * @implements {Search.SearchConfig.SearchScope}
@@ -28,8 +32,8 @@ export class NetworkSearchScope {
    */
   async performSearch(searchConfig, progress, searchResultCallback, searchFinishedCallback) {
     const promises = [];
-    const requests =
-        self.SDK.networkLog.requests().filter(request => searchConfig.filePathMatchesFileQuery(request.url()));
+    const requests = SDK.NetworkLog.NetworkLog.instance().requests().filter(
+        request => searchConfig.filePathMatchesFileQuery(request.url()));
     progress.setTotalWork(requests.length);
     for (const request of requests) {
       const promise = this._searchRequest(searchConfig, request, progress);

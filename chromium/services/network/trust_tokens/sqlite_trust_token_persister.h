@@ -11,6 +11,7 @@
 #include "base/task/task_traits.h"
 #include "components/sqlite_proto/key_value_data.h"
 #include "services/network/trust_tokens/proto/storage.pb.h"
+#include "services/network/trust_tokens/suitable_trust_token_origin.h"
 #include "services/network/trust_tokens/trust_token_database_owner.h"
 #include "services/network/trust_tokens/trust_token_persister.h"
 #include "sql/database.h"
@@ -38,7 +39,8 @@ class SQLiteTrustTokenPersister : public TrustTokenPersister {
   // Constructs a SQLiteTrustTokenPersister backed by an on-disk
   // database:
   // - |db_task_runner| will be used for posting blocking database IO;
-  // - |path| will store the database.
+  // - |path| will store the database; if its parent directory doesn't exist,
+  // the method will attempt to create the directory.
   // - |flush_delay_for_writes| is the maximum time before each write is flushed
   // to the underlying database.
   //
@@ -57,29 +59,29 @@ class SQLiteTrustTokenPersister : public TrustTokenPersister {
 
   // TrustTokenPersister implementation:
 
-  // Preconditions:
-  // - All of these methods require that ther Origin inputs' schemes must be
-  // HTTP or HTTPS.
-  //
-  // Postconditions:
-  // - Each getter returns nullptr when the requested record was not found.
+  // Each getter returns nullptr when the requested record was not found.
   std::unique_ptr<TrustTokenIssuerConfig> GetIssuerConfig(
-      const url::Origin& issuer) override;
+      const SuitableTrustTokenOrigin& issuer) override;
   std::unique_ptr<TrustTokenToplevelConfig> GetToplevelConfig(
-      const url::Origin& toplevel) override;
+      const SuitableTrustTokenOrigin& toplevel) override;
   std::unique_ptr<TrustTokenIssuerToplevelPairConfig>
-  GetIssuerToplevelPairConfig(const url::Origin& issuer,
-                              const url::Origin& toplevel) override;
+  GetIssuerToplevelPairConfig(
+      const SuitableTrustTokenOrigin& issuer,
+      const SuitableTrustTokenOrigin& toplevel) override;
 
-  void SetIssuerConfig(const url::Origin& issuer,
+  void SetIssuerConfig(const SuitableTrustTokenOrigin& issuer,
                        std::unique_ptr<TrustTokenIssuerConfig> config) override;
   void SetToplevelConfig(
-      const url::Origin& toplevel,
+      const SuitableTrustTokenOrigin& toplevel,
       std::unique_ptr<TrustTokenToplevelConfig> config) override;
   void SetIssuerToplevelPairConfig(
-      const url::Origin& issuer,
-      const url::Origin& toplevel,
+      const SuitableTrustTokenOrigin& issuer,
+      const SuitableTrustTokenOrigin& toplevel,
       std::unique_ptr<TrustTokenIssuerToplevelPairConfig> config) override;
+
+  bool DeleteForOrigins(
+      base::RepeatingCallback<bool(const SuitableTrustTokenOrigin&)> matcher)
+      override;
 
  private:
   // Manages the underlying database.

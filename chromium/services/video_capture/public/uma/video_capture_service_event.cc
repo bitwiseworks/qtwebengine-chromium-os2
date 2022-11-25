@@ -4,6 +4,7 @@
 
 #include "services/video_capture/public/uma/video_capture_service_event.h"
 
+#include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 
 namespace video_capture {
@@ -56,7 +57,7 @@ void LogDurationUntilReconnectAfterCapture(base::TimeDelta duration) {
   DVLOG(4) << "Logged DurationUntilReconnectAfterCapture";
 }
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
 void LogMacbookRetryGetDeviceInfosEvent(MacbookRetryGetDeviceInfosEvent event) {
   UMA_HISTOGRAM_ENUMERATION(
       "Media.VideoCapture.MacBook.RetryGetDeviceInfosEvent", event,

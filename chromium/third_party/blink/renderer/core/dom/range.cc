@@ -79,6 +79,8 @@ class RangeUpdateScope {
 #endif
     }
   }
+  RangeUpdateScope(const RangeUpdateScope&) = delete;
+  RangeUpdateScope& operator=(const RangeUpdateScope&) = delete;
 
   ~RangeUpdateScope() {
     DCHECK_GE(scope_count_, 1);
@@ -109,7 +111,6 @@ class RangeUpdateScope {
   Range* range_ = nullptr;
   Document* old_document_ = nullptr;
 
-  DISALLOW_COPY_AND_ASSIGN(RangeUpdateScope);
 };
 
 int RangeUpdateScope::scope_count_ = 0;
@@ -1782,7 +1783,7 @@ void Range::RemoveFromSelectionIfInDifferentRoot(Document& old_document) {
   selection.ClearDocumentCachedRange();
 }
 
-void Range::Trace(Visitor* visitor) {
+void Range::Trace(Visitor* visitor) const {
   visitor->Trace(owner_document_);
   visitor->Trace(start_);
   visitor->Trace(end_);

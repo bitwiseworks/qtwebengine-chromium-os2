@@ -47,25 +47,28 @@ enum { kPurgeDelay = 500 };
 namespace device {
 
 // static
-base::WeakPtr<BluetoothAdapter> BluetoothAdapter::CreateAdapter(
-    InitCallback init_callback) {
+scoped_refptr<BluetoothAdapter> BluetoothAdapter::CreateAdapter() {
   return BluetoothAdapterAndroid::Create(
       BluetoothAdapterWrapper_CreateWithDefaultAdapter());
 }
 
 // static
-base::WeakPtr<BluetoothAdapterAndroid> BluetoothAdapterAndroid::Create(
+scoped_refptr<BluetoothAdapterAndroid> BluetoothAdapterAndroid::Create(
     const JavaRef<jobject>&
-        bluetooth_adapter_wrapper) {  // Java Type: bluetoothAdapterWrapper
-  BluetoothAdapterAndroid* adapter = new BluetoothAdapterAndroid();
+        bluetooth_adapter_wrapper) {  // Java Type: BluetoothAdapterWrapper
+  auto adapter = base::WrapRefCounted(new BluetoothAdapterAndroid());
 
   adapter->j_adapter_.Reset(Java_ChromeBluetoothAdapter_create(
-      AttachCurrentThread(), reinterpret_cast<intptr_t>(adapter),
+      AttachCurrentThread(), reinterpret_cast<intptr_t>(adapter.get()),
       bluetooth_adapter_wrapper));
 
   adapter->ui_task_runner_ = base::ThreadTaskRunnerHandle::Get();
 
-  return adapter->weak_ptr_factory_.GetWeakPtr();
+  return adapter;
+}
+
+void BluetoothAdapterAndroid::Initialize(base::OnceClosure callback) {
+  std::move(callback).Run();
 }
 
 std::string BluetoothAdapterAndroid::GetAddress() const {
@@ -79,8 +82,8 @@ std::string BluetoothAdapterAndroid::GetName() const {
 }
 
 void BluetoothAdapterAndroid::SetName(const std::string& name,
-                                      const base::Closure& callback,
-                                      const ErrorCallback& error_callback) {
+                                      base::OnceClosure callback,
+                                      ErrorCallback error_callback) {
   NOTIMPLEMENTED();
 }
 
@@ -103,10 +106,9 @@ bool BluetoothAdapterAndroid::IsDiscoverable() const {
                                                     j_adapter_);
 }
 
-void BluetoothAdapterAndroid::SetDiscoverable(
-    bool discoverable,
-    const base::Closure& callback,
-    const ErrorCallback& error_callback) {
+void BluetoothAdapterAndroid::SetDiscoverable(bool discoverable,
+                                              base::OnceClosure callback,
+                                              ErrorCallback error_callback) {
   NOTIMPLEMENTED();
 }
 
@@ -123,26 +125,27 @@ BluetoothAdapter::UUIDList BluetoothAdapterAndroid::GetUUIDs() const {
 void BluetoothAdapterAndroid::CreateRfcommService(
     const BluetoothUUID& uuid,
     const ServiceOptions& options,
-    const CreateServiceCallback& callback,
-    const CreateServiceErrorCallback& error_callback) {
+    CreateServiceCallback callback,
+    CreateServiceErrorCallback error_callback) {
   NOTIMPLEMENTED();
-  error_callback.Run("Not Implemented");
+  std::move(error_callback).Run("Not Implemented");
 }
 
 void BluetoothAdapterAndroid::CreateL2capService(
     const BluetoothUUID& uuid,
     const ServiceOptions& options,
-    const CreateServiceCallback& callback,
-    const CreateServiceErrorCallback& error_callback) {
+    CreateServiceCallback callback,
+    CreateServiceErrorCallback error_callback) {
   NOTIMPLEMENTED();
-  error_callback.Run("Not Implemented");
+  std::move(error_callback).Run("Not Implemented");
 }
 
 void BluetoothAdapterAndroid::RegisterAdvertisement(
     std::unique_ptr<BluetoothAdvertisement::Data> advertisement_data,
-    const CreateAdvertisementCallback& callback,
-    const AdvertisementErrorCallback& error_callback) {
-  error_callback.Run(BluetoothAdvertisement::ERROR_UNSUPPORTED_PLATFORM);
+    CreateAdvertisementCallback callback,
+    AdvertisementErrorCallback error_callback) {
+  std::move(error_callback)
+      .Run(BluetoothAdvertisement::ERROR_UNSUPPORTED_PLATFORM);
 }
 
 BluetoothLocalGattService* BluetoothAdapterAndroid::GetGattService(
@@ -178,8 +181,8 @@ void BluetoothAdapterAndroid::CreateOrUpdateDeviceOnScan(
     const JavaParamRef<jobjectArray>& service_data_values,  // Java Type: byte[]
     const JavaParamRef<jintArray>& manufacturer_data_keys,  // Java Type: int[]
     const JavaParamRef<jobjectArray>&
-        manufacturer_data_values  // Java Type: byte[]
-) {
+        manufacturer_data_values,  // Java Type: byte[]
+    int32_t advertisement_flags) {
   std::string device_address = ConvertJavaStringToUTF8(env, address);
   auto iter = devices_.find(device_address);
 
@@ -235,7 +238,11 @@ void BluetoothAdapterAndroid::CreateOrUpdateDeviceOnScan(
   int8_t clamped_tx_power = BluetoothDevice::ClampPower(tx_power);
 
   device_android->UpdateAdvertisementData(
-      BluetoothDevice::ClampPower(rssi), base::nullopt /* flags */,
+      BluetoothDevice::ClampPower(rssi),
+      // Android uses -1 to indicate no advertising flags.
+      // https://developer.android.com/reference/android/bluetooth/le/ScanRecord.html#getAdvertiseFlags()
+      advertisement_flags == -1 ? base::nullopt
+                                : base::make_optional(advertisement_flags),
       advertised_bluetooth_uuids,
       // Android uses INT32_MIN to indicate no Advertised Tx Power.
       // https://developer.android.com/reference/android/bluetooth/le/ScanRecord.html#getTxPowerLevel()

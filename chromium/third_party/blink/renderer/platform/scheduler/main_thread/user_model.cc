@@ -15,9 +15,9 @@ UserModel::UserModel()
 void UserModel::DidStartProcessingInputEvent(blink::WebInputEvent::Type type,
                                              const base::TimeTicks now) {
   last_input_signal_time_ = now;
-  if (type == blink::WebInputEvent::kTouchStart ||
-      type == blink::WebInputEvent::kGestureScrollBegin ||
-      type == blink::WebInputEvent::kGesturePinchBegin) {
+  if (type == blink::WebInputEvent::Type::kTouchStart ||
+      type == blink::WebInputEvent::Type::kGestureScrollBegin ||
+      type == blink::WebInputEvent::Type::kGesturePinchBegin) {
     // Only update stats once per gesture.
     if (!is_gesture_active_)
       last_gesture_start_time_ = now;
@@ -27,23 +27,23 @@ void UserModel::DidStartProcessingInputEvent(blink::WebInputEvent::Type type,
 
   // We need to track continuous gestures seperatly for scroll detection
   // because taps should not be confused with scrolls.
-  if (type == blink::WebInputEvent::kGestureScrollBegin ||
-      type == blink::WebInputEvent::kGestureScrollEnd ||
-      type == blink::WebInputEvent::kGestureScrollUpdate ||
-      type == blink::WebInputEvent::kGestureFlingStart ||
-      type == blink::WebInputEvent::kGestureFlingCancel ||
-      type == blink::WebInputEvent::kGesturePinchBegin ||
-      type == blink::WebInputEvent::kGesturePinchEnd ||
-      type == blink::WebInputEvent::kGesturePinchUpdate) {
+  if (type == blink::WebInputEvent::Type::kGestureScrollBegin ||
+      type == blink::WebInputEvent::Type::kGestureScrollEnd ||
+      type == blink::WebInputEvent::Type::kGestureScrollUpdate ||
+      type == blink::WebInputEvent::Type::kGestureFlingStart ||
+      type == blink::WebInputEvent::Type::kGestureFlingCancel ||
+      type == blink::WebInputEvent::Type::kGesturePinchBegin ||
+      type == blink::WebInputEvent::Type::kGesturePinchEnd ||
+      type == blink::WebInputEvent::Type::kGesturePinchUpdate) {
     last_continuous_gesture_time_ = now;
   }
 
   // If the gesture has ended, clear |is_gesture_active_| and record a UMA
   // metric that tracks its duration.
-  if (type == blink::WebInputEvent::kGestureScrollEnd ||
-      type == blink::WebInputEvent::kGesturePinchEnd ||
-      type == blink::WebInputEvent::kGestureFlingStart ||
-      type == blink::WebInputEvent::kTouchEnd) {
+  if (type == blink::WebInputEvent::Type::kGestureScrollEnd ||
+      type == blink::WebInputEvent::Type::kGesturePinchEnd ||
+      type == blink::WebInputEvent::Type::kGestureFlingStart ||
+      type == blink::WebInputEvent::Type::kTouchEnd) {
     is_gesture_active_ = false;
   }
 
@@ -141,7 +141,7 @@ void UserModel::Reset(base::TimeTicks now) {
 }
 
 void UserModel::AsValueInto(base::trace_event::TracedValue* state) const {
-  state->BeginDictionary("user_model");
+  auto dictionary_scope = state->BeginDictionaryScoped("user_model");
   state->SetInteger("pending_input_event_count", pending_input_event_count_);
   state->SetDouble(
       "last_input_signal_time",
@@ -159,7 +159,6 @@ void UserModel::AsValueInto(base::trace_event::TracedValue* state) const {
                    (last_reset_time_ - base::TimeTicks()).InMillisecondsF());
   state->SetBoolean("is_gesture_expected", is_gesture_expected_);
   state->SetBoolean("is_gesture_active", is_gesture_active_);
-  state->EndDictionary();
 }
 
 }  // namespace scheduler

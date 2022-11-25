@@ -28,6 +28,8 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
 
 import * as Bindings from '../bindings/bindings.js';
 import * as Common from '../common/common.js';
@@ -38,6 +40,7 @@ import * as SDK from '../sdk/sdk.js';
 import * as TimelineModel from '../timeline_model/timeline_model.js';
 import * as UI from '../ui/ui.js';
 
+import {CLSRect} from './CLSLinkifier.js';
 import {TimelinePanel, TimelineSelection} from './TimelinePanel.js';
 
 /**
@@ -109,7 +112,6 @@ export class TimelineUIUtils {
     eventStyles[type.MarkDOMContent] = new TimelineRecordStyle(ls`DOMContentLoaded Event`, scripting, true);
     eventStyles[type.MarkFirstPaint] = new TimelineRecordStyle(ls`First Paint`, painting, true);
     eventStyles[type.MarkFCP] = new TimelineRecordStyle(ls`First Contentful Paint`, rendering, true);
-    eventStyles[type.MarkFMP] = new TimelineRecordStyle(ls`First Meaningful Paint`, rendering, true);
     eventStyles[type.MarkLCPCandidate] = new TimelineRecordStyle(ls`Largest Contentful Paint`, rendering, true);
     eventStyles[type.TimeStamp] = new TimelineRecordStyle(ls`Timestamp`, scripting);
     eventStyles[type.ConsoleTime] = new TimelineRecordStyle(ls`Console Time`, scripting);
@@ -243,7 +245,7 @@ export class TimelineUIUtils {
     return regExp.test(tokens.join('|'));
 
     /**
-     * @param {!Object} object
+     * @param {!*} object
      * @param {number} depth
      */
     function appendObjectProperties(object, depth) {
@@ -494,7 +496,7 @@ export class TimelineUIUtils {
       case recordType.MajorGC:
       case recordType.MinorGC: {
         const delta = event.args['usedHeapSizeBefore'] - event.args['usedHeapSizeAfter'];
-        detailsText = Common.UIString.UIString('%s collected', Number.bytesToString(delta));
+        detailsText = Common.UIString.UIString('%s collected', Platform.NumberUtilities.bytesToString(delta));
         break;
       }
       case recordType.FunctionCall:
@@ -787,15 +789,32 @@ export class TimelineUIUtils {
         link = 'https://web.dev/first-contentful-paint';
         name = 'first contentful paint';
         break;
-      case recordType.MarkFMP:
-        link = 'https://web.dev/first-meaningful-paint/';
-        name = 'first meaningful paint';
-        break;
       default:
         break;
     }
 
     return UI.Fragment.html`<div>${UI.XLink.XLink.create(link, ls`Learn more`)} about ${name}.</div>`;
+  }
+
+  /**
+   * @param {!Object} eventData
+   * @param {!TimelineDetailsContentHelper} contentHelper
+   */
+  static buildCompilationCacheDetails(eventData, contentHelper) {
+    if ('producedCacheSize' in eventData) {
+      contentHelper.appendTextRow(ls`Compilation cache status`, ls`script saved to cache`);
+      contentHelper.appendTextRow(
+          ls`Compilation cache size`, Platform.NumberUtilities.bytesToString(eventData['producedCacheSize']));
+    } else if ('consumedCacheSize' in eventData) {
+      contentHelper.appendTextRow(ls`Compilation cache status`, ls`script loaded from cache`);
+      contentHelper.appendTextRow(
+          ls`Compilation cache size`, Platform.NumberUtilities.bytesToString(eventData['consumedCacheSize']));
+    } else if (eventData && eventData['cacheRejected']) {
+      // Version mismatch or similar.
+      contentHelper.appendTextRow(ls`Compilation cache status`, ls`failed to load script from cache`);
+    } else {
+      contentHelper.appendTextRow(ls`Compilation cache status`, ls`script not eligible`);
+    }
   }
 
   /**
@@ -889,13 +908,14 @@ export class TimelineUIUtils {
       case recordTypes.MajorGC:
       case recordTypes.MinorGC: {
         const delta = event.args['usedHeapSizeBefore'] - event.args['usedHeapSizeAfter'];
-        contentHelper.appendTextRow(ls`Collected`, Number.bytesToString(delta));
+        contentHelper.appendTextRow(ls`Collected`, Platform.NumberUtilities.bytesToString(delta));
         break;
       }
 
       case recordTypes.JSFrame:
       case recordTypes.FunctionCall: {
-        const detailsNode = await TimelineUIUtils.buildDetailsNodeForTraceEvent(event, model.targetByEvent(event), linkifier);
+        const detailsNode =
+            await TimelineUIUtils.buildDetailsNodeForTraceEvent(event, model.targetByEvent(event), linkifier);
         if (detailsNode) {
           contentHelper.appendElementRow(ls`Function`, detailsNode);
         }
@@ -959,17 +979,10 @@ export class TimelineUIUtils {
         if (url) {
           contentHelper.appendLocationRow(ls`Script`, url, eventData['lineNumber'], eventData['columnNumber']);
         }
-        contentHelper.appendTextRow(ls`Streamed`, eventData['streamed']);
-        const producedCacheSize = eventData && eventData['producedCacheSize'];
-        if (producedCacheSize) {
-          contentHelper.appendTextRow(ls`Produced Cache Size`, producedCacheSize);
-        }
-        const cacheConsumeOptions = eventData && eventData['cacheConsumeOptions'];
-        if (cacheConsumeOptions) {
-          contentHelper.appendTextRow(ls`Cache Consume Options`, cacheConsumeOptions);
-          contentHelper.appendTextRow(ls`Consumed Cache Size`, eventData['consumedCacheSize']);
-          contentHelper.appendTextRow(ls`Cache Rejected`, eventData['cacheRejected']);
-        }
+        const isStreamed = eventData['streamed'];
+        contentHelper.appendTextRow(
+            ls`Streamed`, isStreamed + (isStreamed ? '' : `: ${eventData['notStreamedReason']}`));
+        TimelineUIUtils.buildCompilationCacheDetails(eventData, contentHelper);
         break;
       }
 
@@ -1126,11 +1139,21 @@ export class TimelineUIUtils {
 
       case recordTypes.MarkFirstPaint:
       case recordTypes.MarkFCP:
-      case recordTypes.MarkFMP:
       case recordTypes.MarkLoad:
       case recordTypes.MarkDOMContent: {
-        contentHelper.appendTextRow(
-            ls`Timestamp`, Number.preciseMillisToString(event.startTime - model.minimumRecordTime(), 1));
+        let eventTime = event.startTime - model.minimumRecordTime();
+
+        // Find the appropriate navStart based on the navigation ID.
+        const {navigationId} = event.args.data;
+        if (navigationId) {
+          const navStartTime = model.navStartTimes().get(navigationId);
+
+          if (navStartTime) {
+            eventTime = event.startTime - navStartTime.startTime;
+          }
+        }
+
+        contentHelper.appendTextRow(ls`Timestamp`, Number.preciseMillisToString(eventTime, 1));
         contentHelper.appendElementRow(ls`Details`, TimelineUIUtils.buildDetailsNodeForPerformanceEvent(event));
         break;
       }
@@ -1144,11 +1167,24 @@ export class TimelineUIUtils {
         contentHelper.appendTextRow(ls`Score`, eventData['score'].toPrecision(4));
         contentHelper.appendTextRow(ls`Cumulative Score`, eventData['cumulative_score'].toPrecision(4));
         contentHelper.appendTextRow(ls`Had recent input`, eventData['had_recent_input'] ? ls`Yes` : ls`No`);
+
+        for (const impactedNode of eventData['impacted_nodes']) {
+          const oldRect = new CLSRect(impactedNode['old_rect']);
+          const newRect = new CLSRect(impactedNode['new_rect']);
+
+          const linkedOldRect = await Common.Linkifier.Linkifier.linkify(oldRect);
+          const linkedNewRect = await Common.Linkifier.Linkifier.linkify(newRect);
+
+          contentHelper.appendElementRow(ls`Moved from`, linkedOldRect);
+          contentHelper.appendElementRow(ls`Moved to`, linkedNewRect);
+        }
+
         break;
       }
 
       default: {
-        const detailsNode = await TimelineUIUtils.buildDetailsNodeForTraceEvent(event, model.targetByEvent(event), linkifier);
+        const detailsNode =
+            await TimelineUIUtils.buildDetailsNodeForTraceEvent(event, model.targetByEvent(event), linkifier);
         if (detailsNode) {
           contentHelper.appendElementRow(ls`Details`, detailsNode);
         }
@@ -1280,7 +1316,7 @@ export class TimelineUIUtils {
           statsArrays = {time: [], value: []};
           aggregatedStats[category] = statsArrays;
         }
-        if (statsArrays.time.length && statsArrays.time.peekLast() === time) {
+        if (statsArrays.time.length && statsArrays.time.peekLast() === time || lastTime > time) {
           return;
         }
         const lastValue = statsArrays.value.length ? statsArrays.value.peekLast() : 0;
@@ -1389,11 +1425,11 @@ export class TimelineUIUtils {
       lengthText += ls` (from service worker)`;
     }
     if (request.encodedDataLength || !lengthText) {
-      lengthText = `${Number.bytesToString(request.encodedDataLength)}${lengthText}`;
+      lengthText = `${Platform.NumberUtilities.bytesToString(request.encodedDataLength)}${lengthText}`;
     }
     contentHelper.appendTextRow(ls`Encoded Data`, lengthText);
     if (request.decodedBodyLength) {
-      contentHelper.appendTextRow(ls`Decoded Body`, Number.bytesToString(request.decodedBodyLength));
+      contentHelper.appendTextRow(ls`Decoded Body`, Platform.NumberUtilities.bytesToString(request.decodedBodyLength));
     }
     const title = ls`Initiator`;
     const sendRequest = request.children[0];
@@ -1485,7 +1521,8 @@ export class TimelineUIUtils {
       const delay = event.startTime - initiator.startTime;
       contentHelper.appendTextRow(ls`Pending for`, Number.preciseMillisToString(delay, 1));
 
-      const link = createElementWithClass('span', 'devtools-link');
+      const link = document.createElement('span');
+      link.classList.add('devtools-link');
       UI.ARIAUtils.markAsLink(link);
       link.tabIndex = 0;
       link.textContent = ls`Reveal`;
@@ -1603,7 +1640,7 @@ export class TimelineUIUtils {
    * @param {!Array<!TimelineModel.TimelineModel.InvalidationTrackingEvent>} invalidations
    */
   static _collectInvalidationNodeIds(nodeIds, invalidations) {
-    nodeIds.addAll(invalidations.map(invalidation => invalidation.nodeId).filter(id => id));
+    Platform.SetUtilities.addAll(nodeIds, invalidations.map(invalidation => invalidation.nodeId).filter(id => id));
   }
 
   /**
@@ -1705,7 +1742,8 @@ export class TimelineUIUtils {
    * @return {!Element}
    */
   static createEventDivider(event, zeroTime) {
-    const eventDivider = createElementWithClass('div', 'resources-event-divider');
+    const eventDivider = document.createElement('div');
+    eventDivider.classList.add('resources-event-divider');
     const startTime = Number.millisToString(event.startTime - zeroTime);
     eventDivider.title = Common.UIString.UIString('%s at %s', TimelineUIUtils.eventTitle(event), startTime);
     const style = TimelineUIUtils.markerStyleForEvent(event);
@@ -1745,7 +1783,7 @@ export class TimelineUIUtils {
     }
     TimelineUIUtils._categories = {
       loading: new TimelineCategory('loading', ls`Loading`, true, 'hsl(214, 67%, 74%)', 'hsl(214, 67%, 66%)'),
-      experience: new TimelineCategory('experience', ls`Experience`, true, 'hsl(5, 80%, 74%)', 'hsl(5, 80%, 66%)'),
+      experience: new TimelineCategory('experience', ls`Experience`, false, 'hsl(5, 80%, 74%)', 'hsl(5, 80%, 66%)'),
       scripting: new TimelineCategory('scripting', ls`Scripting`, true, 'hsl(43, 83%, 72%)', 'hsl(43, 83%, 64%) '),
       rendering: new TimelineCategory('rendering', ls`Rendering`, true, 'hsl(256, 67%, 76%)', 'hsl(256, 67%, 70%)'),
       painting: new TimelineCategory('painting', ls`Painting`, true, 'hsl(109, 33%, 64%)', 'hsl(109, 33%, 55%)'),
@@ -1794,17 +1832,12 @@ export class TimelineUIUtils {
       total += aggregatedStats[categoryName];
     }
 
-    const element = createElementWithClass('div', 'timeline-details-view-pie-chart-wrapper hbox');
-    const pieChart = new PerfUI.PieChart.PieChart({
-      chartName: ls`Time spent in rendering`,
-      size: 110,
-      formatter: value => Number.preciseMillisToString(value),
-      showLegend: true,
-    });
-    pieChart.element.classList.add('timeline-details-view-pie-chart');
-    pieChart.initializeWithTotal(total);
-    const pieChartContainer = element.createChild('div', 'vbox');
-    pieChartContainer.appendChild(pieChart.element);
+    const element = document.createElement('div');
+    element.classList.add('timeline-details-view-pie-chart-wrapper');
+    element.classList.add('hbox');
+
+    const pieChart = PerfUI.PieChart.createPieChart();
+    const slices = [];
 
     /**
      * @param {string} name
@@ -1816,7 +1849,7 @@ export class TimelineUIUtils {
       if (!value) {
         return;
       }
-      pieChart.addSlice(value, color, title);
+      slices.push({value, color, title});
     }
 
     // In case of self time, first add self, then children of the same category.
@@ -1843,6 +1876,18 @@ export class TimelineUIUtils {
       }
       appendLegendRow(category.name, category.title, aggregatedStats[category.name], category.childColor);
     }
+
+    pieChart.data = {
+      chartName: ls`Time spent in rendering`,
+      size: 110,
+      formatter: value => Number.preciseMillisToString(value),
+      showLegend: true,
+      total,
+      slices
+    };
+    const pieChartContainer = element.createChild('div', 'vbox');
+    pieChartContainer.appendChild(pieChart);
+
     return element;
   }
 
@@ -1861,7 +1906,8 @@ export class TimelineUIUtils {
     contentHelper.appendTextRow(ls`FPS`, Math.floor(1000 / durationInMillis));
     contentHelper.appendTextRow(ls`CPU time`, Number.millisToString(frame.cpuTime, true));
     if (filmStripFrame) {
-      const filmStripPreview = createElementWithClass('div', 'timeline-filmstrip-preview');
+      const filmStripPreview = document.createElement('div');
+      filmStripPreview.classList.add('timeline-filmstrip-preview');
       filmStripFrame.imageDataPromise()
           .then(data => UI.UIUtils.loadImageFromData(data))
           .then(image => image && filmStripPreview.appendChild(image));
@@ -1976,8 +2022,6 @@ export class TimelineUIUtils {
         return ls`FP`;
       case recordTypes.MarkFCP:
         return ls`FCP`;
-      case recordTypes.MarkFMP:
-        return ls`FMP`;
       case recordTypes.MarkLCPCandidate:
         return ls`LCP`;
     }
@@ -1991,9 +2035,11 @@ export class TimelineUIUtils {
   static markerStyleForEvent(event) {
     const tallMarkerDashStyle = [6, 4];
     const title = TimelineUIUtils.eventTitle(event);
+    const recordTypes = TimelineModel.TimelineModel.RecordType;
 
-    if (event.hasCategory(TimelineModel.TimelineModel.TimelineModelImpl.Category.Console) ||
-        event.hasCategory(TimelineModel.TimelineModel.TimelineModelImpl.Category.UserTiming)) {
+    if (event.name !== recordTypes.NavigationStart &&
+        (event.hasCategory(TimelineModel.TimelineModel.TimelineModelImpl.Category.Console) ||
+         event.hasCategory(TimelineModel.TimelineModel.TimelineModelImpl.Category.UserTiming))) {
       return {
         title: title,
         dashStyle: tallMarkerDashStyle,
@@ -2004,10 +2050,13 @@ export class TimelineUIUtils {
         lowPriority: false,
       };
     }
-    const recordTypes = TimelineModel.TimelineModel.RecordType;
     let tall = false;
     let color = 'grey';
     switch (event.name) {
+      case recordTypes.NavigationStart:
+        color = '#FF9800';
+        tall = true;
+        break;
       case recordTypes.FrameStartedLoading:
         color = 'green';
         tall = true;
@@ -2026,10 +2075,6 @@ export class TimelineUIUtils {
         break;
       case recordTypes.MarkFCP:
         color = '#1A6937';
-        tall = true;
-        break;
-      case recordTypes.MarkFMP:
-        color = '#134A26';
         tall = true;
         break;
       case recordTypes.MarkLCPCandidate:
@@ -2220,7 +2265,8 @@ export class InvalidationsGroupElement extends UI.TreeOutline.TreeElement {
     const title = UI.UIUtils.formatLocalized('%s for %s', [reason, truncatedNodesElement]);
 
     if (topFrame && this._contentHelper.linkifier()) {
-      const stack = createElementWithClass('span', 'monospace');
+      const stack = document.createElement('span');
+      stack.classList.add('monospace');
       const completeTitle = UI.UIUtils.formatLocalized('%s. %s', [title, stack]);
       stack.createChild('span').textContent = TimelineUIUtils.frameDisplayName(topFrame);
       const link = this._contentHelper.linkifier().maybeLinkifyConsoleCallFrame(target, topFrame);
@@ -2239,7 +2285,8 @@ export class InvalidationsGroupElement extends UI.TreeOutline.TreeElement {
    * @returns {!Promise}
    */
   async onpopulate() {
-    const content = createElementWithClass('div', 'content');
+    const content = document.createElement('div');
+    content.classList.add('content');
 
     const first = this._invalidations[0];
     if (first.cause.stackTrace) {
@@ -2487,7 +2534,8 @@ export class TimelineDetailsContentHelper {
     this._linkifier = linkifier;
     this._target = target;
 
-    this.element = createElementWithClass('div', 'timeline-details-view-block');
+    this.element = document.createElement('div');
+    this.element.classList.add('timeline-details-view-block');
     this._tableElement = this.element.createChild('div', 'vbox timeline-details-chip-body');
     this.fragment.appendChild(this.element);
   }
@@ -2500,7 +2548,8 @@ export class TimelineDetailsContentHelper {
     if (!this._tableElement.hasChildNodes()) {
       this.element.removeChildren();
     } else {
-      this.element = createElementWithClass('div', 'timeline-details-view-block');
+      this.element = document.createElement('div');
+      this.element.classList.add('timeline-details-view-block');
       this.fragment.appendChild(this.element);
     }
 
@@ -2591,8 +2640,7 @@ export class TimelineDetailsContentHelper {
       return;
     }
     locationContent.appendChild(link);
-    locationContent.createTextChild(
-        Platform.StringUtilities.sprintf(' [%s…%s]', startLine + 1, endLine + 1 || ''));
+    locationContent.createTextChild(Platform.StringUtilities.sprintf(' [%s…%s]', startLine + 1, endLine + 1 || ''));
     this.appendElementRow(title, locationContent);
   }
 

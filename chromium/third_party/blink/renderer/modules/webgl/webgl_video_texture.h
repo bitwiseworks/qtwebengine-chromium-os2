@@ -23,14 +23,16 @@ class WebGLVideoTexture final : public WebGLExtension {
 
   WebGLExtensionName GetName() const override;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   // Get video frame from video frame compositor and bind it to platform
   // texture.
-  VideoFrameMetadata* VideoElementTargetVideoTexture(ExecutionContext*,
-                                                     unsigned,
-                                                     HTMLVideoElement*,
-                                                     ExceptionState&);
+  VideoFrameMetadata* shareVideoImageWEBGL(ExecutionContext*,
+                                           unsigned,
+                                           HTMLVideoElement*,
+                                           ExceptionState&);
+
+  bool releaseVideoImageWEBGL(ExecutionContext*, unsigned, ExceptionState&);
 
  private:
   Member<VideoFrameMetadata> current_frame_metadata_;

@@ -5,7 +5,7 @@
 #include "components/download/public/common/download_item_impl_delegate.h"
 
 #include "base/bind_helpers.h"
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "build/build_config.h"
 #include "components/download/public/common/auto_resumption_handler.h"
 #include "components/download/public/common/download_danger_type.h"
@@ -33,13 +33,12 @@ void DownloadItemImplDelegate::Detach() {
 void DownloadItemImplDelegate::DetermineDownloadTarget(
     DownloadItemImpl* download,
     DownloadTargetCallback callback) {
-  // TODO(rdsmith/asanka): Do something useful if forced file path is null.
   base::FilePath target_path(download->GetForcedFilePath());
-  std::move(callback).Run(target_path,
-                          DownloadItem::TARGET_DISPOSITION_OVERWRITE,
-                          DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-                          DownloadItem::MixedContentStatus::UNKNOWN,
-                          target_path, DOWNLOAD_INTERRUPT_REASON_NONE);
+  std::move(callback).Run(
+      target_path, DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+      DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+      DownloadItem::MixedContentStatus::UNKNOWN, target_path,
+      base::nullopt /*download_schedule*/, DOWNLOAD_INTERRUPT_REASON_NONE);
 }
 
 bool DownloadItemImplDelegate::ShouldCompleteDownload(
@@ -56,7 +55,14 @@ bool DownloadItemImplDelegate::ShouldOpenDownload(
   return false;
 }
 
-bool DownloadItemImplDelegate::ShouldOpenFileBasedOnExtension(
+bool DownloadItemImplDelegate::ShouldAutomaticallyOpenFile(
+    const GURL& url,
+    const base::FilePath& path) {
+  return false;
+}
+
+bool DownloadItemImplDelegate::ShouldAutomaticallyOpenFileByPolicy(
+    const GURL& url,
     const base::FilePath& path) {
   return false;
 }

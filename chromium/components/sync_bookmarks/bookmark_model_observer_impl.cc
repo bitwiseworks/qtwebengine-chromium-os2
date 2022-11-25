@@ -15,7 +15,6 @@
 #include "components/sync/driver/sync_driver_switches.h"
 #include "components/sync/engine/non_blocking_sync_common.h"
 #include "components/sync_bookmarks/bookmark_specifics_conversions.h"
-#include "components/sync_bookmarks/synced_bookmark_tracker.h"
 #include "components/sync_bookmarks/switches.h"
 
 namespace sync_bookmarks {
@@ -91,8 +90,6 @@ void BookmarkModelObserverImpl::BookmarkNodeAdded(
   // Should be removed after figuring out the reason for the crash.
   CHECK(parent_entity);
 
-  // Similar to the directory implementation here:
-  // https://cs.chromium.org/chromium/src/components/sync/syncable/mutable_entry.cc?l=237&gsn=CreateEntryKernel
   // Assign a temp server id for the entity. Will be overriden by the actual
   // server id upon receiving commit response.
   DCHECK(base::IsValidGUIDOutputString(node->guid()));
@@ -112,8 +109,7 @@ void BookmarkModelObserverImpl::BookmarkNodeAdded(
   const SyncedBookmarkTracker::Entity* entity =
       bookmark_tracker_->GetTombstoneEntityForGuid(node->guid());
   const base::Time creation_time = base::Time::Now();
-  if (entity && base::FeatureList::IsEnabled(
-                    switches::kSyncProcessBookmarkRestoreAfterDeletion)) {
+  if (entity) {
     bookmark_tracker_->UndeleteTombstoneForBookmarkNode(entity, node);
     bookmark_tracker_->Update(entity, entity->metadata()->server_version(),
                               creation_time, unique_position, specifics);
@@ -198,25 +194,9 @@ void BookmarkModelObserverImpl::BookmarkNodeChanged(
     return;
   }
 
-  const base::Time modification_time = base::Time::Now();
   sync_pb::EntitySpecifics specifics = CreateSpecificsFromBookmarkNode(
       node, model, /*force_favicon_load=*/true, entity->has_final_guid());
-
-  // TODO(crbug.com/516866): The below CHECKs are added to debug some crashes.
-  // Should be removed after figuring out the reason for the crash.
-  CHECK_EQ(entity, bookmark_tracker_->GetEntityForBookmarkNode(node));
-  if (entity->MatchesSpecificsHash(specifics)) {
-    // We should push data to the server only if there is an actual change in
-    // the data. We could hit this code path without having actual changes
-    // (e.g.upon a favicon load).
-    return;
-  }
-  bookmark_tracker_->Update(entity, entity->metadata()->server_version(),
-                            modification_time,
-                            entity->metadata()->unique_position(), specifics);
-  // Mark the entity that it needs to be committed.
-  bookmark_tracker_->IncrementSequenceNumber(entity);
-  nudge_for_commit_closure_.Run();
+  ProcessUpdate(entity, specifics);
 }
 
 void BookmarkModelObserverImpl::BookmarkMetaInfoChanged(
@@ -243,7 +223,37 @@ void BookmarkModelObserverImpl::BookmarkNodeFaviconChanged(
     model->GetFavicon(node);
     return;
   }
-  BookmarkNodeChanged(model, node);
+
+  const SyncedBookmarkTracker::Entity* entity =
+      bookmark_tracker_->GetEntityForBookmarkNode(node);
+  if (!entity) {
+    // This should be practically unreachable but in theory it's possible that a
+    // favicon changes *during* the creation of a bookmark (by another
+    // observer). See analogous codepath in BookmarkNodeChanged().
+    return;
+  }
+
+  const sync_pb::EntitySpecifics specifics = CreateSpecificsFromBookmarkNode(
+      node, model, /*force_favicon_load=*/false, entity->has_final_guid());
+
+  // TODO(crbug.com/1094825): implement |base_specifics_hash| similar to
+  // ClientTagBasedModelTypeProcessor.
+  if (!entity->MatchesFaviconHash(specifics.bookmark().favicon())) {
+    ProcessUpdate(entity, specifics);
+    return;
+  }
+
+  // The favicon content didn't actually change, which means this event is
+  // almost certainly the result of favicon loading having completed.
+  if (entity->IsUnsynced() &&
+      base::FeatureList::IsEnabled(
+          switches::kSyncDoNotCommitBookmarksWithoutFavicon)) {
+    // When kSyncDoNotCommitBookmarksWithoutFavicon is enabled, nudge for
+    // commit once favicon is loaded. This is needed in case when unsynced
+    // entity was skipped while building commit requests (since favicon wasn't
+    // loaded).
+    nudge_for_commit_closure_.Run();
+  }
 }
 
 void BookmarkModelObserverImpl::BookmarkNodeChildrenReordered(
@@ -351,6 +361,34 @@ syncer::UniquePosition BookmarkModelObserverImpl::ComputePosition(
       syncer::UniquePosition::FromProto(
           successor_entity->metadata()->unique_position()),
       suffix);
+}
+
+void BookmarkModelObserverImpl::ProcessUpdate(
+    const SyncedBookmarkTracker::Entity* entity,
+    const sync_pb::EntitySpecifics& specifics) {
+  DCHECK(entity);
+
+  // Data should be committed to the server only if there is an actual change,
+  // determined here by comparing hashes.
+  if (entity->MatchesSpecificsHash(specifics)) {
+    // Specifics haven't actually changed, so the local change can be ignored.
+    //
+    // This is an opportunity to populate the favicon hash in sync metadata if
+    // it hasn't been populated yet. This is needed because the proto field that
+    // stores favicon hashes was introduced late. The fact that hashed specifics
+    // match implies that the favicon (which is part of specifics) must also
+    // match, hence the proto field can be safely populated.
+    bookmark_tracker_->PopulateFaviconHashIfUnset(
+        entity, specifics.bookmark().favicon());
+    return;
+  }
+
+  bookmark_tracker_->Update(entity, entity->metadata()->server_version(),
+                            /*modification_time=*/base::Time::Now(),
+                            entity->metadata()->unique_position(), specifics);
+  // Mark the entity that it needs to be committed.
+  bookmark_tracker_->IncrementSequenceNumber(entity);
+  nudge_for_commit_closure_.Run();
 }
 
 void BookmarkModelObserverImpl::ProcessDelete(

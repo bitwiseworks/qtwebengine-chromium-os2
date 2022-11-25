@@ -19,6 +19,7 @@ class GURL;
 namespace content {
 class NavigationEntry;
 class WebContents;
+class BrowserContext;
 }  // namespace content
 
 namespace history {
@@ -49,7 +50,9 @@ class BaseUIManager
   // This is a no-op in the base class, but should be overridden to send threat
   // details. Called on the UI thread by the ThreatDetails with the serialized
   // protocol buffer.
-  virtual void SendSerializedThreatDetails(const std::string& serialized);
+  virtual void SendSerializedThreatDetails(
+      content::BrowserContext* browser_context,
+      const std::string& serialized);
 
   // Updates the whitelist URL set for |web_contents|. Called on the UI thread.
   void AddToWhitelistUrlSet(const GURL& whitelist_url,
@@ -147,15 +150,7 @@ class BaseUIManager
   // implement the reporting logic themselves if needed.
   virtual void CreateAndSendHitReport(const UnsafeResource& resource);
 
-  // Calls BaseBlockingPage::ShowBlockingPage(). Override this if using a
-  // different blocking page.
-  virtual void ShowBlockingPageForResource(const UnsafeResource& resource);
-
  private:
-  // When true, we immediately cancel navigations that have been blocked by Safe
-  // Browsing, otherwise we call show on the interstitial.
-  bool SafeBrowsingInterstitialsAreCommittedNavigations();
-
   friend class base::RefCountedThreadSafe<BaseUIManager>;
 
   // Creates a blocking page, used for interstitials triggered by subresources.

@@ -16,8 +16,6 @@ class HID;
 
 class NavigatorHID final : public GarbageCollected<NavigatorHID>,
                            public Supplement<Navigator> {
-  USING_GARBAGE_COLLECTED_MIXIN(NavigatorHID);
-
  public:
   static const char kSupplementName[];
 
@@ -28,7 +26,7 @@ class NavigatorHID final : public GarbageCollected<NavigatorHID>,
   static HID* hid(Navigator&);
   HID* hid();
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   explicit NavigatorHID(Navigator&);
 

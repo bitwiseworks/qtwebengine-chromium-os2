@@ -131,6 +131,9 @@ class PropertyTreeManager {
   static bool DirectlyUpdateCompositedOpacityValue(
       cc::LayerTreeHost&,
       const EffectPaintPropertyNode&);
+  // Returns true if the compositor scroll offsets were updated, even if the
+  // values did not change. This function updates both the cc scroll tree scroll
+  // offset and the cc transform node's scroll offset.
   static bool DirectlyUpdateScrollOffsetTransform(
       cc::LayerTreeHost&,
       const TransformPaintPropertyNode&);
@@ -140,9 +143,20 @@ class PropertyTreeManager {
       cc::LayerTreeHost&,
       const TransformPaintPropertyNode&);
 
+  // This function only updates the cc scroll tree scroll offset and does not
+  // update the cc transform node's scroll offset.
   static void DirectlySetScrollOffset(cc::LayerTreeHost&,
                                       CompositorElementId,
                                       const gfx::ScrollOffset&);
+
+  // Ensures a cc::ScrollNode for all scroll translations.
+  void EnsureCompositorScrollNodes(
+      const Vector<const TransformPaintPropertyNode*>&
+          scroll_translation_nodes);
+
+  // Sets the cc::ScrollNode::is_composited bit to true for the node with ID
+  // |cc_node_id|.
+  void SetCcScrollNodeIsComposited(int cc_node_id);
 
  private:
   void SetupRootTransformNode();
@@ -225,17 +239,16 @@ class PropertyTreeManager {
   void BuildEffectNodesRecursively(const EffectPaintPropertyNode& next_effect);
   void ForceRenderSurfaceIfSyntheticRoundedCornerClip(EffectState& state);
 
-  // When we create a synthetic clip, if the next effect has backdrop effect
-  // (exotic blending or backdrop filter), the backdrop effect should be set
-  // on the synthetic mask isolation effect node instead of the cc effect node
-  // that is created for the original blink effect node, to ensure the backdrop
-  // effect will see the correct backdrop input.
-  enum BackdropEffectState {
-    kNoBackdropEffect,
-    kBackdropEffectHasSetOnSyntheticEffect,
-    kBackdropEffectToBeSetOnCcEffectNode,
-  };
-  BackdropEffectState SynthesizeCcEffectsForClipsIfNeeded(
+  // When entering |target_clip| and |next_effect|, we may need to synthesize
+  // cc clips and effects for particular types of masks. See CcEffectType.
+  // Returns the id of the cc effect node created for |next_effect| or
+  // kInvalidNodeId. Normally this function doesn't create cc effect node for
+  // |next_effect|, thus returns kInvalidNodeId, except when |next_effect| has
+  // backdrop effects and we need to move the effect up to the outermost
+  // synthetic effect to allow the backdrop effects to access the correct
+  // backdrop, in which case this function returns the id of the synthetic cc
+  // effect node that contains the converted |next_effect| effects.
+  int SynthesizeCcEffectsForClipsIfNeeded(
       const ClipPaintPropertyNode& target_clip,
       const EffectPaintPropertyNode* next_effect);
 
@@ -243,11 +256,7 @@ class PropertyTreeManager {
   void CloseCcEffect();
   void PopulateCcEffectNode(cc::EffectNode&,
                             const EffectPaintPropertyNode& effect,
-                            int output_clip_id,
-                            BackdropEffectState);
-  void PopulateCcEffectNodeBackdropEffect(
-      cc::EffectNode& effect_node,
-      const EffectPaintPropertyNode& backdrop_effect);
+                            int output_clip_id);
 
   bool IsCurrentCcEffectSynthetic() const { return current_.effect_type; }
   bool IsCurrentCcEffectSyntheticForNonTrivialClip() const {

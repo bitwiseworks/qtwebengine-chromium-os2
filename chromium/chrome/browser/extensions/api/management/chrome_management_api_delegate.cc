@@ -13,7 +13,9 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/post_task.h"
 #include "chrome/browser/apps/app_service/app_launch_params.h"
-#include "chrome/browser/apps/launch_service/launch_service.h"
+#include "chrome/browser/apps/app_service/app_service_proxy.h"
+#include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
+#include "chrome/browser/apps/app_service/browser_app_launcher.h"
 #include "chrome/browser/extensions/chrome_extension_function_details.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/launch_util.h"
@@ -234,12 +236,12 @@ class ChromeAppForLinkDelegate : public extensions::AppForLinkDelegate {
       const favicon_base::FaviconImageResult& image_result) {
     auto web_app_info = std::make_unique<WebApplicationInfo>();
     web_app_info->title = base::UTF8ToUTF16(title);
-    web_app_info->app_url = launch_url;
+    web_app_info->start_url = launch_url;
     web_app_info->display_mode = web_app::DisplayMode::kBrowser;
     web_app_info->open_as_window = false;
 
     if (!image_result.image.IsEmpty()) {
-      web_app_info->icon_bitmaps[image_result.image.Width()] =
+      web_app_info->icon_bitmaps_any[image_result.image.Width()] =
           image_result.image.AsBitmap();
     }
 
@@ -271,7 +273,7 @@ class ChromeAppForLinkDelegate : public extensions::AppForLinkDelegate {
     info.is_app = true;
     info.type = extensions::api::management::EXTENSION_TYPE_HOSTED_APP;
     info.app_launch_url =
-        std::make_unique<std::string>(registrar.GetAppLaunchURL(app_id).spec());
+        std::make_unique<std::string>(registrar.GetAppStartUrl(app_id).spec());
 
     info.icons =
         std::make_unique<std::vector<extensions::api::management::IconInfo>>();
@@ -280,7 +282,8 @@ class ChromeAppForLinkDelegate : public extensions::AppForLinkDelegate {
     info.icons->reserve(icon_infos.size());
     for (const WebApplicationIconInfo& web_app_icon_info : icon_infos) {
       extensions::api::management::IconInfo icon_info;
-      icon_info.size = web_app_icon_info.square_size_px;
+      if (web_app_icon_info.square_size_px)
+        icon_info.size = *web_app_icon_info.square_size_px;
       icon_info.url = web_app_icon_info.url.spec();
       info.icons->push_back(std::move(icon_info));
     }
@@ -327,9 +330,11 @@ void LaunchWebApp(const web_app::AppId& app_id, Profile* profile) {
   if (display_mode == blink::mojom::DisplayMode::kBrowser)
     launch_container = apps::mojom::LaunchContainer::kLaunchContainerTab;
 
-  apps::LaunchService::Get(profile)->OpenApplication(apps::AppLaunchParams(
-      app_id, launch_container, WindowOpenDisposition::NEW_FOREGROUND_TAB,
-      apps::mojom::AppLaunchSource::kSourceManagementApi));
+  apps::AppServiceProxyFactory::GetForProfile(profile)
+      ->BrowserAppLauncher()
+      ->LaunchAppWithParams(apps::AppLaunchParams(
+          app_id, launch_container, WindowOpenDisposition::NEW_FOREGROUND_TAB,
+          apps::mojom::AppLaunchSource::kSourceManagementApi));
 }
 
 void OnWebAppInstallCompleted(InstallOrLaunchWebAppCallback callback,
@@ -359,11 +364,13 @@ void OnWebAppInstallabilityChecked(
     case InstallableCheckResult::kInstallable:
       content::WebContents* containing_contents = web_contents.get();
       chrome::ScopedTabbedBrowserDisplayer displayer(profile);
+      const GURL& url = web_contents->GetURL();
       chrome::AddWebContents(
-          displayer.browser(), nullptr, std::move(web_contents),
+          displayer.browser(), nullptr, std::move(web_contents), url,
           WindowOpenDisposition::NEW_FOREGROUND_TAB, gfx::Rect());
       web_app::CreateWebAppFromManifest(
-          containing_contents, WebappInstallSource::MANAGEMENT_API,
+          containing_contents, /*bypass_service_worker_check=*/true,
+          WebappInstallSource::MANAGEMENT_API,
           base::BindOnce(&OnWebAppInstallCompleted, std::move(callback)));
       return;
   }
@@ -389,10 +396,12 @@ void ChromeManagementAPIDelegate::LaunchAppFunctionDelegate(
   extensions::LaunchContainer launch_container =
       GetLaunchContainer(extensions::ExtensionPrefs::Get(context), extension);
   Profile* profile = Profile::FromBrowserContext(context);
-  apps::LaunchService::Get(profile)->OpenApplication(apps::AppLaunchParams(
-      extension->id(), launch_container,
-      WindowOpenDisposition::NEW_FOREGROUND_TAB,
-      apps::mojom::AppLaunchSource::kSourceManagementApi));
+  apps::AppServiceProxyFactory::GetForProfile(profile)
+      ->BrowserAppLauncher()
+      ->LaunchAppWithParams(apps::AppLaunchParams(
+          extension->id(), launch_container,
+          WindowOpenDisposition::NEW_FOREGROUND_TAB,
+          apps::mojom::AppLaunchSource::kSourceManagementApi));
 
 #if defined(OS_CHROMEOS)
   chromeos::DemoSession::RecordAppLaunchSourceIfInDemoMode(
@@ -513,7 +522,7 @@ void ChromeManagementAPIDelegate::InstallOrLaunchReplacementWebApp(
     return;
   }
 
-  provider->install_manager().LoadWebAppAndCheckInstallability(
+  provider->install_manager().LoadWebAppAndCheckManifest(
       web_app_url, WebappInstallSource::MANAGEMENT_API,
       base::BindOnce(&OnWebAppInstallabilityChecked, profile,
                      std::move(callback)));
@@ -592,8 +601,10 @@ void ChromeManagementAPIDelegate::EnableExtension(
   // for, and received parent permission to install the extension.
   SupervisedUserService* supervised_user_service =
       SupervisedUserServiceFactory::GetForBrowserContext(context);
-  supervised_user_service->AddOrUpdateExtensionApproval(*extension);
-#endif
+  supervised_user_service->AddExtensionApproval(*extension);
+  supervised_user_service->RecordExtensionEnablementUmaMetrics(
+      /*enabled=*/true);
+#endif  // BUILDFLAG(ENABLE_SUPERVISED_USERS)
 
   // If the extension was disabled for a permissions increase, the Management
   // API will have displayed a re-enable prompt to the user, so we know it's
@@ -608,6 +619,12 @@ void ChromeManagementAPIDelegate::DisableExtension(
     const extensions::Extension* source_extension,
     const std::string& extension_id,
     extensions::disable_reason::DisableReason disable_reason) const {
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
+  SupervisedUserService* supervised_user_service =
+      SupervisedUserServiceFactory::GetForBrowserContext(context);
+  supervised_user_service->RecordExtensionEnablementUmaMetrics(
+      /*enabled=*/false);
+#endif  // BUILDFLAG(ENABLE_SUPERVISED_USERS)
   extensions::ExtensionSystem::Get(context)
       ->extension_service()
       ->DisableExtensionWithSource(source_extension, extension_id,

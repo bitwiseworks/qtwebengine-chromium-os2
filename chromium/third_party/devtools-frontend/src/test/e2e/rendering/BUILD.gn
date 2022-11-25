@@ -4,9 +4,8 @@
 
 import("../../../third_party/typescript/typescript.gni")
 
-ts_library("rendering") {
-  testonly = true
-  sources = [ "vision-deficiencies.ts" ]
+node_ts_library("rendering") {
+  sources = [ "vision-deficiencies_test.ts" ]
 
   deps = [
     "../../shared",

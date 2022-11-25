@@ -72,6 +72,11 @@ String RTCSessionDescription::type() const {
   return platform_session_description_->GetType();
 }
 
+void RTCSessionDescription::setType(base::Optional<V8RTCSdpType> type) {
+  platform_session_description_->SetType(
+      type.has_value() ? type.value().AsString() : String());
+}
+
 void RTCSessionDescription::setType(const String& type) {
   platform_session_description_->SetType(type);
 }
@@ -95,7 +100,7 @@ RTCSessionDescriptionPlatform* RTCSessionDescription::WebSessionDescription() {
   return platform_session_description_;
 }
 
-void RTCSessionDescription::Trace(Visitor* visitor) {
+void RTCSessionDescription::Trace(Visitor* visitor) const {
   visitor->Trace(platform_session_description_);
   ScriptWrappable::Trace(visitor);
 }

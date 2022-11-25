@@ -103,10 +103,6 @@
     "functions": [
       "PatchParameteri",
     ],
-    // FIXME: Make this method non-optional once Chrome starts adding it to the interface.
-    "optional": [
-      "PatchParameteri",
-    ]
   },
 
   {
@@ -178,10 +174,7 @@
 
     "functions": [
       "DrawArraysInstancedBaseInstance", "DrawElementsInstancedBaseVertexBaseInstance"
-    ],
-    "optional": [
-      "DrawArraysInstancedBaseInstance", "DrawElementsInstancedBaseVertexBaseInstance"
-    ],
+    ]
   },
 
   { // ES 3.0 has glDrawBuffers but not glDrawBuffer
@@ -202,6 +195,16 @@
 
     "functions": [
       "DrawArraysIndirect", "DrawElementsIndirect",
+    ]
+  },
+
+  {
+    "GL":    null,
+    "GLES":  [{"ext": "GL_ANGLE_base_vertex_base_instance"}],
+    "WebGL": null,
+
+    "functions": [
+      "MultiDrawArraysInstancedBaseInstance", "MultiDrawElementsInstancedBaseVertexBaseInstance",
     ]
   },
 

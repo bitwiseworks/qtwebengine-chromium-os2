@@ -59,11 +59,30 @@ class VIEWS_EXPORT DialogDelegate : public WidgetDelegate {
     // Prefer to use this field (via SetButtonLabel) rather than override
     // GetDialogButtonLabel - see https://crbug.com/1011446
     base::string16 button_labels[ui::DIALOG_BUTTON_LAST + 1];
+
+    // A bitmask of buttons (from ui::DialogButton) that are enabled in this
+    // dialog. It's legal for a button to be marked enabled that isn't present
+    // in |buttons| (see above).
+    int enabled_buttons = ui::DIALOG_BUTTON_OK | ui::DIALOG_BUTTON_CANCEL;
   };
 
   DialogDelegate();
+  ~DialogDelegate() override;
 
   // Creates a widget at a default location.
+  // There are two variant of this method. The newer one is the unique_ptr
+  // method, which simply takes ownership of the WidgetDelegate and passes it to
+  // the created Widget. When using the unique_ptr version, it is required that
+  // delegate->owned_by_widget(). Unless you have a good reason, you should use
+  // this variant.
+  //
+  // If !delegate->owned_by_widget() *or* if your WidgetDelegate subclass has a
+  // custom override of WidgetDelegate::DeleteDelegate, use the raw pointer
+  // variant instead, and please talk to one of the //ui/views owners about
+  // your use case.
+  static Widget* CreateDialogWidget(std::unique_ptr<WidgetDelegate> delegate,
+                                    gfx::NativeWindow context,
+                                    gfx::NativeView parent);
   static Widget* CreateDialogWidget(WidgetDelegate* delegate,
                                     gfx::NativeWindow context,
                                     gfx::NativeView parent);
@@ -109,19 +128,16 @@ class VIEWS_EXPORT DialogDelegate : public WidgetDelegate {
   virtual bool IsDialogButtonEnabled(ui::DialogButton button) const;
 
   // For Dialog boxes, if there is a "Cancel" button or no dialog button at all,
-  // this is called when the user presses the "Cancel" button.
-  // It can also be called on a close action if |Close| has not been
-  // overridden. This function should return true if the window can be closed
-  // after it returns, or false if it must remain open. By default, return true
-  // without doing anything.
+  // this is called when the user presses the "Cancel" button.  This function
+  // should return true if the window can be closed after it returns, or false
+  // if it must remain open. By default, return true without doing anything.
   // DEPRECATED: use |SetCancelCallback| instead.
   virtual bool Cancel();
 
-  // For Dialog boxes, this is called when the user presses the "OK" button,
-  // or the Enter key. It can also be called on a close action if |Close|
-  // has not been overridden. This function should return true if the window
-  // can be closed after it returns, or false if it must remain open. By
-  // default, return true without doing anything.
+  // For Dialog boxes, this is called when the user presses the "OK" button, or
+  // the Enter key. This function should return true if the window can be closed
+  // after it returns, or false if it must remain open. By default, return true
+  // without doing anything.
   // DEPRECATED: use |SetAcceptCallback| instead.
   virtual bool Accept();
 
@@ -129,10 +145,11 @@ class VIEWS_EXPORT DialogDelegate : public WidgetDelegate {
   View* GetInitiallyFocusedView() override;
   DialogDelegate* AsDialogDelegate() override;
   ClientView* CreateClientView(Widget* widget) override;
-  NonClientFrameView* CreateNonClientFrameView(Widget* widget) override;
-  void WindowWillClose() override;
+  std::unique_ptr<NonClientFrameView> CreateNonClientFrameView(
+      Widget* widget) override;
 
-  static NonClientFrameView* CreateDialogFrameView(Widget* widget);
+  static std::unique_ptr<NonClientFrameView> CreateDialogFrameView(
+      Widget* widget);
 
   const gfx::Insets& margins() const { return margins_; }
   void set_margins(const gfx::Insets& margins) { margins_ = margins; }
@@ -169,7 +186,11 @@ class VIEWS_EXPORT DialogDelegate : public WidgetDelegate {
   void AddObserver(DialogObserver* observer);
   void RemoveObserver(DialogObserver* observer);
 
-  // Notifies observers when the result of the DialogModel overrides changes.
+  // Notifies DialogDelegate that the result of one of the virtual getter
+  // functions above has changed, which causes it to rebuild its layout. It is
+  // not necessary to call this unless you are overriding
+  // IsDialogButtonEnabled() or manually manipulating the dialog buttons.
+  // TODO(https://crbug.com/1011446): Make this private.
   void DialogModelChanged();
 
   void set_use_round_corners(bool round) { params_.round_corners = round; }
@@ -178,11 +199,28 @@ class VIEWS_EXPORT DialogDelegate : public WidgetDelegate {
   void set_use_custom_frame(bool use) { params_.custom_frame = use; }
   bool use_custom_frame() const { return params_.custom_frame; }
 
+  // These methods internally call DialogModelChanged() if needed, so it is not
+  // necessary to call DialogModelChanged() yourself after calling them.
   void SetDefaultButton(int button);
   void SetButtons(int buttons);
   void SetButtonLabel(ui::DialogButton button, base::string16 label);
+  void SetButtonEnabled(ui::DialogButton button, bool enabled);
+
+  // Called when the user presses the dialog's "OK" button or presses the dialog
+  // accept accelerator, if there is one.
   void SetAcceptCallback(base::OnceClosure callback);
+
+  // Called when the user presses the dialog's "Cancel" button or presses the
+  // dialog close accelerator (which is always VKEY_ESCAPE).
   void SetCancelCallback(base::OnceClosure callback);
+
+  // Called when:
+  // * The user presses the dialog's close button, if it has one
+  // * The dialog's widget is closed via Widget::Close()
+  // NOT called when the dialog's widget is closed via Widget::CloseNow() - in
+  // that case, the normal widget close path is skipped, so no orderly teardown
+  // of the dialog's widget happens. The main way that can happen in production
+  // use is if the dialog's parent widget is closed.
   void SetCloseCallback(base::OnceClosure callback);
 
   // Returns ownership of the extra view for this dialog, if one was provided
@@ -243,13 +281,17 @@ class VIEWS_EXPORT DialogDelegate : public WidgetDelegate {
   // dialogs use the same button row insets.
   void SetButtonRowInsets(const gfx::Insets& insets);
 
- protected:
-  ~DialogDelegate() override;
+  // Callback for WidgetDelegate when the window this dialog is hosted in is
+  // closing. Don't call this yourself.
+  void WindowWillClose();
 
+ protected:
   // Overridden from WidgetDelegate:
   ax::mojom::Role GetAccessibleWindowRole() override;
 
   const Params& GetParams() const { return params_; }
+
+  int GetCornerRadius() const;
 
   // Return ownership of the footnote view for this dialog. Only use this in
   // subclass overrides of CreateNonClientFrameView.
@@ -312,14 +354,9 @@ class VIEWS_EXPORT DialogDelegateView : public DialogDelegate, public View {
   ~DialogDelegateView() override;
 
   // DialogDelegate:
-  void DeleteDelegate() override;
   Widget* GetWidget() override;
   const Widget* GetWidget() const override;
   View* GetContentsView() override;
-
-  // View:
-  void ViewHierarchyChanged(
-      const ViewHierarchyChangedDetails& details) override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(DialogDelegateView);

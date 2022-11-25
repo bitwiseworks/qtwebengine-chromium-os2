@@ -5,8 +5,9 @@
 // Canonicalizer functions for working with and resolving relative URLs.
 
 #include <algorithm>
+#include <ostream>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "url/url_canon.h"

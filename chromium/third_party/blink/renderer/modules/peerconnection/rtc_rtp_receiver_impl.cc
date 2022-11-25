@@ -5,7 +5,8 @@
 #include "third_party/blink/renderer/modules/peerconnection/rtc_rtp_receiver_impl.h"
 
 #include "base/bind.h"
-#include "base/logging.h"
+#include "base/check_op.h"
+#include "base/notreached.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_encoded_audio_stream_transformer.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_encoded_video_stream_transformer.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_rtp_sender_platform.h"
@@ -316,8 +317,8 @@ RTCRtpReceiverImpl::DtlsTransportInformation() {
   return internal_->state().webrtc_dtls_transport_information();
 }
 
-const blink::WebMediaStreamTrack& RTCRtpReceiverImpl::Track() const {
-  return internal_->state().track_ref()->web_track();
+MediaStreamComponent* RTCRtpReceiverImpl::Track() const {
+  return internal_->state().track_ref()->track();
 }
 
 Vector<String> RTCRtpReceiverImpl::StreamIds() const {
@@ -404,9 +405,10 @@ webrtc::RtpTransceiverDirection RTCRtpReceiverOnlyTransceiver::Direction()
   return webrtc::RtpTransceiverDirection::kSendOnly;
 }
 
-void RTCRtpReceiverOnlyTransceiver::SetDirection(
+webrtc::RTCError RTCRtpReceiverOnlyTransceiver::SetDirection(
     webrtc::RtpTransceiverDirection direction) {
   NOTIMPLEMENTED();
+  return webrtc::RTCError::OK();
 }
 
 base::Optional<webrtc::RtpTransceiverDirection>

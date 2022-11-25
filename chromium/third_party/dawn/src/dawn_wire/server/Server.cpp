@@ -39,8 +39,8 @@ namespace dawn_wire { namespace server {
         DestroyAllObjects(mProcs);
     }
 
-    void* Server::GetCmdSpace(size_t size) {
-        return mSerializer->GetCmdSpace(size);
+    char* Server::GetCmdSpace(size_t size) {
+        return static_cast<char*>(mSerializer->GetCmdSpace(size));
     }
 
     bool Server::InjectTexture(WGPUTexture texture, uint32_t id, uint32_t generation) {
@@ -50,7 +50,7 @@ namespace dawn_wire { namespace server {
         }
 
         data->handle = texture;
-        data->serial = generation;
+        data->generation = generation;
         data->allocated = true;
 
         // The texture is externally owned so it shouldn't be destroyed when we receive a destroy

@@ -10,7 +10,9 @@
 #include "base/debug/alias.h"
 #include "base/macros.h"
 #include "base/memory/singleton.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
 #include "base/win/win_util.h"
 #include "base/win/wrapped_window_proc.h"
@@ -135,7 +137,16 @@ ATOM ClassRegistrar::RetrieveClassAtom(const ClassInfo& class_info) {
       class_info.icon, class_info.small_icon, &window_class);
   HMODULE instance = window_class.hInstance;
   ATOM atom = RegisterClassEx(&window_class);
-  CHECK(atom) << GetLastError();
+  if (!atom) {
+    // Perhaps the Window session has run out of atoms; see
+    // https://crbug.com/653493.
+    auto last_error = ::GetLastError();
+    base::debug::Alias(&last_error);
+    wchar_t name_copy[64];
+    base::wcslcpy(name_copy, name.c_str(), base::size(name_copy));
+    base::debug::Alias(name_copy);
+    PCHECK(atom);
+  }
 
   registered_classes_.push_back(RegisteredClass(
       class_info, name, atom, instance));
@@ -206,6 +217,8 @@ void WindowImpl::Init(HWND parent, const Rect& bounds) {
                              reinterpret_cast<wchar_t*>(atom), NULL,
                              window_style_, x, y, width, height,
                              parent, NULL, NULL, this);
+  const DWORD create_window_error = ::GetLastError();
+
   // First nccalcszie (during CreateWindow) for captioned windows is
   // deliberately ignored so force a second one here to get the right
   // non-client set up.
@@ -215,7 +228,7 @@ void WindowImpl::Init(HWND parent, const Rect& bounds) {
                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
   }
 
-  if (!hwnd_ && GetLastError() == 0) {
+  if (!hwnd_ && create_window_error == 0) {
     base::debug::Alias(&destroyed);
     base::debug::Alias(&hwnd);
     bool got_create = got_create_;
@@ -237,7 +250,7 @@ void WindowImpl::Init(HWND parent, const Rect& bounds) {
   if (!destroyed)
     destroyed_ = NULL;
 
-  CheckWindowCreated(hwnd_);
+  CheckWindowCreated(hwnd_, create_window_error);
 
   // The window procedure should have set the data for us.
   CHECK_EQ(this, GetWindowUserData(hwnd));

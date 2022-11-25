@@ -60,7 +60,7 @@ struct SingleSubstFormat1
 
   void collect_glyphs (hb_collect_glyphs_context_t *c) const
   {
-    if (unlikely (!(this+coverage).add_coverage (c->input))) return;
+    if (unlikely (!(this+coverage).collect_coverage (c->input))) return;
     unsigned d = deltaGlyphID;
     + hb_iter (this+coverage)
     | hb_map ([d] (hb_codepoint_t g) { return (g + d) & 0xFFFFu; })
@@ -160,7 +160,7 @@ struct SingleSubstFormat2
 
   void collect_glyphs (hb_collect_glyphs_context_t *c) const
   {
-    if (unlikely (!(this+coverage).add_coverage (c->input))) return;
+    if (unlikely (!(this+coverage).collect_coverage (c->input))) return;
     + hb_zip (this+coverage, substitute)
     | hb_map (hb_second)
     | hb_sink (c->output)
@@ -402,7 +402,7 @@ struct MultipleSubstFormat1
 
   void collect_glyphs (hb_collect_glyphs_context_t *c) const
   {
-    if (unlikely (!(this+coverage).add_coverage (c->input))) return;
+    if (unlikely (!(this+coverage).collect_coverage (c->input))) return;
     + hb_zip (this+coverage, sequence)
     | hb_map (hb_second)
     | hb_map (hb_add (this))
@@ -556,6 +556,20 @@ struct AlternateSet
     return_trace (true);
   }
 
+  unsigned
+  get_alternates (unsigned        start_offset,
+		  unsigned       *alternate_count  /* IN/OUT.  May be NULL. */,
+		  hb_codepoint_t *alternate_glyphs /* OUT.     May be NULL. */) const
+  {
+    if (alternates.len && alternate_count)
+    {
+      + alternates.sub_array (start_offset, alternate_count)
+      | hb_sink (hb_array (alternate_glyphs, *alternate_count))
+      ;
+    }
+    return alternates.len;
+  }
+
   template <typename Iterator,
 	    hb_requires (hb_is_source_of (Iterator, hb_codepoint_t))>
   bool serialize (hb_serialize_context_t *c,
@@ -615,7 +629,7 @@ struct AlternateSubstFormat1
 
   void collect_glyphs (hb_collect_glyphs_context_t *c) const
   {
-    if (unlikely (!(this+coverage).add_coverage (c->input))) return;
+    if (unlikely (!(this+coverage).collect_coverage (c->input))) return;
     + hb_zip (this+coverage, alternateSet)
     | hb_map (hb_second)
     | hb_map (hb_add (this))
@@ -627,6 +641,14 @@ struct AlternateSubstFormat1
 
   bool would_apply (hb_would_apply_context_t *c) const
   { return c->len == 1 && (this+coverage).get_coverage (c->glyphs[0]) != NOT_COVERED; }
+
+  unsigned
+  get_glyph_alternates (hb_codepoint_t  gid,
+			unsigned        start_offset,
+			unsigned       *alternate_count  /* IN/OUT.  May be NULL. */,
+			hb_codepoint_t *alternate_glyphs /* OUT.     May be NULL. */) const
+  { return (this+alternateSet[(this+coverage).get_coverage (gid)])
+	   .get_alternates (start_offset, alternate_count, alternate_glyphs); }
 
   bool apply (hb_ot_apply_context_t *c) const
   {
@@ -830,8 +852,8 @@ struct Ligature
 
     auto *out = c->serializer->start_embed (*this);
     return_trace (out->serialize (c->serializer,
-				   glyph_map[ligGlyph],
-				   it));
+				  glyph_map[ligGlyph],
+				  it));
   }
 
   public:
@@ -978,7 +1000,7 @@ struct LigatureSubstFormat1
 
   void collect_glyphs (hb_collect_glyphs_context_t *c) const
   {
-    if (unlikely (!(this+coverage).add_coverage (c->input))) return;
+    if (unlikely (!(this+coverage).collect_coverage (c->input))) return;
 
     + hb_zip (this+coverage, ligatureSet)
     | hb_map (hb_second)
@@ -1170,18 +1192,18 @@ struct ReverseChainSingleSubstFormat1
 
   void collect_glyphs (hb_collect_glyphs_context_t *c) const
   {
-    if (unlikely (!(this+coverage).add_coverage (c->input))) return;
+    if (unlikely (!(this+coverage).collect_coverage (c->input))) return;
 
     unsigned int count;
 
     count = backtrack.len;
     for (unsigned int i = 0; i < count; i++)
-      if (unlikely (!(this+backtrack[i]).add_coverage (c->before))) return;
+      if (unlikely (!(this+backtrack[i]).collect_coverage (c->before))) return;
 
     const OffsetArrayOf<Coverage> &lookahead = StructAfter<OffsetArrayOf<Coverage>> (backtrack);
     count = lookahead.len;
     for (unsigned int i = 0; i < count; i++)
-      if (unlikely (!(this+lookahead[i]).add_coverage (c->after))) return;
+      if (unlikely (!(this+lookahead[i]).collect_coverage (c->after))) return;
 
     const ArrayOf<HBGlyphID> &substitute = StructAfter<ArrayOf<HBGlyphID>> (lookahead);
     count = substitute.len;
@@ -1205,7 +1227,9 @@ struct ReverseChainSingleSubstFormat1
     const OffsetArrayOf<Coverage> &lookahead = StructAfter<OffsetArrayOf<Coverage>> (backtrack);
     const ArrayOf<HBGlyphID> &substitute = StructAfter<ArrayOf<HBGlyphID>> (lookahead);
 
-  unsigned int start_index = 0, end_index = 0;
+    if (unlikely (index >= substitute.len)) return_trace (false);
+
+    unsigned int start_index = 0, end_index = 0;
     if (match_backtrack (c,
 			 backtrack.len, (HBUINT16 *) backtrack.arrayZ,
 			 match_coverage, this,
@@ -1415,9 +1439,9 @@ struct SubstLookup : Lookup
   }
 
   template <typename set_t>
-  void add_coverage (set_t *glyphs) const
+  void collect_coverage (set_t *glyphs) const
   {
-    hb_add_coverage_context_t<set_t> c (glyphs);
+    hb_collect_coverage_context_t<set_t> c (glyphs);
     dispatch (&c);
   }
 
@@ -1547,8 +1571,13 @@ struct GSUB : GSUBGPOS
   bool sanitize (hb_sanitize_context_t *c) const
   { return GSUBGPOS::sanitize<SubstLookup> (c); }
 
-  HB_INTERNAL bool is_blacklisted (hb_blob_t *blob,
+  HB_INTERNAL bool is_blocklisted (hb_blob_t *blob,
 				   hb_face_t *face) const;
+
+  void closure_lookups (hb_face_t      *face,
+			const hb_set_t *glyphs,
+			hb_set_t       *lookup_indexes /* IN/OUT */) const
+  { GSUBGPOS::closure_lookups<SubstLookup> (face, glyphs, lookup_indexes); }
 
   typedef GSUBGPOS::accelerator_t<GSUB> accelerator_t;
 };

@@ -17,8 +17,9 @@
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/ref_counted_delete_on_sequence.h"
+#include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
+#include "components/services/storage/public/mojom/blob_storage_context.mojom.h"
 #include "components/services/storage/public/mojom/indexed_db_control.mojom.h"
 #include "components/services/storage/public/mojom/indexed_db_control_test.mojom.h"
 #include "components/services/storage/public/mojom/native_file_system_context.mojom.h"
@@ -28,7 +29,6 @@
 #include "mojo/public/cpp/bindings/receiver_set.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/bindings/remote_set.h"
-#include "storage/browser/blob/mojom/blob_storage_context.mojom.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
 #include "storage/browser/quota/special_storage_policy.h"
 #include "url/origin.h"
@@ -49,19 +49,22 @@ class IndexedDBConnection;
 class IndexedDBFactoryImpl;
 
 class CONTENT_EXPORT IndexedDBContextImpl
-    : public base::RefCountedDeleteOnSequence<IndexedDBContextImpl>,
+    : public base::RefCountedThreadSafe<IndexedDBContextImpl>,
       public storage::mojom::IndexedDBControl,
       public storage::mojom::IndexedDBControlTest {
  public:
   // The indexed db directory.
   static const base::FilePath::CharType kIndexedDBDirectory[];
 
+  // Release |context| on the IDBTaskRunner.
+  static void ReleaseOnIDBSequence(
+      scoped_refptr<IndexedDBContextImpl>&& context);
+
   // If |data_path| is empty, nothing will be saved to disk.
   // |task_runner| is optional, and only set during testing.
   // This is *not* called on the IDBTaskRunner, unlike most other functions.
   IndexedDBContextImpl(
       const base::FilePath& data_path,
-      scoped_refptr<storage::SpecialStoragePolicy> special_storage_policy,
       scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy,
       base::Clock* clock,
       mojo::PendingRemote<storage::mojom::BlobStorageContext>
@@ -89,6 +92,9 @@ class CONTENT_EXPORT IndexedDBContextImpl
                           DownloadOriginDataCallback callback) override;
   void GetAllOriginsDetails(GetAllOriginsDetailsCallback callback) override;
   void SetForceKeepSessionState() override;
+  void ApplyPolicyUpdates(
+      std::vector<storage::mojom::IndexedDBStoragePolicyUpdatePtr>
+          policy_updates) override;
   void BindTestInterface(
       mojo::PendingReceiver<storage::mojom::IndexedDBControlTest> receiver)
       override;
@@ -144,7 +150,8 @@ class CONTENT_EXPORT IndexedDBContextImpl
 
   int64_t GetOriginDiskUsage(const url::Origin& origin);
 
-  base::SequencedTaskRunner* IDBTaskRunner();
+  // This getter is thread-safe.
+  base::SequencedTaskRunner* IDBTaskRunner() { return idb_task_runner_.get(); }
 
   // Methods called by IndexedDBFactoryImpl or IndexedDBDispatcherHost for
   // quota support.
@@ -198,12 +205,8 @@ class CONTENT_EXPORT IndexedDBContextImpl
                                      const base::string16& database_name,
                                      const base::string16& object_store_name);
 
- protected:
-  ~IndexedDBContextImpl() override;
-
  private:
-  friend class base::RefCountedDeleteOnSequence<IndexedDBContextImpl>;
-  friend class base::DeleteHelper<IndexedDBContextImpl>;
+  friend class base::RefCountedThreadSafe<IndexedDBContextImpl>;
 
   FRIEND_TEST_ALL_PREFIXES(IndexedDBTest, ClearLocalState);
   FRIEND_TEST_ALL_PREFIXES(IndexedDBTest, ClearSessionOnlyDatabases);
@@ -216,6 +219,8 @@ class CONTENT_EXPORT IndexedDBContextImpl
   static void ClearSessionOnlyOrigins(
       const base::FilePath& indexeddb_path,
       scoped_refptr<storage::SpecialStoragePolicy> special_storage_policy);
+
+  ~IndexedDBContextImpl() override;
 
   base::FilePath GetBlobStorePath(const url::Origin& origin) const;
   base::FilePath GetLevelDBPath(const url::Origin& origin) const;
@@ -232,6 +237,7 @@ class CONTENT_EXPORT IndexedDBContextImpl
   // backing stores); the cache will be primed as needed by checking disk.
   std::set<url::Origin>* GetOriginSet();
 
+  scoped_refptr<base::SequencedTaskRunner> idb_task_runner_;
   IndexedDBDispatcherHost indexed_db_factory_;
 
   // Bound and accessed on the |idb_task_runner_|.
@@ -251,6 +257,8 @@ class CONTENT_EXPORT IndexedDBContextImpl
   scoped_refptr<base::SequencedTaskRunner> io_task_runner_;
   std::unique_ptr<std::set<url::Origin>> origin_set_;
   std::map<url::Origin, int64_t> origin_size_map_;
+  // The set of origins whose storage should be cleared on shutdown.
+  std::set<url::Origin> origins_to_purge_on_shutdown_;
   base::Clock* clock_;
 
   mojo::ReceiverSet<storage::mojom::IndexedDBControl> receivers_;
@@ -258,6 +266,7 @@ class CONTENT_EXPORT IndexedDBContextImpl
   base::Optional<mojo::Receiver<storage::mojom::MockFailureInjector>>
       mock_failure_injector_;
   mojo::RemoteSet<storage::mojom::IndexedDBObserver> observers_;
+  std::unique_ptr<storage::FilesystemProxy> filesystem_proxy_;
 
   DISALLOW_COPY_AND_ASSIGN(IndexedDBContextImpl);
 };

@@ -10,16 +10,15 @@
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
 #include "base/single_thread_task_runner.h"
-#include "base/threading/sequence_bound.h"
 #include "gpu/config/gpu_preferences.h"
 #include "media/base/video_frame.h"
 #include "media/gpu/android/codec_buffer_wait_coordinator.h"
 #include "media/gpu/android/codec_image.h"
 #include "media/gpu/android/codec_wrapper.h"
+#include "media/gpu/android/frame_info_helper.h"
 #include "media/gpu/android/maybe_render_early_manager.h"
 #include "media/gpu/android/shared_image_video_provider.h"
 #include "media/gpu/android/video_frame_factory.h"
-#include "media/gpu/android/ycbcr_helper.h"
 #include "media/gpu/media_gpu_export.h"
 #include "ui/gl/gl_bindings.h"
 
@@ -41,13 +40,18 @@ class MEDIA_GPU_EXPORT VideoFrameFactoryImpl : public VideoFrameFactory {
       base::OnceCallback<void(gpu::Mailbox mailbox,
                               VideoFrame::ReleaseMailboxCB release_cb)>;
 
+  using ImageWithInfoReadyCB =
+      base::OnceCallback<void(std::unique_ptr<CodecOutputBufferRenderer>,
+                              FrameInfoHelper::FrameInfo,
+                              SharedImageVideoProvider::ImageRecord)>;
+
   // |get_stub_cb| will be run on |gpu_task_runner|.
   VideoFrameFactoryImpl(
       scoped_refptr<base::SingleThreadTaskRunner> gpu_task_runner,
       const gpu::GpuPreferences& gpu_preferences,
       std::unique_ptr<SharedImageVideoProvider> image_provider,
       std::unique_ptr<MaybeRenderEarlyManager> mre_manager,
-      base::SequenceBound<YCbCrHelper> ycbcr_helper);
+      std::unique_ptr<FrameInfoHelper> frame_info_helper);
   ~VideoFrameFactoryImpl() override;
 
   void Initialize(OverlayMode overlay_mode, InitCB init_cb) override;
@@ -68,6 +72,8 @@ class MEDIA_GPU_EXPORT VideoFrameFactoryImpl : public VideoFrameFactory {
   }
 
  private:
+  void RequestImage(std::unique_ptr<CodecOutputBufferRenderer> buffer_renderer,
+                    ImageWithInfoReadyCB image_ready_cb);
   // ImageReadyCB that will construct a VideoFrame, and forward it to
   // |output_cb| if construction succeeds.  This is static for two reasons.
   // First, we want to snapshot the state of the world when the request is made,
@@ -83,33 +89,22 @@ class MEDIA_GPU_EXPORT VideoFrameFactoryImpl : public VideoFrameFactory {
       base::WeakPtr<VideoFrameFactoryImpl> thiz,
       OnceOutputCB output_cb,
       base::TimeDelta timestamp,
-      gfx::Size coded_size,
       gfx::Size natural_size,
-      std::unique_ptr<CodecOutputBuffer> output_buffer,
-      scoped_refptr<CodecBufferWaitCoordinator> codec_buffer_wait_coordinator,
+      bool is_texture_owner_backed,
       PromotionHintAggregator::NotifyPromotionHintCB promotion_hint_cb,
       VideoPixelFormat pixel_format,
       OverlayMode overlay_mode,
-      bool enable_threaded_texture_mailboxes,
+      const base::Optional<VideoFrameMetadata::CopyMode>& copy_mode,
       scoped_refptr<base::SequencedTaskRunner> gpu_task_runner,
+      std::unique_ptr<CodecOutputBufferRenderer> output_buffer_renderer,
+      FrameInfoHelper::FrameInfo frame_info,
       SharedImageVideoProvider::ImageRecord record);
 
-  // Callback to receive YCbCrInfo from |provider_| while creating a VideoFrame.
-  void CreateVideoFrame_OnYCbCrInfo(base::OnceClosure completion_cb,
-                                    YCbCrHelper::OptionalInfo ycbcr_info);
-
-  // Really create the VideoFrame, once we've tried to get the YCbCrInfo if it's
-  // needed for it.
-  void CreateVideoFrame_Finish(
-      OnceOutputCB output_cb,
-      base::TimeDelta timestamp,
-      gfx::Size coded_size,
-      gfx::Size natural_size,
+  void CreateVideoFrame_OnFrameInfoReady(
+      ImageWithInfoReadyCB image_ready_cb,
       scoped_refptr<CodecBufferWaitCoordinator> codec_buffer_wait_coordinator,
-      VideoPixelFormat pixel_format,
-      OverlayMode overlay_mode,
-      bool enable_threaded_texture_mailboxes,
-      SharedImageVideoProvider::ImageRecord record);
+      std::unique_ptr<CodecOutputBufferRenderer> output_buffer_renderer,
+      FrameInfoHelper::FrameInfo frame_info);
 
   MaybeRenderEarlyManager* mre_manager() const { return mre_manager_.get(); }
 
@@ -121,8 +116,8 @@ class MEDIA_GPU_EXPORT VideoFrameFactoryImpl : public VideoFrameFactory {
 
   OverlayMode overlay_mode_ = OverlayMode::kDontRequestPromotionHints;
 
-  // Is the sync mailbox manager enabled?
-  bool enable_threaded_texture_mailboxes_ = false;
+  // Indicates how video frame needs to be copied when required.
+  base::Optional<VideoFrameMetadata::CopyMode> copy_mode_;
 
   // Current group that new CodecImages should belong to.  Do not use this on
   // our thread; everything must be posted to the gpu main thread, including
@@ -131,11 +126,8 @@ class MEDIA_GPU_EXPORT VideoFrameFactoryImpl : public VideoFrameFactory {
 
   std::unique_ptr<MaybeRenderEarlyManager> mre_manager_;
 
-  // Sampler conversion information which is used in vulkan context.
-  YCbCrHelper::OptionalInfo ycbcr_info_;
-
-  // Optional helper to get the Vulkan YCbCrInfo.
-  base::SequenceBound<YCbCrHelper> ycbcr_helper_;
+  // Helper to get coded_size and optional Vulkan YCbCrInfo.
+  std::unique_ptr<FrameInfoHelper> frame_info_helper_;
 
   // The current image spec that we'll use to request images.
   SharedImageVideoProvider::ImageSpec image_spec_;

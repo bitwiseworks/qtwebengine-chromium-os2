@@ -26,9 +26,11 @@
 #include "third_party/blink/renderer/core/css/css_image_set_value.h"
 
 #include <algorithm>
+#include "third_party/blink/public/common/loader/referrer_utils.h"
 #include "third_party/blink/renderer/core/css/css_image_value.h"
 #include "third_party/blink/renderer/core/css/css_primitive_value.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/loader/resource/image_resource_content.h"
 #include "third_party/blink/renderer/core/style/style_fetched_image_set.h"
@@ -37,7 +39,6 @@
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader_options.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
-#include "third_party/blink/renderer/platform/weborigin/security_policy.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
@@ -67,6 +68,12 @@ void CSSImageSetValue::FillImageSet() {
     image.referrer.referrer = image_value.GetReferrer().referrer;
     image.referrer.referrer_policy = image_value.GetReferrer().referrer_policy;
     image.scale_factor = scale_factor;
+
+    // Only set for the first image as all images in a set should have identical
+    // is_ad_related bits.
+    if (!images_in_set_.size())
+      is_ad_related_ = image_value.GetIsAdRelated();
+    DCHECK_EQ(is_ad_related_, image_value.GetIsAdRelated());
     images_in_set_.push_back(image);
     ++i;
   }
@@ -101,7 +108,7 @@ StyleImage* CSSImageSetValue::CachedImage(float device_scale_factor) const {
 StyleImage* CSSImageSetValue::CacheImage(
     const Document& document,
     float device_scale_factor,
-    FetchParameters::ImageRequestOptimization image_request_optimization,
+    FetchParameters::ImageRequestBehavior image_request_behavior,
     CrossOriginAttributeValue cross_origin) {
   if (!images_in_set_.size())
     FillImageSet();
@@ -114,17 +121,22 @@ StyleImage* CSSImageSetValue::CacheImage(
     ImageWithScale image = BestImageForScaleFactor(device_scale_factor);
     ResourceRequest resource_request(document.CompleteURL(image.image_url));
     resource_request.SetReferrerPolicy(
-        ReferrerPolicyResolveDefault(image.referrer.referrer_policy));
+        ReferrerUtils::MojoReferrerPolicyResolveDefault(
+            image.referrer.referrer_policy));
     resource_request.SetReferrerString(image.referrer.referrer);
-    ResourceLoaderOptions options;
+    if (is_ad_related_)
+      resource_request.SetIsAdResource();
+    ResourceLoaderOptions options(
+        document.GetExecutionContext()->GetCurrentWorld());
     options.initiator_info.name = parser_mode_ == kUASheetMode
                                       ? fetch_initiator_type_names::kUacss
                                       : fetch_initiator_type_names::kCSS;
+    options.initiator_info.referrer = image.referrer.referrer;
     FetchParameters params(std::move(resource_request), options);
 
     if (cross_origin != kCrossOriginAttributeNotSet) {
-      params.SetCrossOriginAccessControl(document.GetSecurityOrigin(),
-                                         cross_origin);
+      params.SetCrossOriginAccessControl(
+          document.GetExecutionContext()->GetSecurityOrigin(), cross_origin);
     }
 
     cached_image_ = MakeGarbageCollected<StyleFetchedImageSet>(
@@ -169,8 +181,8 @@ String CSSImageSetValue::CustomCSSText() const {
 bool CSSImageSetValue::HasFailedOrCanceledSubresources() const {
   if (!cached_image_)
     return false;
-  if (ImageResourceContent* cached_resource = cached_image_->CachedImage())
-    return cached_resource->LoadFailedOrCanceled();
+  if (ImageResourceContent* cached_content = cached_image_->CachedImage())
+    return cached_content->LoadFailedOrCanceled();
   return true;
 }
 

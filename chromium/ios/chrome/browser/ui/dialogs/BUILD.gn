@@ -16,20 +16,6 @@ source_set("dialogs") {
   configs += [ "//build/config/compiler:enable_arc" ]
 }
 
-source_set("feature_flags") {
-  sources = [
-    "dialog_features.h",
-    "dialog_features.mm",
-  ]
-
-  configs += [ "//build/config/compiler:enable_arc" ]
-
-  deps = [
-    "//base",
-    "//components/flags_ui",
-  ]
-}
-
 source_set("unit_tests") {
   testonly = true
 
@@ -56,12 +42,8 @@ source_set("constants") {
 source_set("dialogs_internal") {
   configs += [ "//build/config/compiler:enable_arc" ]
   sources = [
-    "dialog_presenter.h",
-    "dialog_presenter.mm",
     "java_script_dialog_metrics.cc",
     "java_script_dialog_metrics.h",
-    "java_script_dialog_presenter_impl.h",
-    "java_script_dialog_presenter_impl.mm",
     "nsurl_protection_space_util.h",
     "nsurl_protection_space_util.mm",
     "overlay_java_script_dialog_presenter.h",
@@ -84,7 +66,7 @@ source_set("dialogs_internal") {
     "//ui/base",
     "//url",
   ]
-  libs = [ "UIKit.framework" ]
+  frameworks = [ "UIKit.framework" ]
 }
 
 source_set("completion_block_util") {
@@ -101,8 +83,6 @@ source_set("unit_tests_internal") {
   testonly = true
   sources = [
     "completion_block_util_unittest.mm",
-    "dialog_presenter_unittest.mm",
-    "java_script_dialog_presenter_impl_unittest.mm",
     "nsurl_protection_space_util_unittest.mm",
     "overlay_java_script_dialog_presenter_unittest.mm",
   ]
@@ -123,40 +103,6 @@ source_set("unit_tests_internal") {
   ]
 }
 
-source_set("eg_tests") {
-  defines = [ "CHROME_EARL_GREY_1" ]
-  configs += [ "//build/config/compiler:enable_arc" ]
-  testonly = true
-  sources = [ "javascript_dialog_egtest.mm" ]
-  deps = [
-    ":constants",
-    ":feature_flags",
-    "//base",
-    "//base/test:test_support",
-    "//components/strings",
-    "//components/url_formatter",
-    "//ios/chrome/app/strings",
-    "//ios/chrome/browser/ui/util",
-    "//ios/chrome/test:eg_test_support",
-    "//ios/chrome/test/app:test_support",
-    "//ios/chrome/test/earl_grey:test_support",
-    "//ios/testing/earl_grey:earl_grey_support",
-    "//ios/third_party/earl_grey:earl_grey+link",
-    "//ios/web",
-    "//ios/web:earl_grey_test_support",
-    "//ios/web/public/test",
-    "//ios/web/public/test:element_selector",
-    "//ios/web/public/test/http_server",
-    "//net:test_support",
-    "//ui/base",
-    "//url",
-  ]
-  libs = [
-    "UIKit.framework",
-    "XCTest.framework",
-  ]
-}
-
 source_set("eg2_tests") {
   defines = [ "CHROME_EARL_GREY_2" ]
   configs += [
@@ -167,7 +113,6 @@ source_set("eg2_tests") {
   sources = [ "javascript_dialog_egtest.mm" ]
   deps = [
     ":constants",
-    ":feature_flags",
     "//base",
     "//base/test:test_support",
     "//components/strings",
@@ -183,5 +128,5 @@ source_set("eg2_tests") {
     "//ui/base",
     "//url",
   ]
-  libs = [ "UIKit.framework" ]
+  frameworks = [ "UIKit.framework" ]
 }

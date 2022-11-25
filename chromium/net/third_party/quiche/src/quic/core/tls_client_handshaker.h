@@ -5,11 +5,15 @@
 #ifndef QUICHE_QUIC_CORE_TLS_CLIENT_HANDSHAKER_H_
 #define QUICHE_QUIC_CORE_TLS_CLIENT_HANDSHAKER_H_
 
+#include <cstdint>
+#include <memory>
 #include <string>
 
 #include "third_party/boringssl/src/include/openssl/ssl.h"
 #include "net/third_party/quiche/src/quic/core/crypto/proof_verifier.h"
+#include "net/third_party/quiche/src/quic/core/crypto/quic_crypto_client_config.h"
 #include "net/third_party/quiche/src/quic/core/crypto/tls_client_connection.h"
+#include "net/third_party/quiche/src/quic/core/crypto/transport_parameters.h"
 #include "net/third_party/quiche/src/quic/core/quic_crypto_client_stream.h"
 #include "net/third_party/quiche/src/quic/core/quic_crypto_stream.h"
 #include "net/third_party/quiche/src/quic/core/tls_handshaker.h"
@@ -30,7 +34,8 @@ class QUIC_EXPORT_PRIVATE TlsClientHandshaker
                       QuicSession* session,
                       std::unique_ptr<ProofVerifyContext> verify_context,
                       QuicCryptoClientConfig* crypto_config,
-                      QuicCryptoClientStream::ProofHandler* proof_handler);
+                      QuicCryptoClientStream::ProofHandler* proof_handler,
+                      bool has_application_state);
   TlsClientHandshaker(const TlsClientHandshaker&) = delete;
   TlsClientHandshaker& operator=(const TlsClientHandshaker&) = delete;
 
@@ -41,6 +46,7 @@ class QUIC_EXPORT_PRIVATE TlsClientHandshaker
   int num_sent_client_hellos() const override;
   bool IsResumption() const override;
   bool EarlyDataAccepted() const override;
+  ssl_early_data_reason_t EarlyDataReason() const override;
   bool ReceivedInchoateReject() const override;
   int num_scup_messages_received() const override;
   std::string chlo_hash() const override;
@@ -54,6 +60,9 @@ class QUIC_EXPORT_PRIVATE TlsClientHandshaker
   HandshakeState GetHandshakeState() const override;
   size_t BufferSizeLimitForLevel(EncryptionLevel level) const override;
   void OnOneRttPacketAcknowledged() override;
+  void OnHandshakePacketSent() override;
+  void OnConnectionClosed(QuicErrorCode error,
+                          ConnectionCloseSource source) override;
   void OnHandshakeDoneReceived() override;
   void SetWriteSecret(EncryptionLevel level,
                       const SSL_CIPHER* cipher,
@@ -63,7 +72,11 @@ class QUIC_EXPORT_PRIVATE TlsClientHandshaker
   void WriteMessage(EncryptionLevel level,
                     quiche::QuicheStringPiece data) override;
 
+  void SetServerApplicationStateForResumption(
+      std::unique_ptr<ApplicationState> application_state) override;
+
   void AllowEmptyAlpnForTests() { allow_empty_alpn_for_tests_ = true; }
+  void AllowInvalidSNIForTests() { allow_invalid_sni_for_tests_ = true; }
 
  protected:
   const TlsConnection* tls_connection() const override {
@@ -112,12 +125,15 @@ class QUIC_EXPORT_PRIVATE TlsClientHandshaker
   bool SetTransportParameters();
   bool ProcessTransportParameters(std::string* error_details);
   void FinishHandshake();
+  void HandleZeroRttReject();
 
   // Called when server completes handshake (i.e., either handshake done is
   // received or 1-RTT packet gets acknowledged).
   void OnHandshakeConfirmed();
 
   void InsertSession(bssl::UniquePtr<SSL_SESSION> session) override;
+
+  bool PrepareZeroRttConfig(QuicResumptionState* cached_state);
 
   QuicSession* session() { return session_; }
   QuicSession* session_;
@@ -140,6 +156,9 @@ class QUIC_EXPORT_PRIVATE TlsClientHandshaker
 
   std::string user_agent_id_;
 
+  // Pre-shared key used during the handshake.
+  std::string pre_shared_key_;
+
   // ProofVerifierCallback used for async certificate verification. This object
   // is owned by |proof_verifier_|.
   ProofVerifierCallbackImpl* proof_verify_callback_ = nullptr;
@@ -148,14 +167,28 @@ class QUIC_EXPORT_PRIVATE TlsClientHandshaker
   std::string cert_verify_error_details_;
 
   bool encryption_established_ = false;
+  bool initial_keys_dropped_ = false;
   bool one_rtt_keys_available_ = false;
   bool handshake_confirmed_ = false;
   QuicReferenceCountedPointer<QuicCryptoNegotiatedParameters>
       crypto_negotiated_params_;
 
   bool allow_empty_alpn_for_tests_ = false;
+  bool allow_invalid_sni_for_tests_ = false;
+
+  const bool has_application_state_;
+  // Contains the state for performing a resumption, if one is attempted. This
+  // will always be non-null if a 0-RTT resumption is attempted.
+  std::unique_ptr<QuicResumptionState> cached_state_;
 
   TlsClientConnection tls_connection_;
+
+  // If |has_application_state_|, stores the tls session tickets before
+  // application state is received. The latest one is put in the front.
+  bssl::UniquePtr<SSL_SESSION> cached_tls_sessions_[2] = {};
+
+  std::unique_ptr<TransportParameters> received_transport_params_ = nullptr;
+  std::unique_ptr<ApplicationState> received_application_state_ = nullptr;
 };
 
 }  // namespace quic

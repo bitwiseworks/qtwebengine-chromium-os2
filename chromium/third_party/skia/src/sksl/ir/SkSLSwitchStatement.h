@@ -19,10 +19,12 @@ class SymbolTable;
  * A 'switch' statement.
  */
 struct SwitchStatement : public Statement {
+    static constexpr Kind kStatementKind = Kind::kSwitch;
+
     SwitchStatement(int offset, bool isStatic, std::unique_ptr<Expression> value,
                     std::vector<std::unique_ptr<SwitchCase>> cases,
                     const std::shared_ptr<SymbolTable> symbols)
-    : INHERITED(offset, kSwitch_Kind)
+    : INHERITED(offset, kStatementKind)
     , fIsStatic(isStatic)
     , fValue(std::move(value))
     , fSymbols(std::move(symbols))
@@ -37,7 +39,6 @@ struct SwitchStatement : public Statement {
                                                               std::move(cloned), fSymbols));
     }
 
-#ifdef SK_DEBUG
     String description() const override {
         String result;
         if (fIsStatic) {
@@ -50,7 +51,6 @@ struct SwitchStatement : public Statement {
         result += "}";
         return result;
     }
-#endif
 
     bool fIsStatic;
     std::unique_ptr<Expression> fValue;
@@ -59,9 +59,9 @@ struct SwitchStatement : public Statement {
     const std::shared_ptr<SymbolTable> fSymbols;
     std::vector<std::unique_ptr<SwitchCase>> fCases;
 
-    typedef Statement INHERITED;
+    using INHERITED = Statement;
 };
 
-} // namespace
+}  // namespace SkSL
 
 #endif

@@ -188,6 +188,7 @@ int GrPathUtils::worstCasePointCount(const SkPath& path, int* subpaths, SkScalar
                 for (int i = 0; i < converter.countQuads(); ++i) {
                     pointCount += quadraticPointCount(quadPts + 2*i, tol);
                 }
+                [[fallthrough]];
             }
             case SkPath::kQuad_Verb:
                 pointCount += quadraticPointCount(pts, tol);
@@ -365,16 +366,16 @@ bool is_point_within_cubic_tangents(const SkPoint& a,
                                     const SkVector& ab,
                                     const SkVector& dc,
                                     const SkPoint& d,
-                                    SkPathPriv::FirstDirection dir,
+                                    SkPathFirstDirection dir,
                                     const SkPoint p) {
     SkVector ap = p - a;
     SkScalar apXab = ap.cross(ab);
-    if (SkPathPriv::kCW_FirstDirection == dir) {
+    if (SkPathFirstDirection::kCW == dir) {
         if (apXab > 0) {
             return false;
         }
     } else {
-        SkASSERT(SkPathPriv::kCCW_FirstDirection == dir);
+        SkASSERT(SkPathFirstDirection::kCCW == dir);
         if (apXab < 0) {
             return false;
         }
@@ -382,12 +383,12 @@ bool is_point_within_cubic_tangents(const SkPoint& a,
 
     SkVector dp = p - d;
     SkScalar dpXdc = dp.cross(dc);
-    if (SkPathPriv::kCW_FirstDirection == dir) {
+    if (SkPathFirstDirection::kCW == dir) {
         if (dpXdc < 0) {
             return false;
         }
     } else {
-        SkASSERT(SkPathPriv::kCCW_FirstDirection == dir);
+        SkASSERT(SkPathFirstDirection::kCCW == dir);
         if (dpXdc > 0) {
             return false;
         }
@@ -462,7 +463,7 @@ void convert_noninflect_cubic_to_quads(const SkPoint p[4],
 
 void convert_noninflect_cubic_to_quads_with_constraint(const SkPoint p[4],
                                                        SkScalar toleranceSqd,
-                                                       SkPathPriv::FirstDirection dir,
+                                                       SkPathFirstDirection dir,
                                                        SkTArray<SkPoint, true>* quads,
                                                        int sublevel = 0) {
     // Notation: Point a is always p[0]. Point b is p[1] unless p[1] == p[0], in which case it is
@@ -588,7 +589,7 @@ void convert_noninflect_cubic_to_quads_with_constraint(const SkPoint p[4],
     convert_noninflect_cubic_to_quads_with_constraint(
             choppedPts + 3, toleranceSqd, dir, quads, sublevel + 1);
 }
-}
+}  // namespace
 
 void GrPathUtils::convertCubicToQuads(const SkPoint p[4],
                                       SkScalar tolScale,
@@ -612,7 +613,7 @@ void GrPathUtils::convertCubicToQuads(const SkPoint p[4],
 
 void GrPathUtils::convertCubicToQuadsConstrainToTangents(const SkPoint p[4],
                                                          SkScalar tolScale,
-                                                         SkPathPriv::FirstDirection dir,
+                                                         SkPathFirstDirection dir,
                                                          SkTArray<SkPoint, true>* quads) {
     if (!p[0].isFinite() || !p[1].isFinite() || !p[2].isFinite() || !p[3].isFinite()) {
         return;
@@ -806,7 +807,7 @@ SkCubicType GrPathUtils::getCubicKLM(const SkPoint src[4], SkMatrix* klm, double
     switch (type) {
         case SkCubicType::kCuspAtInfinity:
             SkASSERT(1 == t1 && 0 == s1); // Infinity.
-            // fallthru.
+            [[fallthrough]];
         case SkCubicType::kLocalCusp:
         case SkCubicType::kSerpentine:
             calc_serp_kcoeffs(t0, s0, t1, s1, skipTerm, &klmCoeffs[0]);

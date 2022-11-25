@@ -9,14 +9,32 @@ import("//build/config/gclient_args.gni")
 # default_android_ndk_root = "//third_party/android_ndk"
 # default_android_ndk_version = "r10e"
 
-# Some non-Chromium builds don't support building java targets.
-enable_java_templates = true
 
-# Some non-Chromium builds don't use Chromium's third_party/binutils.
-linux_use_bundled_binutils_override = true
+# Features used by //base/trace_event and //services/tracing.
+declare_args() {
+  # Some non-Chromium builds don't support building java targets.
+  enable_java_templates = true
 
-# Allows different projects to specify their own suppressions and blacklist
-# files for sanitizer tools.
+  # Tracing support requires //third_party/perfetto, which is not available in
+  # libchrome (CrOS's version of //base). This flag can disable tracing support
+  # altogether, in which case all tracing instrumentation in //base becomes a
+  # no-op.
+  # TODO(crbug/1065905): Add dependency on perfetto to support typed events.
+  enable_base_tracing = true
+
+  # Switches the TRACE_EVENT instrumentation from base's TraceLog implementation
+  # to //third_party/perfetto's client library. Not implemented yet, currently a
+  # no-op to set up trybot infrastructure.
+  # TODO(crbug/1006769): Switch to perfetto's client library.
+  use_perfetto_client_library = false
+
+  # Allows googletest to pretty-print various absl types.  Disabled for nacl due
+  # to lack of toolchain support.
+  gtest_enable_absl_printers = !is_nacl
+}
+
+# Allows different projects to specify their own suppression/ignore lists for
+# sanitizer tools.
 # asan_suppressions_file = "path/to/asan_suppressions.cc"
 # asan_blacklist_path = "path/to/asan/blacklist.txt"
 # asan_win_blacklist_path = "path/to/asan/blacklist_win.txt"
@@ -27,10 +45,7 @@ linux_use_bundled_binutils_override = true
 # ubsan_blacklist_path = "path/to/ubsan/blacklist.txt"
 # ubsan_vptr_blacklist_path = "path/to/ubsan/vptr_blacklist.txt"
 # ubsan_security_blacklist_path = "path/to/ubsan/security_blacklist.txt"
-# cfi_blacklist_path = "path/to/cfi/blacklist.txt"
-
-# Uncomment these to specify a different lint suppressions file for android
-# lint_suppressions_file = path/to/your/suppressions/file/suppressions.xml
+# cfi_blacklist_path = "path/to/cfi/ignores.txt"
 
 declare_args() {
   # Android 32-bit non-component, non-clang builds cannot have symbol_level=2
@@ -48,7 +63,10 @@ declare_args() {
 
 if (host_os == "mac" && use_system_xcode == "") {
   _result = exec_script("//build/mac/should_use_hermetic_xcode.py",
-                        [ target_os ],
+                        [
+                          "--xcode-version=$mac_xcode_version",
+                          target_os,
+                        ],
                         "value")
 
   assert(_result != 2,

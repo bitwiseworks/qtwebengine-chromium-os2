@@ -4,12 +4,16 @@
 
 package org.chromium.weblayer_private;
 
+import android.Manifest.permission;
+import android.content.pm.PackageManager;
 import android.os.RemoteException;
 import android.webkit.ValueCallback;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
 import org.chromium.base.annotations.NativeMethods;
+import org.chromium.ui.base.WindowAndroid;
 import org.chromium.weblayer_private.interfaces.IDownloadCallbackClient;
 import org.chromium.weblayer_private.interfaces.ObjectWrapper;
 
@@ -20,14 +24,14 @@ import org.chromium.weblayer_private.interfaces.ObjectWrapper;
  */
 @JNINamespace("weblayer")
 public final class DownloadCallbackProxy {
+    private final ProfileImpl mProfile;
     private long mNativeDownloadCallbackProxy;
-    private String mProfileName;
     private IDownloadCallbackClient mClient;
 
-    DownloadCallbackProxy(String profileName, long profile) {
-        mProfileName = profileName;
-        mNativeDownloadCallbackProxy =
-                DownloadCallbackProxyJni.get().createDownloadCallbackProxy(this, profile);
+    DownloadCallbackProxy(ProfileImpl profile) {
+        mProfile = profile;
+        mNativeDownloadCallbackProxy = DownloadCallbackProxyJni.get().createDownloadCallbackProxy(
+                this, profile.getNativeProfile());
     }
 
     public void setClient(IDownloadCallbackClient client) {
@@ -43,7 +47,7 @@ public final class DownloadCallbackProxy {
     private boolean interceptDownload(String url, String userAgent, String contentDisposition,
             String mimetype, long contentLength) throws RemoteException {
         if (mClient == null) {
-            return true;
+            return false;
         }
 
         return mClient.interceptDownload(
@@ -51,7 +55,29 @@ public final class DownloadCallbackProxy {
     }
 
     @CalledByNative
-    private void allowDownload(String url, String requestMethod, String requestInitiator,
+    private void allowDownload(TabImpl tab, String url, String requestMethod,
+            String requestInitiator, long callbackId) throws RemoteException {
+        WindowAndroid window = tab.getBrowser().getWindowAndroid();
+        if (window.hasPermission(permission.WRITE_EXTERNAL_STORAGE)) {
+            continueAllowDownload(url, requestMethod, requestInitiator, callbackId);
+            return;
+        }
+
+        String[] requestPermissions = new String[] {permission.WRITE_EXTERNAL_STORAGE};
+        window.requestPermissions(requestPermissions, (permissions, grantResults) -> {
+            if (grantResults.length == 0 || grantResults[0] == PackageManager.PERMISSION_DENIED) {
+                DownloadCallbackProxyJni.get().allowDownload(callbackId, false);
+                return;
+            }
+
+            try {
+                continueAllowDownload(url, requestMethod, requestInitiator, callbackId);
+            } catch (RemoteException e) {
+            }
+        });
+    }
+
+    private void continueAllowDownload(String url, String requestMethod, String requestInitiator,
             long callbackId) throws RemoteException {
         if (WebLayerFactoryImpl.getClientMajorVersion() < 81) {
             DownloadCallbackProxyJni.get().allowDownload(callbackId, true);
@@ -59,13 +85,14 @@ public final class DownloadCallbackProxy {
         }
 
         if (mClient == null) {
-            DownloadCallbackProxyJni.get().allowDownload(callbackId, false);
+            DownloadCallbackProxyJni.get().allowDownload(callbackId, true);
             return;
         }
 
         ValueCallback<Boolean> callback = new ValueCallback<Boolean>() {
             @Override
             public void onReceiveValue(Boolean result) {
+                ThreadUtils.assertOnUiThread();
                 if (mNativeDownloadCallbackProxy == 0) {
                     throw new IllegalStateException("Called after destroy()");
                 }
@@ -78,7 +105,8 @@ public final class DownloadCallbackProxy {
 
     @CalledByNative
     private DownloadImpl createDownload(long nativeDownloadImpl, int id) {
-        return new DownloadImpl(mProfileName, mClient, nativeDownloadImpl, id);
+        return new DownloadImpl(
+                mProfile.getName(), mProfile.isIncognito(), mClient, nativeDownloadImpl, id);
     }
 
     @CalledByNative

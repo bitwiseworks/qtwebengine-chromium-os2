@@ -4,7 +4,8 @@
 
 #include "extensions/renderer/bindings/api_binding_util.h"
 
-#include "base/logging.h"
+#include "base/check_op.h"
+#include "base/notreached.h"
 #include "base/observer_list.h"
 #include "base/supports_user_data.h"
 #include "build/build_config.h"
@@ -125,7 +126,7 @@ std::string GetPlatformString() {
   return "chromeos";
 #elif defined(OS_LINUX)
   return "linux";
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
   return "mac";
 #elif defined(OS_WIN)
   return "win";

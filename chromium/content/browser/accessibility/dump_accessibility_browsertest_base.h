@@ -75,7 +75,7 @@ class DumpAccessibilityTestBase : public ContentBrowserTest,
 
   // Dump the whole accessibility tree, without applying any filters,
   // and return it as a string.
-  base::string16 DumpUnfilteredAccessibilityTreeAsString();
+  std::string DumpUnfilteredAccessibilityTreeAsString();
 
   // Parse the test html file and parse special directives, usually
   // beginning with an '@' and inside an HTML comment, that control how the
@@ -97,6 +97,7 @@ class DumpAccessibilityTestBase : public ContentBrowserTest,
   // string to appear before comparing the results. There can be multiple
   // @WAIT-FOR: directives.
   void ParseHtmlForExtraDirectives(const std::string& test_html,
+                                   std::vector<std::string>* no_load_expected,
                                    std::vector<std::string>* wait_for,
                                    std::vector<std::string>* execute,
                                    std::vector<std::string>* run_until,
@@ -139,6 +140,7 @@ class DumpAccessibilityTestBase : public ContentBrowserTest,
                                           const std::string& name);
 
   void WaitForAXTreeLoaded(WebContentsImpl* web_contents,
+                           const std::vector<std::string>& no_load_expected,
                            const std::vector<std::string>& wait_for);
 };
 

@@ -2,8 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Formatter from '../formatter/formatter.js';
+import * as Persistence from '../persistence/persistence.js';
 import * as UI from '../ui/ui.js';
 import * as Workspace from '../workspace/workspace.js';  // eslint-disable-line no-unused-vars
 
@@ -75,7 +79,7 @@ export class InplaceFormatterEditorAction {
     if (uiSourceCode.project().canSetFileContent()) {
       return true;
     }
-    if (self.Persistence.persistence.binding(uiSourceCode)) {
+    if (Persistence.Persistence.PersistenceImpl.instance().binding(uiSourceCode)) {
       return true;
     }
     return uiSourceCode.contentType().isStyleSheet();

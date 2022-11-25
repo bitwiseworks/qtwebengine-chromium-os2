@@ -9,9 +9,12 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/check.h"
 #include "base/feature_list.h"
-#include "base/logging.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/notreached.h"
 #include "base/stl_util.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
@@ -21,11 +24,14 @@
 #include "net/base/url_util.h"
 #include "net/http/http_util.h"
 #include "url/gurl.h"
+#include "url/url_constants.h"
 
 namespace net {
 namespace cookie_util {
 
 namespace {
+
+using ContextType = CookieOptions::SameSiteCookieContext::ContextType;
 
 base::Time MinNonNullTime() {
   return base::Time::FromInternalValue(1);
@@ -74,53 +80,61 @@ bool SaturatedTimeFromUTCExploded(const base::Time::Exploded& exploded,
   return false;
 }
 
-CookieOptions::SameSiteCookieContext::CrossSchemeness ComputeSchemeChange(
-    const GURL& url,
-    const SiteForCookies& site_for_cookies) {
-
-  CookieOptions::SameSiteCookieContext::CrossSchemeness cross_schemeness =
-      CookieOptions::SameSiteCookieContext::CrossSchemeness::NONE;
-  bool url_secure = url.SchemeIsCryptographic();
-  bool site_for_cookies_secure =
-      GURL::SchemeIsCryptographic(site_for_cookies.scheme());
-
-  if (url_secure && !site_for_cookies_secure) {
-    cross_schemeness =
-        CookieOptions::SameSiteCookieContext::CrossSchemeness::INSECURE_SECURE;
-  } else if (!url_secure && site_for_cookies_secure) {
-    cross_schemeness =
-        CookieOptions::SameSiteCookieContext::CrossSchemeness::SECURE_INSECURE;
-  }
-
-  return cross_schemeness;
-}
-
-CookieOptions::SameSiteCookieContext ComputeSameSiteContext(
-    const GURL& url,
-    const SiteForCookies& site_for_cookies,
-    const base::Optional<url::Origin>& initiator) {
-  CookieOptions::SameSiteCookieContext same_site_type(
-      CookieOptions::SameSiteCookieContext::ContextType::CROSS_SITE);
-  if (site_for_cookies.IsFirstParty(url)) {
+ContextType ComputeSameSiteContext(const GURL& url,
+                                   const SiteForCookies& site_for_cookies,
+                                   const base::Optional<url::Origin>& initiator,
+                                   bool compute_schemefully) {
+  if (site_for_cookies.IsFirstPartyWithSchemefulMode(url,
+                                                     compute_schemefully)) {
     // Create a SiteForCookies object from the initiator so that we can reuse
-    // IsFirstParty().
+    // IsFirstPartyWithSchemefulMode().
     if (!initiator ||
-        SiteForCookies::FromOrigin(initiator.value()).IsFirstParty(url)) {
-      same_site_type.context =
-          CookieOptions::SameSiteCookieContext::ContextType::SAME_SITE_STRICT;
+        SiteForCookies::FromOrigin(initiator.value())
+            .IsFirstPartyWithSchemefulMode(url, compute_schemefully)) {
+      return ContextType::SAME_SITE_STRICT;
     } else {
-      same_site_type.context =
-          CookieOptions::SameSiteCookieContext::ContextType::SAME_SITE_LAX;
+      return ContextType::SAME_SITE_LAX;
     }
   }
-  same_site_type.cross_schemeness = ComputeSchemeChange(url, site_for_cookies);
-  return same_site_type;
+  return ContextType::CROSS_SITE;
+}
+
+CookieOptions::SameSiteCookieContext ComputeSameSiteContextForSet(
+    const GURL& url,
+    const SiteForCookies& site_for_cookies,
+    bool force_ignore_site_for_cookies) {
+  if (force_ignore_site_for_cookies)
+    return CookieOptions::SameSiteCookieContext::MakeInclusiveForSet();
+
+  // Schemeless check
+  if (!site_for_cookies.IsFirstPartyWithSchemefulMode(url, false)) {
+    return CookieOptions::SameSiteCookieContext(ContextType::CROSS_SITE,
+                                                ContextType::CROSS_SITE);
+  }
+
+  // Schemeful check
+  if (!site_for_cookies.IsFirstPartyWithSchemefulMode(url, true)) {
+    return CookieOptions::SameSiteCookieContext(ContextType::SAME_SITE_LAX,
+                                                ContextType::CROSS_SITE);
+  }
+
+  return CookieOptions::SameSiteCookieContext::MakeInclusiveForSet();
 }
 
 }  // namespace
 
+void FireStorageAccessHistogram(StorageAccessResult result) {
+  UMA_HISTOGRAM_ENUMERATION("API.StorageAccess.AllowedRequests", result);
+}
+
 bool DomainIsHostOnly(const std::string& domain_string) {
   return (domain_string.empty() || domain_string[0] != '.');
+}
+
+std::string CookieDomainAsHost(const std::string& cookie_domain) {
+  if (DomainIsHostOnly(cookie_domain))
+    return cookie_domain;
+  return cookie_domain.substr(1);
 }
 
 std::string GetEffectiveDomain(const std::string& scheme,
@@ -132,9 +146,7 @@ std::string GetEffectiveDomain(const std::string& scheme,
         registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
   }
 
-  if (!DomainIsHostOnly(host))
-    return host.substr(1);
-  return host;
+  return CookieDomainAsHost(host);
 }
 
 bool GetCookieDomainWithString(const GURL& url,
@@ -320,13 +332,40 @@ base::Time ParseCookieExpirationTime(const std::string& time_string) {
   return base::Time();
 }
 
-GURL CookieOriginToURL(const std::string& domain, bool is_https) {
-  if (domain.empty())
+GURL CookieDomainAndPathToURL(const std::string& domain,
+                              const std::string& path,
+                              const std::string& source_scheme) {
+  // Note: domain_no_dot could be empty for e.g. file cookies.
+  std::string domain_no_dot = CookieDomainAsHost(domain);
+  if (domain_no_dot.empty() || source_scheme.empty())
     return GURL();
+  return GURL(base::StrCat(
+      {source_scheme, url::kStandardSchemeSeparator, domain_no_dot, path}));
+}
 
-  const std::string scheme = is_https ? "https" : "http";
-  const std::string host = domain[0] == '.' ? domain.substr(1) : domain;
-  return GURL(scheme + "://" + host);
+GURL CookieDomainAndPathToURL(const std::string& domain,
+                              const std::string& path,
+                              bool is_https) {
+  return CookieDomainAndPathToURL(
+      domain, path,
+      std::string(is_https ? url::kHttpsScheme : url::kHttpScheme));
+}
+
+GURL CookieDomainAndPathToURL(const std::string& domain,
+                              const std::string& path,
+                              CookieSourceScheme source_scheme) {
+  return CookieDomainAndPathToURL(domain, path,
+                                  source_scheme == CookieSourceScheme::kSecure);
+}
+
+GURL CookieOriginToURL(const std::string& domain, bool is_https) {
+  return CookieDomainAndPathToURL(domain, "/", is_https);
+}
+
+GURL SimulatedCookieSource(const CanonicalCookie& cookie,
+                           const std::string& source_scheme) {
+  return CookieDomainAndPathToURL(cookie.Domain(), cookie.Path(),
+                                  source_scheme);
 }
 
 bool IsDomainMatch(const std::string& domain, const std::string& host) {
@@ -421,7 +460,7 @@ CookieOptions::SameSiteCookieContext ComputeSameSiteContextForRequest(
     const GURL& url,
     const SiteForCookies& site_for_cookies,
     const base::Optional<url::Origin>& initiator,
-    bool attach_same_site_cookies) {
+    bool force_ignore_site_for_cookies) {
   // Set SameSiteCookieMode according to the rules laid out in
   // https://tools.ietf.org/html/draft-ietf-httpbis-rfc6265bis-02:
   //
@@ -446,25 +485,27 @@ CookieOptions::SameSiteCookieContext ComputeSameSiteContextForRequest(
   //   but appear like cross-site ones.
   //
   // * Otherwise, do not include same-site cookies.
+
+  if (force_ignore_site_for_cookies)
+    return CookieOptions::SameSiteCookieContext::MakeInclusive();
+
   CookieOptions::SameSiteCookieContext same_site_context;
 
-  if (attach_same_site_cookies) {
-    same_site_context.context =
-        CookieOptions::SameSiteCookieContext::ContextType::SAME_SITE_STRICT;
-    same_site_context.cross_schemeness =
-        ComputeSchemeChange(url, site_for_cookies);
-    return same_site_context;
-  }
-
-  same_site_context = ComputeSameSiteContext(url, site_for_cookies, initiator);
+  same_site_context.set_context(
+      ComputeSameSiteContext(url, site_for_cookies, initiator, false));
+  same_site_context.set_schemeful_context(
+      ComputeSameSiteContext(url, site_for_cookies, initiator, true));
 
   // If the method is safe, the context is Lax. Otherwise, make a note that
   // the method is unsafe.
-  if (same_site_context.context ==
-          CookieOptions::SameSiteCookieContext::ContextType::SAME_SITE_LAX &&
-      !net::HttpUtil::IsMethodSafe(http_method)) {
-    same_site_context.context = CookieOptions::SameSiteCookieContext::
-        ContextType::SAME_SITE_LAX_METHOD_UNSAFE;
+  if (!net::HttpUtil::IsMethodSafe(http_method)) {
+    if (same_site_context.context() == ContextType::SAME_SITE_LAX) {
+      same_site_context.set_context(ContextType::SAME_SITE_LAX_METHOD_UNSAFE);
+    }
+    if (same_site_context.schemeful_context() == ContextType::SAME_SITE_LAX) {
+      same_site_context.set_schemeful_context(
+          ContextType::SAME_SITE_LAX_METHOD_UNSAFE);
+    }
   }
 
   return same_site_context;
@@ -474,71 +515,105 @@ NET_EXPORT CookieOptions::SameSiteCookieContext
 ComputeSameSiteContextForScriptGet(const GURL& url,
                                    const SiteForCookies& site_for_cookies,
                                    const base::Optional<url::Origin>& initiator,
-                                   bool attach_same_site_cookies) {
-  if (attach_same_site_cookies) {
-    CookieOptions::SameSiteCookieContext same_site_context(
-        CookieOptions::SameSiteCookieContext::ContextType::SAME_SITE_STRICT);
-    same_site_context.cross_schemeness =
-        ComputeSchemeChange(url, site_for_cookies);
-    return same_site_context;
-  }
-  return ComputeSameSiteContext(url, site_for_cookies, initiator);
+                                   bool force_ignore_site_for_cookies) {
+  if (force_ignore_site_for_cookies)
+    return CookieOptions::SameSiteCookieContext::MakeInclusive();
+
+  CookieOptions::SameSiteCookieContext same_site_context;
+
+  same_site_context.set_context(
+      ComputeSameSiteContext(url, site_for_cookies, initiator, false));
+  same_site_context.set_schemeful_context(
+      ComputeSameSiteContext(url, site_for_cookies, initiator, true));
+
+  return same_site_context;
 }
 
 CookieOptions::SameSiteCookieContext ComputeSameSiteContextForResponse(
     const GURL& url,
     const SiteForCookies& site_for_cookies,
     const base::Optional<url::Origin>& initiator,
-    bool attach_same_site_cookies) {
-  CookieOptions::SameSiteCookieContext same_site_context;
+    bool force_ignore_site_for_cookies) {
   // |initiator| is here in case it'll be decided to ignore |site_for_cookies|
   // for entirely browser-side requests (see https://crbug.com/958335).
-  if (attach_same_site_cookies || site_for_cookies.IsFirstParty(url)) {
-    same_site_context.context =
-        CookieOptions::SameSiteCookieContext::ContextType::SAME_SITE_LAX;
-  } else {
-    same_site_context.context =
-        CookieOptions::SameSiteCookieContext::ContextType::CROSS_SITE;
-  }
-  same_site_context.cross_schemeness =
-      ComputeSchemeChange(url, site_for_cookies);
-  return same_site_context;
+
+  return ComputeSameSiteContextForSet(url, site_for_cookies,
+                                      force_ignore_site_for_cookies);
 }
 
 CookieOptions::SameSiteCookieContext ComputeSameSiteContextForScriptSet(
     const GURL& url,
     const SiteForCookies& site_for_cookies,
-    bool attach_same_site_cookies) {
-  CookieOptions::SameSiteCookieContext same_site_context;
-  if (attach_same_site_cookies || site_for_cookies.IsFirstParty(url)) {
-    same_site_context.context =
-        CookieOptions::SameSiteCookieContext::ContextType::SAME_SITE_LAX;
-  } else {
-    same_site_context.context =
-        CookieOptions::SameSiteCookieContext::ContextType::CROSS_SITE;
-  }
-  same_site_context.cross_schemeness =
-      ComputeSchemeChange(url, site_for_cookies);
-  return same_site_context;
+    bool force_ignore_site_for_cookies) {
+  return ComputeSameSiteContextForSet(url, site_for_cookies,
+                                      force_ignore_site_for_cookies);
 }
 
 CookieOptions::SameSiteCookieContext ComputeSameSiteContextForSubresource(
     const GURL& url,
     const SiteForCookies& site_for_cookies,
-    bool attach_same_site_cookies) {
-  CookieOptions::SameSiteCookieContext same_site_context;
+    bool force_ignore_site_for_cookies) {
+  if (force_ignore_site_for_cookies)
+    return CookieOptions::SameSiteCookieContext::MakeInclusive();
+
   // If the URL is same-site as site_for_cookies it's same-site as all frames
   // in the tree from the initiator frame up --- including the initiator frame.
-  if (attach_same_site_cookies || site_for_cookies.IsFirstParty(url)) {
-    same_site_context.context =
-        CookieOptions::SameSiteCookieContext::ContextType::SAME_SITE_STRICT;
-  } else {
-    same_site_context.context =
-        CookieOptions::SameSiteCookieContext::ContextType::CROSS_SITE;
+
+  // Schemeless check
+  if (!site_for_cookies.IsFirstPartyWithSchemefulMode(url, false)) {
+    return CookieOptions::SameSiteCookieContext(ContextType::CROSS_SITE,
+                                                ContextType::CROSS_SITE);
   }
-  same_site_context.cross_schemeness =
-      ComputeSchemeChange(url, site_for_cookies);
-  return same_site_context;
+
+  // Schemeful check
+  if (!site_for_cookies.IsFirstPartyWithSchemefulMode(url, true)) {
+    return CookieOptions::SameSiteCookieContext(ContextType::SAME_SITE_STRICT,
+                                                ContextType::CROSS_SITE);
+  }
+
+  return CookieOptions::SameSiteCookieContext::MakeInclusive();
+}
+
+bool IsSameSiteCompatPair(const CanonicalCookie& c1,
+                          const CanonicalCookie& c2,
+                          const CookieOptions& options) {
+  if (options.exclude_httponly() && (c1.IsHttpOnly() || c2.IsHttpOnly()))
+    return false;
+
+  if (c1.IsEquivalent(c2))
+    return false;
+
+  // One of them is SameSite=None and Secure; the other one has unspecified
+  // SameSite.
+  bool same_site_attributes_ok =
+      c1.SameSite() == CookieSameSite::NO_RESTRICTION && c1.IsSecure() &&
+      c2.SameSite() == CookieSameSite::UNSPECIFIED;
+  same_site_attributes_ok =
+      same_site_attributes_ok ||
+      (c2.SameSite() == CookieSameSite::NO_RESTRICTION && c2.IsSecure() &&
+       c1.SameSite() == CookieSameSite::UNSPECIFIED);
+  if (!same_site_attributes_ok)
+    return false;
+
+  if (c1.Domain() != c2.Domain() || c1.Path() != c2.Path() ||
+      c1.Value() != c2.Value()) {
+    return false;
+  }
+
+  DCHECK(c1.Name() != c2.Name());
+  std::string shorter, longer;
+  std::tie(shorter, longer) = (c1.Name().length() < c2.Name().length())
+                                  ? std::tie(c1.Name(), c2.Name())
+                                  : std::tie(c2.Name(), c1.Name());
+  // One of them has a name that is a prefix or suffix of the other and has
+  // length at least 3 characters.
+  if (shorter.length() < kMinCompatPairNameLength)
+    return false;
+  if (base::StartsWith(longer, shorter, base::CompareCase::SENSITIVE) ||
+      base::EndsWith(longer, shorter, base::CompareCase::SENSITIVE)) {
+    return true;
+  }
+  return false;
 }
 
 bool IsSameSiteByDefaultCookiesEnabled() {
@@ -549,6 +624,10 @@ bool IsCookiesWithoutSameSiteMustBeSecureEnabled() {
   return IsSameSiteByDefaultCookiesEnabled() &&
          base::FeatureList::IsEnabled(
              features::kCookiesWithoutSameSiteMustBeSecure);
+}
+
+bool IsSchemefulSameSiteEnabled() {
+  return base::FeatureList::IsEnabled(features::kSchemefulSameSite);
 }
 
 bool IsRecentHttpSameSiteAccessGrantsLegacyCookieSemanticsEnabled() {
@@ -596,21 +675,23 @@ bool DoesCreationTimeGrantLegacySemantics(base::Time creation_date) {
   return (base::Time::Now() - creation_date) < recency_threshold;
 }
 
-base::OnceCallback<void(net::CanonicalCookie::CookieInclusionStatus)>
-AdaptCookieInclusionStatusToBool(base::OnceCallback<void(bool)> callback) {
+base::OnceCallback<void(CookieAccessResult)> AdaptCookieAccessResultToBool(
+    base::OnceCallback<void(bool)> callback) {
   return base::BindOnce(
       [](base::OnceCallback<void(bool)> inner_callback,
-         const net::CanonicalCookie::CookieInclusionStatus status) {
-        bool success = status.IsInclude();
+         const CookieAccessResult access_result) {
+        bool success = access_result.status.IsInclude();
         std::move(inner_callback).Run(success);
       },
       std::move(callback));
 }
 
-CookieList StripStatuses(const CookieStatusList& cookie_status_list) {
+CookieList StripAccessResults(
+    const CookieAccessResultList& cookie_access_results_list) {
   CookieList cookies;
-  for (const CookieWithStatus& cookie_with_status : cookie_status_list) {
-    cookies.push_back(cookie_with_status.cookie);
+  for (const CookieWithAccessResult& cookie_with_access_result :
+       cookie_access_results_list) {
+    cookies.push_back(cookie_with_access_result.cookie);
   }
   return cookies;
 }

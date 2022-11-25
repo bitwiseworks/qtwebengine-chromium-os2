@@ -27,8 +27,6 @@ class Element;
 class CanvasRenderingContext2DState final
     : public GarbageCollected<CanvasRenderingContext2DState>,
       public FontSelectorClient {
-  USING_GARBAGE_COLLECTED_MIXIN(CanvasRenderingContext2DState);
-
  public:
   enum ClipListCopyMode { kCopyClipList, kDontCopyClipList };
 
@@ -37,7 +35,7 @@ class CanvasRenderingContext2DState final
                                 ClipListCopyMode);
   ~CanvasRenderingContext2DState() override;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   enum PaintType {
     kFillPaintType,
@@ -46,7 +44,7 @@ class CanvasRenderingContext2DState final
   };
 
   // FontSelectorClient implementation
-  void FontsNeedUpdate(FontSelector*) override;
+  void FontsNeedUpdate(FontSelector*, FontInvalidationReason) override;
 
   bool HasUnrealizedSaves() const { return unrealized_save_count_; }
   void Save() { ++unrealized_save_count_; }
@@ -79,7 +77,7 @@ class CanvasRenderingContext2DState final
   }
 
   void SetFont(const FontDescription&, FontSelector*);
-  const Font& GetFont();
+  const Font& GetFont() const;
   const FontDescription& GetFontDescription() const;
   bool HasRealizedFont() const { return realized_font_; }
   void SetUnparsedFont(const String& font) { unparsed_font_ = font; }
@@ -110,12 +108,16 @@ class CanvasRenderingContext2DState final
   void SetFillStyle(CanvasStyle*);
   CanvasStyle* FillStyle() const { return fill_style_.Get(); }
 
+  // Prefer to use Style() over StrokeStyle() and FillStyle()
+  // if properties of CanvasStyle are concerned
   CanvasStyle* Style(PaintType) const;
 
-  bool HasPattern() const;
+  // Check the pattern in StrokeStyle or FillStyle depending on the PaintType
+  bool HasPattern(PaintType) const;
 
   // Only to be used if the CanvasRenderingContext2DState has Pattern
-  bool PatternIsAccelerated() const;
+  // Pattern is in either StrokeStyle or FillStyle depending on the PaintType
+  bool PatternIsAccelerated(PaintType) const;
 
   enum Direction { kDirectionInherit, kDirectionRTL, kDirectionLTR };
 

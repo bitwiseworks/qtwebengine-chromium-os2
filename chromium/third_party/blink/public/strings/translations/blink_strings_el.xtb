@@ -13,9 +13,12 @@
 <translation id="1211441953136645838">σημείωση τέλους</translation>
 <translation id="1281252709823657822">παράθυρο διαλόγου</translation>
 <translation id="1306460908038601864">Απενεργοποιημένο</translation>
+<translation id="1311894908970423688">Η τιμή πρέπει να είναι <ph name="VALUE_DATE_OR_TIME" />.</translation>
 <translation id="1335095011850992622">συντελεστές</translation>
 <translation id="1342835525016946179">άρθρο</translation>
 <translation id="1359897965706325498">banner</translation>
+<translation id="145015347812617860"><ph name="COUNT" /> στοιχεία</translation>
+<translation id="1480676835519562650">πολλαπλής επιλογής, έγινε επιλογή <ph name="SELECTED" /> από <ph name="COUNT" />.</translation>
 <translation id="1589122976691792535">περιοχή</translation>
 <translation id="1591562245178063882">Αυτόν το μήνα</translation>
 <translation id="1637811476055996098">Επιλογή αρχείων</translation>
@@ -35,6 +38,7 @@
 <translation id="1938124657309484470">Η τιμή πρέπει να είναι <ph name="MAXIMUM_DATE_OR_TIME" /> ή προγενέστερη.</translation>
 <translation id="1946271899482435442">Εμφάνιση εργαλείου επιλογής ημερομηνίας</translation>
 <translation id="1993104285338243655">Εναλλαγή σε κατοπτρισμό</translation>
+<translation id="2031987842108996681">Κανάλι κόκκινου χρώματος</translation>
 <translation id="2060505056492490888">Το σύμβολο "<ph name="DOT" />" χρησιμοποιείται σε λάθος θέση στη διεύθυνση "<ph name="INVALIDDOMAIN" />".</translation>
 <translation id="2148716181193084225">Σήμερα</translation>
 <translation id="2158401438286456825">λίστα σελίδων</translation>
@@ -43,15 +47,19 @@
 <translation id="2247351761944213033">Εβδομάδα <ph name="WEEKNUMBER" />, <ph name="YEAR" /></translation>
 <translation id="2277199496770840904">Κομμάτι <ph name="NUMBER" /></translation>
 <translation id="2291999235780842123">πλαίσιο ελέγχου</translation>
+<translation id="2307576640803031502">σε λίστα, στοιχείο <ph name="INDEX" /> από <ph name="COUNT" /></translation>
 <translation id="2311842470354187719">αλλαγή σελίδας</translation>
 <translation id="2335594187091864976">εργαλείο επιλογής ημερομηνίας και ώρας</translation>
+<translation id="2393030564806080191">Δεκαεξαδική τιμή χρώματος</translation>
 <translation id="245932805758469625">χρόνος που απομένει από το βίντεο σε δευτερόλεπτα</translation>
 <translation id="248395913932153421">Ημέρα</translation>
 <translation id="2507943997699731163">Συμπληρώστε αυτό το πεδίο.</translation>
 <translation id="2508569020611168319">λίστα καρτελών</translation>
+<translation id="2530182415807757784">πολλαπλής επιλογής, καμία επιλογή.</translation>
 <translation id="2561842179657104141">εμφάνιση περισσότερων στοιχείων ελέγχου μέσων</translation>
 <translation id="2572483411312390101">αναπαραγωγή</translation>
 <translation id="2613802280814924224">Καταχωρίστε μια έγκυρη τιμή. Η κοντινότερη έγκυρη τιμή είναι <ph name="VALID_VALUE" />.</translation>
+<translation id="2634240155926812724">Κανάλι πράσινου χρώματος</translation>
 <translation id="2653659639078652383">Υποβολή</translation>
 <translation id="2657045182931379222">αντικείμενο γραφικών</translation>
 <translation id="2674318244760992338">υποσέλιδο</translation>
@@ -72,6 +80,7 @@
 <translation id="310520048233152454">Εισαγάγετε μια διεύθυνση URL.</translation>
 <translation id="3175736971608411871">χρονόμετρο</translation>
 <translation id="3199563858620722075">σύνθετο πλαίσιο</translation>
+<translation id="3329013043687509092">Κορεσμός</translation>
 <translation id="3450233048674729344">Η τιμή πρέπει να είναι μικρότερη ή ίση του <ph name="MAXIMUM" />.</translation>
 <translation id="3486220673238053218">ορισμός</translation>
 <translation id="3557673793733683882">επικεφαλίδα <ph name="HEADING_LEVEL" /></translation>
@@ -98,7 +107,6 @@
 <translation id="4248100235867064564">γραμμή μενού</translation>
 <translation id="4360991593054037559">Καταχωρίστε μια έγκυρη τιμή. Οι δύο πιο κοντινές έγκυρες τιμές είναι <ph name="VALID_VALUE_LOW" /> και <ph name="VALID_VALUE_HIGHER" />.</translation>
 <translation id="4384583879834880242">Ερωτήσεις και απαντήσεις</translation>
-<translation id="4413860115965805769">κουμπί μενού</translation>
 <translation id="4444765639179266822">Φαίνεται πως λέει: <ph name="OCR_TEXT" /></translation>
 <translation id="4446524499724042288">αναφορά στο γλωσσάρι</translation>
 <translation id="4522570452068850558">Λεπτομέρειες</translation>
@@ -126,6 +134,7 @@
 <translation id="5034860022980953847">ένδειξη προόδου</translation>
 <translation id="5090250355906949916">δείκτης χρόνου βίντεο</translation>
 <translation id="5093189678851173835">επιγραφή</translation>
+<translation id="509897012892853729">Κανάλι μπλε χρώματος</translation>
 <translation id="5117590920725113268">Εμφάνιση επόμενου μήνα</translation>
 <translation id="512758898067543763">κεφαλίδα σειράς</translation>
 <translation id="5143125788380636750">επίλογος</translation>
@@ -149,9 +158,11 @@
 <translation id="5677946354068040947">περισσότερες επιλογές</translation>
 <translation id="576709008726043716">εισαγωγή</translation>
 <translation id="57838592816432529">Σίγαση</translation>
+<translation id="5860033963881614850">Απενεργοποιημένη</translation>
 <translation id="588258955323874662">Πλήρης οθόνη</translation>
 <translation id="5888666972993069672">Μετάδοση τώρα στη συσκευή <ph name="DEVICE_FRIENDLY_NAME" /></translation>
 <translation id="591047860372322273">πλαίσιο αναζήτησης</translation>
+<translation id="5916664084637901428">Ενεργό</translation>
 <translation id="5939518447894949180">Επαναφορά</translation>
 <translation id="5966707198760109579">Εβδομάδα</translation>
 <translation id="5987525920412732405">κουμπί αυξομείωσης</translation>
@@ -163,6 +174,7 @@
 <translation id="6166809985690652833">επίλογος</translation>
 <translation id="6209276755895393898">Φαίνεται πως είναι: <ph name="DESCRIPTION" /></translation>
 <translation id="6213469881011901533">γλωσσάρι</translation>
+<translation id="6281588256137006900">Φωτεινότητα</translation>
 <translation id="6281763101136022427">URL</translation>
 <translation id="6310801910862476708">Έξοδος από τη λειτουργία Picture-in-Picture</translation>
 <translation id="6398862346408813489">Εμφάνιση παραθύρου επιλογής μήνα</translation>
@@ -178,11 +190,13 @@
 <translation id="6643016212128521049">Διαγραφή</translation>
 <translation id="668171684555832681">Άλλο...</translation>
 <translation id="6692633176391053278">stepper</translation>
+<translation id="6709093583001123835">Η τιμή πρέπει να είναι <ph name="VALUE" />.</translation>
 <translation id="6709570249143506788">Κακή ποιότητα αναπαραγωγής</translation>
 <translation id="6755330956360078551">επεξήγηση εργαλείου</translation>
 <translation id="6790428901817661496">Αναπαραγωγή</translation>
 <translation id="6820355525329141109">Δεν είναι δυνατή η φόρτωση της προσθήκης.</translation>
 <translation id="6820615603175220800">βιβλιογραφική αναφορά</translation>
+<translation id="6831465880655513317">Επιλογέας χρώματος με δισδιάστατο ρυθμιστικό για την επιλογή κορεσμού και φωτεινότητας</translation>
 <translation id="6843725295806269523">σίγαση</translation>
 <translation id="6885760532393684712">κατάλογος</translation>
 <translation id="689129560213475294">εκδοτικό σήμα</translation>
@@ -200,6 +214,7 @@
 <translation id="7263440858009898357">Επιλέξτε ένα στοιχείο από τη λίστα.</translation>
 <translation id="727747134524199931">κεφαλίδα στήλης</translation>
 <translation id="7320576522385648310">αποθήκευση στην προσωρινή μνήμη</translation>
+<translation id="7341556277900466204">Επιλογέας χρώματος</translation>
 <translation id="7353453495576941748">εύσημα</translation>
 <translation id="7364796246159120393">Επιλογή αρχείου</translation>
 <translation id="739024184232394898">Άλλες…</translation>
@@ -220,6 +235,7 @@
 <translation id="775297008183122718">Μη έγκυρη καταχώριση</translation>
 <translation id="7789962463072032349">παύση</translation>
 <translation id="7802800022689234070">τρίγωνο εμφάνισης/απόκρυψης</translation>
+<translation id="7852167693871241274">Ρυθμιστικό απόχρωσης</translation>
 <translation id="7888071071722539607">Συμπεριλάβετε το σύμβολο "<ph name="ATSIGN" />" στη διεύθυνση ηλεκτρονικού ταχυδρομείου. Από τη διεύθυνση "<ph name="INVALIDADDRESS" />" λείπει το σύμβολο "<ph name="ATSIGN" />".</translation>
 <translation id="7891486169920085145">διαχωριστής</translation>
 <translation id="795667975304826397">Δεν επιλέχθηκε κανένα αρχείο.</translation>
@@ -260,7 +276,9 @@
 <translation id="8845239796550121995">Γίνεται μετάδοση στην TV</translation>
 <translation id="8851136666856101339">κύριο</translation>
 <translation id="8875657656876809964">Σφάλμα αναπαραγωγής βίντεο</translation>
+<translation id="8889402386540077796">Απόχρωση</translation>
 <translation id="8901569739625249689"><ph name="QUANTITY" /> KB</translation>
+<translation id="894736920926684893">Διακόπτης εναλλαγής μορφής</translation>
 <translation id="8987927404178983737">Μήνας</translation>
 <translation id="901493112792887934">τρέχων χρόνος σε δευτερόλεπτα</translation>
 <translation id="901834265349196618">ηλεκτρονικό ταχυδρομείο</translation>
@@ -273,6 +291,7 @@
 <translation id="9155987714137265666"><ph name="WEEK" />, από τις <ph name="WEEK_START_DATE" /></translation>
 <translation id="916607977885256133">Παράθεση εικόνων</translation>
 <translation id="9168329111483466115">υποσημείωση</translation>
+<translation id="945780513535800434">Μερικώς επιλεγμένο</translation>
 <translation id="954003015749068518">είσοδος στη λειτουργία picture-in-picture</translation>
 <translation id="966787709310836684">μενού</translation>
 </translationbundle>

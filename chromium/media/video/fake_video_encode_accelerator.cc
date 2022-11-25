@@ -5,8 +5,8 @@
 #include "media/video/fake_video_encode_accelerator.h"
 
 #include "base/bind.h"
+#include "base/check.h"
 #include "base/location.h"
-#include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 
 namespace media {
@@ -17,7 +17,7 @@ FakeVideoEncodeAccelerator::FakeVideoEncodeAccelerator(
     const scoped_refptr<base::SingleThreadTaskRunner>& task_runner)
     : task_runner_(task_runner),
       will_initialization_succeed_(true),
-      client_(NULL),
+      client_(nullptr),
       next_frame_is_first_frame_(true) {}
 
 FakeVideoEncodeAccelerator::~FakeVideoEncodeAccelerator() {

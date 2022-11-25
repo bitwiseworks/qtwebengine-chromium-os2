@@ -17,6 +17,7 @@
 #include "base/environment.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/numerics/safe_conversions.h"
@@ -988,7 +989,7 @@ TEST_F(SubresourceFilteringRulesetServiceTest,
     ClearRulesetService();
     RunBlockingUntilIdle();
 
-    EXPECT_TRUE(base::DeleteFileRecursively(base_dir()));
+    EXPECT_TRUE(base::DeletePathRecursively(base_dir()));
     ResetRulesetService();
   }
 
@@ -1035,7 +1036,7 @@ TEST_F(SubresourceFilteringRulesetServiceTest,
     ClearRulesetService();
     RunBlockingUntilIdle();
 
-    EXPECT_TRUE(base::DeleteFileRecursively(base_dir()));
+    EXPECT_TRUE(base::DeletePathRecursively(base_dir()));
     IndexedRulesetVersion().SaveToPrefs(prefs());
     ResetRulesetService();
   }

@@ -52,10 +52,14 @@ void UnifiedHeapController::TracePrologue(
       thread_state_->current_gc_data_.reason);
 
   thread_state_->SetGCState(ThreadState::kNoGCScheduled);
-  BlinkGC::GCReason gc_reason =
-      (v8_flags & v8::EmbedderHeapTracer::TraceFlags::kReduceMemory)
-          ? BlinkGC::GCReason::kUnifiedHeapForMemoryReductionGC
-          : BlinkGC::GCReason::kUnifiedHeapGC;
+  BlinkGC::GCReason gc_reason;
+  if (v8_flags & v8::EmbedderHeapTracer::TraceFlags::kForced) {
+    gc_reason = BlinkGC::GCReason::kUnifiedHeapForcedForTestingGC;
+  } else if (v8_flags & v8::EmbedderHeapTracer::TraceFlags::kReduceMemory) {
+    gc_reason = BlinkGC::GCReason::kUnifiedHeapForMemoryReductionGC;
+  } else {
+    gc_reason = BlinkGC::GCReason::kUnifiedHeapGC;
+  }
   thread_state_->StartIncrementalMarking(gc_reason);
 
   is_tracing_done_ = false;
@@ -82,10 +86,12 @@ void UnifiedHeapController::TraceEpilogue(
         thread_state_->Heap().stats_collector());
     thread_state_->AtomicPauseMarkEpilogue(
         BlinkGC::kIncrementalAndConcurrentMarking);
+    const BlinkGC::SweepingType sweeping_type =
+        thread_state_->IsForcedGC() ? BlinkGC::kEagerSweeping
+                                    : BlinkGC::kConcurrentAndLazySweeping;
     thread_state_->AtomicPauseSweepAndCompact(
         BlinkGC::CollectionType::kMajor,
-        BlinkGC::kIncrementalAndConcurrentMarking,
-        BlinkGC::kConcurrentAndLazySweeping);
+        BlinkGC::kIncrementalAndConcurrentMarking, sweeping_type);
 
     ThreadHeapStatsCollector* const stats_collector =
         thread_state_->Heap().stats_collector();
@@ -132,16 +138,15 @@ bool UnifiedHeapController::AdvanceTracing(double deadline_in_ms) {
     // progress. Oilpan will additionally schedule marking steps.
     ThreadState::AtomicPauseScope atomic_pause_scope(thread_state_);
     ScriptForbiddenScope script_forbidden_scope;
-    base::TimeTicks deadline =
-        base::TimeTicks() + base::TimeDelta::FromMillisecondsD(deadline_in_ms);
-    is_tracing_done_ = thread_state_->MarkPhaseAdvanceMarking(deadline);
+    is_tracing_done_ = thread_state_->MarkPhaseAdvanceMarkingBasedOnSchedule(
+        base::TimeDelta::FromMillisecondsD(deadline_in_ms),
+        ThreadState::EphemeronProcessing::kPartialProcessing);
     if (!is_tracing_done_) {
+      if (base::FeatureList::IsEnabled(
+              blink::features::kBlinkHeapConcurrentMarking)) {
+        thread_state_->ConcurrentMarkingStep();
+      }
       thread_state_->RestartIncrementalMarkingIfPaused();
-    }
-    if (base::FeatureList::IsEnabled(
-            blink::features::kBlinkHeapConcurrentMarking)) {
-      is_tracing_done_ =
-          thread_state_->ConcurrentMarkingStep() && is_tracing_done_;
     }
     return is_tracing_done_;
   }

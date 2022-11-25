@@ -12,6 +12,7 @@
 #include "third_party/blink/renderer/core/frame/picture_in_picture_controller.h"
 #include "third_party/blink/renderer/core/html/media/html_video_element.h"
 #include "third_party/blink/renderer/core/html/media/remote_playback_controller.h"
+#include "third_party/blink/renderer/core/intersection_observer/intersection_observer_entry.h"
 #include "third_party/blink/renderer/core/page/page.h"
 
 namespace blink {
@@ -27,6 +28,12 @@ VideoWakeLock::VideoWakeLock(HTMLVideoElement& video)
                                   this, true);
   VideoElement().addEventListener(event_type_names::kLeavepictureinpicture,
                                   this, true);
+  VideoElement().addEventListener(event_type_names::kVolumechange, this, true);
+
+  if (RuntimeEnabledFeatures::VideoWakeLockOptimisationHiddenMutedEnabled())
+    StartIntersectionObserver();
+  else
+    is_visible_ = true;
 
   RemotePlaybackController* remote_playback_controller =
       RemotePlaybackController::From(VideoElement());
@@ -38,17 +45,31 @@ VideoWakeLock::VideoWakeLock(HTMLVideoElement& video)
 
 void VideoWakeLock::ElementDidMoveToNewDocument() {
   SetExecutionContext(VideoElement().GetExecutionContext());
+
+  if (RuntimeEnabledFeatures::VideoWakeLockOptimisationHiddenMutedEnabled()) {
+    intersection_observer_->disconnect();
+    StartIntersectionObserver();
+  }
 }
 
 void VideoWakeLock::PageVisibilityChanged() {
   Update();
 }
 
-void VideoWakeLock::Trace(Visitor* visitor) {
+void VideoWakeLock::OnVisibilityChanged(
+    const HeapVector<Member<IntersectionObserverEntry>>& entries) {
+  DCHECK(RuntimeEnabledFeatures::VideoWakeLockOptimisationHiddenMutedEnabled());
+
+  is_visible_ = (entries.back()->intersectionRatio() > 0);
+  Update();
+}
+
+void VideoWakeLock::Trace(Visitor* visitor) const {
   NativeEventListener::Trace(visitor);
   PageVisibilityObserver::Trace(visitor);
   ExecutionContextLifecycleStateObserver::Trace(visitor);
   visitor->Trace(video_element_);
+  visitor->Trace(intersection_observer_);
 }
 
 void VideoWakeLock::Invoke(ExecutionContext*, Event* event) {
@@ -62,7 +83,8 @@ void VideoWakeLock::Invoke(ExecutionContext*, Event* event) {
     playing_ = false;
   } else {
     DCHECK(event->type() == event_type_names::kEnterpictureinpicture ||
-           event->type() == event_type_names::kLeavepictureinpicture);
+           event->type() == event_type_names::kLeavepictureinpicture ||
+           event->type() == event_type_names::kVolumechange);
   }
 
   Update();
@@ -95,12 +117,28 @@ bool VideoWakeLock::ShouldBeActive() const {
   bool page_visible = GetPage() && GetPage()->IsPageVisible();
   bool in_picture_in_picture =
       PictureInPictureController::IsElementInPictureInPicture(&VideoElement());
+  bool context_is_running =
+      VideoElement().GetExecutionContext() &&
+      !VideoElement().GetExecutionContext()->IsContextPaused();
 
-  return playing_ && (page_visible || in_picture_in_picture) &&
+  // The visibility requirements are met if one of the following is true:
+  //  - it's in Picture-in-Picture;
+  //  - it's audibly playing on a visible page;
+  //  - it's visible to the user.
+  bool visibility_requirements_met =
+      (in_picture_in_picture ||
+       (page_visible &&
+        (is_visible_ || VideoElement().EffectiveMediaVolume())));
+
+  // The video wake lock should be active iif:
+  //  - it's playing;
+  //  - the visibility requirements are met (see above);
+  //  - it's *not* playing in Remote Playback;
+  //  - the document is not paused nor destroyed.
+  return playing_ && visibility_requirements_met &&
          remote_playback_state_ !=
              mojom::blink::PresentationConnectionState::CONNECTED &&
-         !(VideoElement().GetDocument().IsContextPaused() ||
-           VideoElement().GetDocument().IsContextDestroyed());
+         context_is_running;
 }
 
 void VideoWakeLock::EnsureWakeLockService() {
@@ -139,6 +177,15 @@ void VideoWakeLock::UpdateWakeLockService() {
     wake_lock_service_->RequestWakeLock();
   else
     wake_lock_service_->CancelWakeLock();
+}
+
+void VideoWakeLock::StartIntersectionObserver() {
+  intersection_observer_ = IntersectionObserver::Create(
+      {}, {IntersectionObserver::kMinimumThreshold},
+      &VideoElement().GetDocument(),
+      WTF::BindRepeating(&VideoWakeLock::OnVisibilityChanged,
+                         WrapWeakPersistent(this)));
+  intersection_observer_->observe(&VideoElement());
 }
 
 }  // namespace blink

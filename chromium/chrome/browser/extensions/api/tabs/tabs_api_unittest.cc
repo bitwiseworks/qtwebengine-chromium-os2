@@ -15,6 +15,7 @@
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/sessions/session_tab_helper_factory.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/test_browser_window.h"
 #include "components/sessions/content/session_tab_helper.h"
@@ -30,6 +31,7 @@
 #if defined(OS_CHROMEOS)
 #include "ash/public/cpp/window_pin_type.h"
 #include "ash/public/cpp/window_properties.h"
+#include "chrome/browser/chromeos/policy/dlp/mock_dlp_content_manager.h"
 #endif
 
 namespace extensions {
@@ -338,6 +340,45 @@ TEST_F(TabsApiUnitTest, ExecuteScriptNoTabIsNonFatalError) {
   EXPECT_EQ(tabs_constants::kNoTabInBrowserWindowError, error);
 }
 
+// Tests that calling chrome.tabs.update updates the URL as expected.
+TEST_F(TabsApiUnitTest, TabsUpdate) {
+  scoped_refptr<const Extension> extension =
+      ExtensionBuilder("UpdateTest").Build();
+  const GURL kExampleCom("http://example.com");
+  const GURL kChromiumOrg("https://chromium.org");
+
+  // Add a web contents to the browser.
+  std::unique_ptr<content::WebContents> contents(
+      content::WebContentsTester::CreateTestWebContents(profile(), nullptr));
+  content::WebContents* raw_contents = contents.get();
+  browser()->tab_strip_model()->AppendWebContents(std::move(contents), true);
+  EXPECT_EQ(browser()->tab_strip_model()->GetActiveWebContents(), raw_contents);
+  CreateSessionServiceTabHelper(raw_contents);
+  int tab_id = sessions::SessionTabHelper::IdForTab(raw_contents).id();
+
+  // Navigate the browser to example.com
+  content::WebContentsTester* web_contents_tester =
+      content::WebContentsTester::For(raw_contents);
+  web_contents_tester->NavigateAndCommit(kExampleCom);
+  EXPECT_EQ(kExampleCom, raw_contents->GetLastCommittedURL());
+
+  // Use the TabsUpdateFunction to navigate to chromium.org
+  auto function = base::MakeRefCounted<TabsUpdateFunction>();
+  function->set_extension(extension);
+  static constexpr char kFormatArgs[] = R"([%d, {"url": "%s"}])";
+  const std::string args =
+      base::StringPrintf(kFormatArgs, tab_id, kChromiumOrg.spec().c_str());
+  ASSERT_TRUE(extension_function_test_utils::RunFunction(
+      function.get(), args, browser(), api_test_utils::NONE));
+  content::NavigationController& controller =
+      browser()->tab_strip_model()->GetActiveWebContents()->GetController();
+  content::RenderFrameHostTester::CommitPendingLoad(&controller);
+  EXPECT_EQ(kChromiumOrg, raw_contents->GetLastCommittedURL());
+
+  // Clean up.
+  browser()->tab_strip_model()->CloseAllTabs();
+}
+
 // Tests that calling chrome.tabs.update with a JavaScript URL results
 // in an error.
 TEST_F(TabsApiUnitTest, TabsUpdateJavaScriptUrlNotAllowed) {
@@ -379,6 +420,124 @@ TEST_F(TabsApiUnitTest, TabsUpdateJavaScriptUrlNotAllowed) {
   browser()->tab_strip_model()->CloseAllTabs();
 }
 
+// Test that the tabs.move() function correctly rearranges sets of tabs within a
+// single window.
+TEST_F(TabsApiUnitTest, TabsMoveWithinWindow) {
+  scoped_refptr<const Extension> extension =
+      ExtensionBuilder("MoveWithinWindowTest").Build();
+
+  // Add several web contents to the browser and get their tab IDs.
+  constexpr int kNumTabs = 5;
+  std::vector<int> tab_ids;
+  std::vector<content::WebContents*> web_contentses;
+  for (int i = 0; i < kNumTabs; ++i) {
+    std::unique_ptr<content::WebContents> contents(
+        content::WebContentsTester::CreateTestWebContents(profile(), nullptr));
+
+    CreateSessionServiceTabHelper(contents.get());
+    tab_ids.push_back(
+        sessions::SessionTabHelper::IdForTab(contents.get()).id());
+    web_contentses.push_back(contents.get());
+
+    browser()->tab_strip_model()->AppendWebContents(std::move(contents),
+                                                    /* foreground */ true);
+  }
+  ASSERT_EQ(kNumTabs, browser()->tab_strip_model()->count());
+
+  // Use the TabsMoveFunction to move tabs 0, 2, and 4 to index 1.
+  auto function = base::MakeRefCounted<TabsMoveFunction>();
+  function->set_extension(extension);
+  constexpr char kFormatArgs[] = R"([[%d, %d, %d], {"index": 1}])";
+  const std::string args =
+      base::StringPrintf(kFormatArgs, tab_ids[0], tab_ids[2], tab_ids[4]);
+  ASSERT_TRUE(extension_function_test_utils::RunFunction(
+      function.get(), args, browser(), api_test_utils::NONE));
+
+  TabStripModel* tab_strip_model = browser()->tab_strip_model();
+  EXPECT_EQ(tab_strip_model->GetWebContentsAt(0), web_contentses[1]);
+  EXPECT_EQ(tab_strip_model->GetWebContentsAt(1), web_contentses[0]);
+  EXPECT_EQ(tab_strip_model->GetWebContentsAt(2), web_contentses[2]);
+  EXPECT_EQ(tab_strip_model->GetWebContentsAt(3), web_contentses[4]);
+  EXPECT_EQ(tab_strip_model->GetWebContentsAt(4), web_contentses[3]);
+
+  // Clean up.
+  browser()->tab_strip_model()->CloseAllTabs();
+}
+
+// Test that the tabs.move() function correctly rearranges sets of tabs across
+// windows.
+TEST_F(TabsApiUnitTest, TabsMoveAcrossWindows) {
+  scoped_refptr<const Extension> extension =
+      ExtensionBuilder("MoveAcrossWindowTest").Build();
+
+  // Add several web contents to the original browser and get their tab IDs.
+  constexpr int kNumTabs = 5;
+  std::vector<int> tab_ids;
+  std::vector<content::WebContents*> web_contentses;
+  for (int i = 0; i < kNumTabs; ++i) {
+    std::unique_ptr<content::WebContents> contents(
+        content::WebContentsTester::CreateTestWebContents(profile(), nullptr));
+
+    CreateSessionServiceTabHelper(contents.get());
+    tab_ids.push_back(
+        sessions::SessionTabHelper::IdForTab(contents.get()).id());
+    web_contentses.push_back(contents.get());
+
+    browser()->tab_strip_model()->AppendWebContents(std::move(contents),
+                                                    /* foreground */ true);
+  }
+  ASSERT_EQ(kNumTabs, browser()->tab_strip_model()->count());
+
+  // Create a new window and add a few tabs, getting the ID of the last tab.
+  TestBrowserWindow* window2 = new TestBrowserWindow;
+  // TestBrowserWindowOwner handles its own lifetime, and also cleans up
+  // |window2|.
+  new TestBrowserWindowOwner(window2);
+  Browser::CreateParams params(profile(), /* user_gesture */ true);
+  params.type = Browser::TYPE_NORMAL;
+  params.window = window2;
+  std::unique_ptr<Browser> browser2 = std::make_unique<Browser>(params);
+  BrowserList::SetLastActive(browser2.get());
+  int window_id2 = ExtensionTabUtil::GetWindowId(browser2.get());
+
+  constexpr int kNumTabs2 = 3;
+  for (int i = 0; i < kNumTabs2; ++i) {
+    std::unique_ptr<content::WebContents> contents(
+        content::WebContentsTester::CreateTestWebContents(profile(), nullptr));
+    CreateSessionServiceTabHelper(contents.get());
+    browser2->tab_strip_model()->AppendWebContents(std::move(contents),
+                                                   /* foreground */ true);
+  }
+  ASSERT_EQ(kNumTabs2, browser2->tab_strip_model()->count());
+
+  content::WebContents* web_contents2 =
+      browser2->tab_strip_model()->GetWebContentsAt(2);
+  int tab_id2 = sessions::SessionTabHelper::IdForTab(web_contents2).id();
+
+  // Use the TabsMoveFunction to move tab 2 from browser2 and tabs 0, 2, and 4
+  // from the original browser to index 1 of browser2.
+  constexpr int kNumTabsMovedAcrossWindows = 3;
+  auto function = base::MakeRefCounted<TabsMoveFunction>();
+  function->set_extension(extension);
+  constexpr char kFormatArgs[] =
+      R"([[%d, %d, %d, %d], {"windowId": %d, "index": 1}])";
+  const std::string args = base::StringPrintf(
+      kFormatArgs, tab_id2, tab_ids[0], tab_ids[2], tab_ids[4], window_id2);
+  ASSERT_TRUE(extension_function_test_utils::RunFunction(
+      function.get(), args, browser(), api_test_utils::NONE));
+
+  TabStripModel* tab_strip_model2 = browser2->tab_strip_model();
+  ASSERT_EQ(kNumTabs2 + kNumTabsMovedAcrossWindows, tab_strip_model2->count());
+  EXPECT_EQ(tab_strip_model2->GetWebContentsAt(1), web_contents2);
+  EXPECT_EQ(tab_strip_model2->GetWebContentsAt(2), web_contentses[0]);
+  EXPECT_EQ(tab_strip_model2->GetWebContentsAt(3), web_contentses[2]);
+  EXPECT_EQ(tab_strip_model2->GetWebContentsAt(4), web_contentses[4]);
+
+  // Clean up.
+  browser()->tab_strip_model()->CloseAllTabs();
+  browser2->tab_strip_model()->CloseAllTabs();
+}
+
 TEST_F(TabsApiUnitTest, TabsGoForwardNoSelectedTabError) {
   scoped_refptr<const Extension> extension = CreateTabsExtension();
   auto function = base::MakeRefCounted<TabsGoForwardFunction>();
@@ -406,7 +565,7 @@ TEST_F(TabsApiUnitTest, TabsGoForwardAndBack) {
   const int tab_id =
       sessions::SessionTabHelper::IdForTab(raw_web_contents).id();
   browser()->tab_strip_model()->AppendWebContents(std::move(web_contents),
-                                                  true);
+                                                  /* foreground */ true);
   // Go back with chrome.tabs.goBack.
   auto goback_function = base::MakeRefCounted<TabsGoBackFunction>();
   goback_function->set_extension(extension_with_tabs_permission.get());
@@ -561,6 +720,44 @@ TEST_F(TabsApiUnitTest, DontCreateTabsInLockedFullscreenMode) {
   EXPECT_EQ(tabs_constants::kLockedFullscreenModeNewTabError,
             extension_function_test_utils::RunFunctionAndReturnError(
                 function.get(), "[{}]", browser(), api_test_utils::NONE));
+}
+
+// Ensure tabs.captureVisibleTab respects any Data Leak Prevention restrictions.
+TEST_F(TabsApiUnitTest, ScreenshotsRestricted) {
+  // Setup the function and extension.
+  scoped_refptr<const Extension> extension = ExtensionBuilder("Screenshot")
+                                                 .AddPermission("tabs")
+                                                 .AddPermission("<all_urls>")
+                                                 .Build();
+  auto function = base::MakeRefCounted<TabsCaptureVisibleTabFunction>();
+  function->set_extension(extension.get());
+
+  // Add a visible tab.
+  std::unique_ptr<content::WebContents> web_contents =
+      content::WebContentsTester::CreateTestWebContents(profile(), nullptr);
+  content::WebContentsTester* web_contents_tester =
+      content::WebContentsTester::For(web_contents.get());
+  const GURL kGoogle("http://www.google.com");
+  web_contents_tester->NavigateAndCommit(kGoogle);
+  browser()->tab_strip_model()->AppendWebContents(std::move(web_contents),
+                                                  /*foreground=*/true);
+
+  // Setup Data Leak Prevention restriction.
+  policy::MockDlpContentManager mock_dlp_content_manager;
+  policy::DlpContentManager::SetDlpContentManagerForTesting(
+      &mock_dlp_content_manager);
+  EXPECT_CALL(mock_dlp_content_manager, IsScreenshotRestricted(testing::_))
+      .Times(1)
+      .WillOnce(testing::Return(true));
+
+  // Run the function and check result.
+  std::string error = extension_function_test_utils::RunFunctionAndReturnError(
+      function.get(), "[{}]", browser(), api_test_utils::NONE);
+  EXPECT_EQ(tabs_constants::kScreenshotsDisabled, error);
+
+  // Clean up.
+  browser()->tab_strip_model()->CloseAllTabs();
+  policy::DlpContentManager::ResetDlpContentManagerForTesting();
 }
 #endif  // defined(OS_CHROMEOS)
 

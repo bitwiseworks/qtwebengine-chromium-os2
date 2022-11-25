@@ -120,13 +120,7 @@ void ModuleScriptLoader::FetchInternal(
   resource_request.SetRequestContext(module_request.ContextType());
   resource_request.SetRequestDestination(module_request.Destination());
 
-  ResourceLoaderOptions options;
-
-  // <spec step="6">If destination is "worker" or "sharedworker" and the
-  // top-level module fetch flag is set, then set request's mode to
-  // "same-origin".</spec>
-  // Cross-origin workers are not supported due to security checks in
-  // AbstractWorker::ResolveURL, so no action needs to be taken here.
+  ResourceLoaderOptions options(&modulator_->GetScriptState()->World());
 
   // <spec step="7">Set up the module script request given request and
   // options.</spec>
@@ -147,8 +141,8 @@ void ModuleScriptLoader::FetchInternal(
   options.reject_coep_unsafe_none = options_.GetRejectCoepUnsafeNone();
 
   if (level == ModuleGraphLevel::kDependentModuleFetch) {
-    options.initiator_info.imported_module_referrer =
-        module_request.ReferrerString();
+    options.initiator_info.is_imported_module = true;
+    options.initiator_info.referrer = module_request.ReferrerString();
     options.initiator_info.position = module_request.GetReferrerPosition();
   }
 
@@ -177,6 +171,26 @@ void ModuleScriptLoader::FetchInternal(
   fetch_params.SetCrossOriginAccessControl(
       fetch_client_settings_object.GetSecurityOrigin(),
       options_.CredentialsMode());
+
+  // <spec step="6">If destination is "worker" or "sharedworker" and the
+  // top-level module fetch flag is set, then set request's mode to
+  // "same-origin".</spec>
+  //
+  // `kServiceWorker` is included here for consistency, while it isn't mentioned
+  // in the spec. This doesn't affect the behavior, because we already forbid
+  // redirects and cross-origin response URLs in other places.
+  if ((module_request.Destination() ==
+           network::mojom::RequestDestination::kWorker ||
+       module_request.Destination() ==
+           network::mojom::RequestDestination::kSharedWorker ||
+       module_request.Destination() ==
+           network::mojom::RequestDestination::kServiceWorker) &&
+      level == ModuleGraphLevel::kTopLevelModuleFetch) {
+    // This should be done after SetCrossOriginAccessControl() that sets the
+    // mode to kCors.
+    fetch_params.MutableResourceRequest().SetMode(
+        network::mojom::RequestMode::kSameOrigin);
+  }
 
   // <spec step="5">... referrer is referrer, ...</spec>
   fetch_params.MutableResourceRequest().SetReferrerString(
@@ -279,7 +293,7 @@ void ModuleScriptLoader::NotifyFetchFinished(
   AdvanceState(State::kFinished);
 }
 
-void ModuleScriptLoader::Trace(Visitor* visitor) {
+void ModuleScriptLoader::Trace(Visitor* visitor) const {
   visitor->Trace(modulator_);
   visitor->Trace(module_script_);
   visitor->Trace(registry_);

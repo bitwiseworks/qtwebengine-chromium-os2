@@ -17,9 +17,11 @@ namespace SkSL {
  * A 'while' loop.
  */
 struct WhileStatement : public Statement {
+    static constexpr Kind kStatementKind = Kind::kWhile;
+
     WhileStatement(int offset, std::unique_ptr<Expression> test,
                    std::unique_ptr<Statement> statement)
-    : INHERITED(offset, kWhile_Kind)
+    : INHERITED(offset, kStatementKind)
     , fTest(std::move(test))
     , fStatement(std::move(statement)) {}
 
@@ -28,18 +30,16 @@ struct WhileStatement : public Statement {
                                                              fStatement->clone()));
     }
 
-#ifdef SK_DEBUG
     String description() const override {
         return "while (" + fTest->description() + ") " + fStatement->description();
     }
-#endif
 
     std::unique_ptr<Expression> fTest;
     std::unique_ptr<Statement> fStatement;
 
-    typedef Statement INHERITED;
+    using INHERITED = Statement;
 };
 
-} // namespace
+}  // namespace SkSL
 
 #endif

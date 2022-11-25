@@ -17,7 +17,7 @@
 #include "chrome/browser/net/dns_probe_runner.h"
 #include "chrome/browser/net/dns_probe_service.h"
 #include "chrome/browser/net/dns_probe_test_util.h"
-#include "chrome/browser/net/dns_util.h"
+#include "chrome/browser/net/secure_dns_config.h"
 #include "chrome/browser/net/stub_resolver_config_reader.h"
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/common/pref_names.h"
@@ -27,6 +27,7 @@
 #include "components/prefs/pref_service.h"
 #include "content/public/test/browser_task_environment.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "net/dns/public/secure_dns_mode.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using base::RunLoop;
@@ -187,8 +188,7 @@ TEST_F(DnsProbeServiceTest, Probe_FAIL_OK_automatic) {
   // being downgraded to off if the test environment is managed.
   local_state()->SetManagedPref(
       prefs::kDnsOverHttpsMode,
-      std::make_unique<base::Value>(
-          chrome_browser_net::kDnsOverHttpsModeAutomatic));
+      std::make_unique<base::Value>(SecureDnsConfig::kModeAutomatic));
   ConfigureTest({{net::ERR_NAME_NOT_RESOLVED,
                   net::ResolveErrorInfo(net::ERR_NAME_NOT_RESOLVED),
                   FakeHostResolver::kNoResponse}},
@@ -202,8 +202,7 @@ TEST_F(DnsProbeServiceTest, Probe_FAIL_OK_secure) {
   // being downgraded to off if the test environment is managed.
   local_state()->SetManagedPref(
       prefs::kDnsOverHttpsMode,
-      std::make_unique<base::Value>(
-          chrome_browser_net::kDnsOverHttpsModeSecure));
+      std::make_unique<base::Value>(SecureDnsConfig::kModeSecure));
   ConfigureTest({{net::ERR_NAME_NOT_RESOLVED,
                   net::ResolveErrorInfo(
                       net::ERR_DNS_SECURE_RESOLVER_HOSTNAME_RESOLUTION_FAILED),
@@ -305,8 +304,7 @@ TEST_F(DnsProbeServiceTest, CurrentConfig_Automatic) {
   // being downgraded to off if the test environment is managed.
   local_state()->SetManagedPref(
       prefs::kDnsOverHttpsMode,
-      std::make_unique<base::Value>(
-          chrome_browser_net::kDnsOverHttpsModeAutomatic));
+      std::make_unique<base::Value>(SecureDnsConfig::kModeAutomatic));
   local_state()->SetManagedPref(
       prefs::kDnsOverHttpsTemplates,
       std::make_unique<base::Value>(kDohTemplateGet + " " + kDohTemplatePost));
@@ -318,12 +316,9 @@ TEST_F(DnsProbeServiceTest, CurrentConfig_Automatic) {
   EXPECT_EQ(0u, overrides.search->size());
   EXPECT_TRUE(overrides.attempts.has_value());
   EXPECT_EQ(1, overrides.attempts.value());
-  EXPECT_TRUE(overrides.randomize_ports.has_value());
-  EXPECT_FALSE(overrides.randomize_ports.value());
 
   EXPECT_TRUE(overrides.secure_dns_mode.has_value());
-  EXPECT_EQ(net::DnsConfig::SecureDnsMode::OFF,
-            overrides.secure_dns_mode.value());
+  EXPECT_EQ(net::SecureDnsMode::kOff, overrides.secure_dns_mode.value());
   EXPECT_FALSE(overrides.dns_over_https_servers.has_value());
 }
 
@@ -332,8 +327,7 @@ TEST_F(DnsProbeServiceTest, CurrentConfig_Secure) {
   // being downgraded to off if the test environment is managed.
   local_state()->SetManagedPref(
       prefs::kDnsOverHttpsMode,
-      std::make_unique<base::Value>(
-          chrome_browser_net::kDnsOverHttpsModeSecure));
+      std::make_unique<base::Value>(SecureDnsConfig::kModeSecure));
   local_state()->SetManagedPref(
       prefs::kDnsOverHttpsTemplates,
       std::make_unique<base::Value>(kDohTemplateGet + " " + kDohTemplatePost));
@@ -345,12 +339,9 @@ TEST_F(DnsProbeServiceTest, CurrentConfig_Secure) {
   EXPECT_EQ(0u, overrides.search->size());
   EXPECT_TRUE(overrides.attempts.has_value());
   EXPECT_EQ(1, overrides.attempts.value());
-  EXPECT_TRUE(overrides.randomize_ports.has_value());
-  EXPECT_FALSE(overrides.randomize_ports.value());
 
   EXPECT_TRUE(overrides.secure_dns_mode.has_value());
-  EXPECT_EQ(net::DnsConfig::SecureDnsMode::SECURE,
-            overrides.secure_dns_mode.value());
+  EXPECT_EQ(net::SecureDnsMode::kSecure, overrides.secure_dns_mode.value());
   EXPECT_TRUE(overrides.dns_over_https_servers.has_value());
   ASSERT_EQ(2u, overrides.dns_over_https_servers->size());
   EXPECT_EQ(kDohTemplateGet,

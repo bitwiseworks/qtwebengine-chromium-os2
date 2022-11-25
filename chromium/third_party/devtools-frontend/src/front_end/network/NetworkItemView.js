@@ -28,6 +28,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as SDK from '../sdk/sdk.js';
 import * as UI from '../ui/ui.js';
@@ -124,7 +127,7 @@ export class NetworkItemView extends UI.TabbedPane.TabbedPane {
   }
 
   _maybeAppendCookiesPanel() {
-    const cookiesPresent = this._request.requestCookies.length || this._request.responseCookies.length;
+    const cookiesPresent = this._request.hasRequestCookies() || this._request.responseCookies.length;
     console.assert(cookiesPresent || !this._cookiesView, 'Cookies were introduced in headers and then removed!');
     if (cookiesPresent && !this._cookiesView) {
       this._cookiesView = new RequestCookiesView(this._request);

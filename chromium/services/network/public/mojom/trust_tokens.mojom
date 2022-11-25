@@ -102,14 +102,21 @@ struct TrustTokenParams {
   // or redeem a new token, evicting the SRR currently stored.
   TrustTokenRefreshPolicy refresh_policy = kUseCached;
 
-  // "sign_request_data", "include_timestamp_header", "issuer", and
-  // "additional_signed_headers" are used only when "type" is "kSigning":
-  // these parameters specify the manner in which the outgoing request should
-  // be signed.
+  // The remaining members are used only when "type" is "kSigning": these
+  // parameters specify the manner in which the outgoing request should be
+  // signed, including optionally specifying additional data to add in
+  // browser-provided request headers (for instance, a timestamp or custom
+  // client-provided data).
   TrustTokenSignRequestData sign_request_data = kOmit;
   bool include_timestamp_header = false;
-  url.mojom.Origin? issuer;
+  array<url.mojom.Origin> issuers;
   array<string> additional_signed_headers;
+
+  // "possibly_unsafe_additional_signing_data", which stores the request's
+  // optional additionalSigningData Trust Tokens parameter, might not be a valid
+  // HTTP header value; it's the user's responsibility to ensure that it is safe
+  // to attach as a header prior to adding it to an outgoing request's headers.
+  string? possibly_unsafe_additional_signing_data;
 };
 
 // Result struct for a HasTrustTokens (see below) call:
@@ -150,24 +157,12 @@ interface HasTrustTokensAnswerer {
 struct TrustTokenVerificationKey {
   string body;
   mojo_base.mojom.Time expiry;
-  // Key labels are opaque values provided by the trust token issuer,
-  // constrained to be in the representable range of uint32. We keep track of
-  // them in order to provide them in Trust Tokens redemption requests, at which
-  // point the label of a token's verification key becomes bound to the token's
-  // redemption.
-  uint32 label;
-};
-
-// This is a wrapper struct that exists in order to make the batch size
-// nullable.
-struct TrustTokenKeyCommitmentBatchSize {
-  int32 value;
 };
 
 struct TrustTokenKeyCommitmentResult {
-  // |batch_size| is the issuer's optional number of tokens it wishes the client
+  // |batch_size| is the issuer's number of tokens it wishes the client
   // to request per Trust Tokens issuance operation.
-  TrustTokenKeyCommitmentBatchSize? batch_size;
+  int32 batch_size;
 
   // |keys| is the collection of the issuer's current trust token verification
   // keys.

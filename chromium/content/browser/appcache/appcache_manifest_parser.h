@@ -51,16 +51,17 @@ struct CONTENT_EXPORT AppCacheManifest {
   std::unordered_set<std::string> explicit_urls;
   std::vector<AppCacheNamespace> intercept_namespaces;
   std::vector<AppCacheNamespace> fallback_namespaces;
-  std::vector<AppCacheNamespace> online_whitelist_namespaces;
+  std::vector<AppCacheNamespace> online_safelist_namespaces;
   // Stores the version of the manifest parser used to interpret a given
   // AppCache manifest.
   int parser_version = -1;
   // Stores the scope used to validate resource overrides specified in a given
   // manifest, if |scope_checks_enabled| is true.
   std::string scope;
-  bool online_whitelist_all = false;
+  bool online_safelist_all = false;
   bool did_ignore_intercept_namespaces = false;
   bool did_ignore_fallback_namespaces = false;
+  base::Time token_expires;
 };
 
 enum ParseMode {
@@ -74,6 +75,8 @@ CONTENT_EXPORT bool ParseManifest(const GURL& manifest_url,
                                   int manifest_size,
                                   ParseMode parse_mode,
                                   AppCacheManifest& manifest);
+
+CONTENT_EXPORT std::string GetAppCacheOriginTrialNameForTesting();
 
 }  // namespace content
 

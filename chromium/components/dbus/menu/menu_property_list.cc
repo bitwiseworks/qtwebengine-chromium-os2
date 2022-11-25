@@ -6,16 +6,19 @@
 
 #include <utility>
 
+#include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/accelerators/menu_label_accelerator_util_linux.h"
+#include "ui/base/models/image_model.h"
 #include "ui/base/models/menu_model.h"
+#include "ui/events/keycodes/keysym_to_unicode.h"
 #include "ui/gfx/image/image.h"
 
 #if defined(USE_X11)
-#include <X11/Xlib.h>
-
+#include "ui/base/ui_base_features.h"
 #include "ui/events/keycodes/keyboard_code_conversion_x.h"  // nogncheck
+#include "ui/gfx/x/x11.h"                                   // nogncheck
 #endif
 
 MenuItemProperties ComputeMenuPropertiesForMenuItem(ui::MenuModel* menu,
@@ -37,28 +40,31 @@ MenuItemProperties ComputeMenuPropertiesForMenuItem(ui::MenuModel* menu,
   if (!menu->IsVisibleAt(i))
     properties["visible"] = MakeDbusVariant(DbusBoolean(false));
 
-  gfx::Image icon;
-  if (menu->GetIconAt(i, &icon)) {
+  ui::ImageModel icon = menu->GetIconAt(i);
+  if (icon.IsImage()) {
     properties["icon-data"] =
-        MakeDbusVariant(DbusByteArray(icon.As1xPNGBytes()));
+        MakeDbusVariant(DbusByteArray(icon.GetImage().As1xPNGBytes()));
   }
 
   ui::Accelerator accelerator;
   if (menu->GetAcceleratorAt(i, &accelerator)) {
     std::vector<DbusString> parts;
     if (accelerator.IsCtrlDown())
-      parts.push_back(DbusString("Control"));
+      parts.emplace_back("Control");
     if (accelerator.IsAltDown())
-      parts.push_back(DbusString("Alt"));
+      parts.emplace_back("Alt");
     if (accelerator.IsShiftDown())
-      parts.push_back(DbusString("Shift"));
+      parts.emplace_back("Shift");
     if (accelerator.IsCmdDown())
-      parts.push_back(DbusString("Super"));
+      parts.emplace_back("Super");
 #if defined(USE_X11)
-    parts.push_back(DbusString(XKeysymToString(
-        XKeysymForWindowsKeyCode(accelerator.key_code(), false))));
-    properties["shortcut"] =
-        MakeDbusVariant(MakeDbusArray(DbusArray<DbusString>(std::move(parts))));
+    if (!features::IsUsingOzonePlatform()) {
+      uint16_t keysym = ui::GetUnicodeCharacterFromXKeySym(
+          XKeysymForWindowsKeyCode(accelerator.key_code(), false));
+      parts.emplace_back(base::UTF16ToUTF8(base::string16(1, keysym)));
+      properties["shortcut"] = MakeDbusVariant(
+          MakeDbusArray(DbusArray<DbusString>(std::move(parts))));
+    }
 #else
     NOTIMPLEMENTED();
 #endif

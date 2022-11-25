@@ -33,25 +33,26 @@ def _setup_sys_path():
 
 _setup_sys_path()
 
-from . import style_format
+from .callback_function import generate_callback_functions
+from .callback_interface import generate_callback_interfaces
 from .dictionary import generate_dictionaries
 from .enumeration import generate_enumerations
 from .interface import generate_interfaces
-from .path_manager import PathManager
-from .union import generate_unions
+from .task_queue import TaskQueue
 
 
-def init(root_src_dir, root_gen_dir, component_reldirs):
+def init(web_idl_database_path, root_src_dir, root_gen_dir, component_reldirs):
     """
     Args:
+        web_idl_database_path: File path to the web_idl.Database.
         root_src_dir: Project's root directory, which corresponds to "//" in GN.
         root_gen_dir: Root directory of generated files, which corresponds to
             "//out/Default/gen" in GN.
         component_reldirs: Pairs of component and output directory.
     """
-    style_format.init(root_src_dir)
 
-    PathManager.init(
-        root_src_dir=root_src_dir,
-        root_gen_dir=root_gen_dir,
-        component_reldirs=component_reldirs)
+    from . import package_initializer
+    package_initializer.init(web_idl_database_path=web_idl_database_path,
+                             root_src_dir=root_src_dir,
+                             root_gen_dir=root_gen_dir,
+                             component_reldirs=component_reldirs)

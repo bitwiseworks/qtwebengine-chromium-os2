@@ -95,10 +95,11 @@ class LibvpxVp8Encoder : public VideoEncoder {
 
   const std::unique_ptr<LibvpxInterface> libvpx_;
 
-  const absl::optional<std::vector<CpuSpeedExperiment::Config>>
-      experimental_cpu_speed_config_arm_;
+  const CpuSpeedExperiment experimental_cpu_speed_config_arm_;
   const RateControlSettings rate_control_settings_;
-  const absl::optional<int> screenshare_max_qp_;
+
+  // EncoderInfo::requested_resolution_alignment override from field trial.
+  const absl::optional<int> requested_resolution_alignment_override_;
 
   EncodedImageCallback* encoded_complete_callback_ = nullptr;
   VideoCodec codec_;

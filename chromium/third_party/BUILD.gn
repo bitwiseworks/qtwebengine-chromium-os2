@@ -29,7 +29,18 @@ if (use_system_libjpeg) {
                        ":system_libjpeg_config"
     ]
   }
+} else if (use_qt_libjpeg) {
+  # we do need shim since pdfium just includes 'system' headers
+  config ("qt_libjpeg_config") {
+    include_dirs  = string_split(qt_libjpeg_includes)
+  }
+  source_set("qt_libjpeg") {
+    public_configs = [ ":qt_libjpeg_config",
+                       ":system_libjpeg_config"
+    ]
+  }
 }
+
 
 config("system_libjpeg_config") {
   defines = [ "USE_SYSTEM_LIBJPEG" ]
@@ -45,6 +56,8 @@ config("libjpeg_turbo_config") {
 group("jpeg") {
   if (use_system_libjpeg) {
     public_deps = [ ":libjpeg" ]
+  } else if (use_qt_libjpeg) {
+    public_deps = [ ":qt_libjpeg" ]
   } else if (use_libjpeg_turbo) {
     public_deps = [ "//third_party/libjpeg_turbo:libjpeg" ]
     public_configs = [ ":libjpeg_turbo_config" ]
@@ -67,10 +80,6 @@ group("jpeg_includes") {
   }
 }
 
-config("bundled_harfbuzz_config") {
-  defines = [ "HAVE_HB_SUBSET_H=1" ]
-}
-
 # FreeType and HarfBuzz libraries are dependent on each other. This component
 # will depend on the appropriate source sets or export the system packages
 # for both FreeType and HarfBuzz.
@@ -78,14 +87,17 @@ component("freetype_harfbuzz") {
   public_configs = []
   public_deps = []
   if (use_system_freetype) {
-    public_configs += [ "//build/linux:freetype_from_pkgconfig" ]
+    public_configs += [ "//third_party/freetype:freetype_from_pkgconfig" ]
+  } else if (use_qt_freetype) {
+    public_configs += [ "//third_party/freetype:freetype_from_qt" ]
   } else {
     public_deps += [ "//third_party/freetype:freetype_source" ]
   }
   if (use_system_harfbuzz) {
     public_configs += [ "//third_party/harfbuzz-ng:harfbuzz_from_pkgconfig" ]
+  } else if (use_qt_harfbuzz) {
+    public_configs += [ "//third_party/harfbuzz-ng:harfbuzz_from_qt" ]
   } else {
     public_deps += [ "//third_party/harfbuzz-ng:harfbuzz_source" ]
-    public_configs += [ ":bundled_harfbuzz_config" ]
   }
 }

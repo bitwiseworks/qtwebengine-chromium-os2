@@ -41,6 +41,7 @@ public:
     enum Type {
         kVertex_Type,
         kIndex_Type,
+        kIndirect_Type,
         kUniform_Type,
         kTexel_Type,
         kCopyRead_Type,
@@ -74,7 +75,7 @@ protected:
     private:
         void onRecycle() const override { this->unref(); }
 
-        typedef GrVkRecycledResource INHERITED;
+        using INHERITED = GrVkRecycledResource;
     };
 
     // convenience routine for raw buffer creation
@@ -96,7 +97,7 @@ protected:
     bool vkUpdateData(GrVkGpu* gpu, const void* src, size_t srcSizeInBytes,
                       bool* createdNewBuffer = nullptr);
 
-    void vkRelease();
+    void vkRelease(GrVkGpu* gpu);
 
 private:
     virtual const Resource* createResource(GrVkGpu* gpu,
@@ -116,7 +117,7 @@ private:
     VkDeviceSize            fOffset;
     void*                   fMapPtr;
 
-    typedef SkNoncopyable INHERITED;
+    using INHERITED = SkNoncopyable;
 };
 
 #endif

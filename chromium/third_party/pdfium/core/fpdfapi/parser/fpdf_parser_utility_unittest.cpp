@@ -4,6 +4,8 @@
 
 #include "core/fpdfapi/parser/fpdf_parser_utility.h"
 
+#include <memory>
+
 #include "core/fpdfapi/page/cpdf_docpagedata.h"
 #include "core/fpdfapi/page/cpdf_pagemodule.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
@@ -89,9 +91,9 @@ TEST(fpdf_parser_utility, ValidateDictAllResourcesOfType) {
 
   {
     // Indirect dictionary.
-    auto doc = pdfium::MakeUnique<CPDF_Document>(
-        pdfium::MakeUnique<CPDF_DocRenderData>(),
-        pdfium::MakeUnique<CPDF_DocPageData>());
+    auto doc =
+        std::make_unique<CPDF_Document>(std::make_unique<CPDF_DocRenderData>(),
+                                        std::make_unique<CPDF_DocPageData>());
 
     auto dict = doc->New<CPDF_Dictionary>();
 

@@ -5,13 +5,14 @@
 #include "weblayer/browser/download_manager_delegate_impl.h"
 
 #include "base/files/file_util.h"
-#include "base/task/post_task.h"
+#include "base/optional.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "build/build_config.h"
 #include "components/download/public/common/download_item.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_item_utils.h"
 #include "content/public/browser/download_manager.h"
 #include "net/base/filename_util.h"
@@ -42,8 +43,8 @@ void GenerateFilename(
     base::CreateDirectory(suggested_directory);
 
   base::FilePath suggested_path(suggested_directory.Append(generated_name));
-  base::PostTask(FROM_HERE, {content::BrowserThread::UI},
-                 base::BindOnce(std::move(callback), suggested_path));
+  content::GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindOnce(std::move(callback), suggested_path));
 }
 
 }  // namespace
@@ -89,7 +90,8 @@ bool DownloadManagerDelegateImpl::DetermineDownloadTarget(
         download::DownloadItem::TARGET_DISPOSITION_OVERWRITE,
         download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
         download::DownloadItem::MixedContentStatus::UNKNOWN,
-        item->GetForcedFilePath(), download::DOWNLOAD_INTERRUPT_REASON_NONE);
+        item->GetForcedFilePath(), base::nullopt /*download_schedule*/,
+        download::DOWNLOAD_INTERRUPT_REASON_NONE);
     return true;
   }
 
@@ -149,14 +151,16 @@ void DownloadManagerDelegateImpl::CheckDownloadAllowed(
     bool from_download_cross_origin_redirect,
     bool content_initiated,
     content::CheckDownloadAllowedCallback check_download_allowed_cb) {
+  auto* web_contents = web_contents_getter.Run();
   // If there's no DownloadDelegate, the download is simply dropped.
-  auto* delegate = GetDelegate(web_contents_getter.Run());
-  if (!delegate) {
+  auto* delegate = GetDelegate(web_contents);
+  auto* tab = TabImpl::FromWebContents(web_contents);
+  if (!delegate || !tab) {
     std::move(check_download_allowed_cb).Run(false);
     return;
   }
 
-  delegate->AllowDownload(url, request_method, request_initiator,
+  delegate->AllowDownload(tab, url, request_method, request_initiator,
                           std::move(check_download_allowed_cb));
 }
 
@@ -205,6 +209,16 @@ void DownloadManagerDelegateImpl::OnManagerInitialized() {
 
 void DownloadManagerDelegateImpl::OnDownloadUpdated(
     download::DownloadItem* item) {
+  // If this is the first navigation in a tab it should be closed. Wait until
+  // the target path is determined or the download is canceled to check.
+  if (!item->GetTargetFilePath().empty() ||
+      item->GetState() == download::DownloadItem::CANCELLED) {
+    content::WebContents* web_contents =
+        content::DownloadItemUtils::GetWebContents(item);
+    if (web_contents && web_contents->GetController().IsInitialNavigation())
+      web_contents->Close();
+  }
+
   auto* delegate = GetDelegate(item);
   if (item->GetState() == download::DownloadItem::COMPLETE ||
       item->GetState() == download::DownloadItem::CANCELLED ||
@@ -238,6 +252,7 @@ void DownloadManagerDelegateImpl::OnDownloadPathGenerated(
       download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
       download::DownloadItem::MixedContentStatus::UNKNOWN,
       suggested_path.AddExtension(FILE_PATH_LITERAL(".crdownload")),
+      base::nullopt /*download_schedule*/,
       download::DOWNLOAD_INTERRUPT_REASON_NONE);
 }
 

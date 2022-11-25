@@ -45,8 +45,6 @@ const char kConvertedFromUserScript[] = "converted_from_user_script";
 const char kCss[] = "css";
 const char kCtrlKey[] = "ctrlKey";
 const char kCurrentLocale[] = "current_locale";
-const char kDeclarativeNetRequestKey[] = "declarative_net_request";
-const char kDeclarativeRuleResourcesKey[] = "rule_resources";
 const char kDefaultLocale[] = "default_locale";
 const char kDescription[] = "description";
 const char kDevToolsPage[] = "devtools_page";
@@ -76,7 +74,6 @@ const char kIcons[] = "icons";
 const char kId[] = "id";
 const char kImeOptionsPage[] = "options_page";
 const char kImport[] = "import";
-const char kIncognito[] = "incognito";
 const char kIncludeGlobs[] = "include_globs";
 const char kIndicator[] = "indicator";
 const char kInputComponents[] = "input_components";
@@ -105,6 +102,7 @@ const char kLinkedAppIconURL[] = "url";
 const char kLinkedAppIconSize[] = "size";
 const char kManifestVersion[] = "manifest_version";
 const char kMatchAboutBlank[] = "match_about_blank";
+const char kMatchOriginAsFallback[] = "match_origin_as_fallback";
 const char kMatches[] = "matches";
 const char kMinimumChromeVersion[] = "minimum_chrome_version";
 const char kMinimumVersion[] = "minimum_version";
@@ -190,6 +188,13 @@ const char kWebAccessibleResources[] = "web_accessible_resources";
 const char kWebAppFileHandlers[] = "web_app_file_handlers";
 const char kWebAppFileHandlerAccept[] = "accept";
 const char kWebAppFileHandlerAction[] = "action";
+const char kWebAppLinkedShortcutItems[] = "web_app_linked_shortcut_items";
+const char kWebAppLinkedShortcutItemIcons[] = "shortcut_item_icons";
+const char kWebAppLinkedShortcutItemIconSize[] = "size";
+const char kWebAppLinkedShortcutItemIconURL[] = "url";
+const char kWebAppLinkedShortcutItemName[] = "name";
+const char kWebAppLinkedShortcutItemURL[] = "url";
+const char kWebAppShortcutIcons[] = "web_app_shortcut_icons";
 const char kWebURLs[] = "app.urls";
 const char kWebview[] = "webview";
 const char kWebviewAccessibleResources[] = "accessible_resources";
@@ -207,6 +212,7 @@ const char kFileSystemProviderCapabilities[] =
 
 namespace manifest_values {
 
+const char kActionCommandEvent[] = "_execute_action";
 const char kApiKey[] = "api_key";
 const char kBrowserActionCommandEvent[] = "_execute_browser_action";
 const char kIncognitoNotAllowed[] = "not_allowed";
@@ -304,6 +310,8 @@ const char kCannotScriptGallery[] =
 const char kCannotScriptNtp[] = "The New Tab Page cannot be scripted.";
 const char kCannotScriptSigninPage[] =
     "The sign-in page cannot be scripted.";
+const char kChromeStyleInvalidForManifestV3[] =
+    "The chrome_style option cannot be used with manifest version 3.";
 const char kChromeVersionTooLow[] =
     "This extension requires * version * or greater.";
 const char kDeclarativeNetRequestPermissionNeeded[] =
@@ -382,10 +390,6 @@ const char kInvalidCss[] =
     "Invalid value for 'content_scripts[*].css[*]'.";
 const char kInvalidCssList[] =
     "Required value 'content_scripts[*].css' is invalid.";
-const char kInvalidDeclarativeNetRequestKey[] = "Invalid value for '*' key";
-const char kInvalidDeclarativeRulesFileKey[] =
-    "Invalid value for '*.*' key. It must be a non-empty list containing "
-    "Ruleset dictionaries.";
 const char kInvalidDefaultLocale[] =
     "Invalid value for default locale - locale name must be a string.";
 const char kInvalidDescription[] =
@@ -470,8 +474,6 @@ const char kInvalidImportId[] =
     "Invalid value for 'import[*].id'.";
 const char kInvalidImportVersion[] =
     "Invalid value for 'import[*].minimum_version'.";
-const char kInvalidIncognitoBehavior[] =
-    "Invalid value for 'incognito'.";
 const char kInvalidInputComponents[] =
     "Invalid value for 'input_components'";
 const char kInvalidInputComponentDescription[] =
@@ -558,6 +560,8 @@ const char kInvalidMatch[] =
     "Invalid value for 'content_scripts[*].matches[*]': *";
 const char kInvalidMatchAboutBlank[] =
     "Invalid value for 'content_scripts[*].match_about_blank'.";
+const char kInvalidMatchOriginAsFallback[] =
+    "Invalid value for 'content_scripts[*].match_origin_as_fallback'.";
 const char kInvalidMatchCount[] =
     "Invalid value for 'content_scripts[*].matches'. There must be at least "
     "one match specified.";
@@ -619,6 +623,9 @@ const char kInvalidRequirement[] =
     "Invalid value for requirement \"*\"";
 const char kInvalidRequirements[] =
     "Invalid value for 'requirements'";
+const char kInvalidRulesetID[] =
+    "'*.*': Invalid 'id' specified for Ruleset at index *. The ID must be "
+    "non-empty, unique and must not start with '_'.";
 const char kInvalidRunAt[] =
     "Invalid value for 'content_scripts[*].run_at'.";
 const char kInvalidSandboxedPagesList[] =
@@ -626,8 +633,8 @@ const char kInvalidSandboxedPagesList[] =
 const char kInvalidSandboxedPage[] =
     "Invalid value for 'sandbox.pages[*]'.";
 const char kInvalidSearchEngineMissingKeys[] =
-    "Missing mandatory parameters for "
-    "'chrome_settings_overrides.search_provider'.";
+    "Missing or invalid value for "
+    "'chrome_settings_overrides.search_provider.*.";
 const char kInvalidSearchEngineURL[] =
     "Invalid URL [*] for 'chrome_settings_overrides.search_provider'.";
 const char kInvalidShortName[] =
@@ -711,6 +718,35 @@ const char kInvalidWebAppFileHandlerFileExtensions[] =
     "Invalid value for 'web_app_file_handlers[*].accept[*].file_extensions'.";
 const char kInvalidWebAppFileHandlerFileExtension[] =
     "Invalid value for web_app_file_handlers[*].accept[*].file_extensions[*]'.";
+const char kInvalidWebAppLinkedShortcutItem[] =
+    "Invalid 'web_app_linked_shortcut_item'. Must be a dictionary";
+const char kInvalidWebAppLinkedShortcutItems[] =
+    "Invalid 'web_app_linked_shortcut_items'. Must be an array";
+const char kInvalidWebAppLinkedShortcutItemsNotBookmarkApp[] =
+    "The 'web_app_linked_shortcut_items' manifest key is only supported for "
+    "Bookmark Apps.";
+const char kInvalidWebAppLinkedShortcutItemIcons[] =
+    "Invalid 'shortcut_item_icons'. Must be an array";
+const char kInvalidWebAppLinkedShortcutItemIcon[] =
+    "Invalid 'shortcut_item_icon'. Must be a dictionary";
+const char kInvalidWebAppLinkedShortcutItemIconSize[] =
+    "Invalid 'size' for 'shortcut_item_icon'. Must be an "
+    "integer";
+const char kInvalidWebAppLinkedShortcutItemIconUrl[] =
+    "Invalid 'url' for 'shortcut_item_icon'. Must be a "
+    "string that is a valid URL";
+const char kInvalidWebAppLinkedShortcutItemName[] =
+    "Invalid 'name' for 'web_app_linked_shortcut_item'. Must be a string.";
+const char kInvalidWebAppLinkedShortcutItemUrl[] =
+    "Invalid 'url' for 'web_app_linked_shortcut_item'. Must be a string that "
+    "is a valid URL";
+const char kInvalidWebAppShortcutItemIcons[] =
+    "Invalid value for web app shortcut item's icons. Must be a Dictionary.";
+const char kInvalidWebAppShortcutIcons[] =
+    "Invalid value for 'web_app_shortcut_icons'. Must be a Dictionary.";
+const char kInvalidWebAppShortcutIconsNotBookmarkApp[] =
+    "The 'web_app_shortcut_icons' manifest key is only supported for Bookmark "
+    "Apps.";
 const char kInvalidWebview[] =
     "Invalid value for 'webview'.";
 const char kInvalidWebviewAccessibleResourcesList[] =

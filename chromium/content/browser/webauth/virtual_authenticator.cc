@@ -18,17 +18,19 @@
 namespace content {
 
 VirtualAuthenticator::VirtualAuthenticator(
-    ::device::ProtocolVersion protocol,
-    ::device::FidoTransportProtocol transport,
-    ::device::AuthenticatorAttachment attachment,
+    device::ProtocolVersion protocol,
+    device::Ctap2Version ctap2_version,
+    device::FidoTransportProtocol transport,
+    device::AuthenticatorAttachment attachment,
     bool has_resident_key,
     bool has_user_verification)
     : protocol_(protocol),
+      ctap2_version_(ctap2_version),
       attachment_(attachment),
       has_resident_key_(has_resident_key),
       has_user_verification_(has_user_verification),
       unique_id_(base::GenerateGUID()),
-      state_(base::MakeRefCounted<::device::VirtualFidoDevice::State>()) {
+      state_(base::MakeRefCounted<device::VirtualFidoDevice::State>()) {
   state_->transport = transport;
   // If the authenticator has user verification, simulate having set it up
   // already.
@@ -48,17 +50,18 @@ bool VirtualAuthenticator::AddRegistration(
     const std::string& rp_id,
     const std::vector<uint8_t>& private_key,
     int32_t counter) {
-  auto ec_private_key =
-      crypto::ECPrivateKey::CreateFromPrivateKeyInfo(private_key);
-  if (!ec_private_key)
+  base::Optional<std::unique_ptr<device::VirtualFidoDevice::PrivateKey>>
+      fido_private_key =
+          device::VirtualFidoDevice::PrivateKey::FromPKCS8(private_key);
+  if (!fido_private_key)
     return false;
 
   return state_->registrations
       .emplace(
           std::move(key_handle),
-          ::device::VirtualFidoDevice::RegistrationData(
-              std::move(ec_private_key),
-              ::device::fido_parsing_utils::CreateSHA256Hash(rp_id), counter))
+          device::VirtualFidoDevice::RegistrationData(
+              std::move(*fido_private_key),
+              device::fido_parsing_utils::CreateSHA256Hash(rp_id), counter))
       .second;
 }
 
@@ -68,16 +71,17 @@ bool VirtualAuthenticator::AddResidentRegistration(
     const std::vector<uint8_t>& private_key,
     int32_t counter,
     std::vector<uint8_t> user_handle) {
-  auto ec_private_key =
-      crypto::ECPrivateKey::CreateFromPrivateKeyInfo(private_key);
-  if (!ec_private_key)
+  base::Optional<std::unique_ptr<device::VirtualFidoDevice::PrivateKey>>
+      fido_private_key =
+          device::VirtualFidoDevice::PrivateKey::FromPKCS8(private_key);
+  if (!fido_private_key)
     return false;
 
   return state_->InjectResidentKey(
       std::move(key_handle),
       device::PublicKeyCredentialRpEntity(std::move(rp_id)),
       device::PublicKeyCredentialUserEntity(std::move(user_handle)), counter,
-      std::move(ec_private_key));
+      std::move(*fido_private_key));
 }
 
 void VirtualAuthenticator::ClearRegistrations() {
@@ -98,22 +102,32 @@ void VirtualAuthenticator::SetUserPresence(bool is_user_present) {
       is_user_present);
 }
 
-std::unique_ptr<::device::FidoDevice> VirtualAuthenticator::ConstructDevice() {
+std::unique_ptr<device::FidoDevice> VirtualAuthenticator::ConstructDevice() {
   switch (protocol_) {
-    case ::device::ProtocolVersion::kU2f:
-      return std::make_unique<::device::VirtualU2fDevice>(state_);
-    case ::device::ProtocolVersion::kCtap2: {
+    case device::ProtocolVersion::kU2f:
+      return std::make_unique<device::VirtualU2fDevice>(state_);
+    case device::ProtocolVersion::kCtap2: {
       device::VirtualCtap2Device::Config config;
+      switch (ctap2_version_) {
+        case device::Ctap2Version::kCtap2_0:
+          config.ctap2_versions = {std::begin(device::kCtap2Versions2_0),
+                                   std::end(device::kCtap2Versions2_0)};
+          break;
+        case device::Ctap2Version::kCtap2_1:
+          config.ctap2_versions = {std::begin(device::kCtap2Versions2_1),
+                                   std::end(device::kCtap2Versions2_1)};
+          break;
+      }
       config.resident_key_support = has_resident_key_;
       config.internal_uv_support = has_user_verification_;
       config.is_platform_authenticator =
-          attachment_ == ::device::AuthenticatorAttachment::kPlatform;
+          attachment_ == device::AuthenticatorAttachment::kPlatform;
       config.user_verification_succeeds = is_user_verified_;
-      return std::make_unique<::device::VirtualCtap2Device>(state_, config);
+      return std::make_unique<device::VirtualCtap2Device>(state_, config);
     }
     default:
       NOTREACHED();
-      return std::make_unique<::device::VirtualU2fDevice>(state_);
+      return std::make_unique<device::VirtualU2fDevice>(state_);
   }
 }
 
@@ -129,8 +143,8 @@ void VirtualAuthenticator::GetRegistrations(GetRegistrationsCallback callback) {
     mojo_registered_key->counter = registration.second.counter;
     mojo_registered_key->rp_id =
         registration.second.rp ? registration.second.rp->id : "";
-    registration.second.private_key->ExportPrivateKey(
-        &mojo_registered_key->private_key);
+    mojo_registered_key->private_key =
+        registration.second.private_key->GetPKCS8PrivateKey();
     mojo_registered_keys.push_back(std::move(mojo_registered_key));
   }
   std::move(callback).Run(std::move(mojo_registered_keys));

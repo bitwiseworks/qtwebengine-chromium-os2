@@ -5,7 +5,6 @@
 #include "chrome/browser/renderer_host/pepper/pepper_flash_browser_host.h"
 
 #include "base/bind.h"
-#include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/content_settings/cookie_settings_factory.h"
@@ -18,7 +17,6 @@
 #include "content/public/browser/device_service.h"
 #include "content/public/browser/render_process_host.h"
 #include "ipc/ipc_message_macros.h"
-#include "mojo/public/cpp/bindings/interface_request.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/c/private/ppb_flash.h"
@@ -31,7 +29,7 @@
 
 #if defined(OS_WIN)
 #include <windows.h>
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
 #include <CoreServices/CoreServices.h>
 #endif
 
@@ -132,9 +130,8 @@ int32_t PepperFlashBrowserHost::OnGetLocalDataRestrictions(
                              plugin_url,
                              cookie_settings_);
   } else {
-    base::PostTaskAndReplyWithResult(
-        FROM_HERE, {BrowserThread::UI},
-        base::BindOnce(&GetCookieSettings, render_process_id_),
+    content::GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+        FROM_HERE, base::BindOnce(&GetCookieSettings, render_process_id_),
         base::BindOnce(&PepperFlashBrowserHost::GetLocalDataRestrictions,
                        weak_factory_.GetWeakPtr(),
                        context->MakeReplyMessageContext(), document_url,
@@ -178,8 +175,8 @@ device::mojom::WakeLock* PepperFlashBrowserHost::GetWakeLock() {
     return wake_lock_.get();
 
   mojo::Remote<device::mojom::WakeLockProvider> wake_lock_provider;
-  base::PostTask(
-      FROM_HERE, {BrowserThread::UI},
+  content::GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce(&BindWakeLockProviderOnUIThread,
                      wake_lock_provider.BindNewPipeAndPassReceiver()));
   wake_lock_provider->GetWakeLockWithoutContext(

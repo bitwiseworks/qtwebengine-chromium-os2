@@ -8,6 +8,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/stl_util.h"
 #include "build/build_config.h"
@@ -50,6 +51,7 @@
 #include "third_party/blink/renderer/modules/payments/payment_request_update_event.h"
 #include "third_party/blink/renderer/modules/payments/payment_response.h"
 #include "third_party/blink/renderer/modules/payments/payments_validators.h"
+#include "third_party/blink/renderer/modules/payments/secure_payment_confirmation_helper.h"
 #include "third_party/blink/renderer/modules/payments/update_payment_details_function.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
@@ -93,59 +95,63 @@ using ::payments::mojom::blink::PaymentValidationErrorsPtr;
 const char kHasEnrolledInstrumentDebugName[] = "hasEnrolledInstrument";
 const char kGooglePayMethod[] = "https://google.com/pay";
 const char kAndroidPayMethod[] = "https://android.com/pay";
+const char kGooglePlayBillingMethod[] = "https://play.google.com/billing";
+const char kUnknownCurrency[] = "ZZZ";
+const char kAppStoreBillingLabelPlaceHolder[] = "AppStoreBillingPlaceHolder";
+const char kSecurePaymentConfirmationMethod[] = "secure-payment-confirmation";
 
 }  // namespace
 
 namespace mojo {
 
 template <>
-struct TypeConverter<PaymentCurrencyAmountPtr, blink::PaymentCurrencyAmount*> {
+struct TypeConverter<PaymentCurrencyAmountPtr, blink::PaymentCurrencyAmount> {
   static PaymentCurrencyAmountPtr Convert(
-      const blink::PaymentCurrencyAmount* input) {
+      const blink::PaymentCurrencyAmount& input) {
     PaymentCurrencyAmountPtr output = PaymentCurrencyAmount::New();
-    output->currency = input->currency().UpperASCII();
-    output->value = input->value();
+    output->currency = input.currency().UpperASCII();
+    output->value = input.value();
     return output;
   }
 };
 
 template <>
-struct TypeConverter<PaymentItemPtr, blink::PaymentItem*> {
-  static PaymentItemPtr Convert(const blink::PaymentItem* input) {
+struct TypeConverter<PaymentItemPtr, blink::PaymentItem> {
+  static PaymentItemPtr Convert(const blink::PaymentItem& input) {
     PaymentItemPtr output = payments::mojom::blink::PaymentItem::New();
-    output->label = input->label();
-    output->amount = PaymentCurrencyAmount::From(input->amount());
-    output->pending = input->pending();
+    output->label = input.label();
+    output->amount = PaymentCurrencyAmount::From(*input.amount());
+    output->pending = input.pending();
     return output;
   }
 };
 
 template <>
-struct TypeConverter<PaymentShippingOptionPtr, blink::PaymentShippingOption*> {
+struct TypeConverter<PaymentShippingOptionPtr, blink::PaymentShippingOption> {
   static PaymentShippingOptionPtr Convert(
-      const blink::PaymentShippingOption* input) {
+      const blink::PaymentShippingOption& input) {
     PaymentShippingOptionPtr output =
         payments::mojom::blink::PaymentShippingOption::New();
-    output->id = input->id();
-    output->label = input->label();
-    output->amount = PaymentCurrencyAmount::From(input->amount());
-    output->selected = input->hasSelected() && input->selected();
+    output->id = input.id();
+    output->label = input.label();
+    output->amount = PaymentCurrencyAmount::From(*input.amount());
+    output->selected = input.hasSelected() && input.selected();
     return output;
   }
 };
 
 template <>
-struct TypeConverter<PaymentOptionsPtr, const blink::PaymentOptions*> {
-  static PaymentOptionsPtr Convert(const blink::PaymentOptions* input) {
+struct TypeConverter<PaymentOptionsPtr, blink::PaymentOptions> {
+  static PaymentOptionsPtr Convert(const blink::PaymentOptions& input) {
     PaymentOptionsPtr output = payments::mojom::blink::PaymentOptions::New();
-    output->request_payer_name = input->requestPayerName();
-    output->request_payer_email = input->requestPayerEmail();
-    output->request_payer_phone = input->requestPayerPhone();
-    output->request_shipping = input->requestShipping();
+    output->request_payer_name = input.requestPayerName();
+    output->request_payer_email = input.requestPayerEmail();
+    output->request_payer_phone = input.requestPayerPhone();
+    output->request_shipping = input.requestShipping();
 
-    if (input->shippingType() == "delivery")
+    if (input.shippingType() == "delivery")
       output->shipping_type = PaymentShippingType::DELIVERY;
-    else if (input->shippingType() == "pickup")
+    else if (input.shippingType() == "pickup")
       output->shipping_type = PaymentShippingType::PICKUP;
     else
       output->shipping_type = PaymentShippingType::SHIPPING;
@@ -156,55 +162,55 @@ struct TypeConverter<PaymentOptionsPtr, const blink::PaymentOptions*> {
 
 template <>
 struct TypeConverter<PaymentValidationErrorsPtr,
-                     blink::PaymentValidationErrors*> {
+                     blink::PaymentValidationErrors> {
   static PaymentValidationErrorsPtr Convert(
-      const blink::PaymentValidationErrors* input) {
+      const blink::PaymentValidationErrors& input) {
     PaymentValidationErrorsPtr output =
         payments::mojom::blink::PaymentValidationErrors::New();
-    output->error = input->hasError() ? input->error() : g_empty_string;
-    output->payer = input->hasPayer()
-                        ? PayerErrors::From(input->payer())
-                        : PayerErrors::From(blink::PayerErrors::Create());
-    output->shipping_address =
-        input->hasShippingAddress()
-            ? AddressErrors::From(input->shippingAddress())
-            : AddressErrors::From(blink::AddressErrors::Create());
+    output->error = input.hasError() ? input.error() : g_empty_string;
+    auto* payer_errors =
+        input.hasPayer() ? input.payer() : blink::PayerErrors::Create();
+    output->payer = PayerErrors::From(*payer_errors);
+    auto* address_errors = input.hasShippingAddress()
+                               ? input.shippingAddress()
+                               : blink::AddressErrors::Create();
+    output->shipping_address = AddressErrors::From(*address_errors);
     return output;
   }
 };
 
 template <>
-struct TypeConverter<PayerErrorsPtr, blink::PayerErrors*> {
-  static PayerErrorsPtr Convert(const blink::PayerErrors* input) {
+struct TypeConverter<PayerErrorsPtr, blink::PayerErrors> {
+  static PayerErrorsPtr Convert(const blink::PayerErrors& input) {
     PayerErrorsPtr output = payments::mojom::blink::PayerErrors::New();
-    output->email = input->hasEmail() ? input->email() : g_empty_string;
-    output->name = input->hasName() ? input->name() : g_empty_string;
-    output->phone = input->hasPhone() ? input->phone() : g_empty_string;
+    output->email = input.hasEmail() ? input.email() : g_empty_string;
+    output->name = input.hasName() ? input.name() : g_empty_string;
+    output->phone = input.hasPhone() ? input.phone() : g_empty_string;
     return output;
   }
 };
 
 template <>
-struct TypeConverter<AddressErrorsPtr, blink::AddressErrors*> {
-  static AddressErrorsPtr Convert(const blink::AddressErrors* input) {
+struct TypeConverter<AddressErrorsPtr, blink::AddressErrors> {
+  static AddressErrorsPtr Convert(const blink::AddressErrors& input) {
     AddressErrorsPtr output = payments::mojom::blink::AddressErrors::New();
     output->address_line =
-        input->hasAddressLine() ? input->addressLine() : g_empty_string;
-    output->city = input->hasCity() ? input->city() : g_empty_string;
-    output->country = input->hasCountry() ? input->country() : g_empty_string;
-    output->dependent_locality = input->hasDependentLocality()
-                                     ? input->dependentLocality()
+        input.hasAddressLine() ? input.addressLine() : g_empty_string;
+    output->city = input.hasCity() ? input.city() : g_empty_string;
+    output->country = input.hasCountry() ? input.country() : g_empty_string;
+    output->dependent_locality = input.hasDependentLocality()
+                                     ? input.dependentLocality()
                                      : g_empty_string;
     output->organization =
-        input->hasOrganization() ? input->organization() : g_empty_string;
-    output->phone = input->hasPhone() ? input->phone() : g_empty_string;
+        input.hasOrganization() ? input.organization() : g_empty_string;
+    output->phone = input.hasPhone() ? input.phone() : g_empty_string;
     output->postal_code =
-        input->hasPostalCode() ? input->postalCode() : g_empty_string;
+        input.hasPostalCode() ? input.postalCode() : g_empty_string;
     output->recipient =
-        input->hasRecipient() ? input->recipient() : g_empty_string;
-    output->region = input->hasRegion() ? input->region() : g_empty_string;
+        input.hasRecipient() ? input.recipient() : g_empty_string;
+    output->region = input.hasRegion() ? input.region() : g_empty_string;
     output->sorting_code =
-        input->hasSortingCode() ? input->sortingCode() : g_empty_string;
+        input.hasSortingCode() ? input.sortingCode() : g_empty_string;
     return output;
   }
 };
@@ -266,6 +272,23 @@ void ValidateShippingOptionOrPaymentItem(const T* item,
   }
 }
 
+const WTF::HashSet<String> GetAppStoreBillingMethods() {
+  static const WTF::HashSet<String> app_store_billing_methods = {
+      kGooglePlayBillingMethod};
+  return app_store_billing_methods;
+}
+
+bool RequestingOnlyAppStoreBillingMethods(
+    const Vector<payments::mojom::blink::PaymentMethodDataPtr>& method_data) {
+  DCHECK(!method_data.IsEmpty());
+  const WTF::HashSet<String> billing_methods = GetAppStoreBillingMethods();
+  for (const auto& method : method_data) {
+    if (!billing_methods.Contains(method->supported_method))
+      return false;
+  }
+  return true;
+}
+
 void ValidateAndConvertDisplayItems(
     const HeapVector<Member<PaymentItem>>& input,
     const String& item_names,
@@ -282,7 +305,7 @@ void ValidateAndConvertDisplayItems(
                                         exception_state);
     if (exception_state.HadException())
       return;
-    output.push_back(payments::mojom::blink::PaymentItem::From(item));
+    output.push_back(payments::mojom::blink::PaymentItem::From(*item));
   }
 }
 
@@ -336,7 +359,7 @@ void ValidateAndConvertShippingOptions(
     unique_ids.insert(option->id());
 
     output.push_back(
-        payments::mojom::blink::PaymentShippingOption::From(option));
+        payments::mojom::blink::PaymentShippingOption::From(*option));
   }
 }
 
@@ -355,8 +378,7 @@ void ValidateAndConvertTotal(const PaymentItem* input,
     return;
   }
 
-  output = payments::mojom::blink::PaymentItem::From(
-      const_cast<PaymentItem*>(input));
+  output = payments::mojom::blink::PaymentItem::From(*input);
 }
 
 // Parses Android Pay data to avoid parsing JSON in the browser.
@@ -391,13 +413,13 @@ void SetAndroidPayMethodData(v8::Isolate* isolate,
     output->api_version = android_pay->apiVersion();
 }
 
-void StringifyAndParseMethodSpecificData(v8::Isolate* isolate,
+void StringifyAndParseMethodSpecificData(ExecutionContext& execution_context,
                                          const String& supported_method,
                                          const ScriptValue& input,
                                          PaymentMethodDataPtr& output,
                                          ExceptionState& exception_state) {
   PaymentsValidators::ValidateAndStringifyObject(
-      isolate, "Payment method data", input, output->stringified_data,
+      execution_context.GetIsolate(), input, output->stringified_data,
       exception_state);
   if (exception_state.HadException())
     return;
@@ -407,15 +429,24 @@ void StringifyAndParseMethodSpecificData(v8::Isolate* isolate,
   // data asynchronously. Do not throw exceptions here.
   if (supported_method == kGooglePayMethod ||
       supported_method == kAndroidPayMethod) {
-    SetAndroidPayMethodData(isolate, input, output, exception_state);
+    SetAndroidPayMethodData(execution_context.GetIsolate(), input, output,
+                            exception_state);
     if (exception_state.HadException())
       exception_state.ClearException();
   }
 
+  // Parse method data to avoid parsing JSON in the browser.
   if (supported_method == "basic-card") {
-    // Parses basic-card data to avoid parsing JSON in the browser.
     BasicCardHelper::ParseBasiccardData(input, output->supported_networks,
                                         exception_state);
+  } else if (supported_method == kSecurePaymentConfirmationMethod &&
+             RuntimeEnabledFeatures::SecurePaymentConfirmationEnabled(
+                 &execution_context)) {
+    UseCounter::Count(&execution_context,
+                      WebFeature::kSecurePaymentConfirmation);
+    output->secure_payment_confirmation =
+        SecurePaymentConfirmationHelper::ParseSecurePaymentConfirmationData(
+            input, exception_state);
   }
 }
 
@@ -460,8 +491,8 @@ void ValidateAndConvertPaymentDetailsModifiers(
 
     if (modifier->hasData() && !modifier->data().IsEmpty()) {
       StringifyAndParseMethodSpecificData(
-          execution_context.GetIsolate(), modifier->supportedMethod(),
-          modifier->data(), output.back()->method_data, exception_state);
+          execution_context, modifier->supportedMethod(), modifier->data(),
+          output.back()->method_data, exception_state);
     } else {
       output.back()->method_data->stringified_data = "";
     }
@@ -504,17 +535,50 @@ void ValidateAndConvertPaymentDetailsBase(const PaymentDetailsBase* input,
   }
 }
 
+PaymentItemPtr CreateTotalPlaceHolderForAppStoreBilling(
+    ExecutionContext& execution_context) {
+  PaymentItemPtr total = payments::mojom::blink::PaymentItem::New();
+  total->label = kAppStoreBillingLabelPlaceHolder;
+  total->amount = payments::mojom::blink::PaymentCurrencyAmount::New();
+  total->amount->currency = kUnknownCurrency;
+  total->amount->value = "0";
+
+  return total;
+}
+
 void ValidateAndConvertPaymentDetailsInit(const PaymentDetailsInit* input,
                                           const PaymentOptions* options,
                                           PaymentDetailsPtr& output,
                                           String& shipping_option_output,
+                                          bool ignore_total,
                                           ExecutionContext& execution_context,
                                           ExceptionState& exception_state) {
-  DCHECK(input->hasTotal());
-  ValidateAndConvertTotal(input->total(), "total", output->total,
-                          execution_context, exception_state);
-  if (exception_state.HadException())
-    return;
+  if (ignore_total) {
+    output->total = CreateTotalPlaceHolderForAppStoreBilling(execution_context);
+    if (input->hasTotal()) {
+      execution_context.AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+          mojom::blink::ConsoleMessageSource::kJavaScript,
+          mojom::blink::ConsoleMessageLevel::kWarning,
+          "Specified total is ignored for in-app purchases with app stores. "
+          "User will be shown the total derived from the product identifier."));
+    }
+  } else {
+    // Whether details (i.e., input) being omitted, null, defined or {} is
+    // indistinguishable, so we check all of its attributes to decide whether it
+    // has been provided.
+    if (!input->hasTotal() && !input->hasId()) {
+      exception_state.ThrowTypeError("required member details is undefined.");
+      return;
+    }
+    if (!input->hasTotal()) {
+      exception_state.ThrowTypeError("required member total is undefined.");
+      return;
+    }
+    ValidateAndConvertTotal(input->total(), "total", output->total,
+                            execution_context, exception_state);
+    if (exception_state.HadException())
+      return;
+  }
 
   ValidateAndConvertPaymentDetailsBase(input, options, output,
                                        shipping_option_output,
@@ -525,6 +589,7 @@ void ValidateAndConvertPaymentDetailsUpdate(const PaymentDetailsUpdate* input,
                                             const PaymentOptions* options,
                                             PaymentDetailsPtr& output,
                                             String& shipping_option_output,
+                                            bool ignore_total,
                                             ExecutionContext& execution_context,
                                             ExceptionState& exception_state) {
   ValidateAndConvertPaymentDetailsBase(input, options, output,
@@ -532,12 +597,17 @@ void ValidateAndConvertPaymentDetailsUpdate(const PaymentDetailsUpdate* input,
                                        execution_context, exception_state);
   if (exception_state.HadException())
     return;
-
   if (input->hasTotal()) {
-    ValidateAndConvertTotal(input->total(), "total", output->total,
-                            execution_context, exception_state);
-    if (exception_state.HadException())
-      return;
+    DCHECK(!RuntimeEnabledFeatures::DigitalGoodsEnabled() || !ignore_total);
+    if (ignore_total) {
+      output->total =
+          CreateTotalPlaceHolderForAppStoreBilling(execution_context);
+    } else {
+      ValidateAndConvertTotal(input->total(), "total", output->total,
+                              execution_context, exception_state);
+      if (exception_state.HadException())
+        return;
+    }
   }
 
   if (input->hasError()) {
@@ -559,14 +629,12 @@ void ValidateAndConvertPaymentDetailsUpdate(const PaymentDetailsUpdate* input,
     }
     output->shipping_address_errors =
         payments::mojom::blink::AddressErrors::From(
-            input->shippingAddressErrors());
+            *input->shippingAddressErrors());
   }
 
   if (input->hasPaymentMethodErrors()) {
     PaymentsValidators::ValidateAndStringifyObject(
-        execution_context.GetIsolate(), "Payment method errors",
-        input->paymentMethodErrors(),
-
+        execution_context.GetIsolate(), input->paymentMethodErrors(),
         output->stringified_payment_method_errors, exception_state);
   }
 }
@@ -603,6 +671,34 @@ void ValidateAndConvertPaymentMethodData(
           "Invalid payment method identifier format");
       return;
     }
+
+    if (method_names.Contains(payment_method_data->supportedMethod())) {
+      exception_state.ThrowRangeError(
+          "Cannot have duplicate payment method identifiers");
+      return;
+    }
+
+    if (payment_method_data->supportedMethod() ==
+            kSecurePaymentConfirmationMethod &&
+        RuntimeEnabledFeatures::SecurePaymentConfirmationEnabled(
+            &execution_context)) {
+      if (input.size() > 1) {
+        exception_state.ThrowRangeError(
+            String(kSecurePaymentConfirmationMethod) +
+            " must be the only payment method identifier specified in the "
+            "PaymentRequest constructor.");
+        return;
+      } else if (options->requestShipping() || options->requestPayerName() ||
+                 options->requestPayerEmail() || options->requestPayerPhone()) {
+        exception_state.ThrowRangeError(
+            String(kSecurePaymentConfirmationMethod) +
+            " payment method identifier cannot be used with "
+            "\"requestShipping\", \"requestPayerName\", \"requestPayerEmail\", "
+            "or \"requestPayerPhone\" options.");
+        return;
+      }
+    }
+
     method_names.insert(payment_method_data->supportedMethod());
 
     output.push_back(payments::mojom::blink::PaymentMethodData::New());
@@ -611,9 +707,8 @@ void ValidateAndConvertPaymentMethodData(
     if (payment_method_data->hasData() &&
         !payment_method_data->data().IsEmpty()) {
       StringifyAndParseMethodSpecificData(
-          execution_context.GetIsolate(),
-          payment_method_data->supportedMethod(), payment_method_data->data(),
-          output.back(), exception_state);
+          execution_context, payment_method_data->supportedMethod(),
+          payment_method_data->data(), output.back(), exception_state);
       if (exception_state.HadException())
         continue;
 
@@ -636,12 +731,11 @@ bool AllowedToUsePaymentRequest(const ExecutionContext* execution_context) {
 
   // Note: PaymentRequest is only exposed to Window and not workers.
   // 1. If |document| has no browsing context, then return false.
-  const Document* document = Document::From(execution_context);
-  if (!document->GetFrame())
+  if (execution_context->IsContextDestroyed())
     return false;
 
   // 2. If Feature Policy is enabled, return the policy for "payment" feature.
-  return document->IsFeatureEnabled(
+  return execution_context->IsFeatureEnabled(
       mojom::blink::FeaturePolicyFeature::kPayment,
       ReportOptions::kReportOnFailure);
 }
@@ -666,9 +760,9 @@ PaymentRequest* PaymentRequest::Create(
     const HeapVector<Member<PaymentMethodData>>& method_data,
     const PaymentDetailsInit* details,
     ExceptionState& exception_state) {
-  return MakeGarbageCollected<PaymentRequest>(execution_context, method_data,
-                                              details, PaymentOptions::Create(),
-                                              exception_state);
+  return MakeGarbageCollected<PaymentRequest>(
+      execution_context, method_data, details, PaymentOptions::Create(),
+      mojo::NullRemote(), exception_state);
 }
 
 PaymentRequest* PaymentRequest::Create(
@@ -678,7 +772,8 @@ PaymentRequest* PaymentRequest::Create(
     const PaymentOptions* options,
     ExceptionState& exception_state) {
   return MakeGarbageCollected<PaymentRequest>(
-      execution_context, method_data, details, options, exception_state);
+      execution_context, method_data, details, options, mojo::NullRemote(),
+      exception_state);
 }
 
 PaymentRequest::~PaymentRequest() = default;
@@ -698,6 +793,13 @@ ScriptPromise PaymentRequest::show(ScriptState* script_state,
     return ScriptPromise();
   }
 
+  if (!not_supported_for_invalid_origin_or_ssl_error_.IsEmpty()) {
+    return ScriptPromise::RejectWithDOMException(
+        script_state, MakeGarbageCollected<DOMException>(
+                          DOMExceptionCode::kNotSupportedError,
+                          not_supported_for_invalid_origin_or_ssl_error_));
+  }
+
   if (!payment_provider_.is_bound() || accept_resolver_) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Already called show() once");
@@ -710,6 +812,15 @@ ScriptPromise PaymentRequest::show(ScriptState* script_state,
   if (!is_user_gesture) {
     UseCounter::Count(GetExecutionContext(),
                       WebFeature::kPaymentRequestShowWithoutGesture);
+  }
+
+  // TODO(crbug.com/825270): Pretend that a user gesture is provided to allow
+  // origins that are part of the Secure Payment Confirmation Origin Trial to
+  // use skip-the-sheet flow as a hack for secure modal window
+  // (crbug.com/1122028). Remove this after user gesture delegation ships.
+  if (RuntimeEnabledFeatures::SecurePaymentConfirmationEnabled(
+          GetExecutionContext())) {
+    is_user_gesture = true;
   }
 
   // TODO(crbug.com/779126): add support for handling payment requests in
@@ -772,6 +883,11 @@ ScriptPromise PaymentRequest::abort(ScriptState* script_state,
 
 ScriptPromise PaymentRequest::canMakePayment(ScriptState* script_state,
                                              ExceptionState& exception_state) {
+  if (!not_supported_for_invalid_origin_or_ssl_error_.IsEmpty()) {
+    return ScriptPromise::Cast(script_state,
+                               ScriptValue::From(script_state, false));
+  }
+
   if (!payment_provider_.is_bound() || GetPendingAcceptPromiseResolver() ||
       can_make_payment_resolver_ || !script_state->ContextIsValid()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
@@ -789,6 +905,11 @@ ScriptPromise PaymentRequest::canMakePayment(ScriptState* script_state,
 ScriptPromise PaymentRequest::hasEnrolledInstrument(
     ScriptState* script_state,
     ExceptionState& exception_state) {
+  if (!not_supported_for_invalid_origin_or_ssl_error_.IsEmpty()) {
+    return ScriptPromise::Cast(script_state,
+                               ScriptValue::From(script_state, false));
+  }
+
   if (!payment_provider_.is_bound() || GetPendingAcceptPromiseResolver() ||
       has_enrolled_instrument_resolver_ || !script_state->ContextIsValid()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
@@ -796,15 +917,7 @@ ScriptPromise PaymentRequest::hasEnrolledInstrument(
     return ScriptPromise();
   }
 
-  bool per_method_quota =
-      RuntimeEnabledFeatures::PerMethodCanMakePaymentQuotaEnabled(
-          GetExecutionContext());
-  if (per_method_quota) {
-    UseCounter::Count(GetExecutionContext(),
-                      WebFeature::kPerMethodCanMakePaymentQuota);
-  }
-
-  payment_provider_->HasEnrolledInstrument(per_method_quota);
+  payment_provider_->HasEnrolledInstrument();
 
   has_enrolled_instrument_resolver_ =
       MakeGarbageCollected<ScriptPromiseResolver>(script_state);
@@ -812,7 +925,9 @@ ScriptPromise PaymentRequest::hasEnrolledInstrument(
 }
 
 bool PaymentRequest::HasPendingActivity() const {
-  return GetPendingAcceptPromiseResolver() || complete_resolver_;
+  return accept_resolver_ || retry_resolver_ || complete_resolver_ ||
+         has_enrolled_instrument_resolver_ || can_make_payment_resolver_ ||
+         abort_resolver_;
 }
 
 const AtomicString& PaymentRequest::InterfaceName() const {
@@ -847,7 +962,7 @@ ScriptPromise PaymentRequest::Retry(ScriptState* script_state,
     return ScriptPromise();
   }
 
-  if (!payment_provider_) {
+  if (!payment_provider_.is_bound()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Payment request terminated");
     return ScriptPromise();
@@ -903,8 +1018,7 @@ ScriptPromise PaymentRequest::Retry(ScriptState* script_state,
 
   // The payment provider should respond in PaymentRequest::OnPaymentResponse().
   payment_provider_->Retry(
-      payments::mojom::blink::PaymentValidationErrors::From(
-          const_cast<PaymentValidationErrors*>(errors)));
+      payments::mojom::blink::PaymentValidationErrors::From(*errors));
 
   retry_resolver_ = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
 
@@ -941,7 +1055,7 @@ ScriptPromise PaymentRequest::Complete(ScriptState* script_state,
   }
 
   // User has cancelled the transaction while the website was processing it.
-  if (!payment_provider_) {
+  if (!payment_provider_.is_bound()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kAbortError,
                                       "Request cancelled");
     return ScriptPromise();
@@ -960,7 +1074,7 @@ ScriptPromise PaymentRequest::Complete(ScriptState* script_state,
 void PaymentRequest::OnUpdatePaymentDetails(
     const ScriptValue& details_script_value) {
   ScriptPromiseResolver* resolver = GetPendingAcceptPromiseResolver();
-  if (!resolver || !payment_provider_ ||
+  if (!resolver || !payment_provider_.is_bound() ||
       !update_payment_details_timer_.IsActive()) {
     return;
   }
@@ -983,7 +1097,7 @@ void PaymentRequest::OnUpdatePaymentDetails(
   PaymentDetailsPtr validated_details =
       payments::mojom::blink::PaymentDetails::New();
   ValidateAndConvertPaymentDetailsUpdate(
-      details, options_, validated_details, shipping_option_,
+      details, options_, validated_details, shipping_option_, ignore_total_,
       *GetExecutionContext(), exception_state);
   if (exception_state.HadException()) {
     resolver->Reject(exception_state.GetException());
@@ -1011,7 +1125,7 @@ void PaymentRequest::OnUpdatePaymentDetails(
 }
 
 void PaymentRequest::OnUpdatePaymentDetailsFailure(const String& error) {
-  if (!payment_provider_)
+  if (!payment_provider_.is_bound())
     return;
   if (update_payment_details_timer_.IsActive())
     update_payment_details_timer_.Stop();
@@ -1031,7 +1145,7 @@ bool PaymentRequest::IsInteractive() const {
   return !!GetPendingAcceptPromiseResolver();
 }
 
-void PaymentRequest::Trace(Visitor* visitor) {
+void PaymentRequest::Trace(Visitor* visitor) const {
   visitor->Trace(options_);
   visitor->Trace(shipping_address_);
   visitor->Trace(payment_response_);
@@ -1041,6 +1155,8 @@ void PaymentRequest::Trace(Visitor* visitor) {
   visitor->Trace(abort_resolver_);
   visitor->Trace(can_make_payment_resolver_);
   visitor->Trace(has_enrolled_instrument_resolver_);
+  visitor->Trace(payment_provider_);
+  visitor->Trace(client_receiver_);
   EventTargetWithInlineData::Trace(visitor);
   ExecutionContextLifecycleObserver::Trace(visitor);
 }
@@ -1066,9 +1182,13 @@ PaymentRequest::PaymentRequest(
     const HeapVector<Member<PaymentMethodData>>& method_data,
     const PaymentDetailsInit* details,
     const PaymentOptions* options,
+    mojo::PendingRemote<payments::mojom::blink::PaymentRequest>
+        mock_payment_provider,
     ExceptionState& exception_state)
     : ExecutionContextLifecycleObserver(execution_context),
       options_(options),
+      payment_provider_(execution_context),
+      client_receiver_(this, execution_context),
       complete_timer_(
           execution_context->GetTaskRunner(TaskType::kMiscPlatformAPI),
           this,
@@ -1078,8 +1198,12 @@ PaymentRequest::PaymentRequest(
           this,
           &PaymentRequest::OnUpdatePaymentDetailsTimeout),
       is_waiting_for_show_promise_to_resolve_(false) {
-  DCHECK(GetExecutionContext()->IsSecureContext());
+  // options_, details has default value, so could never be null, according to
+  // payment_request.idl.
+  DCHECK(options_);
+  DCHECK(details);
 
+  DCHECK(GetExecutionContext()->IsSecureContext());
   if (!AllowedToUsePaymentRequest(execution_context)) {
     exception_state.ThrowSecurityError(
         "Must be in a top-level browsing context or an iframe needs to specify "
@@ -1111,11 +1235,28 @@ PaymentRequest::PaymentRequest(
   if (exception_state.HadException())
     return;
 
+  ignore_total_ = RuntimeEnabledFeatures::DigitalGoodsEnabled() &&
+                  RequestingOnlyAppStoreBillingMethods(validated_method_data);
   ValidateAndConvertPaymentDetailsInit(details, options_, validated_details,
-                                       shipping_option_, *GetExecutionContext(),
-                                       exception_state);
+                                       shipping_option_, ignore_total_,
+                                       *GetExecutionContext(), exception_state);
   if (exception_state.HadException())
     return;
+
+  const WTF::HashSet<String> billing_methods = GetAppStoreBillingMethods();
+  for (const PaymentMethodDataPtr& data : validated_method_data) {
+    if (billing_methods.Contains(data->supported_method) &&
+        (options_->requestShipping() || options_->requestPayerName() ||
+         options_->requestPayerEmail() || options_->requestPayerPhone())) {
+      execution_context->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+          mojom::blink::ConsoleMessageSource::kJavaScript,
+          mojom::blink::ConsoleMessageLevel::kError,
+          "Payment method \"" + data->supported_method +
+              "\" cannot be used with \"requestShipping\", "
+              "\"requestPayerName\", "
+              "\"requestPayerEmail\", or \"requestPayerPhone\"."));
+    }
+  }
 
   if (options_->requestShipping()) {
     shipping_type_ = options_->shippingType();
@@ -1140,8 +1281,14 @@ PaymentRequest::PaymentRequest(
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =
       execution_context->GetTaskRunner(TaskType::kUserInteraction);
 
-  GetFrame()->GetBrowserInterfaceBroker().GetInterface(
-      payment_provider_.BindNewPipeAndPassReceiver(task_runner));
+  if (mock_payment_provider) {
+    payment_provider_.Bind(
+        std::move(mock_payment_provider),
+        execution_context->GetTaskRunner(TaskType::kMiscPlatformAPI));
+  } else {
+    GetFrame()->GetBrowserInterfaceBroker().GetInterface(
+        payment_provider_.BindNewPipeAndPassReceiver(task_runner));
+  }
   payment_provider_.set_disconnect_handler(
       WTF::Bind(&PaymentRequest::OnConnectionError, WrapWeakPersistent(this)));
 
@@ -1152,13 +1299,13 @@ PaymentRequest::PaymentRequest(
   payment_provider_->Init(
       std::move(client), std::move(validated_method_data),
       std::move(validated_details),
-      payments::mojom::blink::PaymentOptions::From(options_.Get()),
+      payments::mojom::blink::PaymentOptions::From(*options_),
       skip_to_gpay_ready);
 #else
   payment_provider_->Init(
       std::move(client), std::move(validated_method_data),
       std::move(validated_details),
-      payments::mojom::blink::PaymentOptions::From(options_.Get()));
+      payments::mojom::blink::PaymentOptions::From(*options_));
 #endif
 }
 
@@ -1183,7 +1330,8 @@ void PaymentRequest::OnPaymentMethodChange(const String& method_name,
       GetPendingAcceptPromiseResolver()->GetScriptState();
   ScriptState::Scope scope(script_state);
 
-  PaymentMethodChangeEventInit* init = PaymentMethodChangeEventInit::Create();
+  PaymentMethodChangeEventInit* init =
+      PaymentMethodChangeEventInit::Create(script_state->GetIsolate());
   init->setMethodName(method_name);
 
   if (!stringified_details.IsEmpty()) {
@@ -1343,7 +1491,12 @@ void PaymentRequest::OnError(PaymentErrorReason error,
       break;
 
     case PaymentErrorReason::NOT_SUPPORTED:
+      exception_code = exception_code = DOMExceptionCode::kNotSupportedError;
+      break;
+
+    case PaymentErrorReason::NOT_SUPPORTED_FOR_INVALID_ORIGIN_OR_SSL:
       exception_code = DOMExceptionCode::kNotSupportedError;
+      not_supported_for_invalid_origin_or_ssl_error_ = error_message;
       break;
 
     case PaymentErrorReason::ALREADY_SHOWING:
@@ -1375,13 +1528,21 @@ void PaymentRequest::OnError(PaymentErrorReason error,
   }
 
   if (can_make_payment_resolver_) {
-    can_make_payment_resolver_->Reject(
-        MakeGarbageCollected<DOMException>(exception_code, error_message));
+    if (!not_supported_for_invalid_origin_or_ssl_error_.IsEmpty()) {
+      can_make_payment_resolver_->Reject(false);
+    } else {
+      can_make_payment_resolver_->Reject(
+          MakeGarbageCollected<DOMException>(exception_code, error_message));
+    }
   }
 
   if (has_enrolled_instrument_resolver_) {
-    has_enrolled_instrument_resolver_->Reject(
-        MakeGarbageCollected<DOMException>(exception_code, error_message));
+    if (!not_supported_for_invalid_origin_or_ssl_error_.IsEmpty()) {
+      has_enrolled_instrument_resolver_->Reject(false);
+    } else {
+      has_enrolled_instrument_resolver_->Reject(
+          MakeGarbageCollected<DOMException>(exception_code, error_message));
+    }
   }
 
   ClearResolversAndCloseMojoConnection();

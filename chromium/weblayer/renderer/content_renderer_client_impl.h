@@ -17,6 +17,7 @@ class LocalInterfaceProvider;
 }  // namespace service_manager
 
 namespace weblayer {
+class WebLayerRenderThreadObserver;
 
 class ContentRendererClientImpl : public content::ContentRendererClient {
  public:
@@ -26,9 +27,10 @@ class ContentRendererClientImpl : public content::ContentRendererClient {
   // content::ContentRendererClient:
   void RenderThreadStarted() override;
   void RenderFrameCreated(content::RenderFrame* render_frame) override;
+  void RenderViewCreated(content::RenderView* render_view) override;
+  SkBitmap* GetSadPluginBitmap() override;
+  SkBitmap* GetSadWebViewBitmap() override;
   bool HasErrorPage(int http_status_code) override;
-  bool ShouldSuppressErrorPage(content::RenderFrame* render_frame,
-                               const GURL& url) override;
   void PrepareErrorPage(content::RenderFrame* render_frame,
                         const blink::WebURLError& error,
                         const std::string& http_method,
@@ -39,6 +41,12 @@ class ContentRendererClientImpl : public content::ContentRendererClient {
   void AddSupportedKeySystems(
       std::vector<std::unique_ptr<::media::KeySystemProperties>>* key_systems)
       override;
+  void SetRuntimeFeaturesDefaultsBeforeBlinkInitialization() override;
+  bool IsPrefetchOnly(content::RenderFrame* render_frame,
+                      const blink::WebURLRequest& request) override;
+  bool DeferMediaLoad(content::RenderFrame* render_frame,
+                      bool has_played_media_before,
+                      base::OnceClosure closure) override;
 
  private:
 #if defined(OS_ANDROID)
@@ -46,6 +54,8 @@ class ContentRendererClientImpl : public content::ContentRendererClient {
       local_interface_provider_;
   std::unique_ptr<SpellCheck> spellcheck_;
 #endif
+
+  std::unique_ptr<WebLayerRenderThreadObserver> weblayer_observer_;
 
   scoped_refptr<blink::ThreadSafeBrowserInterfaceBrokerProxy>
       browser_interface_broker_;

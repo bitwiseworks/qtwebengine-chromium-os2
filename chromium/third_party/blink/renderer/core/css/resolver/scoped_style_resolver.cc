@@ -79,8 +79,8 @@ void ScopedStyleResolver::AddFontFaceRules(const RuleSet& rule_set) {
     if (FontFace* font_face = FontFace::Create(&document, font_face_rule))
       css_font_selector->GetFontFaceCache()->Add(font_face_rule, font_face);
   }
-  if (font_face_rules.size() && document.GetStyleResolver())
-    document.GetStyleResolver()->InvalidateMatchedPropertiesCache();
+  if (font_face_rules.size())
+    document.GetStyleResolver().InvalidateMatchedPropertiesCache();
 }
 
 void ScopedStyleResolver::AppendActiveStyleSheets(
@@ -288,7 +288,7 @@ void ScopedStyleResolver::MatchPageRules(PageRuleCollector& collector) {
     collector.MatchPageRules(&sheet->Contents()->GetRuleSet());
 }
 
-void ScopedStyleResolver::Trace(Visitor* visitor) {
+void ScopedStyleResolver::Trace(Visitor* visitor) const {
   visitor->Trace(scope_);
   visitor->Trace(author_style_sheets_);
   visitor->Trace(keyframes_rule_map_);
@@ -386,7 +386,7 @@ void ScopedStyleResolver::AddSlottedRules(const RuleSet& author_rules,
       parent_style_sheet, sheet_index, slotted_rule_set));
 }
 
-void ScopedStyleResolver::RuleSubSet::Trace(Visitor* visitor) {
+void ScopedStyleResolver::RuleSubSet::Trace(Visitor* visitor) const {
   visitor->Trace(parent_style_sheet_);
   visitor->Trace(rule_set_);
 }

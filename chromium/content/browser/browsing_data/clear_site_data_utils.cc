@@ -63,7 +63,7 @@ class SiteDataClearer : public BrowsingDataRemover::Observer {
     // TODO(msramek): What about plugin data?
     if (clear_cookies_) {
       std::string domain = GetDomainAndRegistry(
-          origin_.host(),
+          origin_,
           net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
 
       if (domain.empty())
@@ -71,11 +71,11 @@ class SiteDataClearer : public BrowsingDataRemover::Observer {
 
       std::unique_ptr<BrowsingDataFilterBuilder> domain_filter_builder(
           BrowsingDataFilterBuilder::Create(
-              BrowsingDataFilterBuilder::WHITELIST));
+              BrowsingDataFilterBuilder::Mode::kDelete));
       domain_filter_builder->AddRegisterableDomain(domain);
 
       pending_task_count_++;
-      int remove_mask = BrowsingDataRemover::DATA_TYPE_COOKIES;
+      uint64_t remove_mask = BrowsingDataRemover::DATA_TYPE_COOKIES;
       if (avoid_closing_connections_) {
         remove_mask |= BrowsingDataRemover::DATA_TYPE_AVOID_CLOSING_CONNECTIONS;
       }
@@ -87,7 +87,7 @@ class SiteDataClearer : public BrowsingDataRemover::Observer {
     }
 
     // Delete origin-scoped data.
-    int remove_mask = 0;
+    uint64_t remove_mask = 0;
     if (clear_storage_)
       remove_mask |= BrowsingDataRemover::DATA_TYPE_DOM_STORAGE;
     if (clear_cache_)
@@ -96,7 +96,7 @@ class SiteDataClearer : public BrowsingDataRemover::Observer {
     if (remove_mask) {
       std::unique_ptr<BrowsingDataFilterBuilder> origin_filter_builder(
           BrowsingDataFilterBuilder::Create(
-              BrowsingDataFilterBuilder::WHITELIST));
+              BrowsingDataFilterBuilder::Mode::kDelete));
       origin_filter_builder->AddOrigin(origin_);
 
       pending_task_count_++;
@@ -112,7 +112,7 @@ class SiteDataClearer : public BrowsingDataRemover::Observer {
 
  private:
   // BrowsingDataRemover::Observer:
-  void OnBrowsingDataRemoverDone() override {
+  void OnBrowsingDataRemoverDone(uint64_t failed_data_types) override {
     DCHECK(pending_task_count_);
     if (--pending_task_count_)
       return;

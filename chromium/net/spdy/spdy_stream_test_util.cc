@@ -83,6 +83,7 @@ void StreamDelegateBase::OnClose(int status) {
   if (!stream_.get())
     return;
   stream_id_ = stream_->stream_id();
+  stream_->GetLoadTimingInfo(&load_timing_info_);
   stream_.reset();
   callback_.callback().Run(status);
 }
@@ -115,7 +116,12 @@ std::string StreamDelegateBase::GetResponseHeaderValue(
     const std::string& name) const {
   spdy::SpdyHeaderBlock::const_iterator it = response_headers_.find(name);
   return (it == response_headers_.end()) ? std::string()
-                                         : it->second.as_string();
+                                         : std::string(it->second);
+}
+
+const LoadTimingInfo& StreamDelegateBase::GetLoadTimingInfo() {
+  DCHECK(StreamIsClosed());
+  return load_timing_info_;
 }
 
 StreamDelegateDoNothing::StreamDelegateDoNothing(

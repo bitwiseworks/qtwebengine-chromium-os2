@@ -25,10 +25,12 @@ namespace SkSL {
  * At the IR level, this is represented by a single variable of struct type.
  */
 struct InterfaceBlock : public ProgramElement {
+    static constexpr Kind kProgramElementKind = Kind::kInterfaceBlock;
+
     InterfaceBlock(int offset, const Variable* var, String typeName, String instanceName,
                    std::vector<std::unique_ptr<Expression>> sizes,
                    std::shared_ptr<SymbolTable> typeOwner)
-    : INHERITED(offset, kInterfaceBlock_Kind)
+    : INHERITED(offset, kProgramElementKind)
     , fVariable(*var)
     , fTypeName(std::move(typeName))
     , fInstanceName(std::move(instanceName))
@@ -46,11 +48,10 @@ struct InterfaceBlock : public ProgramElement {
                                                                   fTypeOwner));
     }
 
-#ifdef SK_DEBUG
     String description() const override {
         String result = fVariable.fModifiers.description() + fTypeName + " {\n";
-        const Type* structType = &fVariable.fType;
-        while (structType->kind() == Type::kArray_Kind) {
+        const Type* structType = &fVariable.type();
+        while (structType->typeKind() == Type::TypeKind::kArray) {
             structType = &structType->componentType();
         }
         for (const auto& f : structType->fields()) {
@@ -69,7 +70,6 @@ struct InterfaceBlock : public ProgramElement {
         }
         return result + ";";
     }
-#endif
 
     const Variable& fVariable;
     const String fTypeName;
@@ -77,9 +77,9 @@ struct InterfaceBlock : public ProgramElement {
     std::vector<std::unique_ptr<Expression>> fSizes;
     const std::shared_ptr<SymbolTable> fTypeOwner;
 
-    typedef ProgramElement INHERITED;
+    using INHERITED = ProgramElement;
 };
 
-} // namespace
+}  // namespace SkSL
 
 #endif

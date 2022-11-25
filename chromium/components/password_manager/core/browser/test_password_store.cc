@@ -8,12 +8,13 @@
 
 #include <memory>
 
-#include "base/logging.h"
+#include "base/check_op.h"
+#include "base/notreached.h"
 #include "base/stl_util.h"
 #include "base/threading/sequenced_task_runner_handle.h"
-#include "components/autofill/core/common/password_form.h"
 #include "components/password_manager/core/browser/compromised_credentials_table.h"
 #include "components/password_manager/core/browser/login_database.h"
+#include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/psl_matching_helper.h"
 #include "components/password_manager/core/browser/statistics_table.h"
 #include "components/sync/protocol/entity_metadata.pb.h"
@@ -41,6 +42,9 @@ class TestPasswordSyncMetadataStore : public PasswordStoreSync::MetadataStore {
   bool ClearModelTypeState(syncer::ModelType model_type) override;
   std::unique_ptr<syncer::MetadataBatch> GetAllSyncMetadata() override;
   void DeleteAllSyncMetadata() override;
+  void SetDeletionsHaveSyncedCallback(
+      base::RepeatingCallback<void(bool)> callback) override;
+  bool HasUnsyncedDeletions() override;
 
  private:
   sync_pb::ModelTypeState sync_model_type_state_;
@@ -59,7 +63,7 @@ bool TestPasswordSyncMetadataStore::UpdateSyncMetadata(
 bool TestPasswordSyncMetadataStore::ClearSyncMetadata(
     syncer::ModelType model_type,
     const std::string& storage_key) {
-  sync_metadata_.clear();
+  sync_metadata_.erase(storage_key);
   return true;
 }
 
@@ -95,9 +99,19 @@ void TestPasswordSyncMetadataStore::DeleteAllSyncMetadata() {
   sync_metadata_.clear();
 }
 
+void TestPasswordSyncMetadataStore::SetDeletionsHaveSyncedCallback(
+    base::RepeatingCallback<void(bool)> callback) {
+  NOTIMPLEMENTED();
+}
+
+bool TestPasswordSyncMetadataStore::HasUnsyncedDeletions() {
+  return false;
+}
+
 }  // namespace
 
-TestPasswordStore::TestPasswordStore(bool is_account_store)
+TestPasswordStore::TestPasswordStore(
+    password_manager::IsAccountStore is_account_store)
     : is_account_store_(is_account_store),
       metadata_store_(std::make_unique<TestPasswordSyncMetadataStore>()) {}
 
@@ -112,7 +126,7 @@ void TestPasswordStore::Clear() {
   stored_passwords_.clear();
 }
 
-bool TestPasswordStore::IsEmpty() const {
+bool TestPasswordStore::IsEmpty() {
   // The store is empty, if the sum of all stored passwords across all entries
   // in |stored_passwords_| is 0.
   size_t number_of_passwords = 0u;
@@ -129,7 +143,7 @@ TestPasswordStore::CreateBackgroundTaskRunner() const {
 }
 
 PasswordStoreChangeList TestPasswordStore::AddLoginImpl(
-    const autofill::PasswordForm& form,
+    const PasswordForm& form,
     AddLoginError* error) {
   if (error)
     *error = AddLoginError::kNone;
@@ -146,35 +160,33 @@ PasswordStoreChangeList TestPasswordStore::AddLoginImpl(
     changes.emplace_back(PasswordStoreChange::REMOVE, *iter);
     changes.emplace_back(PasswordStoreChange::ADD, form);
     *iter = form;
-    iter->in_store = is_account_store_
-                         ? autofill::PasswordForm::Store::kAccountStore
-                         : autofill::PasswordForm::Store::kProfileStore;
+    iter->in_store = IsAccountStore() ? PasswordForm::Store::kAccountStore
+                                      : PasswordForm::Store::kProfileStore;
     return changes;
   }
 
   changes.emplace_back(PasswordStoreChange::ADD, form);
   passwords_for_signon_realm.push_back(form);
   passwords_for_signon_realm.back().in_store =
-      is_account_store_ ? autofill::PasswordForm::Store::kAccountStore
-                        : autofill::PasswordForm::Store::kProfileStore;
+      IsAccountStore() ? PasswordForm::Store::kAccountStore
+                       : PasswordForm::Store::kProfileStore;
   return changes;
 }
 
 PasswordStoreChangeList TestPasswordStore::UpdateLoginImpl(
-    const autofill::PasswordForm& form,
+    const PasswordForm& form,
     UpdateLoginError* error) {
   if (error)
     *error = UpdateLoginError::kNone;
 
   PasswordStoreChangeList changes;
-  std::vector<autofill::PasswordForm>& forms =
-      stored_passwords_[form.signon_realm];
-  for (auto it = forms.begin(); it != forms.end(); ++it) {
-    if (ArePasswordFormUniqueKeysEqual(form, *it)) {
-      *it = form;
-      it->in_store = is_account_store_
-                         ? autofill::PasswordForm::Store::kAccountStore
-                         : autofill::PasswordForm::Store::kProfileStore;
+  std::vector<PasswordForm>& forms = stored_passwords_[form.signon_realm];
+  for (auto& stored_form : forms) {
+    if (ArePasswordFormUniqueKeysEqual(form, stored_form)) {
+      stored_form = form;
+      stored_form.in_store = IsAccountStore()
+                                 ? PasswordForm::Store::kAccountStore
+                                 : PasswordForm::Store::kProfileStore;
       changes.push_back(PasswordStoreChange(PasswordStoreChange::UPDATE, form));
     }
   }
@@ -182,10 +194,9 @@ PasswordStoreChangeList TestPasswordStore::UpdateLoginImpl(
 }
 
 PasswordStoreChangeList TestPasswordStore::RemoveLoginImpl(
-    const autofill::PasswordForm& form) {
+    const PasswordForm& form) {
   PasswordStoreChangeList changes;
-  std::vector<autofill::PasswordForm>& forms =
-      stored_passwords_[form.signon_realm];
+  std::vector<PasswordForm>& forms = stored_passwords_[form.signon_realm];
   auto it = forms.begin();
   while (it != forms.end()) {
     if (ArePasswordFormUniqueKeysEqual(form, *it)) {
@@ -198,10 +209,10 @@ PasswordStoreChangeList TestPasswordStore::RemoveLoginImpl(
   return changes;
 }
 
-std::vector<std::unique_ptr<autofill::PasswordForm>>
+std::vector<std::unique_ptr<PasswordForm>>
 TestPasswordStore::FillMatchingLogins(const FormDigest& form) {
   ++fill_matching_logins_calls_;
-  std::vector<std::unique_ptr<autofill::PasswordForm>> matched_forms;
+  std::vector<std::unique_ptr<PasswordForm>> matched_forms;
   for (const auto& elements : stored_passwords_) {
     // The code below doesn't support PSL federated credential. It's doable but
     // no tests need it so far.
@@ -209,18 +220,17 @@ TestPasswordStore::FillMatchingLogins(const FormDigest& form) {
     const bool realm_psl_matches =
         IsPublicSuffixDomainMatch(elements.first, form.signon_realm);
     if (realm_matches || realm_psl_matches ||
-        (form.scheme == autofill::PasswordForm::Scheme::kHtml &&
-         password_manager::IsFederatedRealm(elements.first, form.origin))) {
+        (form.scheme == PasswordForm::Scheme::kHtml &&
+         password_manager::IsFederatedRealm(elements.first, form.url))) {
       const bool is_psl = !realm_matches && realm_psl_matches;
       for (const auto& stored_form : elements.second) {
         // Repeat the condition above with an additional check for origin.
         if (realm_matches || realm_psl_matches ||
-            (form.scheme == autofill::PasswordForm::Scheme::kHtml &&
-             stored_form.origin.GetOrigin() == form.origin.GetOrigin() &&
+            (form.scheme == PasswordForm::Scheme::kHtml &&
+             stored_form.url.GetOrigin() == form.url.GetOrigin() &&
              password_manager::IsFederatedRealm(stored_form.signon_realm,
-                                                form.origin))) {
-          matched_forms.push_back(
-              std::make_unique<autofill::PasswordForm>(stored_form));
+                                                form.url))) {
+          matched_forms.push_back(std::make_unique<PasswordForm>(stored_form));
           matched_forms.back()->is_public_suffix_match = is_psl;
         }
       }
@@ -229,37 +239,36 @@ TestPasswordStore::FillMatchingLogins(const FormDigest& form) {
   return matched_forms;
 }
 
-std::vector<std::unique_ptr<autofill::PasswordForm>>
+std::vector<std::unique_ptr<PasswordForm>>
 TestPasswordStore::FillMatchingLoginsByPassword(
     const base::string16& plain_text_password) {
-  std::vector<std::unique_ptr<autofill::PasswordForm>> matched_forms;
+  std::vector<std::unique_ptr<PasswordForm>> matched_forms;
   for (const auto& elements : stored_passwords_) {
     for (const auto& password_form : elements.second) {
       if (password_form.password_value == plain_text_password)
-        matched_forms.push_back(
-            std::make_unique<autofill::PasswordForm>(password_form));
+        matched_forms.push_back(std::make_unique<PasswordForm>(password_form));
     }
   }
   return matched_forms;
 }
 
 bool TestPasswordStore::FillAutofillableLogins(
-    std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) {
+    std::vector<std::unique_ptr<PasswordForm>>* forms) {
   for (const auto& forms_for_realm : stored_passwords_) {
-    for (const autofill::PasswordForm& form : forms_for_realm.second) {
-      if (!form.blacklisted_by_user)
-        forms->push_back(std::make_unique<autofill::PasswordForm>(form));
+    for (const PasswordForm& form : forms_for_realm.second) {
+      if (!form.blocked_by_user)
+        forms->push_back(std::make_unique<PasswordForm>(form));
     }
   }
   return true;
 }
 
 bool TestPasswordStore::FillBlacklistLogins(
-    std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) {
+    std::vector<std::unique_ptr<PasswordForm>>* forms) {
   for (const auto& forms_for_realm : stored_passwords_) {
-    for (const autofill::PasswordForm& form : forms_for_realm.second) {
-      if (form.blacklisted_by_user)
-        forms->push_back(std::make_unique<autofill::PasswordForm>(form));
+    for (const PasswordForm& form : forms_for_realm.second) {
+      if (form.blocked_by_user)
+        forms->push_back(std::make_unique<PasswordForm>(form));
     }
   }
   return true;
@@ -324,7 +333,10 @@ std::vector<InteractionsStats> TestPasswordStore::GetAllSiteStatsImpl() {
 
 bool TestPasswordStore::AddCompromisedCredentialsImpl(
     const CompromisedCredentials& compromised_credentials) {
-  return compromised_credentials_.insert(compromised_credentials).second;
+  CompromisedCredentials cred = compromised_credentials;
+  cred.in_store = IsAccountStore() ? PasswordForm::Store::kAccountStore
+                                   : PasswordForm::Store::kProfileStore;
+  return compromised_credentials_.insert(std::move(cred)).second;
 }
 
 bool TestPasswordStore::RemoveCompromisedCredentialsImpl(
@@ -340,10 +352,36 @@ bool TestPasswordStore::RemoveCompromisedCredentialsImpl(
   return old_size != compromised_credentials_.size();
 }
 
+bool TestPasswordStore::RemoveCompromisedCredentialsByCompromiseTypeImpl(
+    const std::string& signon_realm,
+    const base::string16& username,
+    const CompromiseType& compromise_type,
+    RemoveCompromisedCredentialsReason reason) {
+  const size_t old_size = compromised_credentials_.size();
+  base::EraseIf(compromised_credentials_, [&](const auto& credential) {
+    return credential.signon_realm == signon_realm &&
+           credential.username == username &&
+           credential.compromise_type == compromise_type;
+  });
+  return old_size != compromised_credentials_.size();
+}
+
 std::vector<CompromisedCredentials>
 TestPasswordStore::GetAllCompromisedCredentialsImpl() {
   return std::vector<CompromisedCredentials>(compromised_credentials_.begin(),
                                              compromised_credentials_.end());
+}
+
+std::vector<CompromisedCredentials>
+TestPasswordStore::GetMatchingCompromisedCredentialsImpl(
+    const std::string& signon_realm) {
+  std::vector<CompromisedCredentials> result;
+  std::copy_if(compromised_credentials_.begin(), compromised_credentials_.end(),
+               std::back_inserter(result),
+               [&signon_realm](const CompromisedCredentials& credential) {
+                 return credential.signon_realm == signon_realm;
+               });
+  return result;
 }
 
 bool TestPasswordStore::RemoveCompromisedCredentialsByUrlAndTimeImpl(
@@ -409,7 +447,7 @@ PasswordStoreSync::MetadataStore* TestPasswordStore::GetMetadataStore() {
 }
 
 bool TestPasswordStore::IsAccountStore() const {
-  return is_account_store_;
+  return is_account_store_.value();
 }
 
 bool TestPasswordStore::DeleteAndRecreateDatabaseFile() {

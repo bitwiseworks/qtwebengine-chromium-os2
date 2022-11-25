@@ -7,11 +7,10 @@
 
 #include "src/gpu/GrResourceCache.h"
 #include <atomic>
-#include "include/gpu/GrContext.h"
+#include "include/gpu/GrDirectContext.h"
 #include "include/private/GrSingleOwner.h"
 #include "include/private/SkTo.h"
 #include "include/utils/SkRandom.h"
-#include "src/core/SkExchange.h"
 #include "src/core/SkMessageBus.h"
 #include "src/core/SkOpts.h"
 #include "src/core/SkScopeExit.h"
@@ -22,6 +21,7 @@
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/GrTextureProxyCacheAccess.h"
+#include "src/gpu/GrThreadSafeUniquelyKeyedProxyViewCache.h"
 #include "src/gpu/GrTracing.h"
 #include "src/gpu/SkGr.h"
 
@@ -29,8 +29,7 @@ DECLARE_SKMESSAGEBUS_MESSAGE(GrUniqueKeyInvalidatedMessage);
 
 DECLARE_SKMESSAGEBUS_MESSAGE(GrTextureFreedMessage);
 
-#define ASSERT_SINGLE_OWNER \
-    SkDEBUGCODE(GrSingleOwner::AutoEnforce debug_SingleOwner(fSingleOwner);)
+#define ASSERT_SINGLE_OWNER GR_ASSERT_SINGLE_OWNER(fSingleOwner)
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -78,14 +77,14 @@ inline GrResourceCache::TextureAwaitingUnref::TextureAwaitingUnref(GrTexture* te
         : fTexture(texture), fNumUnrefs(1) {}
 
 inline GrResourceCache::TextureAwaitingUnref::TextureAwaitingUnref(TextureAwaitingUnref&& that) {
-    fTexture = skstd::exchange(that.fTexture, nullptr);
-    fNumUnrefs = skstd::exchange(that.fNumUnrefs, 0);
+    fTexture = std::exchange(that.fTexture, nullptr);
+    fNumUnrefs = std::exchange(that.fNumUnrefs, 0);
 }
 
 inline GrResourceCache::TextureAwaitingUnref& GrResourceCache::TextureAwaitingUnref::operator=(
         TextureAwaitingUnref&& that) {
-    fTexture = skstd::exchange(that.fTexture, nullptr);
-    fNumUnrefs = skstd::exchange(that.fNumUnrefs, 0);
+    fTexture = std::exchange(that.fTexture, nullptr);
+    fNumUnrefs = std::exchange(that.fNumUnrefs, 0);
     return *this;
 }
 
@@ -202,6 +201,8 @@ void GrResourceCache::removeResource(GrGpuResource* resource) {
 void GrResourceCache::abandonAll() {
     AutoValidate av(this);
 
+    fThreadSafeViewCache->dropAllRefs();
+
     // We need to make sure to free any resources that were waiting on a free message but never
     // received one.
     fTexturesAwaitingUnref.reset();
@@ -232,6 +233,8 @@ void GrResourceCache::abandonAll() {
 void GrResourceCache::releaseAll() {
     AutoValidate av(this);
 
+    fThreadSafeViewCache->dropAllRefs();
+
     this->processFreedGpuResources();
 
     // We need to make sure to free any resources that were waiting on a free message but never
@@ -239,6 +242,8 @@ void GrResourceCache::releaseAll() {
     fTexturesAwaitingUnref.reset();
 
     SkASSERT(fProxyProvider); // better have called setProxyProvider
+    SkASSERT(fThreadSafeViewCache); // better have called setThreadSafeViewCache too
+
     // We must remove the uniqueKeys from the proxies here. While they possess a uniqueKey
     // they also have a raw pointer back to this class (which is presumably going away)!
     fProxyProvider->removeAllUniqueKeys();
@@ -524,11 +529,25 @@ void GrResourceCache::purgeAsNeeded() {
         stillOverbudget = this->overBudget();
     }
 
+    if (stillOverbudget) {
+        fThreadSafeViewCache->dropUniqueRefs(this);
+
+        while (stillOverbudget && fPurgeableQueue.count()) {
+            GrGpuResource* resource = fPurgeableQueue.peek();
+            SkASSERT(resource->resourcePriv().isPurgeable());
+            resource->cacheAccess().release();
+            stillOverbudget = this->overBudget();
+        }
+    }
+
     this->validate();
 }
 
 void GrResourceCache::purgeUnlockedResources(bool scratchResourcesOnly) {
+
     if (!scratchResourcesOnly) {
+        fThreadSafeViewCache->dropUniqueRefs(nullptr);
+
         // We could disable maintaining the heap property here, but it would add a lot of
         // complexity. Moreover, this is rarely called.
         while (fPurgeableQueue.count()) {
@@ -561,6 +580,8 @@ void GrResourceCache::purgeUnlockedResources(bool scratchResourcesOnly) {
 }
 
 void GrResourceCache::purgeResourcesNotUsedSince(GrStdSteadyClock::time_point purgeTime) {
+    fThreadSafeViewCache->dropUniqueRefsOlderThan(purgeTime);
+
     while (fPurgeableQueue.count()) {
         const GrStdSteadyClock::time_point resourceTime =
                 fPurgeableQueue.peek()->cacheAccess().timeWhenResourceBecamePurgeable();
@@ -618,11 +639,11 @@ void GrResourceCache::purgeUnlockedResources(size_t bytesToPurge, bool preferScr
         fMaxBytes = cachedByteCount;
     }
 }
+
 bool GrResourceCache::requestsFlush() const {
     return this->overBudget() && !fPurgeableQueue.count() &&
            fNumBudgetedResourcesFlushWillMakePurgeable > 0;
 }
-
 
 void GrResourceCache::insertDelayedTextureUnref(GrTexture* texture) {
     texture->ref();
@@ -636,7 +657,7 @@ void GrResourceCache::insertDelayedTextureUnref(GrTexture* texture) {
 
 void GrResourceCache::processFreedGpuResources() {
     if (!fTexturesAwaitingUnref.count()) {
-      return;
+        return;
     }
 
     SkTArray<GrTextureFreedMessage> msgs;
@@ -691,7 +712,7 @@ uint32_t GrResourceCache::getNextTimestamp() {
                 fPurgeableQueue.pop();
             }
 
-            SkTQSort(fNonpurgeableResources.begin(), fNonpurgeableResources.end() - 1,
+            SkTQSort(fNonpurgeableResources.begin(), fNonpurgeableResources.end(),
                      CompareTimestamp);
 
             // Pick resources out of the purgeable and non-purgeable arrays based on lowest

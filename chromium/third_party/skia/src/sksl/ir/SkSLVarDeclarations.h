@@ -21,10 +21,12 @@ namespace SkSL {
  * instances.
  */
 struct VarDeclaration : public Statement {
+    static constexpr Kind kStatementKind = Kind::kVarDeclaration;
+
     VarDeclaration(const Variable* var,
                    std::vector<std::unique_ptr<Expression>> sizes,
                    std::unique_ptr<Expression> value)
-    : INHERITED(var->fOffset, Statement::kVarDeclaration_Kind)
+    : INHERITED(var->fOffset, kStatementKind)
     , fVar(var)
     , fSizes(std::move(sizes))
     , fValue(std::move(value)) {}
@@ -42,9 +44,8 @@ struct VarDeclaration : public Statement {
                                                              fValue ? fValue->clone() : nullptr));
     }
 
-#ifdef SK_DEBUG
     String description() const override {
-        String result = fVar->fName;
+        String result = fVar->fModifiers.description() + fVar->type().name() + " " + fVar->fName;
         for (const auto& size : fSizes) {
             if (size) {
                 result += "[" + size->description() + "]";
@@ -57,22 +58,23 @@ struct VarDeclaration : public Statement {
         }
         return result;
     }
-#endif
 
     const Variable* fVar;
     std::vector<std::unique_ptr<Expression>> fSizes;
     std::unique_ptr<Expression> fValue;
 
-    typedef Statement INHERITED;
+    using INHERITED = Statement;
 };
 
 /**
  * A variable declaration statement, which may consist of one or more individual variables.
  */
 struct VarDeclarations : public ProgramElement {
+    static constexpr Kind kProgramElementKind = Kind::kVar;
+
     VarDeclarations(int offset, const Type* baseType,
                     std::vector<std::unique_ptr<VarDeclaration>> vars)
-    : INHERITED(offset, kVar_Kind)
+    : INHERITED(offset, kProgramElementKind)
     , fBaseType(*baseType) {
         for (auto& var : vars) {
             fVars.push_back(std::unique_ptr<Statement>(var.release()));
@@ -89,31 +91,44 @@ struct VarDeclarations : public ProgramElement {
                                                                      std::move(cloned)));
     }
 
-#ifdef SK_DEBUG
     String description() const override {
         if (!fVars.size()) {
             return String();
         }
-        String result = ((VarDeclaration&) *fVars[0]).fVar->fModifiers.description() +
-                fBaseType.description() + " ";
-        String separator;
+        String result;
         for (const auto& var : fVars) {
+            if (var->kind() != Statement::Kind::kNop) {
+                SkASSERT(var->kind() == Statement::Kind::kVarDeclaration);
+                result = ((const VarDeclaration&) *var).fVar->fModifiers.description();
+                break;
+            }
+        }
+        result += fBaseType.description() + " ";
+        String separator;
+        for (const auto& rawVar : fVars) {
+            if (rawVar->kind() == Statement::Kind::kNop) {
+                continue;
+            }
+            SkASSERT(rawVar->kind() == Statement::Kind::kVarDeclaration);
+            VarDeclaration& var = (VarDeclaration&) *rawVar;
             result += separator;
             separator = ", ";
-            result += var->description();
+            result += var.fVar->fName;
+            if (var.fValue) {
+                result += " = " + var.fValue->description();
+            }
         }
         return result;
     }
-#endif
 
     const Type& fBaseType;
     // this *should* be a vector of unique_ptr<VarDeclaration>, but it significantly simplifies the
     // CFG to only have to worry about unique_ptr<Statement>
     std::vector<std::unique_ptr<Statement>> fVars;
 
-    typedef ProgramElement INHERITED;
+    using INHERITED = ProgramElement;
 };
 
-} // namespace
+}  // namespace SkSL
 
 #endif

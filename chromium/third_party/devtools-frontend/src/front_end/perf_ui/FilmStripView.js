@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Host from '../host/host.js';
 import * as SDK from '../sdk/sdk.js';  // eslint-disable-line no-unused-vars
@@ -62,7 +65,8 @@ export class FilmStripView extends UI.Widget.HBox {
    */
   createFrameElement(frame) {
     const time = frame.timestamp;
-    const element = createElementWithClass('div', 'frame');
+    const element = document.createElement('div');
+    element.classList.add('frame');
     element.title = Common.UIString.UIString('Doubleclick to zoom image. Click to view preceding requests.');
     element.createChild('div', 'time').textContent = Number.millisToString(time - this._zeroTime);
     const imageElement = element.createChild('div', 'thumbnail').createChild('img');

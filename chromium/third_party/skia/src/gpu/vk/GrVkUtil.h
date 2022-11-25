@@ -21,25 +21,21 @@ class GrVkGpu;
 // makes a Vk call on the interface
 #define GR_VK_CALL(IFACE, X) (IFACE)->fFunctions.f##X
 
-#define GR_VK_CALL_RESULT(GPU, RESULT, X)                             \
-    do {                                                              \
-    (RESULT) = GR_VK_CALL(GPU->vkInterface(), X);                     \
-    SkASSERT(VK_SUCCESS == RESULT || VK_ERROR_DEVICE_LOST == RESULT); \
-    if (RESULT != VK_SUCCESS && !GPU->isDeviceLost()) {               \
-        SkDebugf("Failed vulkan call. Error: %d\n", RESULT);          \
-    }                                                                 \
-    if (VK_ERROR_DEVICE_LOST == RESULT) {                             \
-        GPU->setDeviceLost();                                         \
-    }                                                                 \
-    } while(false)
+#define GR_VK_CALL_RESULT(GPU, RESULT, X)                                 \
+    do {                                                                  \
+        (RESULT) = GR_VK_CALL(GPU->vkInterface(), X);                     \
+        SkASSERT(VK_SUCCESS == RESULT || VK_ERROR_DEVICE_LOST == RESULT); \
+        if (RESULT != VK_SUCCESS && !GPU->isDeviceLost()) {               \
+            SkDebugf("Failed vulkan call. Error: %d," #X "\n", RESULT);   \
+        }                                                                 \
+        GPU->checkVkResult(RESULT);                                       \
+    } while (false)
 
-#define GR_VK_CALL_RESULT_NOCHECK(GPU, RESULT, X)                     \
-    do {                                                              \
-    (RESULT) = GR_VK_CALL(GPU->vkInterface(), X);                     \
-    if (VK_ERROR_DEVICE_LOST == RESULT) {                             \
-        GPU->setDeviceLost();                                         \
-    }                                                                 \
-    } while(false)
+#define GR_VK_CALL_RESULT_NOCHECK(GPU, RESULT, X)     \
+    do {                                              \
+        (RESULT) = GR_VK_CALL(GPU->vkInterface(), X); \
+        GPU->checkVkResult(RESULT);                   \
+    } while (false)
 
 // same as GR_VK_CALL but checks for success
 #define GR_VK_CALL_ERRCHECK(GPU, X)                                  \
@@ -49,14 +45,35 @@ class GrVkGpu;
 
 bool GrVkFormatIsSupported(VkFormat);
 
-bool GrVkFormatNeedsYcbcrSampler(VkFormat format);
+static constexpr uint32_t GrVkFormatChannels(VkFormat vkFormat) {
+    switch (vkFormat) {
+        case VK_FORMAT_R8G8B8A8_UNORM:           return kRGBA_SkColorChannelFlags;
+        case VK_FORMAT_R8_UNORM:                 return kRed_SkColorChannelFlag;
+        case VK_FORMAT_B8G8R8A8_UNORM:           return kRGBA_SkColorChannelFlags;
+        case VK_FORMAT_R5G6B5_UNORM_PACK16:      return kRGB_SkColorChannelFlags;
+        case VK_FORMAT_R16G16B16A16_SFLOAT:      return kRGBA_SkColorChannelFlags;
+        case VK_FORMAT_R16_SFLOAT:               return kRed_SkColorChannelFlag;
+        case VK_FORMAT_R8G8B8_UNORM:             return kRGB_SkColorChannelFlags;
+        case VK_FORMAT_R8G8_UNORM:               return kRG_SkColorChannelFlags;
+        case VK_FORMAT_A2B10G10R10_UNORM_PACK32: return kRGBA_SkColorChannelFlags;
+        case VK_FORMAT_A2R10G10B10_UNORM_PACK32: return kRGBA_SkColorChannelFlags;
+        case VK_FORMAT_B4G4R4A4_UNORM_PACK16:    return kRGBA_SkColorChannelFlags;
+        case VK_FORMAT_R4G4B4A4_UNORM_PACK16:    return kRGBA_SkColorChannelFlags;
+        case VK_FORMAT_R32G32B32A32_SFLOAT:      return kRGBA_SkColorChannelFlags;
+        case VK_FORMAT_R8G8B8A8_SRGB:            return kRGBA_SkColorChannelFlags;
+        case VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK:  return kRGB_SkColorChannelFlags;
+        case VK_FORMAT_BC1_RGB_UNORM_BLOCK:      return kRGB_SkColorChannelFlags;
+        case VK_FORMAT_BC1_RGBA_UNORM_BLOCK:     return kRGBA_SkColorChannelFlags;
+        case VK_FORMAT_R16_UNORM:                return kRed_SkColorChannelFlag;
+        case VK_FORMAT_R16G16_UNORM:             return kRG_SkColorChannelFlags;
+        case VK_FORMAT_R16G16B16A16_UNORM:       return kRGBA_SkColorChannelFlags;
+        case VK_FORMAT_R16G16_SFLOAT:            return kRG_SkColorChannelFlags;
 
-#ifdef SK_DEBUG
-/**
- * Returns true if the passed in VkFormat and GrColorType are compatible with each other.
- */
-bool GrVkFormatColorTypePairIsValid(VkFormat, GrColorType);
-#endif
+        default:                                 return 0;
+    }
+}
+
+bool GrVkFormatNeedsYcbcrSampler(VkFormat format);
 
 bool GrSampleCountToVkSampleCount(uint32_t samples, VkSampleCountFlagBits* vkSamples);
 
@@ -80,12 +97,7 @@ bool GrInstallVkShaderModule(GrVkGpu* gpu,
  */
 bool GrVkFormatIsCompressed(VkFormat);
 
-/**
- * Maps a vk format into the CompressionType enum if applicable.
- */
-SkImage::CompressionType GrVkFormatToCompressionType(VkFormat vkFormat);
-
-#if GR_TEST_UTILS
+#if defined(SK_DEBUG) || GR_TEST_UTILS
 static constexpr const char* GrVkFormatToStr(VkFormat vkFormat) {
     switch (vkFormat) {
         case VK_FORMAT_R8G8B8A8_UNORM:           return "R8G8B8A8_UNORM";

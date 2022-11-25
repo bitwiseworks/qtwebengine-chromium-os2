@@ -15,7 +15,7 @@
 #ifndef DAWNNATIVE_DEVICE_H_
 #define DAWNNATIVE_DEVICE_H_
 
-#include "common/Serial.h"
+#include "dawn_native/Commands.h"
 #include "dawn_native/Error.h"
 #include "dawn_native/Extensions.h"
 #include "dawn_native/Format.h"
@@ -37,6 +37,7 @@ namespace dawn_native {
     class ErrorScope;
     class ErrorScopeTracker;
     class FenceSignalTracker;
+    class MapRequestTracker;
     class StagingBufferBase;
 
     class DeviceBase {
@@ -71,6 +72,7 @@ namespace dawn_native {
 
         ErrorScopeTracker* GetErrorScopeTracker() const;
         FenceSignalTracker* GetFenceSignalTracker() const;
+        MapRequestTracker* GetMapRequestTracker() const;
 
         // Returns the Format corresponding to the wgpu::TextureFormat or an error if the format
         // isn't a valid wgpu::TextureFormat or isn't supported by this device.
@@ -86,9 +88,10 @@ namespace dawn_native {
             CommandEncoder* encoder,
             const CommandBufferDescriptor* descriptor) = 0;
 
-        virtual Serial GetCompletedCommandSerial() const = 0;
-        virtual Serial GetLastSubmittedCommandSerial() const = 0;
-        virtual Serial GetPendingCommandSerial() const = 0;
+        ExecutionSerial GetCompletedCommandSerial() const;
+        ExecutionSerial GetLastSubmittedCommandSerial() const;
+        ExecutionSerial GetFutureCallbackSerial() const;
+        ExecutionSerial GetPendingCommandSerial() const;
         virtual MaybeError TickImpl() = 0;
 
         // Many Dawn objects are completely immutable once created which means that if two
@@ -105,9 +108,11 @@ namespace dawn_native {
         // the created object will be, the "blueprint". The blueprint is just a FooBase object
         // instead of a backend Foo object. If the blueprint doesn't match an object in the
         // cache, then the descriptor is used to make a new object.
-        ResultOrError<BindGroupLayoutBase*> GetOrCreateBindGroupLayout(
+        ResultOrError<Ref<BindGroupLayoutBase>> GetOrCreateBindGroupLayout(
             const BindGroupLayoutDescriptor* descriptor);
         void UncacheBindGroupLayout(BindGroupLayoutBase* obj);
+
+        BindGroupLayoutBase* GetEmptyBindGroupLayout();
 
         ResultOrError<ComputePipelineBase*> GetOrCreateComputePipeline(
             const ComputePipelineDescriptor* descriptor);
@@ -139,13 +144,10 @@ namespace dawn_native {
         BindGroupBase* CreateBindGroup(const BindGroupDescriptor* descriptor);
         BindGroupLayoutBase* CreateBindGroupLayout(const BindGroupLayoutDescriptor* descriptor);
         BufferBase* CreateBuffer(const BufferDescriptor* descriptor);
-        WGPUCreateBufferMappedResult CreateBufferMapped(const BufferDescriptor* descriptor);
-        void CreateBufferMappedAsync(const BufferDescriptor* descriptor,
-                                     wgpu::BufferCreateMappedCallback callback,
-                                     void* userdata);
         CommandEncoder* CreateCommandEncoder(const CommandEncoderDescriptor* descriptor);
         ComputePipelineBase* CreateComputePipeline(const ComputePipelineDescriptor* descriptor);
         PipelineLayoutBase* CreatePipelineLayout(const PipelineLayoutDescriptor* descriptor);
+        QuerySetBase* CreateQuerySet(const QuerySetDescriptor* descriptor);
         QueueBase* CreateQueue();
         RenderBundleEncoder* CreateRenderBundleEncoder(
             const RenderBundleEncoderDescriptor* descriptor);
@@ -157,8 +159,12 @@ namespace dawn_native {
         TextureViewBase* CreateTextureView(TextureBase* texture,
                                            const TextureViewDescriptor* descriptor);
 
-        void InjectError(wgpu::ErrorType type, const char* message);
+        // For Dawn Wire
+        BufferBase* CreateErrorBuffer();
 
+        QueueBase* GetDefaultQueue();
+
+        void InjectError(wgpu::ErrorType type, const char* message);
         void Tick();
 
         void SetDeviceLostCallback(wgpu::DeviceLostCallback callback, void* userdata);
@@ -180,44 +186,75 @@ namespace dawn_native {
                                                    BufferBase* destination,
                                                    uint64_t destinationOffset,
                                                    uint64_t size) = 0;
+        virtual MaybeError CopyFromStagingToTexture(const StagingBufferBase* source,
+                                                    const TextureDataLayout& src,
+                                                    TextureCopy* dst,
+                                                    const Extent3D& copySizePixels) = 0;
 
         DynamicUploader* GetDynamicUploader() const;
+
+        // The device state which is a combination of creation state and loss state.
+        //
+        //   - BeingCreated: the device didn't finish creation yet and the frontend cannot be used
+        //     (both for the application calling WebGPU, or re-entrant calls). No work exists on
+        //     the GPU timeline.
+        //   - Alive: the device is usable and might have work happening on the GPU timeline.
+        //   - BeingDisconnected: the device is no longer usable because we are waiting for all
+        //     work on the GPU timeline to finish. (this is to make validation prevent the
+        //     application from adding more work during the transition from Available to
+        //     Disconnected)
+        //   - Disconnected: there is no longer work happening on the GPU timeline and the CPU data
+        //     structures can be safely destroyed without additional synchronization.
+        enum class State {
+            BeingCreated,
+            Alive,
+            BeingDisconnected,
+            Disconnected,
+        };
+        State GetState() const;
+        bool IsLost() const;
 
         std::vector<const char*> GetEnabledExtensions() const;
         std::vector<const char*> GetTogglesUsed() const;
         bool IsExtensionEnabled(Extension extension) const;
         bool IsToggleEnabled(Toggle toggle) const;
         bool IsValidationEnabled() const;
+        bool IsRobustnessEnabled() const;
         size_t GetLazyClearCountForTesting();
         void IncrementLazyClearCountForTesting();
+        size_t GetDeprecationWarningCountForTesting();
+        void EmitDeprecationWarning(const char* warning);
         void LoseForTesting();
-        bool IsLost() const;
+        void AddFutureCallbackSerial(ExecutionSerial serial);
+
+        virtual uint32_t GetOptimalBytesPerRowAlignment() const = 0;
+        virtual uint64_t GetOptimalBufferToTextureCopyOffsetAlignment() const = 0;
 
       protected:
         void SetToggle(Toggle toggle, bool isEnabled);
-        void ApplyToggleOverrides(const DeviceDescriptor* deviceDescriptor);
-        void BaseDestructor();
+        void ForceSetToggle(Toggle toggle, bool isEnabled);
 
-        std::unique_ptr<DynamicUploader> mDynamicUploader;
-        // LossStatus::Alive means the device is alive and can be used normally.
-        // LossStatus::BeingLost means the device is in the process of being lost and should not
-        //              accept any new commands.
-        // LossStatus::AlreadyLost means the device has been lost and can no longer be used,
-        //             all resources have been freed.
-        enum class LossStatus { Alive, BeingLost, AlreadyLost };
-        LossStatus mLossStatus = LossStatus::Alive;
+        MaybeError Initialize(QueueBase* defaultQueue);
+        void ShutDownBase();
+
+        // Incrememt mLastSubmittedSerial when we submit the next serial
+        void IncrementLastSubmittedCommandSerial();
+        // Check for passed fences and set the new completed serial
+        void CheckPassedSerials();
 
       private:
         virtual ResultOrError<BindGroupBase*> CreateBindGroupImpl(
             const BindGroupDescriptor* descriptor) = 0;
         virtual ResultOrError<BindGroupLayoutBase*> CreateBindGroupLayoutImpl(
             const BindGroupLayoutDescriptor* descriptor) = 0;
-        virtual ResultOrError<BufferBase*> CreateBufferImpl(const BufferDescriptor* descriptor) = 0;
+        virtual ResultOrError<Ref<BufferBase>> CreateBufferImpl(
+            const BufferDescriptor* descriptor) = 0;
         virtual ResultOrError<ComputePipelineBase*> CreateComputePipelineImpl(
             const ComputePipelineDescriptor* descriptor) = 0;
         virtual ResultOrError<PipelineLayoutBase*> CreatePipelineLayoutImpl(
             const PipelineLayoutDescriptor* descriptor) = 0;
-        virtual ResultOrError<QueueBase*> CreateQueueImpl() = 0;
+        virtual ResultOrError<QuerySetBase*> CreateQuerySetImpl(
+            const QuerySetDescriptor* descriptor) = 0;
         virtual ResultOrError<RenderPipelineBase*> CreateRenderPipelineImpl(
             const RenderPipelineDescriptor* descriptor) = 0;
         virtual ResultOrError<SamplerBase*> CreateSamplerImpl(
@@ -231,22 +268,25 @@ namespace dawn_native {
             Surface* surface,
             NewSwapChainBase* previousSwapChain,
             const SwapChainDescriptor* descriptor) = 0;
-        virtual ResultOrError<TextureBase*> CreateTextureImpl(
+        virtual ResultOrError<Ref<TextureBase>> CreateTextureImpl(
             const TextureDescriptor* descriptor) = 0;
         virtual ResultOrError<TextureViewBase*> CreateTextureViewImpl(
             TextureBase* texture,
             const TextureViewDescriptor* descriptor) = 0;
 
+        ResultOrError<Ref<BindGroupLayoutBase>> CreateEmptyBindGroupLayout();
+
         MaybeError CreateBindGroupInternal(BindGroupBase** result,
                                            const BindGroupDescriptor* descriptor);
         MaybeError CreateBindGroupLayoutInternal(BindGroupLayoutBase** result,
                                                  const BindGroupLayoutDescriptor* descriptor);
-        MaybeError CreateBufferInternal(BufferBase** result, const BufferDescriptor* descriptor);
+        ResultOrError<Ref<BufferBase>> CreateBufferInternal(const BufferDescriptor* descriptor);
         MaybeError CreateComputePipelineInternal(ComputePipelineBase** result,
                                                  const ComputePipelineDescriptor* descriptor);
         MaybeError CreatePipelineLayoutInternal(PipelineLayoutBase** result,
                                                 const PipelineLayoutDescriptor* descriptor);
-        MaybeError CreateQueueInternal(QueueBase** result);
+        MaybeError CreateQuerySetInternal(QuerySetBase** result,
+                                          const QuerySetDescriptor* descriptor);
         MaybeError CreateRenderBundleEncoderInternal(
             RenderBundleEncoder** result,
             const RenderBundleEncoderDescriptor* descriptor);
@@ -258,20 +298,40 @@ namespace dawn_native {
         MaybeError CreateSwapChainInternal(SwapChainBase** result,
                                            Surface* surface,
                                            const SwapChainDescriptor* descriptor);
-        MaybeError CreateTextureInternal(TextureBase** result, const TextureDescriptor* descriptor);
+        ResultOrError<Ref<TextureBase>> CreateTextureInternal(const TextureDescriptor* descriptor);
         MaybeError CreateTextureViewInternal(TextureViewBase** result,
                                              TextureBase* texture,
                                              const TextureViewDescriptor* descriptor);
 
+        void ApplyToggleOverrides(const DeviceDescriptor* deviceDescriptor);
         void ApplyExtensions(const DeviceDescriptor* deviceDescriptor);
 
         void SetDefaultToggles();
 
         void ConsumeError(std::unique_ptr<ErrorData> error);
 
-        // Destroy is used to clean up and release resources used by device, does not wait for GPU
-        // or check errors.
-        virtual void Destroy() = 0;
+        // Each backend should implement to check their passed fences if there are any and return a
+        // completed serial. Return 0 should indicate no fences to check.
+        virtual ExecutionSerial CheckAndUpdateCompletedSerials() = 0;
+        // During shut down of device, some operations might have been started since the last submit
+        // and waiting on a serial that doesn't have a corresponding fence enqueued. Fake serials to
+        // make all commands look completed.
+        void AssumeCommandsComplete();
+        // mCompletedSerial tracks the last completed command serial that the fence has returned.
+        // mLastSubmittedSerial tracks the last submitted command serial.
+        // During device removal, the serials could be artificially incremented
+        // to make it appear as if commands have been compeleted. They can also be artificially
+        // incremented when no work is being done in the GPU so CPU operations don't have to wait on
+        // stale serials.
+        // mFutureCallbackSerial tracks the largest serial we need to tick to for the callbacks to
+        // fire
+        ExecutionSerial mCompletedSerial = ExecutionSerial(0);
+        ExecutionSerial mLastSubmittedSerial = ExecutionSerial(0);
+        ExecutionSerial mFutureCallbackSerial = ExecutionSerial(0);
+
+        // ShutDownImpl is used to clean up and release resources used by device, does not wait for
+        // GPU or check errors.
+        virtual void ShutDownImpl() = 0;
 
         // WaitForIdleForDestruction waits for GPU to finish, checks errors and gets ready for
         // destruction. This is only used when properly destructing the device. For a real
@@ -279,9 +339,8 @@ namespace dawn_native {
         // resources.
         virtual MaybeError WaitForIdleForDestruction() = 0;
 
-        void HandleLoss(const char* message);
         wgpu::DeviceLostCallback mDeviceLostCallback = nullptr;
-        void* mDeviceLostUserdata;
+        void* mDeviceLostUserdata = nullptr;
 
         AdapterBase* mAdapter = nullptr;
 
@@ -293,22 +352,24 @@ namespace dawn_native {
         struct Caches;
         std::unique_ptr<Caches> mCaches;
 
-        struct DeferredCreateBufferMappedAsync {
-            wgpu::BufferCreateMappedCallback callback;
-            WGPUBufferMapAsyncStatus status;
-            WGPUCreateBufferMappedResult result;
-            void* userdata;
-        };
+        Ref<BindGroupLayoutBase> mEmptyBindGroupLayout;
 
+        std::unique_ptr<DynamicUploader> mDynamicUploader;
         std::unique_ptr<ErrorScopeTracker> mErrorScopeTracker;
         std::unique_ptr<FenceSignalTracker> mFenceSignalTracker;
-        std::vector<DeferredCreateBufferMappedAsync> mDeferredCreateBufferMappedAsyncResults;
+        std::unique_ptr<MapRequestTracker> mMapRequestTracker;
+        Ref<QueueBase> mDefaultQueue;
+
+        struct DeprecationWarnings;
+        std::unique_ptr<DeprecationWarnings> mDeprecationWarnings;
 
         uint32_t mRefCount = 1;
+        State mState = State::BeingCreated;
 
         FormatTable mFormatTable;
 
-        TogglesSet mTogglesSet;
+        TogglesSet mEnabledToggles;
+        TogglesSet mOverridenToggles;
         size_t mLazyClearCountForTesting = 0;
 
         ExtensionsSet mEnabledExtensions;

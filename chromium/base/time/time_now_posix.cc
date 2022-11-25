@@ -12,14 +12,15 @@
 #endif
 #include <unistd.h>
 
-#include "base/logging.h"
+#include "base/check.h"
+#include "base/notreached.h"
 #include "base/numerics/safe_math.h"
 #include "base/time/time_override.h"
 #include "build/build_config.h"
 
 // Ensure the Fuchsia and Mac builds do not include this module. Instead,
 // non-POSIX implementation is used for sampling the system clocks.
-#if defined(OS_FUCHSIA) || defined(OS_MACOSX)
+#if defined(OS_FUCHSIA) || defined(OS_APPLE)
 #error "This implementation is for POSIX platforms other than Fuchsia or Mac."
 #endif
 

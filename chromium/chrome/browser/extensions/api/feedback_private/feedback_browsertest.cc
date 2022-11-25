@@ -19,6 +19,7 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/api/feedback_private/feedback_private_api.h"
@@ -44,7 +45,7 @@ class FeedbackTest : public ExtensionBrowserTest {
  public:
   void SetUp() override {
     extensions::ComponentLoader::EnableBackgroundExtensionsForTesting();
-    InProcessBrowserTest::SetUp();
+    ExtensionBrowserTest::SetUp();
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -138,8 +139,7 @@ IN_PROC_BROWSER_TEST_F(FeedbackTest, ShowLoginFeedback) {
   EXPECT_TRUE(bool_result);
 }
 
-// Tests that there's an option in the email drop down box with a value
-// 'anonymous_user'.
+// Tests that there's an option in the email drop down box with a value ''.
 IN_PROC_BROWSER_TEST_F(FeedbackTest, AnonymousUser) {
   WaitForExtensionViewsToLoad();
 
@@ -159,7 +159,7 @@ IN_PROC_BROWSER_TEST_F(FeedbackTest, AnonymousUser) {
       "  ((function() {"
       "      var options = $('user-email-drop-down').options;"
       "      for (var option in options) {"
-      "        if (options[option].value == 'anonymous_user')"
+      "        if (options[option].value == '')"
       "          return true;"
       "      }"
       "      return false;"
@@ -283,7 +283,8 @@ IN_PROC_BROWSER_TEST_F(FeedbackTest, ProvideBluetoothLogs) {
 }
 #endif  // if defined(CHROME_OS)
 
-IN_PROC_BROWSER_TEST_F(FeedbackTest, GetTargetTabUrl) {
+// Disabled due to flake: https://crbug.com/1069870
+IN_PROC_BROWSER_TEST_F(FeedbackTest, DISABLED_GetTargetTabUrl) {
   const std::pair<std::string, std::string> test_cases[] = {
       {"https://www.google.com/", "https://www.google.com/"},
       {"about://version/", chrome::kChromeUIVersionURL},
@@ -298,8 +299,10 @@ IN_PROC_BROWSER_TEST_F(FeedbackTest, GetTargetTabUrl) {
     // Sanity check that we always have one tab in the browser.
     ASSERT_EQ(browser()->tab_strip_model()->count(), 1);
 
-    ASSERT_EQ(expected_url,
-              browser()->tab_strip_model()->GetWebContentsAt(0)->GetURL());
+    ASSERT_EQ(expected_url, browser()
+                                ->tab_strip_model()
+                                ->GetWebContentsAt(0)
+                                ->GetLastCommittedURL());
 
     ASSERT_EQ(expected_url,
               chrome::GetTargetTabUrl(browser()->session_id(), 0));

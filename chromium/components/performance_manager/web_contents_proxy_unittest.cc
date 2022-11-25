@@ -8,12 +8,12 @@
 #include <utility>
 
 #include "base/run_loop.h"
-#include "base/task/post_task.h"
 #include "base/task/task_traits.h"
 #include "base/test/bind_test_util.h"
 #include "components/performance_manager/graph/page_node_impl.h"
+#include "components/performance_manager/performance_manager_impl.h"
 #include "components/performance_manager/performance_manager_tab_helper.h"
-#include "components/performance_manager/performance_manager_test_harness.h"
+#include "components/performance_manager/test_support/performance_manager_test_harness.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -55,8 +55,8 @@ TEST_F(WebContentsProxyTest, EndToEnd) {
         FROM_HERE,
         base::BindLambdaForTesting(
             [&deref_proxy, page_node, quit_loop = run_loop.QuitClosure()]() {
-              base::PostTask(
-                  FROM_HERE, {content::BrowserThread::UI},
+              content::GetUIThreadTaskRunner({})->PostTask(
+                  FROM_HERE,
                   base::BindOnce(deref_proxy, page_node->contents_proxy(),
                                  std::move(quit_loop)));
             }));
@@ -73,11 +73,11 @@ TEST_F(WebContentsProxyTest, EndToEnd) {
         FROM_HERE,
         base::BindLambdaForTesting([&contents, &deref_proxy, page_node,
                                     quit_loop = run_loop.QuitClosure()]() {
-          base::PostTask(
-              FROM_HERE, {content::BrowserThread::UI},
+          content::GetUIThreadTaskRunner({})->PostTask(
+              FROM_HERE,
               base::BindLambdaForTesting([&contents]() { contents.reset(); }));
-          base::PostTask(
-              FROM_HERE, {content::BrowserThread::UI},
+          content::GetUIThreadTaskRunner({})->PostTask(
+              FROM_HERE,
               base::BindOnce(deref_proxy, page_node->contents_proxy(),
                              std::move(quit_loop)));
         }));

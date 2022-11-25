@@ -55,9 +55,6 @@ class CORE_EXPORT ExecutionContextLifecycleStateObserver
     : public ExecutionContextLifecycleObserver {
  public:
   explicit ExecutionContextLifecycleStateObserver(ExecutionContext*);
-  // TODO(crbug.com/1029822): This is a shim to enable migrating
-  // ExecutionContext to LocalDOMWindow.
-  explicit ExecutionContextLifecycleStateObserver(Document*);
 
   // UpdateStateIfNeeded() should be called exactly once after object
   // construction to synchronize the suspend state with that in
@@ -70,7 +67,7 @@ class CORE_EXPORT ExecutionContextLifecycleStateObserver
 #endif
 
   virtual void ContextLifecycleStateChanged(
-      mojom::blink::FrameLifecycleState state) = 0;
+      mojom::blink::FrameLifecycleState state) {}
 
   void SetExecutionContext(ExecutionContext*) override;
 

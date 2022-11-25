@@ -27,10 +27,16 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as EventListeners from '../event_listeners/event_listeners.js';
 import * as SDK from '../sdk/sdk.js';
 import * as UI from '../ui/ui.js';
+
+/** @type {!EventListenersWidget} */
+let eventListenersWidgetInstance;
 
 /**
  * @implements {UI.Toolbar.ItemsProvider}
@@ -83,8 +89,21 @@ export class EventListenersWidget extends UI.ThrottledWidget.ThrottledWidget {
     this._toolbarItems.push(new UI.Toolbar.ToolbarSettingCheckbox(
         this._showFrameworkListenersSetting, Common.UIString.UIString('Resolve event listeners bound with framework')));
 
-    self.UI.context.addFlavorChangeListener(SDK.DOMModel.DOMNode, this.update, this);
+    UI.Context.Context.instance().addFlavorChangeListener(SDK.DOMModel.DOMNode, this.update, this);
     this.update();
+  }
+
+  /**
+   * @param {{forceNew: ?boolean}=} opts
+   * @return {!EventListenersWidget}
+   */
+  static instance(opts = {forceNew: null}) {
+    const {forceNew} = opts;
+    if (!eventListenersWidgetInstance || forceNew) {
+      eventListenersWidgetInstance = new EventListenersWidget();
+    }
+
+    return eventListenersWidgetInstance;
   }
 
   /**
@@ -97,7 +116,7 @@ export class EventListenersWidget extends UI.ThrottledWidget.ThrottledWidget {
       this._lastRequestedNode.domModel().runtimeModel().releaseObjectGroup(_objectGroupName);
       delete this._lastRequestedNode;
     }
-    const node = self.UI.context.flavor(SDK.DOMModel.DOMNode);
+    const node = UI.Context.Context.instance().flavor(SDK.DOMModel.DOMNode);
     if (!node) {
       this._eventListenersView.reset();
       this._eventListenersView.addEmptyHolderIfNeeded();

@@ -59,10 +59,8 @@ mojom::VREyeParametersPtr GetEyeDetails(ovrSession session,
   return eye_parameters;
 }
 
-mojom::VRDisplayInfoPtr CreateVRDisplayInfo(mojom::XRDeviceId id,
-                                            ovrSession session) {
+mojom::VRDisplayInfoPtr CreateVRDisplayInfo(ovrSession session) {
   mojom::VRDisplayInfoPtr display_info = mojom::VRDisplayInfo::New();
-  display_info->id = id;
 
   ovrHmdDesc hmdDesc = ovr_GetHmdDesc(session);
   display_info->left_eye = GetEyeDetails(session, hmdDesc, ovrEye_Left);
@@ -74,9 +72,9 @@ mojom::VRDisplayInfoPtr CreateVRDisplayInfo(mojom::XRDeviceId id,
   float floor_height = ovr_state.HeadPose.ThePose.Position.y;
   ovr_SetTrackingOriginType(session, ovrTrackingOrigin_EyeLevel);
 
-  gfx::Transform standing_transform;
-  standing_transform.Translate3d(0, floor_height, 0);
-  display_info->stage_parameters->standing_transform = standing_transform;
+  gfx::Transform mojo_from_floor;
+  mojo_from_floor.Translate3d(0, -1 * floor_height, 0);
+  display_info->stage_parameters->mojo_from_floor = mojo_from_floor;
 
   ovrVector3f boundary_size;
   ovr_GetBoundaryDimensions(session, ovrBoundary_PlayArea, &boundary_size);
@@ -174,7 +172,7 @@ bool OculusDevice::EnsureValidDisplayInfo() {
       return false;
     }
 
-    SetVRDisplayInfo(CreateVRDisplayInfo(GetId(), session_));
+    SetVRDisplayInfo(CreateVRDisplayInfo(session_));
     have_real_display_info_ = true;
   }
   return have_real_display_info_;

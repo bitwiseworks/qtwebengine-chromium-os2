@@ -20,6 +20,10 @@
 #include "ui/views/input_event_activation_protector.h"
 #include "ui/views/window/non_client_view.h"
 
+namespace gfx {
+class RoundedCornersF;
+}
+
 namespace views {
 
 class FootnoteContainerView;
@@ -43,6 +47,9 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView,
 
   // Creates a close button used in the corner of the dialog.
   static std::unique_ptr<Button> CreateCloseButton(ButtonListener* listener);
+
+  // Creates a minimize button used in the corner of the dialog.
+  static std::unique_ptr<Button> CreateMinimizeButton(ButtonListener* listener);
 
   // NonClientFrameView:
   gfx::Rect GetBoundsForClientView() const override;
@@ -137,6 +144,12 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView,
   void SetBackgroundColor(SkColor color);
   SkColor GetBackgroundColor() const;
 
+  // For masking reasons, the ClientView may be painted to a textured layer. To
+  // ensure bubbles that rely on the frame background color continue to work as
+  // expected, we must set the background of the ClientView to match that of the
+  // BubbleFrameView.
+  void UpdateClientViewBackground();
+
   // Given the size of the contents and the rect to point at, returns the bounds
   // of the bubble window. The bubble's arrow location may change if the bubble
   // does not fit on the monitor or anchor window (if one exists) and
@@ -170,13 +183,22 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView,
   bool IsCloseButtonVisible() const;
   gfx::Rect GetCloseButtonMirroredBounds() const;
 
+  // Helper function that gives the corner radius values that should be applied
+  // to the BubbleFrameView's client view. These values depend on the amount of
+  // inset present on the client view and the presence of header and footer
+  // views.
+  gfx::RoundedCornersF GetClientCornerRadii() const;
+
   BubbleBorder* bubble_border_for_testing() const { return bubble_border_; }
 
  private:
   FRIEND_TEST_ALL_PREFIXES(BubbleFrameViewTest, RemoveFootnoteView);
   FRIEND_TEST_ALL_PREFIXES(BubbleFrameViewTest, LayoutWithIcon);
   FRIEND_TEST_ALL_PREFIXES(BubbleFrameViewTest, LayoutWithProgressIndicator);
-  FRIEND_TEST_ALL_PREFIXES(BubbleFrameViewTest, IgnorePossiblyUnintendedClicks);
+  FRIEND_TEST_ALL_PREFIXES(BubbleFrameViewTest,
+                           IgnorePossiblyUnintendedClicksClose);
+  FRIEND_TEST_ALL_PREFIXES(BubbleFrameViewTest,
+                           IgnorePossiblyUnintendedClicksMinimize);
   FRIEND_TEST_ALL_PREFIXES(BubbleDelegateTest, CloseReasons);
   FRIEND_TEST_ALL_PREFIXES(BubbleDialogDelegateViewTest, CloseMethods);
   FRIEND_TEST_ALL_PREFIXES(BubbleDialogDelegateViewTest, CreateDelegate);
@@ -219,6 +241,12 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView,
   // if there is no header view or if it is not visible.
   int GetHeaderHeightForFrameWidth(int frame_width) const;
 
+  // Updates the corner radius of a layer backed client view for MD rounded
+  // corners.
+  // TODO(tluk): Use this and remove the need for GetClientMask() for clipping
+  // client views to the bubble border's bounds.
+  void UpdateClientLayerCornerRadius();
+
   // The bubble border.
   BubbleBorder* bubble_border_ = nullptr;
 
@@ -242,6 +270,9 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView,
 
   // The optional close button (the X).
   Button* close_ = nullptr;
+
+  // The optional minimize button.
+  Button* minimize_ = nullptr;
 
   // The optional progress bar. Used to indicate bubble pending state. By
   // default it is invisible.

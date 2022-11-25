@@ -158,12 +158,8 @@ void UseCounterCallback(v8::Isolate* isolate,
     case v8::Isolate::kWasmThreadOpcodes:
       blink_feature = WebFeature::kV8WasmThreadOpcodes;
       break;
-    case v8::Isolate::kAtomicsNotify:
-      blink_feature = WebFeature::kV8AtomicsNotify;
-      break;
-    case v8::Isolate::kAtomicsWake:
-      blink_feature = WebFeature::kV8AtomicsWake;
-      deprecated = true;
+    case v8::Isolate::kWasmSimdOpcodes:
+      blink_feature = WebFeature::kV8WasmSimdOpcodes;
       break;
     case v8::Isolate::kCollator:
       blink_feature = WebFeature::kCollator;
@@ -241,7 +237,12 @@ void UseCounterCallback(v8::Isolate* isolate,
       blink_feature = WebFeature::kV8RegExpReplaceCalledOnSlowRegExp;
       break;
     case v8::Isolate::kSharedArrayBufferConstructed:
-      blink_feature = WebFeature::kV8SharedArrayBufferConstructed;
+      if (!CurrentExecutionContext(isolate)->CrossOriginIsolatedCapability()) {
+        blink_feature =
+            WebFeature::kV8SharedArrayBufferConstructedWithoutIsolation;
+      } else {
+        blink_feature = WebFeature::kV8SharedArrayBufferConstructed;
+      }
       break;
     case v8::Isolate::kArrayPrototypeHasElements:
       blink_feature = WebFeature::kV8ArrayPrototypeHasElements;
@@ -267,6 +268,76 @@ void UseCounterCallback(v8::Isolate* isolate,
     case v8::Isolate::kBreakIteratorTypeLine:
       blink_feature = WebFeature::kBreakIteratorTypeLine;
       break;
+    case v8::Isolate::kInvalidatedArrayBufferDetachingProtector:
+      blink_feature = WebFeature::kV8InvalidatedArrayBufferDetachingProtector;
+      break;
+    case v8::Isolate::kInvalidatedArrayConstructorProtector:
+      blink_feature = WebFeature::kV8InvalidatedArrayConstructorProtector;
+      break;
+    case v8::Isolate::kInvalidatedArrayIteratorLookupChainProtector:
+      blink_feature =
+          WebFeature::kV8InvalidatedArrayIteratorLookupChainProtector;
+      break;
+    case v8::Isolate::kInvalidatedArraySpeciesLookupChainProtector:
+      blink_feature =
+          WebFeature::kV8InvalidatedArraySpeciesLookupChainProtector;
+      break;
+    case v8::Isolate::kInvalidatedIsConcatSpreadableLookupChainProtector:
+      blink_feature =
+          WebFeature::kV8InvalidatedIsConcatSpreadableLookupChainProtector;
+      break;
+    case v8::Isolate::kInvalidatedMapIteratorLookupChainProtector:
+      blink_feature = WebFeature::kV8InvalidatedMapIteratorLookupChainProtector;
+      break;
+    case v8::Isolate::kInvalidatedNoElementsProtector:
+      blink_feature = WebFeature::kV8InvalidatedNoElementsProtector;
+      break;
+    case v8::Isolate::kInvalidatedPromiseHookProtector:
+      blink_feature = WebFeature::kV8InvalidatedPromiseHookProtector;
+      break;
+    case v8::Isolate::kInvalidatedPromiseResolveLookupChainProtector:
+      blink_feature =
+          WebFeature::kV8InvalidatedPromiseResolveLookupChainProtector;
+      break;
+    case v8::Isolate::kInvalidatedPromiseSpeciesLookupChainProtector:
+      blink_feature =
+          WebFeature::kV8InvalidatedPromiseSpeciesLookupChainProtector;
+      break;
+    case v8::Isolate::kInvalidatedPromiseThenLookupChainProtector:
+      blink_feature = WebFeature::kV8InvalidatedPromiseThenLookupChainProtector;
+      break;
+    case v8::Isolate::kInvalidatedRegExpSpeciesLookupChainProtector:
+      blink_feature =
+          WebFeature::kV8InvalidatedRegExpSpeciesLookupChainProtector;
+      break;
+    case v8::Isolate::kInvalidatedSetIteratorLookupChainProtector:
+      blink_feature = WebFeature::kV8InvalidatedSetIteratorLookupChainProtector;
+      break;
+    case v8::Isolate::kInvalidatedStringIteratorLookupChainProtector:
+      blink_feature =
+          WebFeature::kV8InvalidatedStringIteratorLookupChainProtector;
+      break;
+    case v8::Isolate::kInvalidatedStringLengthOverflowLookupChainProtector:
+      blink_feature =
+          WebFeature::kV8InvalidatedStringLengthOverflowLookupChainProtector;
+      break;
+    case v8::Isolate::kInvalidatedTypedArraySpeciesLookupChainProtector:
+      blink_feature =
+          WebFeature::kV8InvalidatedTypedArraySpeciesLookupChainProtector;
+      break;
+    case v8::Isolate::kVarRedeclaredCatchBinding:
+      blink_feature = WebFeature::kV8VarRedeclaredCatchBinding;
+      break;
+    case v8::Isolate::kWasmRefTypes:
+      blink_feature = WebFeature::kV8WasmRefTypes;
+      break;
+    case v8::Isolate::kWasmBulkMemory:
+      blink_feature = WebFeature::kV8WasmBulkMemory;
+      break;
+    case v8::Isolate::kWasmMultiValue:
+      blink_feature = WebFeature::kV8WasmMultiValue;
+      break;
+
     default:
       // This can happen if V8 has added counters that this version of Blink
       // does not know about. It's harmless.

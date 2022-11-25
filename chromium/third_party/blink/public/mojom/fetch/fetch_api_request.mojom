@@ -4,7 +4,6 @@
 
 module blink.mojom;
 
-import "mojo/public/mojom/base/file.mojom";
 import "mojo/public/mojom/base/file_path.mojom";
 import "mojo/public/mojom/base/time.mojom";
 import "mojo/public/mojom/base/unguessable_token.mojom";
@@ -14,7 +13,7 @@ import "services/network/public/mojom/fetch_api.mojom";
 import "services/network/public/mojom/url_loader.mojom";
 import "third_party/blink/public/mojom/blob/serialized_blob.mojom";
 import "third_party/blink/public/mojom/loader/request_context_frame_type.mojom";
-import "third_party/blink/public/mojom/referrer.mojom";
+import "third_party/blink/public/mojom/loader/referrer.mojom";
 import "url/mojom/url.mojom";
 
 
@@ -121,10 +120,8 @@ struct FetchAPIDataElement {
   network.mojom.DataElementType type;
   // For kBytes.
   array<uint8> buf;
-  // For kFile and kRawFile
+  // For kFile
   mojo_base.mojom.FilePath path;
-  // For kRawFile
-  mojo_base.mojom.File? file;
   // For kBlob
   string? blob_uuid;
   // For kDataPipe
@@ -171,7 +168,6 @@ struct FetchAPIRequestBody {
 struct FetchAPIRequest {
   network.mojom.RequestMode mode = network.mojom.RequestMode.kNoCors;
   bool is_main_resource_load = false;
-  RequestContextType request_context_type = RequestContextType.UNSPECIFIED;
   network.mojom.RequestDestination destination = network.mojom.RequestDestination.kEmpty;
   RequestContextFrameType frame_type = RequestContextFrameType.kNone;
   url.mojom.Url url;

@@ -17,10 +17,8 @@ class BrowserAccessibilityAuraLinux;
 class CONTENT_EXPORT BrowserAccessibilityManagerAuraLinux
     : public BrowserAccessibilityManager {
  public:
-  BrowserAccessibilityManagerAuraLinux(
-      const ui::AXTreeUpdate& initial_tree,
-      BrowserAccessibilityDelegate* delegate,
-      BrowserAccessibilityFactory* factory = new BrowserAccessibilityFactory());
+  BrowserAccessibilityManagerAuraLinux(const ui::AXTreeUpdate& initial_tree,
+                                       BrowserAccessibilityDelegate* delegate);
 
   ~BrowserAccessibilityManagerAuraLinux() override;
 
@@ -37,10 +35,13 @@ class CONTENT_EXPORT BrowserAccessibilityManagerAuraLinux
                           BrowserAccessibility* node) override;
 
   void FireSelectedEvent(BrowserAccessibility* node);
+  void FireEnabledChangedEvent(BrowserAccessibility* node);
   void FireExpandedEvent(BrowserAccessibility* node, bool is_expanded);
   void FireLoadingEvent(BrowserAccessibility* node, bool is_loading);
   void FireNameChangedEvent(BrowserAccessibility* node);
   void FireDescriptionChangedEvent(BrowserAccessibility* node);
+  void FireSortDirectionChangedEvent(BrowserAccessibility* node);
+  void FireTextAttributesChangedEvent(BrowserAccessibility* node);
   void FireSubtreeCreatedEvent(BrowserAccessibility* node);
   void OnFindInPageResult(int request_id,
                           int match_index,
@@ -51,6 +52,8 @@ class CONTENT_EXPORT BrowserAccessibilityManagerAuraLinux
   void OnFindInPageTermination() override;
 
  protected:
+  FRIEND_TEST_ALL_PREFIXES(BrowserAccessibilityManagerAuraLinuxTest,
+                           TestEmitChildrenChanged);
   // AXTreeObserver methods.
   void OnNodeDataWillChange(ui::AXTree* tree,
                             const ui::AXNodeData& old_node_data,
@@ -62,6 +65,7 @@ class CONTENT_EXPORT BrowserAccessibilityManagerAuraLinux
       const std::vector<ui::AXTreeObserver::Change>& changes) override;
 
  private:
+  bool CanEmitChildrenChanged(BrowserAccessibility* node) const;
   void FireEvent(BrowserAccessibility* node, ax::mojom::Event event);
 
   AtkObject* parent_object_;

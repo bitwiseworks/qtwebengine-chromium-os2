@@ -47,7 +47,15 @@ class VIEWS_EXPORT ScrollView : public View, public ScrollBarController {
  public:
   METADATA_HEADER(ScrollView);
 
+  // Indicates whether or not scroll view is initialized with layer-scrolling.
+  enum class ScrollWithLayers { kDisabled, kEnabled };
+
   ScrollView();
+
+  // Additional constructor for overriding scrolling as defined by
+  // |kUiCompositorScrollWithLayers|. See crbug.com/873923 for more details on
+  // enabling by default this for all platforms.
+  explicit ScrollView(ScrollWithLayers scroll_with_layers);
 
   ~ScrollView() override;
 
@@ -143,6 +151,8 @@ class VIEWS_EXPORT ScrollView : public View, public ScrollBarController {
   void OnScrollEvent(ui::ScrollEvent* event) override;
   void OnGestureEvent(ui::GestureEvent* event) override;
   void OnThemeChanged() override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
+  bool HandleAccessibleAction(const ui::AXActionData& action_data) override;
 
   // ScrollBarController overrides:
   void ScrollToPosition(ScrollBar* source, int position) override;
@@ -278,10 +288,23 @@ class VIEWS_EXPORT ScrollView : public View, public ScrollBarController {
   const bool scroll_with_layers_enabled_;
 
   // The focus ring for this ScrollView.
-  std::unique_ptr<FocusRing> focus_ring_;
+  FocusRing* focus_ring_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(ScrollView);
 };
+
+BEGIN_VIEW_BUILDER(VIEWS_EXPORT, ScrollView, View)
+VIEW_BUILDER_VIEW_TYPE_PROPERTY(View, Contents)
+VIEW_BUILDER_VIEW_TYPE_PROPERTY(View, Header)
+VIEW_BUILDER_PROPERTY(base::Optional<ui::NativeTheme::ColorId>,
+                      BackgroundThemeColorId)
+VIEW_BUILDER_PROPERTY(bool, HideHorizontalScrollBar)
+VIEW_BUILDER_PROPERTY(bool, DrawOverflowIndicator)
+VIEW_BUILDER_PROPERTY(base::Optional<SkColor>, BackgroundColor)
+VIEW_BUILDER_VIEW_PROPERTY(ScrollBar, HorizontalScrollBar)
+VIEW_BUILDER_VIEW_PROPERTY(ScrollBar, VerticalScrollBar)
+VIEW_BUILDER_PROPERTY(bool, HasFocusIndicator)
+END_VIEW_BUILDER(VIEWS_EXPORT, ScrollView)
 
 // VariableRowHeightScrollHelper is intended for views that contain rows of
 // varying height. To use a VariableRowHeightScrollHelper create one supplying

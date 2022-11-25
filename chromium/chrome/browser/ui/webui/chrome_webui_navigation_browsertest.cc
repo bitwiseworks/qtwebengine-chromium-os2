@@ -9,6 +9,7 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/common/url_constants.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/web_ui_browsertest_util.h"
@@ -60,9 +61,8 @@ IN_PROC_BROWSER_TEST_F(ChromeWebUINavigationBrowserTest,
   EXPECT_EQ("about:blank", child->GetLastCommittedURL());
 
   content::TestNavigationObserver observer(web_contents);
-  GURL webui_url(content::GetWebUIURL("web-ui/title1.html?noxfo=true"));
-  content::PwnMessageHelper::OpenURL(child->GetProcess(), child->GetRoutingID(),
-                                     webui_url);
+  content::PwnMessageHelper::OpenURL(
+      child, content::GetWebUIURL("web-ui/title1.html?noxfo=true"));
   observer.Wait();
 
   // Retrieve the RenderFrameHost again since it might have been swapped.
@@ -99,10 +99,8 @@ IN_PROC_BROWSER_TEST_F(
   content::AddUntrustedDataSource(browser()->profile(), "test-iframe-host",
                                   csp);
 
-  GURL untrusted_url(
-      content::GetChromeUntrustedUIURL("test-iframe-host/title1.html"));
-  content::PwnMessageHelper::OpenURL(child->GetProcess(), child->GetRoutingID(),
-                                     untrusted_url);
+  content::PwnMessageHelper::OpenURL(
+      child, content::GetChromeUntrustedUIURL("test-iframe-host/title1.html"));
   observer.Wait();
 
   // Retrieve the RenderFrameHost again since it might have been swapped.

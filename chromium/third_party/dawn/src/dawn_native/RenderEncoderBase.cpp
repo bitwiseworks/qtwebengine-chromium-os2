@@ -20,6 +20,7 @@
 #include "dawn_native/Commands.h"
 #include "dawn_native/Device.h"
 #include "dawn_native/RenderPipeline.h"
+#include "dawn_native/ValidationUtils_autogen.h"
 
 #include <math.h>
 #include <cstring>
@@ -27,7 +28,7 @@
 namespace dawn_native {
 
     RenderEncoderBase::RenderEncoderBase(DeviceBase* device, EncodingContext* encodingContext)
-        : ProgrammablePassEncoder(device, encodingContext),
+        : ProgrammablePassEncoder(device, encodingContext, PassType::Render),
           mDisableBaseVertex(device->IsToggleEnabled(Toggle::DisableBaseVertex)),
           mDisableBaseInstance(device->IsToggleEnabled(Toggle::DisableBaseInstance)) {
     }
@@ -35,7 +36,7 @@ namespace dawn_native {
     RenderEncoderBase::RenderEncoderBase(DeviceBase* device,
                                          EncodingContext* encodingContext,
                                          ErrorTag errorTag)
-        : ProgrammablePassEncoder(device, encodingContext, errorTag),
+        : ProgrammablePassEncoder(device, encodingContext, errorTag, PassType::Render),
           mDisableBaseVertex(device->IsToggleEnabled(Toggle::DisableBaseVertex)),
           mDisableBaseInstance(device->IsToggleEnabled(Toggle::DisableBaseInstance)) {
     }
@@ -135,14 +136,51 @@ namespace dawn_native {
         });
     }
 
-    void RenderEncoderBase::SetIndexBuffer(BufferBase* buffer, uint64_t offset) {
+    void RenderEncoderBase::SetIndexBuffer(BufferBase* buffer, uint64_t offset, uint64_t size) {
+        GetDevice()->EmitDeprecationWarning(
+            "RenderEncoderBase::SetIndexBuffer is deprecated. Use RenderEncoderBase::SetIndexBufferWithFormat instead");
+
+        SetIndexBufferCommon(buffer, wgpu::IndexFormat::Undefined, offset, size, false);
+    }
+
+    void RenderEncoderBase::SetIndexBufferWithFormat(BufferBase* buffer, wgpu::IndexFormat format,
+                                                     uint64_t offset, uint64_t size) {
+        SetIndexBufferCommon(buffer, format, offset, size, true);
+    }
+
+    void RenderEncoderBase::SetIndexBufferCommon(BufferBase* buffer, wgpu::IndexFormat format,
+                                                 uint64_t offset, uint64_t size,
+                                                 bool requireFormat) {
         mEncodingContext->TryEncode(this, [&](CommandAllocator* allocator) -> MaybeError {
             DAWN_TRY(GetDevice()->ValidateObject(buffer));
+            DAWN_TRY(ValidateIndexFormat(format));
+
+            uint64_t bufferSize = buffer->GetSize();
+            if (offset > bufferSize) {
+                return DAWN_VALIDATION_ERROR("Offset larger than the buffer size");
+            }
+            uint64_t remainingSize = bufferSize - offset;
+
+            if (size == 0) {
+                size = remainingSize;
+            } else {
+                if (size > remainingSize) {
+                    return DAWN_VALIDATION_ERROR("Size + offset larger than the buffer size");
+                }
+            }
+
+            if (requireFormat && format == wgpu::IndexFormat::Undefined) {
+                return DAWN_VALIDATION_ERROR("Index format must be specified");
+            } else if (!requireFormat) {
+                ASSERT(format == wgpu::IndexFormat::Undefined);
+            }
 
             SetIndexBufferCmd* cmd =
                 allocator->Allocate<SetIndexBufferCmd>(Command::SetIndexBuffer);
             cmd->buffer = buffer;
+            cmd->format = format;
             cmd->offset = offset;
+            cmd->size = size;
 
             mUsageTracker.BufferUsedAs(buffer, wgpu::BufferUsage::Index);
 
@@ -150,7 +188,10 @@ namespace dawn_native {
         });
     }
 
-    void RenderEncoderBase::SetVertexBuffer(uint32_t slot, BufferBase* buffer, uint64_t offset) {
+    void RenderEncoderBase::SetVertexBuffer(uint32_t slot,
+                                            BufferBase* buffer,
+                                            uint64_t offset,
+                                            uint64_t size) {
         mEncodingContext->TryEncode(this, [&](CommandAllocator* allocator) -> MaybeError {
             DAWN_TRY(GetDevice()->ValidateObject(buffer));
 
@@ -158,11 +199,26 @@ namespace dawn_native {
                 return DAWN_VALIDATION_ERROR("Vertex buffer slot out of bounds");
             }
 
+            uint64_t bufferSize = buffer->GetSize();
+            if (offset > bufferSize) {
+                return DAWN_VALIDATION_ERROR("Offset larger than the buffer size");
+            }
+            uint64_t remainingSize = bufferSize - offset;
+
+            if (size == 0) {
+                size = remainingSize;
+            } else {
+                if (size > remainingSize) {
+                    return DAWN_VALIDATION_ERROR("Size + offset larger than the buffer size");
+                }
+            }
+
             SetVertexBufferCmd* cmd =
                 allocator->Allocate<SetVertexBufferCmd>(Command::SetVertexBuffer);
-            cmd->slot = slot;
+            cmd->slot = VertexBufferSlot(static_cast<uint8_t>(slot));
             cmd->buffer = buffer;
             cmd->offset = offset;
+            cmd->size = size;
 
             mUsageTracker.BufferUsedAs(buffer, wgpu::BufferUsage::Vertex);
 

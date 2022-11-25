@@ -22,31 +22,16 @@
 #include "content/public/common/url_constants.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/navigation_simulator.h"
+#include "content/public/test/test_utils.h"
 #include "content/public/test/web_contents_tester.h"
 
 using content::WebContents;
 using content::WebContentsObserver;
 
 namespace {
+
 // content::WebContentsDelegate destructor is protected: subclass for testing.
 class TestWebContentsDelegate : public content::WebContentsDelegate {};
-
-class PrintPreviewDialogDestroyedObserver : public WebContentsObserver {
- public:
-  explicit PrintPreviewDialogDestroyedObserver(WebContents* dialog)
-      : WebContentsObserver(dialog) {}
-  ~PrintPreviewDialogDestroyedObserver() override = default;
-
-  bool dialog_destroyed() const { return dialog_destroyed_; }
-
- private:
-  // content::WebContentsObserver implementation.
-  void WebContentsDestroyed() override { dialog_destroyed_ = true; }
-
-  bool dialog_destroyed_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(PrintPreviewDialogDestroyedObserver);
-};
 
 }  // namespace
 
@@ -96,7 +81,7 @@ TEST_F(PrintPreviewDialogControllerUnitTest, GetOrCreatePreviewDialog) {
 // initiator gets focused.
 //
 // Flaky on Mac. https://crbug.com/845844
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
 #define MAYBE_MultiplePreviewDialogs DISABLED_MultiplePreviewDialogs
 #else
 #define MAYBE_MultiplePreviewDialogs MultiplePreviewDialogs
@@ -214,7 +199,7 @@ TEST_F(PrintPreviewDialogControllerUnitTest, CloseDialogOnNavigation) {
   // Two similar URLs (same webpage, different URL fragment/query)
   // Gmail navigates from fragment to query when opening an email to print.
   GURL tiger("https://www.google.com/#q=tiger");
-  GURL tiger_barb("https://www.google.com/?q=tiger+barb");
+  GURL tiger_barb("https://www.google.com/#?q=tiger+barb");
 
   // Set up by opening a new tab and getting web contents
   EXPECT_EQ(1u, chrome::GetTotalBrowserCount());
@@ -243,7 +228,7 @@ TEST_F(PrintPreviewDialogControllerUnitTest, CloseDialogOnNavigation) {
   // still 1.
   EXPECT_EQ(1, browser()->tab_strip_model()->count());
   EXPECT_NE(web_contents, tiger_preview_dialog);
-  PrintPreviewDialogDestroyedObserver tiger_destroyed(tiger_preview_dialog);
+  content::WebContentsDestroyedWatcher tiger_destroyed(tiger_preview_dialog);
 
   // Navigate via link to a similar page.
   content::NavigationSimulator::NavigateAndCommitFromBrowser(web_contents,
@@ -261,10 +246,10 @@ TEST_F(PrintPreviewDialogControllerUnitTest, CloseDialogOnNavigation) {
 
   // Check a new dialog was created - either the pointers should be different or
   // the previous web contents must have been destroyed.
-  EXPECT_TRUE(tiger_destroyed.dialog_destroyed() ||
+  EXPECT_TRUE(tiger_destroyed.IsDestroyed() ||
               tiger_barb_preview_dialog != tiger_preview_dialog);
   EXPECT_NE(tiger_barb_preview_dialog, web_contents);
-  PrintPreviewDialogDestroyedObserver tiger_barb_destroyed(
+  content::WebContentsDestroyedWatcher tiger_barb_destroyed(
       tiger_barb_preview_dialog);
 
   // Now this returns false as |tiger_barb_preview_dialog| is open.
@@ -281,21 +266,22 @@ TEST_F(PrintPreviewDialogControllerUnitTest, CloseDialogOnNavigation) {
   ASSERT_TRUE(tiger_preview_dialog_2);
 
   // Verify this is a new dialog.
-  EXPECT_TRUE(tiger_barb_destroyed.dialog_destroyed() ||
+  EXPECT_TRUE(tiger_barb_destroyed.IsDestroyed() ||
               tiger_barb_preview_dialog != tiger_preview_dialog_2);
   EXPECT_NE(tiger_preview_dialog_2, web_contents);
-  PrintPreviewDialogDestroyedObserver tiger_2_destroyed(
+  content::WebContentsDestroyedWatcher tiger_2_destroyed(
       tiger_preview_dialog_2);
 
   // Try to simulate Gmail navigation: Navigate to an existing page (via
   // Forward) but modify the navigation type while pending to look like an
   // address bar + typed transition (like Gmail auto navigation)
-  content::NavigationController& nav_controller = web_contents->GetController();
-  nav_controller.GoForward();
-  nav_controller.GetPendingEntry()->SetTransitionType(ui::PageTransitionFromInt(
-      ui::PAGE_TRANSITION_TYPED | ui::PAGE_TRANSITION_FROM_ADDRESS_BAR));
-  CommitPendingLoad(&nav_controller);
-
+  std::unique_ptr<content::NavigationSimulator> forward_nav =
+      content::NavigationSimulator::CreateHistoryNavigation(1, web_contents);
+  forward_nav->Start();
+  web_contents->GetController().GetPendingEntry()->SetTransitionType(
+      ui::PageTransitionFromInt(ui::PAGE_TRANSITION_TYPED |
+                                ui::PAGE_TRANSITION_FROM_ADDRESS_BAR));
+  forward_nav->Commit();
   // Navigation successful
   EXPECT_EQ(tiger_barb, web_contents->GetLastCommittedURL());
 
@@ -304,7 +290,7 @@ TEST_F(PrintPreviewDialogControllerUnitTest, CloseDialogOnNavigation) {
   // returned by GetOrCreatePreviewDialog should be the same as the earlier
   // dialog.
   EXPECT_FALSE(manager->PrintPreviewNow(web_contents->GetMainFrame(), false));
-  EXPECT_FALSE(tiger_2_destroyed.dialog_destroyed());
+  EXPECT_FALSE(tiger_2_destroyed.IsDestroyed());
   WebContents* tiger_preview_dialog_2b =
       dialog_controller->GetOrCreatePreviewDialog(web_contents);
   ASSERT_TRUE(tiger_preview_dialog_2b);

@@ -4,7 +4,7 @@
 
 #include "third_party/blink/renderer/platform/scheduler/main_thread/render_widget_signals.h"
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/memory/ptr_util.h"
 #include "third_party/blink/public/platform/scheduler/web_render_widget_scheduling_state.h"
 
@@ -53,11 +53,11 @@ void RenderWidgetSignals::DecNumVisibleRenderWidgetsWithTouchHandlers() {
 
 void RenderWidgetSignals::AsValueInto(
     base::trace_event::TracedValue* state) const {
-  state->BeginDictionary("renderer_widget_signals");
+  auto dictionary_scope =
+      state->BeginDictionaryScoped("renderer_widget_signals");
   state->SetInteger("num_visible_render_widgets", num_visible_render_widgets_);
   state->SetInteger("num_visible_render_widgets_with_touch_handlers",
                     num_visible_render_widgets_with_touch_handlers_);
-  state->EndDictionary();
 }
 
 }  // namespace scheduler

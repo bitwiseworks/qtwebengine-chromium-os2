@@ -13,8 +13,10 @@
 #include "base/bind_helpers.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/numerics/ranges.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/optional.h"
 #include "base/stl_util.h"
+#include "base/trace_event/trace_event.h"
 #include "base/win/win_util.h"
 #include "base/win/windows_version.h"
 #include "ui/display/display.h"
@@ -22,12 +24,12 @@
 #include "ui/display/display_layout_builder.h"
 #include "ui/display/win/display_info.h"
 #include "ui/display/win/dpi.h"
+#include "ui/display/win/local_process_window_finder_win.h"
 #include "ui/display/win/scaling_util.h"
 #include "ui/display/win/screen_win_display.h"
 #include "ui/gfx/geometry/point_conversions.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
-#include "ui/gfx/geometry/safe_integer_conversions.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/gfx/icc_profile.h"
@@ -126,17 +128,37 @@ base::Optional<DISPLAYCONFIG_PATH_INFO> GetPathInfo(HMONITOR monitor) {
   return base::nullopt;
 }
 
-float GetMonitorSDRWhiteLevel(HMONITOR monitor) {
-  if (auto path_info = GetPathInfo(monitor)) {
+float GetSDRWhiteLevel(const base::Optional<DISPLAYCONFIG_PATH_INFO>& path) {
+  if (path) {
     DISPLAYCONFIG_SDR_WHITE_LEVEL white_level = {};
     white_level.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL;
     white_level.header.size = sizeof(white_level);
-    white_level.header.adapterId = path_info->targetInfo.adapterId;
-    white_level.header.id = path_info->targetInfo.id;
+    white_level.header.adapterId = path->targetInfo.adapterId;
+    white_level.header.id = path->targetInfo.id;
     if (DisplayConfigGetDeviceInfo(&white_level.header) == ERROR_SUCCESS)
-      return white_level.SDRWhiteLevel * 80.0 / 1000.0;
+      return white_level.SDRWhiteLevel * 80.0 / 1000.0;  // From wingdi.h.
   }
   return 200.0f;
+}
+
+DISPLAYCONFIG_VIDEO_OUTPUT_TECHNOLOGY GetOutputTechnology(
+    const base::Optional<DISPLAYCONFIG_PATH_INFO>& path) {
+  if (path)
+    return path->targetInfo.outputTechnology;
+  return DISPLAYCONFIG_OUTPUT_TECHNOLOGY_OTHER;
+}
+
+// Returns true if |tech| represents an internal display (eg. a laptop screen).
+bool IsInternalOutputTechnology(DISPLAYCONFIG_VIDEO_OUTPUT_TECHNOLOGY tech) {
+  switch (tech) {
+    case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INTERNAL:
+    case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DISPLAYPORT_EMBEDDED:
+    case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_UDI_EMBEDDED:
+      return true;
+
+    default:
+      return false;
+  }
 }
 
 Display::Rotation OrientationToRotation(DWORD orientation) {
@@ -180,15 +202,11 @@ std::vector<DisplayInfo> FindAndRemoveTouchingDisplayInfos(
   return touching_display_infos;
 }
 
-// Default scRGB white level in nits.  This is used to determine the SDR scaling
-// factor with the user configured white level from the SDR brightness slider.
-constexpr float kDefaultScrgbWhiteLevel = 80.0f;
-
 // Helper function to create gfx::DisplayColorSpaces from given |color_space|
 // and |sdr_white_level| with default buffer formats for Windows.
 gfx::DisplayColorSpaces CreateDisplayColorSpaces(
     const gfx::ColorSpace& color_space,
-    float sdr_white_level = kDefaultScrgbWhiteLevel) {
+    float sdr_white_level = gfx::ColorSpace::kDefaultScrgbLinearSdrWhiteLevel) {
   gfx::DisplayColorSpaces display_color_spaces(color_space);
   // When alpha is not needed, specify BGRX_8888 to get
   // DXGI_ALPHA_MODE_IGNORE. This saves significant power (see
@@ -207,8 +225,7 @@ gfx::DisplayColorSpaces GetDisplayColorSpacesForHdr(float sdr_white_level) {
 
   // This will map to DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709. In that space,
   // the brightness of (1,1,1) is 80 nits.
-  const auto scrgb_linear = gfx::ColorSpace::CreateSCRGBLinear(
-      kDefaultScrgbWhiteLevel / sdr_white_level);
+  const auto scrgb_linear = gfx::ColorSpace::CreateSCRGBLinear(sdr_white_level);
 
   // This will map to DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020, with sRGB's
   // (1,1,1) mapping to the specified number of nits.
@@ -238,12 +255,11 @@ gfx::DisplayColorSpaces GetDisplayColorSpacesForHdr(float sdr_white_level) {
 // Sets SDR white level and buffer formats on |display_color_spaces| when using
 // a forced color profile.
 gfx::DisplayColorSpaces GetForcedDisplayColorSpaces() {
-  // Adjust white level to default for Windows if color space is PQ.  This is
-  // needed because the color space is created with the cross-platform default
-  // white level which is different (gfx::ColorSpace::kDefaultSDRWhiteLevel).
+  // Adjust white level to a default value irrespective of whether the color
+  // space is scRGB linear (defaults to 80 nits) or PQ (defaults to 100 nits).
   const auto& color_space =
-      Display::GetForcedDisplayColorProfile().GetWithPQSDRWhiteLevel(
-          kDefaultScrgbWhiteLevel);
+      Display::GetForcedDisplayColorProfile().GetWithSDRWhiteLevel(
+          gfx::ColorSpace::kDefaultScrgbLinearSdrWhiteLevel);
   auto display_color_spaces = CreateDisplayColorSpaces(color_space);
   // Use the forced color profile's buffer format for all content usages.
   if (color_space.GetTransferID() == gfx::ColorSpace::TransferID::SMPTEST2084) {
@@ -423,13 +439,14 @@ BOOL CALLBACK EnumMonitorForDisplayInfoCallback(HMONITOR monitor,
   const gfx::Vector2dF pixels_per_inch =
       GetMonitorPixelsPerInch(monitor).value_or(
           GetDefaultMonitorPhysicalPixelsPerInch());
+  const auto path_info = GetPathInfo(monitor);
 
   auto* display_infos = reinterpret_cast<std::vector<DisplayInfo>*>(data);
   DCHECK(display_infos);
-  display_infos->emplace_back(monitor_info, GetMonitorScaleFactor(monitor),
-                              GetMonitorSDRWhiteLevel(monitor),
-                              display_settings.rotation,
-                              display_settings.frequency, pixels_per_inch);
+  display_infos->emplace_back(
+      monitor_info, GetMonitorScaleFactor(monitor), GetSDRWhiteLevel(path_info),
+      display_settings.rotation, display_settings.frequency, pixels_per_inch,
+      GetOutputTechnology(path_info));
   return TRUE;
 }
 
@@ -635,7 +652,7 @@ void ScreenWin::SetHDREnabled(bool hdr_enabled) {
   }
 }
 
-HWND ScreenWin::GetHWNDFromNativeView(gfx::NativeView window) const {
+HWND ScreenWin::GetHWNDFromNativeWindow(gfx::NativeWindow window) const {
 #ifndef TOOLKIT_QT
   NOTREACHED();
 #endif
@@ -673,6 +690,20 @@ gfx::NativeWindow ScreenWin::GetWindowAtScreenPoint(const gfx::Point& point) {
   return GetNativeWindowFromHWND(WindowFromPoint(screen_point.ToPOINT()));
 }
 
+gfx::NativeWindow ScreenWin::GetLocalProcessWindowAtPoint(
+    const gfx::Point& point,
+    const std::set<gfx::NativeWindow>& ignore) {
+  std::set<HWND> hwnd_set;
+  for (auto* const window : ignore) {
+    HWND w = GetHWNDFromNativeWindow(window);
+    if (w)
+      hwnd_set.emplace(w);
+  }
+
+  return LocalProcessWindowFinder::GetProcessWindowAtPoint(point, hwnd_set,
+                                                           this);
+}
+
 int ScreenWin::GetNumDisplays() const {
   return int(screen_win_displays_.size());
 }
@@ -682,7 +713,7 @@ const std::vector<Display>& ScreenWin::GetAllDisplays() const {
 }
 
 Display ScreenWin::GetDisplayNearestWindow(gfx::NativeWindow window) const {
-  const HWND window_hwnd = window ? GetHWNDFromNativeView(window) : nullptr;
+  const HWND window_hwnd = window ? GetHWNDFromNativeWindow(window) : nullptr;
   // When |window| isn't rooted to a display, we should just return the default
   // display so we get some correct display information like the scaling factor.
   return window_hwnd ? GetScreenWinDisplayNearestHWND(window_hwnd).display()
@@ -695,7 +726,8 @@ Display ScreenWin::GetDisplayNearestPoint(const gfx::Point& point) const {
 }
 
 Display ScreenWin::GetDisplayMatching(const gfx::Rect& match_rect) const {
-  return GetScreenWinDisplayNearestScreenRect(match_rect).display();
+  const gfx::Rect screen_rect = DIPToScreenRect(nullptr, match_rect);
+  return GetScreenWinDisplayNearestScreenRect(screen_rect).display();
 }
 
 Display ScreenWin::GetPrimaryDisplay() const {
@@ -711,15 +743,15 @@ void ScreenWin::RemoveObserver(DisplayObserver* observer) {
 }
 
 gfx::Rect ScreenWin::ScreenToDIPRectInWindow(
-    gfx::NativeView view,
+    gfx::NativeWindow window,
     const gfx::Rect& screen_rect) const {
-  const HWND hwnd = view ? GetHWNDFromNativeView(view) : nullptr;
+  const HWND hwnd = window ? GetHWNDFromNativeWindow(window) : nullptr;
   return ScreenToDIPRect(hwnd, screen_rect);
 }
 
-gfx::Rect ScreenWin::DIPToScreenRectInWindow(gfx::NativeView view,
+gfx::Rect ScreenWin::DIPToScreenRectInWindow(gfx::NativeWindow window,
                                              const gfx::Rect& dip_rect) const {
-  const HWND hwnd = view ? GetHWNDFromNativeView(view) : nullptr;
+  const HWND hwnd = window ? GetHWNDFromNativeWindow(window) : nullptr;
   return DIPToScreenRect(hwnd, dip_rect);
 }
 
@@ -728,6 +760,13 @@ void ScreenWin::UpdateFromDisplayInfos(
   screen_win_displays_ = DisplayInfosToScreenWinDisplays(
       display_infos, color_profile_reader_.get(), hdr_enabled_);
   displays_ = ScreenWinDisplaysToDisplays(screen_win_displays_);
+  for (const auto& display_info : display_infos) {
+    if (IsInternalOutputTechnology(display_info.output_technology())) {
+      // TODO(crbug.com/1078903): Support multiple internal displays.
+      Display::SetInternalDisplayId(display_info.id());
+      break;
+    }
+  }
 }
 
 void ScreenWin::Initialize() {
@@ -778,6 +817,8 @@ void ScreenWin::OnWndProc(HWND hwnd,
       (message != WM_SETTINGCHANGE || wparam != SPI_SETWORKAREA))
     return;
 
+  TRACE_EVENT1("ui", "ScreenWin::OnWndProc", "message", message);
+
   color_profile_reader_->UpdateIfNeeded();
   if (request_hdr_status_callback_)
     request_hdr_status_callback_.Run();
@@ -797,6 +838,8 @@ void ScreenWin::OnColorProfilesChanged() {
 }
 
 void ScreenWin::UpdateAllDisplaysAndNotify() {
+  TRACE_EVENT0("ui", "ScreenWin::UpdateAllDisplaysAndNotify");
+
   std::vector<Display> old_displays = std::move(displays_);
   UpdateFromDisplayInfos(GetDisplayInfosFromSystem());
   change_notifier_.NotifyDisplaysChanged(old_displays, displays_);
@@ -884,8 +927,8 @@ int ScreenWin::GetSystemMetricsForScaleFactor(float scale_factor,
 
   // Windows 8.1 doesn't support GetSystemMetricsForDpi(), yet does support
   // per-process dpi awareness.
-  return gfx::ToRoundedInt(GetSystemMetrics(metric) * scale_factor /
-                           GetPrimaryDisplay().device_scale_factor());
+  return base::ClampRound(GetSystemMetrics(metric) * scale_factor /
+                          GetPrimaryDisplay().device_scale_factor());
 }
 
 void ScreenWin::RecordDisplayScaleFactors() const {

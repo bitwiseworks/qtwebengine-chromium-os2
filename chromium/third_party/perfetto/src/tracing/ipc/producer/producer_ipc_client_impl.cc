@@ -47,13 +47,14 @@ std::unique_ptr<TracingService::ProducerEndpoint> ProducerIPCClient::Connect(
     size_t shared_memory_size_hint_bytes,
     size_t shared_memory_page_size_hint_bytes,
     std::unique_ptr<SharedMemory> shm,
-    std::unique_ptr<SharedMemoryArbiter> shm_arbiter) {
+    std::unique_ptr<SharedMemoryArbiter> shm_arbiter,
+    ConnectionFlags conn_flags) {
   return std::unique_ptr<TracingService::ProducerEndpoint>(
-      new ProducerIPCClientImpl(service_sock_name, producer, producer_name,
-                                task_runner, smb_scraping_mode,
-                                shared_memory_size_hint_bytes,
-                                shared_memory_page_size_hint_bytes,
-                                std::move(shm), std::move(shm_arbiter)));
+      new ProducerIPCClientImpl(
+          service_sock_name, producer, producer_name, task_runner,
+          smb_scraping_mode, shared_memory_size_hint_bytes,
+          shared_memory_page_size_hint_bytes, std::move(shm),
+          std::move(shm_arbiter), conn_flags));
 }
 
 ProducerIPCClientImpl::ProducerIPCClientImpl(
@@ -65,10 +66,14 @@ ProducerIPCClientImpl::ProducerIPCClientImpl(
     size_t shared_memory_size_hint_bytes,
     size_t shared_memory_page_size_hint_bytes,
     std::unique_ptr<SharedMemory> shm,
-    std::unique_ptr<SharedMemoryArbiter> shm_arbiter)
+    std::unique_ptr<SharedMemoryArbiter> shm_arbiter,
+    ProducerIPCClient::ConnectionFlags conn_flags)
     : producer_(producer),
       task_runner_(task_runner),
-      ipc_channel_(ipc::Client::CreateInstance(service_sock_name, task_runner)),
+      ipc_channel_(ipc::Client::CreateInstance(
+          service_sock_name,
+          conn_flags == ProducerIPCClient::ConnectionFlags::kRetryIfUnreachable,
+          task_runner)),
       producer_port_(this /* event_listener */),
       shared_memory_(std::move(shm)),
       shared_memory_arbiter_(std::move(shm_arbiter)),
@@ -155,6 +160,11 @@ void ProducerIPCClientImpl::OnConnect() {
       });
   producer_port_.GetAsyncCommand(protos::gen::GetAsyncCommandRequest(),
                                  std::move(on_cmd));
+
+  // If there are pending Sync() requests, send them now.
+  for (const auto& pending_sync : pending_sync_reqs_)
+    Sync(std::move(pending_sync));
+  pending_sync_reqs_.clear();
 }
 
 void ProducerIPCClientImpl::OnDisconnect() {
@@ -394,6 +404,23 @@ void ProducerIPCClientImpl::ActivateTriggers(
   }
   producer_port_.ActivateTriggers(
       proto_req, ipc::Deferred<protos::gen::ActivateTriggersResponse>());
+}
+
+void ProducerIPCClientImpl::Sync(std::function<void()> callback) {
+  PERFETTO_DCHECK_THREAD(thread_checker_);
+  if (!connected_) {
+    pending_sync_reqs_.emplace_back(std::move(callback));
+    return;
+  }
+  ipc::Deferred<protos::gen::SyncResponse> resp;
+  resp.Bind([callback](ipc::AsyncResult<protos::gen::SyncResponse>) {
+    // Here we ACK the callback even if the service replies with a failure
+    // (i.e. the service is too old and doesn't understand Sync()). In that
+    // case the service has still seen the request, the IPC roundtrip is
+    // still a (weaker) linearization fence.
+    callback();
+  });
+  producer_port_.Sync(protos::gen::SyncRequest(), std::move(resp));
 }
 
 std::unique_ptr<TraceWriter> ProducerIPCClientImpl::CreateTraceWriter(

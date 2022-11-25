@@ -258,8 +258,8 @@ IN_PROC_BROWSER_TEST_F(HeadlessBrowserTest, ContextWebPreferences) {
   HeadlessBrowserContext* browser_context =
       browser()
           ->CreateBrowserContextBuilder()
-          .SetOverrideWebPreferencesCallback(
-              base::BindRepeating([](WebPreferences* preferences) {
+          .SetOverrideWebPreferencesCallback(base::BindRepeating(
+              [](blink::web_pref::WebPreferences* preferences) {
                 preferences->hide_scrollbars = true;
               }))
           .Build();
@@ -272,8 +272,8 @@ IN_PROC_BROWSER_TEST_F(HeadlessBrowserTest, ContextWebPreferences) {
   HeadlessWebContentsImpl* contents_impl =
       HeadlessWebContentsImpl::From(web_contents);
   EXPECT_TRUE(contents_impl->web_contents()
-                  ->GetRenderViewHost()
-                  ->GetWebkitPreferences().hide_scrollbars);
+                  ->GetOrCreateWebPreferences()
+                  .hide_scrollbars);
 }
 
 }  // namespace headless

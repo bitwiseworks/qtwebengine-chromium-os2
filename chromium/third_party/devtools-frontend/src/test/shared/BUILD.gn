@@ -4,13 +4,12 @@
 
 import("../../third_party/typescript/typescript.gni")
 
-ts_library("shared") {
-  testonly = true
+node_ts_library("shared") {
   sources = [
     "config.ts",
     "helper.ts",
-    "runner.ts",
-    "screenshot.ts",
+    "mocha-extensions.ts",
     "text-color.ts",
   ]
+  deps = [ "../conductor:implementation" ]
 }

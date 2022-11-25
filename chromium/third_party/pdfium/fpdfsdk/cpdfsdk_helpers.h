@@ -32,6 +32,7 @@ class CPDF_Object;
 class CPDF_Font;
 class CPDF_LinkExtract;
 class CPDF_PageObject;
+class CPDF_RenderOptions;
 class CPDF_Stream;
 class CPDF_StructElement;
 class CPDF_StructTree;
@@ -210,6 +211,15 @@ CPDFSDKFormFillEnvironmentFromFPDFFormHandle(FPDF_FORMHANDLE handle) {
   return reinterpret_cast<CPDFSDK_FormFillEnvironment*>(handle);
 }
 
+inline FPDF_SIGNATURE FPDFSignatureFromCPDFDictionary(
+    CPDF_Dictionary* dictionary) {
+  return reinterpret_cast<FPDF_SIGNATURE>(dictionary);
+}
+inline CPDF_Dictionary* CPDFDictionaryFromFPDFSignature(
+    FPDF_SIGNATURE signature) {
+  return reinterpret_cast<CPDF_Dictionary*>(signature);
+}
+
 CPDFSDK_InteractiveForm* FormHandleToInteractiveForm(FPDF_FORMHANDLE hHandle);
 
 ByteString ByteStringFromFPDFWideString(FPDF_WIDESTRING wide_string);
@@ -237,6 +247,10 @@ FS_RECTF FSRectFFromCFXFloatRect(const CFX_FloatRect& rect);
 
 CFX_Matrix CFXMatrixFromFSMatrix(const FS_MATRIX& matrix);
 FS_MATRIX FSMatrixFromCFXMatrix(const CFX_Matrix& matrix);
+
+unsigned long NulTerminateMaybeCopyAndReturnLength(const ByteString& text,
+                                                   void* buffer,
+                                                   unsigned long buflen);
 
 unsigned long Utf16EncodeMaybeCopyAndReturnLength(const WideString& text,
                                                   void* buffer,
@@ -266,5 +280,7 @@ void ReportUnsupportedFeatures(const CPDF_Document* pDoc);
 void ReportUnsupportedXFA(const CPDF_Document* pDoc);
 void CheckForUnsupportedAnnot(const CPDF_Annot* pAnnot);
 void ProcessParseError(CPDF_Parser::Error err);
+void SetColorFromScheme(const FPDF_COLORSCHEME* pColorScheme,
+                        CPDF_RenderOptions* pRenderOptions);
 
 #endif  // FPDFSDK_CPDFSDK_HELPERS_H_

@@ -34,8 +34,6 @@ ClearParameters GetClearParameters(const gl::State &state, GLbitfield mask)
     ClearParameters clearParams;
     memset(&clearParams, 0, sizeof(ClearParameters));
 
-    const auto &blendStateArray = state.getBlendStateArray();
-
     clearParams.colorF           = state.getColorClearValue();
     clearParams.colorType        = GL_FLOAT;
     clearParams.clearDepth       = false;
@@ -43,21 +41,35 @@ ClearParameters GetClearParameters(const gl::State &state, GLbitfield mask)
     clearParams.clearStencil     = false;
     clearParams.stencilValue     = state.getStencilClearValue();
     clearParams.stencilWriteMask = state.getDepthStencilState().stencilWritemask;
-    clearParams.scissorEnabled   = state.isScissorTestEnabled();
-    clearParams.scissor          = state.getScissor();
 
-    const gl::Framebuffer *framebufferObject = state.getDrawFramebuffer();
+    const auto *framebufferObject      = state.getDrawFramebuffer();
+    const gl::Extents &framebufferSize = framebufferObject->getFirstNonNullAttachment()->getSize();
+    const gl::Offset &surfaceTextureOffset = framebufferObject->getSurfaceTextureOffset();
+    if (state.isScissorTestEnabled())
+    {
+        clearParams.scissorEnabled = true;
+        clearParams.scissor        = state.getScissor();
+        clearParams.scissor.x      = clearParams.scissor.x + surfaceTextureOffset.x;
+        clearParams.scissor.y      = clearParams.scissor.y + surfaceTextureOffset.y;
+    }
+    else if (surfaceTextureOffset != gl::kOffsetZero)
+    {
+        clearParams.scissorEnabled = true;
+        clearParams.scissor        = gl::Rectangle(surfaceTextureOffset.x, surfaceTextureOffset.y,
+                                            framebufferSize.width, framebufferSize.height);
+    }
+
     const bool clearColor =
         (mask & GL_COLOR_BUFFER_BIT) && framebufferObject->hasEnabledDrawBuffer();
-    ASSERT(blendStateArray.size() == gl::IMPLEMENTATION_MAX_DRAW_BUFFERS);
-    for (size_t i = 0; i < blendStateArray.size(); i++)
+    if (clearColor)
     {
-        clearParams.clearColor[i]     = clearColor;
-        clearParams.colorMaskRed[i]   = blendStateArray[i].colorMaskRed;
-        clearParams.colorMaskGreen[i] = blendStateArray[i].colorMaskGreen;
-        clearParams.colorMaskBlue[i]  = blendStateArray[i].colorMaskBlue;
-        clearParams.colorMaskAlpha[i] = blendStateArray[i].colorMaskAlpha;
+        clearParams.clearColor.set();
     }
+    else
+    {
+        clearParams.clearColor.reset();
+    }
+    clearParams.colorMask = state.getBlendStateExt().mColorMask;
 
     if (mask & GL_DEPTH_BUFFER_BIT)
     {
@@ -184,58 +196,12 @@ angle::Result FramebufferD3D::clearBufferfi(const gl::Context *context,
     return clearImpl(context, clearParams);
 }
 
-GLenum FramebufferD3D::getImplementationColorReadFormat(const gl::Context *context) const
-{
-    const gl::FramebufferAttachment *readAttachment = mState.getReadAttachment();
-
-    if (readAttachment == nullptr)
-    {
-        return GL_NONE;
-    }
-
-    RenderTargetD3D *attachmentRenderTarget = nullptr;
-    angle::Result error                     = readAttachment->getRenderTarget(
-        context, readAttachment->getRenderToTextureSamples(), &attachmentRenderTarget);
-    if (error != angle::Result::Continue)
-    {
-        return GL_NONE;
-    }
-
-    GLenum implementationFormat = getRenderTargetImplementationFormat(attachmentRenderTarget);
-    const gl::InternalFormat &implementationFormatInfo =
-        gl::GetSizedInternalFormatInfo(implementationFormat);
-
-    return implementationFormatInfo.getReadPixelsFormat(context->getExtensions());
-}
-
-GLenum FramebufferD3D::getImplementationColorReadType(const gl::Context *context) const
-{
-    const gl::FramebufferAttachment *readAttachment = mState.getReadAttachment();
-
-    if (readAttachment == nullptr)
-    {
-        return GL_NONE;
-    }
-
-    RenderTargetD3D *attachmentRenderTarget = nullptr;
-    angle::Result error                     = readAttachment->getRenderTarget(
-        context, readAttachment->getRenderToTextureSamples(), &attachmentRenderTarget);
-    if (error != angle::Result::Continue)
-    {
-        return GL_NONE;
-    }
-
-    GLenum implementationFormat = getRenderTargetImplementationFormat(attachmentRenderTarget);
-    const gl::InternalFormat &implementationFormatInfo =
-        gl::GetSizedInternalFormatInfo(implementationFormat);
-
-    return implementationFormatInfo.getReadPixelsType(context->getClientVersion());
-}
-
 angle::Result FramebufferD3D::readPixels(const gl::Context *context,
                                          const gl::Rectangle &area,
                                          GLenum format,
                                          GLenum type,
+                                         const gl::PixelPackState &pack,
+                                         gl::Buffer *packBuffer,
                                          void *pixels)
 {
     // Clip read area to framebuffer.
@@ -248,24 +214,22 @@ angle::Result FramebufferD3D::readPixels(const gl::Context *context,
         return angle::Result::Continue;
     }
 
-    const gl::PixelPackState &packState = context->getState().getPackState();
-
     const gl::InternalFormat &sizedFormatInfo = gl::GetInternalFormatInfo(format, type);
 
     ContextD3D *contextD3D = GetImplAs<ContextD3D>(context);
 
     GLuint outputPitch = 0;
     ANGLE_CHECK_GL_MATH(contextD3D,
-                        sizedFormatInfo.computeRowPitch(type, area.width, packState.alignment,
-                                                        packState.rowLength, &outputPitch));
+                        sizedFormatInfo.computeRowPitch(type, area.width, pack.alignment,
+                                                        pack.rowLength, &outputPitch));
 
     GLuint outputSkipBytes = 0;
-    ANGLE_CHECK_GL_MATH(contextD3D, sizedFormatInfo.computeSkipBytes(
-                                        type, outputPitch, 0, packState, false, &outputSkipBytes));
+    ANGLE_CHECK_GL_MATH(contextD3D, sizedFormatInfo.computeSkipBytes(type, outputPitch, 0, pack,
+                                                                     false, &outputSkipBytes));
     outputSkipBytes += (clippedArea.x - area.x) * sizedFormatInfo.pixelBytes +
                        (clippedArea.y - area.y) * outputPitch;
 
-    return readPixelsImpl(context, clippedArea, format, type, outputPitch, packState,
+    return readPixelsImpl(context, clippedArea, format, type, outputPitch, pack, packBuffer,
                           static_cast<uint8_t *>(pixels) + outputSkipBytes);
 }
 
@@ -316,7 +280,9 @@ bool FramebufferD3D::checkStatus(const gl::Context *context) const
 }
 
 angle::Result FramebufferD3D::syncState(const gl::Context *context,
-                                        const gl::Framebuffer::DirtyBits &dirtyBits)
+                                        GLenum binding,
+                                        const gl::Framebuffer::DirtyBits &dirtyBits,
+                                        gl::Command command)
 {
     if (!mColorAttachmentsForRender.valid())
     {
@@ -396,19 +362,18 @@ const gl::AttachmentList &FramebufferD3D::getColorAttachmentsForRender(const gl:
             // it to be attached to a new binding point.
             if (mDummyAttachment.isAttached())
             {
-                mDummyAttachment.detach(context);
+                mDummyAttachment.detach(context, Serial());
             }
 
             gl::Texture *dummyTex = nullptr;
-            // TODO(Jamie): Handle error if dummy texture can't be created.
+            // TODO(jmadill): Handle error if dummy texture can't be created.
             (void)mRenderer->getIncompleteTexture(context, gl::TextureType::_2D, &dummyTex);
             if (dummyTex)
             {
-
                 gl::ImageIndex index = gl::ImageIndex::Make2D(0);
                 mDummyAttachment     = gl::FramebufferAttachment(
                     context, GL_TEXTURE, GL_COLOR_ATTACHMENT0_EXT + activeProgramLocation, index,
-                    dummyTex);
+                    dummyTex, Serial());
                 colorAttachmentsForRender.push_back(&mDummyAttachment);
             }
         }
@@ -424,7 +389,7 @@ void FramebufferD3D::destroy(const gl::Context *context)
 {
     if (mDummyAttachment.isAttached())
     {
-        mDummyAttachment.detach(context);
+        mDummyAttachment.detach(context, Serial());
     }
 }
 

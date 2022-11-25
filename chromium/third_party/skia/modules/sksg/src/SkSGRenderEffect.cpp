@@ -108,7 +108,10 @@ SkRect ImageFilterEffect::onRevalidate(InvalidationController* ic, const SkMatri
     fImageFilter->revalidate(ic, ctm);
 
     const auto& filter = fImageFilter->getFilter();
-    SkASSERT(!filter || filter->canComputeFastBounds());
+
+    // Would be nice for this this to stick, but canComputeFastBounds()
+    // appears to be conservative (false negatives).
+    // SkASSERT(!filter || filter->canComputeFastBounds());
 
     const auto content_bounds = this->INHERITED::onRevalidate(ic, ctm);
 
@@ -164,6 +167,9 @@ SkRect ImageFilter::onRevalidate(InvalidationController*, const SkMatrix&) {
     return SkRect::MakeEmpty();
 }
 
+ExternalImageFilter:: ExternalImageFilter() = default;
+ExternalImageFilter::~ExternalImageFilter() = default;
+
 sk_sp<DropShadowImageFilter> DropShadowImageFilter::Make(sk_sp<ImageFilter> input) {
     return sk_sp<DropShadowImageFilter>(new DropShadowImageFilter(std::move(input)));
 }
@@ -216,6 +222,37 @@ void BlendModeEffect::onRender(SkCanvas* canvas, const RenderContext* ctx) const
 const RenderNode* BlendModeEffect::onNodeAt(const SkPoint& p) const {
     // TODO: we likely need to do something more sophisticated than delegate to descendants here.
     return this->INHERITED::onNodeAt(p);
+}
+
+sk_sp<LayerEffect> LayerEffect::Make(sk_sp<RenderNode> child, SkBlendMode mode) {
+    return child ? sk_sp<LayerEffect>(new LayerEffect(std::move(child), mode))
+                 : nullptr;
+}
+
+LayerEffect::LayerEffect(sk_sp<RenderNode> child, SkBlendMode mode)
+    : INHERITED(std::move(child))
+    , fMode(mode) {}
+
+LayerEffect::~LayerEffect() = default;
+
+void LayerEffect::onRender(SkCanvas* canvas, const RenderContext* ctx) const {
+    SkAutoCanvasRestore acr(canvas, false);
+
+    // Commit any potential pending paint effects to their own layer.
+    const auto local_ctx = ScopedRenderContext(canvas, ctx).setIsolation(this->bounds(),
+                                                                         canvas->getTotalMatrix(),
+                                                                         true);
+
+    SkPaint layer_paint;
+    if (ctx) {
+        // Apply all optional context overrides upfront.
+        ctx->modulatePaint(canvas->getTotalMatrix(), &layer_paint);
+    }
+    layer_paint.setBlendMode(fMode);
+
+    canvas->saveLayer(nullptr, &layer_paint);
+
+    this->INHERITED::onRender(canvas, nullptr);
 }
 
 } // namespace sksg

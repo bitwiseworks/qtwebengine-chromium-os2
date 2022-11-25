@@ -25,7 +25,7 @@ class ScrollbarThemeAuraButtonOverride final : public ScrollbarThemeAura {
   }
 
   int MinimumThumbLength(const Scrollbar& scrollbar) override {
-    return ThumbThickness(scrollbar);
+    return ScrollbarThickness(scrollbar.ScaleFromDIP());
   }
 
  private:
@@ -49,13 +49,13 @@ void SendEvent(Scrollbar* scrollbar,
       blink::WebInputEvent::kScrollbarManipulationHandledOnCompositorThread,
       base::TimeTicks::Now());
   switch (type) {
-    case blink::WebInputEvent::kMouseDown:
+    case blink::WebInputEvent::Type::kMouseDown:
       scrollbar->MouseDown(web_mouse_event);
       break;
-    case blink::WebInputEvent::kMouseMove:
+    case blink::WebInputEvent::Type::kMouseMove:
       scrollbar->MouseMoved(web_mouse_event);
       break;
-    case blink::WebInputEvent::kMouseUp:
+    case blink::WebInputEvent::Type::kMouseUp:
       scrollbar->MouseUp(web_mouse_event);
       break;
     default:
@@ -72,7 +72,7 @@ TEST_F(ScrollbarThemeAuraTest, ButtonSizeHorizontal) {
   MockScrollableArea* mock_scrollable_area = MockScrollableArea::Create();
   ScrollbarThemeAuraButtonOverride theme;
   Scrollbar* scrollbar = Scrollbar::CreateForTesting(
-      mock_scrollable_area, kHorizontalScrollbar, kRegularScrollbar, &theme);
+      mock_scrollable_area, kHorizontalScrollbar, &theme);
 
   IntRect scrollbar_size_normal_dimensions(11, 22, 444, 66);
   scrollbar->SetFrameRect(scrollbar_size_normal_dimensions);
@@ -96,7 +96,7 @@ TEST_F(ScrollbarThemeAuraTest, ButtonSizeVertical) {
   MockScrollableArea* mock_scrollable_area = MockScrollableArea::Create();
   ScrollbarThemeAuraButtonOverride theme;
   Scrollbar* scrollbar = Scrollbar::CreateForTesting(
-      mock_scrollable_area, kVerticalScrollbar, kRegularScrollbar, &theme);
+      mock_scrollable_area, kVerticalScrollbar, &theme);
 
   IntRect scrollbar_size_normal_dimensions(11, 22, 44, 666);
   scrollbar->SetFrameRect(scrollbar_size_normal_dimensions);
@@ -120,7 +120,7 @@ TEST_F(ScrollbarThemeAuraTest, NoButtonsReturnsSize0) {
   MockScrollableArea* mock_scrollable_area = MockScrollableArea::Create();
   ScrollbarThemeAuraButtonOverride theme;
   Scrollbar* scrollbar = Scrollbar::CreateForTesting(
-      mock_scrollable_area, kVerticalScrollbar, kRegularScrollbar, &theme);
+      mock_scrollable_area, kVerticalScrollbar, &theme);
   theme.SetHasScrollbarButtons(false);
 
   scrollbar->SetFrameRect(IntRect(1, 2, 3, 4));
@@ -139,7 +139,7 @@ TEST_F(ScrollbarThemeAuraTest, ScrollbarPartsInvalidationTest) {
       MockScrollableArea::Create(ScrollOffset(0, 1000));
   ScrollbarThemeAuraButtonOverride theme;
   Scrollbar* scrollbar = Scrollbar::CreateForTesting(
-      mock_scrollable_area, kVerticalScrollbar, kRegularScrollbar, &theme);
+      mock_scrollable_area, kVerticalScrollbar, &theme);
   ON_CALL(*mock_scrollable_area, VerticalScrollbar())
       .WillByDefault(Return(scrollbar));
 
@@ -149,13 +149,16 @@ TEST_F(ScrollbarThemeAuraTest, ScrollbarPartsInvalidationTest) {
   scrollbar->ClearTrackNeedsRepaint();
 
   // Tests that mousedown on the thumb causes an invalidation.
-  SendEvent(scrollbar, blink::WebInputEvent::kMouseMove, gfx::PointF(10, 20));
-  SendEvent(scrollbar, blink::WebInputEvent::kMouseDown, gfx::PointF(10, 20));
+  SendEvent(scrollbar, blink::WebInputEvent::Type::kMouseMove,
+            gfx::PointF(10, 20));
+  SendEvent(scrollbar, blink::WebInputEvent::Type::kMouseDown,
+            gfx::PointF(10, 20));
   EXPECT_TRUE(scrollbar->ThumbNeedsRepaint());
 
   // Tests that mouseup on the thumb causes an invalidation.
   scrollbar->ClearThumbNeedsRepaint();
-  SendEvent(scrollbar, blink::WebInputEvent::kMouseUp, gfx::PointF(10, 20));
+  SendEvent(scrollbar, blink::WebInputEvent::Type::kMouseUp,
+            gfx::PointF(10, 20));
   EXPECT_TRUE(scrollbar->ThumbNeedsRepaint());
 
   // Note that, since these tests run with the assumption that the compositor
@@ -189,13 +192,16 @@ TEST_F(ScrollbarThemeAuraTest, ScrollbarPartsInvalidationTest) {
 
   // Tests that mousedown on the arrow causes an invalidation.
   scrollbar->ClearTrackNeedsRepaint();
-  SendEvent(scrollbar, blink::WebInputEvent::kMouseMove, gfx::PointF(10, 760));
-  SendEvent(scrollbar, blink::WebInputEvent::kMouseDown, gfx::PointF(10, 760));
+  SendEvent(scrollbar, blink::WebInputEvent::Type::kMouseMove,
+            gfx::PointF(10, 760));
+  SendEvent(scrollbar, blink::WebInputEvent::Type::kMouseDown,
+            gfx::PointF(10, 760));
   EXPECT_TRUE(scrollbar->TrackNeedsRepaint());
 
   // Tests that mouseup on the arrow causes an invalidation.
   scrollbar->ClearTrackNeedsRepaint();
-  SendEvent(scrollbar, blink::WebInputEvent::kMouseUp, gfx::PointF(10, 760));
+  SendEvent(scrollbar, blink::WebInputEvent::Type::kMouseUp,
+            gfx::PointF(10, 760));
   EXPECT_TRUE(scrollbar->TrackNeedsRepaint());
 
   ThreadState::Current()->CollectAllGarbageForTesting();

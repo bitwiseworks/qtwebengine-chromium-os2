@@ -36,6 +36,7 @@
 #include "base/optional.h"
 #include "base/time/time.h"
 #include "base/unguessable_token.h"
+#include "third_party/blink/public/common/loader/previews_state.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "ui/base/page_transition_types.h"
 
@@ -87,47 +88,6 @@ class WebURLRequest {
     kHighest = kVeryHigh,
   };
 
-  typedef int PreviewsState;
-
-  // The Previews types which determines whether to request a Preview version of
-  // the resource.
-  enum PreviewsTypes {
-    kPreviewsUnspecified = 0,  // Let the browser process decide whether or
-                               // not to request Preview types.
-    kServerLoFiOn_DEPRECATED =
-        1 << 0,  // Request a Lo-Fi version of the resource
-                 // from the server. Deprecated and should not be used.
-    kClientLoFiOn = 1 << 1,          // Request a Lo-Fi version of the resource
-                                     // from the client.
-    kClientLoFiAutoReload = 1 << 2,  // Request the original version of the
-                                     // resource after a decoding error occurred
-                                     // when attempting to use Client Lo-Fi.
-    kServerLitePageOn = 1 << 3,      // Request a Lite Page version of the
-                                     // resource from the server.
-    kPreviewsNoTransform = 1 << 4,   // Explicitly forbid Previews
-                                     // transformations.
-    kPreviewsOff = 1 << 5,  // Request a normal (non-Preview) version of
-                            // the resource. Server transformations may
-                            // still happen if the page is heavy.
-    kNoScriptOn = 1 << 6,   // Request that script be disabled for page load.
-    kResourceLoadingHintsOn = 1 << 7,  // Request that resource loading hints be
-                                       // used during pageload.
-    kOfflinePageOn = 1 << 8,
-    kLitePageRedirectOn = 1 << 9,  // Allow the browser to redirect the resource
-                                   // to a Lite Page server.
-    kLazyImageLoadDeferred = 1 << 10,  // Request the placeholder version of an
-                                       // image that was deferred by lazyload.
-    kLazyImageAutoReload = 1 << 11,    // Request the full version of an image
-                                       // that was previously fetched as a
-                                       // placeholder by lazyload.
-    kDeferAllScriptOn = 1 << 12,  // Request that script execution be deferred
-                                  // until parsing completes.
-    kSubresourceRedirectOn =
-        1 << 13,  // Allow the subresources in the page to be redirected
-                  // to serve better optimized resources.
-    kPreviewsStateLast = kSubresourceRedirectOn
-  };
-
   class ExtraData : public base::RefCounted<ExtraData> {
    public:
     void set_render_frame_id(int render_frame_id) {
@@ -157,9 +117,11 @@ class WebURLRequest {
 
     // Determines whether SameSite cookies will be attached to the request
     // even when the request looks cross-site.
-    bool attach_same_site_cookies() const { return attach_same_site_cookies_; }
-    void set_attach_same_site_cookies(bool attach) {
-      attach_same_site_cookies_ = attach;
+    bool force_ignore_site_for_cookies() const {
+      return force_ignore_site_for_cookies_;
+    }
+    void set_force_ignore_site_for_cookies(bool attach) {
+      force_ignore_site_for_cookies_ = attach;
     }
 
    protected:
@@ -173,7 +135,7 @@ class WebURLRequest {
     ui::PageTransition transition_type_ = ui::PAGE_TRANSITION_LINK;
     bool is_for_no_state_prefetch_ = false;
     bool originated_from_service_worker_ = false;
-    bool attach_same_site_cookies_ = false;
+    bool force_ignore_site_for_cookies_ = false;
   };
 
   BLINK_PLATFORM_EXPORT ~WebURLRequest();
@@ -268,6 +230,8 @@ class WebURLRequest {
   // True if the request was user initiated.
   BLINK_PLATFORM_EXPORT bool HasUserGesture() const;
   BLINK_PLATFORM_EXPORT void SetHasUserGesture(bool);
+
+  BLINK_PLATFORM_EXPORT bool HasTextFragmentToken() const;
 
   // A consumer controlled value intended to be used to identify the
   // requestor.

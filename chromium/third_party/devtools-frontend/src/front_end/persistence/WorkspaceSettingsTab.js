@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as UI from '../ui/ui.js';
 
@@ -9,6 +12,7 @@ import {EditFileSystemView} from './EditFileSystemView.js';
 import {FileSystem} from './FileSystemWorkspaceBinding.js';  // eslint-disable-line no-unused-vars
 import {IsolatedFileSystem} from './IsolatedFileSystem.js';
 import {Events, IsolatedFileSystemManager} from './IsolatedFileSystemManager.js';
+import {NetworkPersistenceManager} from './NetworkPersistenceManager.js';
 import {PlatformFileSystem} from './PlatformFileSystem.js';  // eslint-disable-line no-unused-vars
 
 export class WorkspaceSettingsTab extends UI.Widget.VBox {
@@ -94,7 +98,7 @@ export class WorkspaceSettingsTab extends UI.Widget.VBox {
     if (!(fileSystem instanceof IsolatedFileSystem)) {
       return;
     }
-    const networkPersistenceProject = self.Persistence.networkPersistenceManager.project();
+    const networkPersistenceProject = NetworkPersistenceManager.instance().project();
     if (networkPersistenceProject &&
         IsolatedFileSystemManager.instance().fileSystem(
             /** @type {!FileSystem} */ (networkPersistenceProject).fileSystemPath()) === fileSystem) {
@@ -120,7 +124,8 @@ export class WorkspaceSettingsTab extends UI.Widget.VBox {
     const lastIndexOfSlash = fileSystemPath.lastIndexOf('/');
     const folderName = fileSystemPath.substr(lastIndexOfSlash + 1);
 
-    const element = createElementWithClass('div', 'file-system-container');
+    const element = document.createElement('div');
+    element.classList.add('file-system-container');
     const header = element.createChild('div', 'file-system-header');
 
     const nameElement = header.createChild('div', 'file-system-name');

@@ -34,8 +34,6 @@ class NavigatorGeolocation final
     : public GarbageCollected<NavigatorGeolocation>,
       public Supplement<Navigator>,
       public NameClient {
-  USING_GARBAGE_COLLECTED_MIXIN(NavigatorGeolocation);
-
  public:
   static const char kSupplementName[];
 
@@ -45,7 +43,7 @@ class NavigatorGeolocation final
 
   explicit NavigatorGeolocation(Navigator&);
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
   const char* NameInHeapSnapshot() const override {
     return "NavigatorGeolocation";
   }

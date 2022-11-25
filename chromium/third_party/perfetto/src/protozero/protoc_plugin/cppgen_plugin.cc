@@ -490,7 +490,6 @@ void CppObjGenerator::GenEnum(const EnumDescriptor* enum_desc,
   // enum MyEnum { FOO=1, BAR=2 }
   // Hence this |prefix| logic.
   std::string prefix = enum_desc->containing_type() ? full_name + "_" : "";
-
   p->Print("enum $f$ : int {\n", "f", full_name);
   for (int e = 0; e < enum_desc->value_count(); e++) {
     const EnumValueDescriptor* value = enum_desc->value(e);
@@ -502,12 +501,28 @@ void CppObjGenerator::GenEnum(const EnumDescriptor* enum_desc,
 
 void CppObjGenerator::GenEnumAliases(const EnumDescriptor* enum_desc,
                                      Printer* p) const {
+  int min_value = std::numeric_limits<int>::max();
+  int max_value = std::numeric_limits<int>::min();
+  std::string min_name;
+  std::string max_name;
   std::string full_name = GetFullName(enum_desc);
   for (int e = 0; e < enum_desc->value_count(); e++) {
     const EnumValueDescriptor* value = enum_desc->value(e);
     p->Print("static constexpr auto $n$ = $f$_$n$;\n", "f", full_name, "n",
              value->name());
+    if (value->number() < min_value) {
+      min_value = value->number();
+      min_name = full_name + "_" + value->name();
+    }
+    if (value->number() > max_value) {
+      max_value = value->number();
+      max_name = full_name + "_" + value->name();
+    }
   }
+  p->Print("static constexpr auto $n$_MIN = $m$;\n", "n", enum_desc->name(),
+           "m", min_name);
+  p->Print("static constexpr auto $n$_MAX = $m$;\n", "n", enum_desc->name(),
+           "m", max_name);
 }
 
 void CppObjGenerator::GenClassDecl(const Descriptor* msg, Printer* p) const {
@@ -595,22 +610,35 @@ void CppObjGenerator::GenClassDecl(const Descriptor* msg, Printer* p) const {
         }
       }
     } else {  // is_repeated()
-      p->Print(
-          "int $n$_size() const { return static_cast<int>($n$_.size()); }\n",
-          "t", GetCppType(field, false), "n", field->lowercase_name());
       p->Print("const std::vector<$t$>& $n$() const { return $n$_; }\n", "t",
                GetCppType(field, false), "n", field->lowercase_name());
       p->Print("std::vector<$t$>* mutable_$n$() { return &$n$_; }\n", "t",
                GetCppType(field, false), "n", field->lowercase_name());
-      p->Print("void clear_$n$() { $n$_.clear(); }\n", "n",
-               field->lowercase_name());
-      if (field->type() != FieldDescriptor::TYPE_MESSAGE) {
-        p->Print("void add_$n$($t$ value);\n", "t",
+
+      // Generate accessors for repeated message types in the .cc file so that
+      // the header doesn't depend on the full definition of all nested types.
+      if (field->type() == TYPE_MESSAGE) {
+        p->Print("int $n$_size() const;\n", "t", GetCppType(field, false), "n",
+                 field->lowercase_name());
+        p->Print("void clear_$n$();\n", "n", field->lowercase_name());
+        p->Print("$t$* add_$n$();\n", "t", GetCppType(field, false), "n",
+                 field->lowercase_name());
+      } else {  // Primitive type.
+        p->Print(
+            "int $n$_size() const { return static_cast<int>($n$_.size()); }\n",
+            "t", GetCppType(field, false), "n", field->lowercase_name());
+        p->Print("void clear_$n$() { $n$_.clear(); }\n", "n",
+                 field->lowercase_name());
+        p->Print("void add_$n$($t$ value) { $n$_.emplace_back(value); }\n", "t",
                  GetCppType(field, false), "n", field->lowercase_name());
+        // TODO(primiano): this should be done only for TYPE_MESSAGE.
+        // Unfortuntely we didn't realize before and now we have a bunch of code
+        // that does: *msg->add_int_value() = 42 instead of
+        // msg->add_int_value(42).
+        p->Print(
+            "$t$* add_$n$() { $n$_.emplace_back(); return &$n$_.back(); }\n",
+            "t", GetCppType(field, false), "n", field->lowercase_name());
       }
-      p->Print(
-          "$t$* add_$n$();\n", "t", GetCppType(field, false),
-          "n", field->lowercase_name());
     }
   }
   p->Outdent();
@@ -674,28 +702,26 @@ void CppObjGenerator::GenClassDef(const Descriptor* msg, Printer* p) const {
   p->Outdent();
   p->Print("\n}\n\n");
 
-  std::string proto_type = GetFullName(msg, true);
-
-  // Non-inline accessors:
+  // Accessors for repeated message fields.
   for (int i = 0; i < msg->field_count(); i++) {
     const FieldDescriptor* field = msg->field(i);
-    if (!field->options().lazy() && field->is_repeated()) {
-      if (field->type() != FieldDescriptor::TYPE_MESSAGE) {
-        p->Print("void $f$::add_$n$($t$ value) { $n$_.emplace_back(value); }\n",
-                 "f", full_name,
-                 "n", field->lowercase_name(),
-                 "t", GetCppType(field, false));
-      }
-
-      p->Print("$t$* $f$::add_$n$() {\n", "f", full_name, "t",
-               GetCppType(field, false), "n", field->lowercase_name());
-      p->Indent();
-      p->Print("$n$_.emplace_back();\n", "n", field->lowercase_name());
-      p->Print("return &$n$_.back();\n", "n", field->lowercase_name());
-      p->Outdent();
-      p->Print("}\n\n");
+    if (field->options().lazy() || !field->is_repeated() ||
+        field->type() != TYPE_MESSAGE) {
+      continue;
     }
+    p->Print(
+        "int $c$::$n$_size() const { return static_cast<int>($n$_.size()); }\n",
+        "c", full_name, "t", GetCppType(field, false), "n",
+        field->lowercase_name());
+    p->Print("void $c$::clear_$n$() { $n$_.clear(); }\n", "c", full_name, "n",
+             field->lowercase_name());
+    p->Print(
+        "$t$* $c$::add_$n$() { $n$_.emplace_back(); return &$n$_.back(); }\n",
+        "c", full_name, "t", GetCppType(field, false), "n",
+        field->lowercase_name());
   }
+
+  std::string proto_type = GetFullName(msg, true);
 
   // Generate the ParseFromArray() method definition.
   p->Print("bool $f$::ParseFromArray(const void* raw, size_t size) {\n", "f",

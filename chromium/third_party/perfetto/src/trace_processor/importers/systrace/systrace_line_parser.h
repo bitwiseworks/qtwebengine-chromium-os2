@@ -21,7 +21,7 @@
 
 #include "src/trace_processor/importers/systrace/systrace_line.h"
 #include "src/trace_processor/trace_parser.h"
-#include "src/trace_processor/trace_processor_context.h"
+#include "src/trace_processor/types/trace_processor_context.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -36,6 +36,9 @@ class SystraceLineParser {
   TraceProcessorContext* const context_;
   const StringId sched_wakeup_name_id_ = kNullStringId;
   const StringId cpuidle_name_id_ = kNullStringId;
+  const StringId workqueue_name_id_ = kNullStringId;
+  const StringId sched_blocked_reason_id_ = kNullStringId;
+  const StringId io_wait_id_ = kNullStringId;
 };
 
 }  // namespace trace_processor

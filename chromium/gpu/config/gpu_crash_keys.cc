@@ -18,7 +18,8 @@ crash_reporter::CrashKeyString<16> gpu_revision("gpu-rev");
 crash_reporter::CrashKeyString<64> gpu_driver_version("gpu-driver");
 crash_reporter::CrashKeyString<16> gpu_pixel_shader_version("gpu-psver");
 crash_reporter::CrashKeyString<16> gpu_vertex_shader_version("gpu-vsver");
-#if defined(OS_MACOSX)
+crash_reporter::CrashKeyString<16> gpu_generation_intel("gpu-generation-intel");
+#if defined(OS_MAC)
 crash_reporter::CrashKeyString<64> gpu_gl_version("gpu-glver");
 #elif defined(OS_POSIX)
 crash_reporter::CrashKeyString<256> gpu_vendor("gpu-gl-vendor");

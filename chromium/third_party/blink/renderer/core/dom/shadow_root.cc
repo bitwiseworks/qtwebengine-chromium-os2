@@ -46,6 +46,7 @@
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/trustedtypes/trusted_types_util.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/wtf/size_assertions.h"
 
 namespace blink {
 
@@ -59,8 +60,7 @@ struct SameSizeAsShadowRoot : public DocumentFragment, public TreeScope {
   unsigned flags[1];
 };
 
-static_assert(sizeof(ShadowRoot) == sizeof(SameSizeAsShadowRoot),
-              "ShadowRoot should stay small");
+ASSERT_SIZE(ShadowRoot, SameSizeAsShadowRoot);
 
 ShadowRoot::ShadowRoot(Document& document, ShadowRootType type)
     : DocumentFragment(nullptr, kCreateShadowRoot),
@@ -122,23 +122,6 @@ void ShadowRoot::setInnerHTML(const String& markup,
           markup, &host(), kAllowScriptingContent, "innerHTML",
           exception_state))
     ReplaceChildrenWithFragment(this, fragment, exception_state);
-}
-
-void ShadowRoot::RecalcStyle(const StyleRecalcChange change) {
-  // ShadowRoot doesn't support custom callbacks.
-  DCHECK(!HasCustomStyleCallbacks());
-  DCHECK(!RuntimeEnabledFeatures::FlatTreeStyleRecalcEnabled());
-
-  StyleRecalcChange child_change = change;
-  if (GetStyleChangeType() == kSubtreeStyleChange)
-    child_change = child_change.ForceRecalcDescendants();
-
-  // There's no style to update so just calling RecalcStyle means we're updated.
-  ClearNeedsStyleRecalc();
-
-  if (child_change.TraverseChildren(*this))
-    RecalcDescendantStyles(child_change);
-  ClearChildNeedsStyleRecalc();
 }
 
 void ShadowRoot::RebuildLayoutTree(WhitespaceAttacher& whitespace_attacher) {
@@ -237,7 +220,7 @@ void ShadowRoot::SetNeedsDistributionRecalc() {
   host().MarkAncestorsWithChildNeedsDistributionRecalc();
 }
 
-void ShadowRoot::Trace(Visitor* visitor) {
+void ShadowRoot::Trace(Visitor* visitor) const {
   visitor->Trace(style_sheet_list_);
   visitor->Trace(slot_assignment_);
   visitor->Trace(shadow_root_v0_);

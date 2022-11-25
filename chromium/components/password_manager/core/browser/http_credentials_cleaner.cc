@@ -39,7 +39,7 @@ void HttpCredentialCleaner::StartCleaning(Observer* observer) {
 }
 
 void HttpCredentialCleaner::OnGetPasswordStoreResults(
-    std::vector<std::unique_ptr<autofill::PasswordForm>> results) {
+    std::vector<std::unique_ptr<PasswordForm>> results) {
   // Non HTTP or HTTPS credentials are ignored, in particular Android or
   // federated credentials.
   for (auto& form : RemoveNonHTTPOrHTTPSForms(std::move(results))) {
@@ -47,8 +47,8 @@ void HttpCredentialCleaner::OnGetPasswordStoreResults(
         {std::string(
              password_manager_util::GetSignonRealmWithProtocolExcluded(*form)),
          form->scheme, form->username_value});
-    if (form->origin.SchemeIs(url::kHttpScheme)) {
-      const GURL origin = form->origin;
+    if (form->url.SchemeIs(url::kHttpScheme)) {
+      auto origin = url::Origin::Create(form->url);
       PostHSTSQueryForHostAndNetworkContext(
           origin, network_context_getter_.Run(),
           base::BindOnce(&HttpCredentialCleaner::OnHSTSQueryResult,
@@ -64,7 +64,7 @@ void HttpCredentialCleaner::OnGetPasswordStoreResults(
 }
 
 void HttpCredentialCleaner::OnHSTSQueryResult(
-    std::unique_ptr<autofill::PasswordForm> form,
+    std::unique_ptr<PasswordForm> form,
     FormKey key,
     HSTSResult hsts_result) {
   ++processed_results_;

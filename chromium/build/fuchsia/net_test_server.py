@@ -43,6 +43,7 @@ class SSHPortForwarder(chrome_test_server_spawner.PortForwarder):
             '-NT', '-O', 'cancel', '-R', '0:localhost:%d' % host_port]
         task = self._target.RunCommandPiped([],
                                             ssh_args=forwarding_args,
+                                            stdout=open(os.devnull, 'w'),
                                             stderr=subprocess.PIPE)
         task.wait()
         if task.returncode != 0:
@@ -76,10 +77,7 @@ def SetupTestServer(target, test_concurrency, for_package):
 
   config_file = tempfile.NamedTemporaryFile(delete=True)
 
-  # Clean up the config JSON to only pass ports. See https://crbug.com/810209 .
   config_file.write(json.dumps({
-    'name': 'testserver',
-    'address': '127.0.0.1',
     'spawner_url_base': 'http://localhost:%d' % forwarded_port
   }))
 

@@ -38,7 +38,6 @@ class LocalFrame;
 
 class StyleMedia final : public ScriptWrappable, public ExecutionContextClient {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(StyleMedia);
 
  public:
   explicit StyleMedia(LocalFrame*);
@@ -46,7 +45,7 @@ class StyleMedia final : public ScriptWrappable, public ExecutionContextClient {
   AtomicString type() const;
   bool matchMedium(const String&) const;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 };
 
 }  // namespace blink

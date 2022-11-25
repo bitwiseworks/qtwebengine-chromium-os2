@@ -27,40 +27,60 @@ public:
     SymbolTable(ErrorReporter* errorReporter)
     : fErrorReporter(*errorReporter) {}
 
-    SymbolTable(std::shared_ptr<SymbolTable> parent, ErrorReporter* errorReporter)
+    SymbolTable(std::shared_ptr<SymbolTable> parent)
     : fParent(parent)
-    , fErrorReporter(*errorReporter) {}
+    , fErrorReporter(parent->fErrorReporter) {}
 
     const Symbol* operator[](StringFragment name);
 
-    void add(StringFragment name, std::unique_ptr<Symbol> symbol);
-
     void addWithoutOwnership(StringFragment name, const Symbol* symbol);
 
-    Symbol* takeOwnership(std::unique_ptr<Symbol> s);
+    template <typename T>
+    const T* add(StringFragment name, std::unique_ptr<T> symbol) {
+        const T* ptr = symbol.get();
+        this->addWithoutOwnership(name, ptr);
+        this->takeOwnershipOfSymbol(std::move(symbol));
+        return ptr;
+    }
 
-    IRNode* takeOwnership(std::unique_ptr<IRNode> n);
+    template <typename T>
+    const T* takeOwnershipOfSymbol(std::unique_ptr<T> symbol) {
+        const T* ptr = symbol.get();
+        fOwnedSymbols.push_back(std::move(symbol));
+        return ptr;
+    }
 
-    void markAllFunctionsBuiltin();
+    template <typename T>
+    const T* takeOwnershipOfIRNode(std::unique_ptr<T> node) {
+        const T* ptr = node.get();
+        fOwnedNodes.push_back(std::move(node));
+        return ptr;
+    }
+
+    const String* takeOwnershipOfString(std::unique_ptr<String> n);
 
     std::unordered_map<StringFragment, const Symbol*>::iterator begin();
 
     std::unordered_map<StringFragment, const Symbol*>::iterator end();
 
-    const std::shared_ptr<SymbolTable> fParent;
+    std::shared_ptr<SymbolTable> fParent;
+
+    std::vector<std::unique_ptr<const Symbol>> fOwnedSymbols;
 
 private:
     static std::vector<const FunctionDeclaration*> GetFunctions(const Symbol& s);
 
-    std::vector<std::unique_ptr<Symbol>> fOwnedSymbols;
-
     std::vector<std::unique_ptr<IRNode>> fOwnedNodes;
+
+    std::vector<std::unique_ptr<String>> fOwnedStrings;
 
     std::unordered_map<StringFragment, const Symbol*> fSymbols;
 
     ErrorReporter& fErrorReporter;
+
+    friend class Dehydrator;
 };
 
-} // namespace
+}  // namespace SkSL
 
 #endif

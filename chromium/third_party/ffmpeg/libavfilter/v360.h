@@ -48,12 +48,18 @@ enum Projections {
     CYLINDRICAL,
     PERSPECTIVE,
     TETRAHEDRON,
+    BARREL_SPLIT,
+    TSPYRAMID,
+    HEQUIRECTANGULAR,
+    EQUISOLID,
+    ORTHOGRAPHIC,
     NB_PROJECTIONS,
 };
 
 enum InterpMethod {
     NEAREST,
     BILINEAR,
+    LAGRANGE9,
     BICUBIC,
     LANCZOS,
     SPLINE16,

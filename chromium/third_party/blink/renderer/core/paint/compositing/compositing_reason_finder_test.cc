@@ -109,42 +109,6 @@ TEST_F(CompositingReasonFinderTest, OnlyAnchoredStickyPositionPromoted) {
                                 ->GetCompositingState());
 }
 
-TEST_F(CompositingReasonFinderTest,
-       OnlyAnchoredStickyPositionPromotedAssumeOverlap) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeatureState(
-      blink::features::kAssumeOverlapAfterFixedOrStickyPosition, true);
-  SetBodyInnerHTML(R"HTML(
-    <style>
-    .scroller {contain: paint; width: 400px; height: 400px; overflow: auto;
-    will-change: transform;}
-    .sticky { position: sticky; width: 10px; height: 10px;}</style>
-    <div class='scroller'>
-      <div id='sticky-top' class='sticky' style='top: 0px;'></div>
-      <div id='sticky-no-anchor' class='sticky'></div>
-      <div style='height: 2000px;'></div>
-    </div>
-  )HTML");
-
-  EXPECT_EQ(kPaintsIntoOwnBacking,
-            ToLayoutBoxModelObject(GetLayoutObjectByElementId("sticky-top"))
-                ->Layer()
-                ->GetCompositingState());
-  // Any scroll dependent layer, such as sticky-top, assumes that it overlaps
-  // anything which draws after it.
-  EXPECT_EQ(
-      kPaintsIntoOwnBacking,
-      ToLayoutBoxModelObject(GetLayoutObjectByElementId("sticky-no-anchor"))
-          ->Layer()
-          ->GetCompositingState());
-  EXPECT_EQ(
-      CompositingReason::kAssumedOverlap,
-      ToLayoutBoxModelObject(GetLayoutObjectByElementId("sticky-no-anchor"))
-              ->Layer()
-              ->GetCompositingReasons() &
-          CompositingReason::kAssumedOverlap);
-}
-
 TEST_F(CompositingReasonFinderTest, OnlyScrollingStickyPositionPromoted) {
   SetBodyInnerHTML(R"HTML(
     <style>.scroller {width: 400px; height: 400px; overflow: auto;
@@ -254,14 +218,15 @@ TEST_F(CompositingReasonFinderTest, PromoteCrossOriginIframe) {
   )HTML");
   UpdateAllLifecyclePhasesForTest();
 
-  Element* iframe = GetDocument().getElementById("iframe");
+  HTMLFrameOwnerElement* iframe =
+      To<HTMLFrameOwnerElement>(GetDocument().getElementById("iframe"));
   ASSERT_TRUE(iframe);
-  PaintLayer* iframe_layer =
-      ToLayoutBoxModelObject(iframe->GetLayoutObject())->Layer();
+  ASSERT_FALSE(iframe->ContentFrame()->IsCrossOriginToMainFrame());
+  LayoutView* iframe_layout_view =
+      To<LocalFrame>(iframe->ContentFrame())->ContentLayoutObject();
+  ASSERT_TRUE(iframe_layout_view);
+  PaintLayer* iframe_layer = iframe_layout_view->Layer();
   ASSERT_TRUE(iframe_layer);
-  ASSERT_FALSE(To<HTMLFrameOwnerElement>(iframe)
-                   ->ContentFrame()
-                   ->IsCrossOriginToMainFrame());
   EXPECT_EQ(kNotComposited, iframe_layer->DirectCompositingReasons());
 
   SetBodyInnerHTML(R"HTML(
@@ -270,15 +235,222 @@ TEST_F(CompositingReasonFinderTest, PromoteCrossOriginIframe) {
   )HTML");
   UpdateAllLifecyclePhasesForTest();
 
-  iframe = GetDocument().getElementById("iframe");
-  ASSERT_TRUE(iframe);
-  iframe_layer = ToLayoutBoxModelObject(iframe->GetLayoutObject())->Layer();
+  iframe = To<HTMLFrameOwnerElement>(GetDocument().getElementById("iframe"));
+  iframe_layout_view =
+      To<LocalFrame>(iframe->ContentFrame())->ContentLayoutObject();
+  iframe_layer = iframe_layout_view->Layer();
   ASSERT_TRUE(iframe_layer);
-  ASSERT_TRUE(To<HTMLFrameOwnerElement>(iframe)
-                  ->ContentFrame()
-                  ->IsCrossOriginToMainFrame());
+  ASSERT_TRUE(iframe->ContentFrame()->IsCrossOriginToMainFrame());
   EXPECT_EQ(CompositingReason::kIFrame,
             iframe_layer->DirectCompositingReasons());
+}
+
+TEST_F(CompositingReasonFinderTest,
+       CompositeWithBackfaceVisibilityAncestorAndPreserve3D) {
+  ScopedTransformInteropForTest enabled(true);
+
+  SetBodyInnerHTML(R"HTML(
+    <!DOCTYPE html>
+    <style>
+      div { width: 100px; height: 100px; position: relative }
+    </style>
+    <div style="backface-visibility: hidden; transform-style: preserve-3d">
+      <div id=target></div>
+    </div>
+  )HTML");
+
+  PaintLayer* target_layer =
+      ToLayoutBoxModelObject(GetLayoutObjectByElementId("target"))->Layer();
+
+  EXPECT_EQ(CompositingReason::kBackfaceInvisibility3DAncestor,
+            target_layer->PotentialCompositingReasonsFromNonStyle());
+  EXPECT_EQ(kPaintsIntoOwnBacking, target_layer->GetCompositingState());
+}
+
+TEST_F(CompositingReasonFinderTest,
+       CompositeWithBackfaceVisibilityAncestorAndPreserve3DWithInterveningDiv) {
+  ScopedTransformInteropForTest enabled(true);
+
+  SetBodyInnerHTML(R"HTML(
+    <!DOCTYPE html>
+    <style>
+      div { width: 100px; height: 100px }
+    </style>
+    <div style="backface-visibility: hidden; transform-style: preserve-3d">
+      <div>
+        <div id=target style="position: relative"></div>
+      </div>
+    </div>
+  )HTML");
+
+  PaintLayer* target_layer =
+      ToLayoutBoxModelObject(GetLayoutObjectByElementId("target"))->Layer();
+
+  EXPECT_EQ(CompositingReason::kBackfaceInvisibility3DAncestor,
+            target_layer->PotentialCompositingReasonsFromNonStyle());
+  EXPECT_EQ(kPaintsIntoOwnBacking, target_layer->GetCompositingState());
+}
+
+TEST_F(CompositingReasonFinderTest,
+       CompositeWithBackfaceVisibilityAncestorWithInterveningStackingDiv) {
+  ScopedTransformInteropForTest enabled(true);
+
+  SetBodyInnerHTML(R"HTML(
+    <!DOCTYPE html>
+    <style>
+      div { width: 100px; height: 100px }
+    </style>
+    <div style="backface-visibility: hidden; transform-style: preserve-3d">
+      <div id=intermediate style="isolation: isolate">
+        <div id=target style="position: relative"></div>
+      </div>
+    </div>
+  )HTML");
+
+  PaintLayer* intermediate_layer =
+      ToLayoutBoxModelObject(GetLayoutObjectByElementId("intermediate"))
+          ->Layer();
+
+  PaintLayer* target_layer =
+      ToLayoutBoxModelObject(GetLayoutObjectByElementId("target"))->Layer();
+
+  EXPECT_EQ(CompositingReason::kBackfaceInvisibility3DAncestor,
+            intermediate_layer->PotentialCompositingReasonsFromNonStyle());
+  EXPECT_EQ(kPaintsIntoOwnBacking, intermediate_layer->GetCompositingState());
+
+  EXPECT_EQ(CompositingReason::kNone,
+            target_layer->PotentialCompositingReasonsFromNonStyle());
+  EXPECT_NE(kPaintsIntoOwnBacking, target_layer->GetCompositingState());
+}
+
+TEST_F(CompositingReasonFinderTest,
+       CompositeWithBackfaceVisibilityAncestorAndFlattening) {
+  ScopedTransformInteropForTest enabled(true);
+
+  SetBodyInnerHTML(R"HTML(
+    <!DOCTYPE html>
+    <style>
+      div { width: 100px; height: 100px; position: relative }
+    </style>
+    <div style="backface-visibility: hidden;">
+      <div id=target></div>
+    </div>
+  )HTML");
+
+  PaintLayer* target_layer =
+      ToLayoutBoxModelObject(GetLayoutObjectByElementId("target"))->Layer();
+
+  EXPECT_EQ(CompositingReason::kNone,
+            target_layer->PotentialCompositingReasonsFromNonStyle());
+  EXPECT_NE(kPaintsIntoOwnBacking, target_layer->GetCompositingState());
+}
+
+TEST_F(CompositingReasonFinderTest, CompositeWithBackfaceVisibility) {
+  ScopedTransformInteropForTest enabled(true);
+
+  SetBodyInnerHTML(R"HTML(
+    <!DOCTYPE html>
+    <style>
+      div { width: 100px; height: 100px; position: relative }
+    </style>
+    <div id=target style="backface-visibility: hidden;">
+      <div></div>
+    </div>
+  )HTML");
+
+  PaintLayer* target_layer =
+      ToLayoutBoxModelObject(GetLayoutObjectByElementId("target"))->Layer();
+
+  EXPECT_EQ(CompositingReason::kNone,
+            target_layer->PotentialCompositingReasonsFromNonStyle());
+  EXPECT_EQ(kPaintsIntoOwnBacking, target_layer->GetCompositingState());
+}
+
+TEST_F(CompositingReasonFinderTest, CompositedSVGText) {
+  SetBodyInnerHTML(R"HTML(
+    <svg>
+      <text id="text" style="will-change: opacity">Text</text>
+    </svg>
+  )HTML");
+
+  auto* svg_text = GetLayoutObjectByElementId("text");
+  EXPECT_EQ(
+      CompositingReason::kWillChangeOpacity,
+      CompositingReasonFinder::DirectReasonsForPaintProperties(*svg_text));
+  auto* text = svg_text->SlowFirstChild();
+  ASSERT_TRUE(text->IsText());
+  EXPECT_EQ(CompositingReason::kNone,
+            CompositingReasonFinder::DirectReasonsForPaintProperties(*text));
+}
+
+TEST_F(CompositingReasonFinderTest, SVGCompositedTransformAnimation) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      .animate {
+        width: 100px;
+        height: 100px;
+        animation: wave 1s infinite;
+      }
+      @keyframes wave {
+        0% { transform: rotate(-5deg); }
+        100% { transform: rotate(5deg); }
+      }
+      .animate-mixed {
+        width: 100px;
+        height: 100px;
+        animation: mixed 1s infinite;
+      }
+      @keyframes mixed {
+        0% { transform: rotate(-5deg); stroke-dashoffset: 0; }
+        100% { transform: rotate(5deg); stroke-dashoffset: 180; }
+      }
+    </style>
+    <svg id="svg" class="animate">
+      <rect id="rect" class="animate"/>
+      <rect id="rect-smil" class="animate">
+        <animateMotion dur="10s" repeatCount="indefinite"
+                       path="M0,0 L100,100 z"/>
+      </rect>
+      <rect id="rect-mixed" class="animate-mixed"/>
+      <svg id="embedded-svg" class="animate"/>
+      <foreignObject id="foreign" class="animate"/>
+      <foreignObject id="foreign-zoomed" class="animate"
+                     style="zoom: 1.5; will-change: opacity"/>
+      <use id="use" href="#rect" class="animate"/>
+      <use id="use-offset" href="#rect" x="10" class="animate"/>
+    </svg>
+  )HTML");
+
+  EXPECT_EQ(CompositingReason::kActiveTransformAnimation |
+                CompositingReason::kSVGRoot,
+            CompositingReasonFinder::DirectReasonsForPaintProperties(
+                *GetLayoutObjectByElementId("svg")));
+  EXPECT_EQ(CompositingReason::kActiveTransformAnimation,
+            CompositingReasonFinder::DirectReasonsForPaintProperties(
+                *GetLayoutObjectByElementId("rect")));
+  EXPECT_EQ(CompositingReason::kNone,
+            CompositingReasonFinder::DirectReasonsForPaintProperties(
+                *GetLayoutObjectByElementId("rect-smil")));
+  EXPECT_EQ(CompositingReason::kNone,
+            CompositingReasonFinder::DirectReasonsForPaintProperties(
+                *GetLayoutObjectByElementId("rect-mixed")));
+  EXPECT_EQ(CompositingReason::kNone,
+            CompositingReasonFinder::DirectReasonsForPaintProperties(
+                *GetLayoutObjectByElementId("embedded-svg")));
+  EXPECT_EQ(CompositingReason::kActiveTransformAnimation,
+            CompositingReasonFinder::DirectReasonsForPaintProperties(
+                *GetLayoutObjectByElementId("foreign")));
+  // The foreignObject that can't use composited animation still gets other
+  // compositing reasons.
+  EXPECT_EQ(CompositingReason::kWillChangeOpacity,
+            CompositingReasonFinder::DirectReasonsForPaintProperties(
+                *GetLayoutObjectByElementId("foreign-zoomed")));
+  EXPECT_EQ(CompositingReason::kActiveTransformAnimation,
+            CompositingReasonFinder::DirectReasonsForPaintProperties(
+                *GetLayoutObjectByElementId("use")));
+  EXPECT_EQ(CompositingReason::kNone,
+            CompositingReasonFinder::DirectReasonsForPaintProperties(
+                *GetLayoutObjectByElementId("use-offset")));
 }
 
 }  // namespace blink

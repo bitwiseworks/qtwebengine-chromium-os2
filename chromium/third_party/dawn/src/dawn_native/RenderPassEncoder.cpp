@@ -17,8 +17,10 @@
 #include "common/Constants.h"
 #include "dawn_native/Buffer.h"
 #include "dawn_native/CommandEncoder.h"
+#include "dawn_native/CommandValidation.h"
 #include "dawn_native/Commands.h"
 #include "dawn_native/Device.h"
+#include "dawn_native/QuerySet.h"
 #include "dawn_native/RenderBundle.h"
 #include "dawn_native/RenderPipeline.h"
 
@@ -153,10 +155,28 @@ namespace dawn_native {
                 for (uint32_t i = 0; i < usages.buffers.size(); ++i) {
                     mUsageTracker.BufferUsedAs(usages.buffers[i], usages.bufferUsages[i]);
                 }
+
                 for (uint32_t i = 0; i < usages.textures.size(); ++i) {
-                    mUsageTracker.TextureUsedAs(usages.textures[i], usages.textureUsages[i]);
+                    mUsageTracker.AddTextureUsage(usages.textures[i], usages.textureUsages[i]);
                 }
             }
+
+            return {};
+        });
+    }
+
+    void RenderPassEncoder::WriteTimestamp(QuerySetBase* querySet, uint32_t queryIndex) {
+        mEncodingContext->TryEncode(this, [&](CommandAllocator* allocator) -> MaybeError {
+            if (GetDevice()->IsValidationEnabled()) {
+                DAWN_TRY(GetDevice()->ValidateObject(querySet));
+                DAWN_TRY(ValidateTimestampQuery(querySet, queryIndex));
+                mCommandEncoder->TrackUsedQuerySet(querySet);
+            }
+
+            WriteTimestampCmd* cmd =
+                allocator->Allocate<WriteTimestampCmd>(Command::WriteTimestamp);
+            cmd->querySet = querySet;
+            cmd->queryIndex = queryIndex;
 
             return {};
         });

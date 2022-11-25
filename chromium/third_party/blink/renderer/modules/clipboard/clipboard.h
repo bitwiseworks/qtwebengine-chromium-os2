@@ -16,17 +16,18 @@
 
 namespace blink {
 
+class ClipboardItemOptions;
 class ScriptState;
 
 class Clipboard : public EventTargetWithInlineData,
                   public ExecutionContextClient {
-  USING_GARBAGE_COLLECTED_MIXIN(Clipboard);
   DEFINE_WRAPPERTYPEINFO();
 
  public:
   explicit Clipboard(ExecutionContext* execution_context);
 
   ScriptPromise read(ScriptState*);
+  ScriptPromise read(ScriptState*, ClipboardItemOptions*);
   ScriptPromise readText(ScriptState*);
 
   ScriptPromise write(ScriptState*, const HeapVector<Member<ClipboardItem>>&);
@@ -36,7 +37,7 @@ class Clipboard : public EventTargetWithInlineData,
   const AtomicString& InterfaceName() const override;
   ExecutionContext* GetExecutionContext() const override;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(Clipboard);

@@ -327,6 +327,11 @@ class BlinkScrollbarPartAnimationTimer {
     double fraction = delta / duration_;
     fraction = clampTo(fraction, 0.0, 1.0);
     double progress = timing_function_->Evaluate(fraction);
+    // In some scenarios, animation_ gets released during the call to
+    // setCurrentProgress. Because BlinkScrollbarPartAnimationTimer is a
+    // member variable of BlinkScrollbarPartAnimation animation_ the timer
+    // gets freed at the same time with animation_. In that case, it will
+    // not be safe to call any other code after animation_ setCurrentProgress.
     [animation_ setCurrentProgress:progress];
   }
 
@@ -401,6 +406,10 @@ class BlinkScrollbarPartAnimationTimer {
 
 - (void)setCurrentProgress:(NSAnimationProgress)progress {
   DCHECK(_scrollbar);
+  // In some scenarios, BlinkScrollbarPartAnimation is released in the middle
+  // of this method by _scrollbarPainter. This is why we have to retain the self
+  // pointer when we run this method.
+  [self retain];
 
   CGFloat currentValue;
   if (_startValue > _endValue)
@@ -427,7 +436,13 @@ class BlinkScrollbarPartAnimationTimer {
       break;
   }
 
-  _scrollbar->SetNeedsPaintInvalidation(invalidParts);
+  // Before BlinkScrollbarPartAnimation is released by _scrollbarPainter,
+  // invalidate is called and _scrollbar is set to nullptr. Check to see
+  // if _scrollbar is non-null before calling SetNeedsPaintInvalidation.
+  if (_scrollbar)
+    _scrollbar->SetNeedsPaintInvalidation(invalidParts);
+
+  [self release];
 }
 
 - (void)invalidate {
@@ -987,7 +1002,7 @@ void ScrollAnimatorMac::UpdateScrollerStyle() {
         [scrollbar_painter_controller_ verticalScrollerImp];
     ScrollbarPainter new_vertical_painter = [NSClassFromString(@"NSScrollerImp")
         scrollerImpWithStyle:new_style
-                 controlSize:(NSControlSize)vertical_scrollbar->GetControlSize()
+                 controlSize:NSRegularControlSize
                   horizontal:NO
         replacingScrollerImp:old_vertical_painter];
     [old_vertical_painter setDelegate:nil];
@@ -1002,7 +1017,7 @@ void ScrollAnimatorMac::UpdateScrollerStyle() {
     // offset
     // and length are properly updated.
     int thickness =
-        mac_theme->ScrollbarThickness(vertical_scrollbar->GetControlSize());
+        mac_theme->ScrollbarThickness(vertical_scrollbar->ScaleFromDIP());
     vertical_scrollbar->SetFrameRect(IntRect(0, 0, thickness, thickness));
   }
 
@@ -1015,8 +1030,7 @@ void ScrollAnimatorMac::UpdateScrollerStyle() {
     ScrollbarPainter new_horizontal_painter =
         [NSClassFromString(@"NSScrollerImp")
             scrollerImpWithStyle:new_style
-                     controlSize:(NSControlSize)
-                                     horizontal_scrollbar->GetControlSize()
+                     controlSize:NSRegularControlSize
                       horizontal:YES
             replacingScrollerImp:old_horizontal_painter];
     [old_horizontal_painter setDelegate:nil];
@@ -1032,7 +1046,7 @@ void ScrollAnimatorMac::UpdateScrollerStyle() {
     // offset
     // and length are properly updated.
     int thickness =
-        mac_theme->ScrollbarThickness(horizontal_scrollbar->GetControlSize());
+        mac_theme->ScrollbarThickness(horizontal_scrollbar->ScaleFromDIP());
     horizontal_scrollbar->SetFrameRect(IntRect(0, 0, thickness, thickness));
   }
 

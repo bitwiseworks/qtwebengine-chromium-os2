@@ -8,12 +8,18 @@
 #include <fuchsia/sys/cpp/fidl.h>
 #include <fuchsia/web/cpp/fidl.h>
 #include <lib/fidl/cpp/interface_request.h>
+#include <lib/sys/cpp/service_directory.h>
 
 #include "base/command_line.h"
 
 namespace cr_fuchsia {
 
-// TODO(crbug.com/1046615): Use test manifests for package specification.
+fidl::InterfaceHandle<fuchsia::io::Directory> StartWebEngineForTests(
+    fidl::InterfaceRequest<fuchsia::sys::ComponentController>
+        component_controller_request,
+    const base::CommandLine& command_line =
+        base::CommandLine(base::CommandLine::NO_PROGRAM));
+
 fuchsia::web::ContextProviderPtr ConnectContextProvider(
     fidl::InterfaceRequest<fuchsia::sys::ComponentController>
         component_controller_request,

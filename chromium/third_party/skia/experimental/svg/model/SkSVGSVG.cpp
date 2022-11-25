@@ -14,11 +14,11 @@ SkSVGSVG::SkSVGSVG() : INHERITED(SkSVGTag::kSvg) { }
 
 bool SkSVGSVG::onPrepareToRender(SkSVGRenderContext* ctx) const {
     auto viewPortRect  = ctx->lengthContext().resolveRect(fX, fY, fWidth, fHeight);
-    auto contentMatrix = SkMatrix::MakeTrans(viewPortRect.x(), viewPortRect.y());
+    auto contentMatrix = SkMatrix::Translate(viewPortRect.x(), viewPortRect.y());
     auto viewPort      = SkSize::Make(viewPortRect.width(), viewPortRect.height());
 
     if (fViewBox.isValid()) {
-        const SkRect& viewBox = *fViewBox.get();
+        const SkRect& viewBox = *fViewBox;
 
         // An empty viewbox disables rendering.
         if (viewBox.isEmpty()) {
@@ -96,7 +96,7 @@ void SkSVGSVG::onSetAttribute(SkSVGAttribute attr, const SkSVGValue& v) {
     }
 }
 
-// https://www.w3.org/TR/SVG/coords.html#IntrinsicSizing
+// https://www.w3.org/TR/SVG11/coords.html#IntrinsicSizing
 SkSize SkSVGSVG::intrinsicSize(const SkSVGLengthContext& lctx) const {
     // Percentage values do not provide an intrinsic size.
     if (fWidth.unit() == SkSVGLength::Unit::kPercentage ||

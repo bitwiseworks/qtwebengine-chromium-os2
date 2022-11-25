@@ -46,6 +46,7 @@
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/picture_in_picture_controller.h"
+#include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/fullscreen/fullscreen.h"
 #include "third_party/blink/renderer/core/html/custom/element_internals.h"
 #include "third_party/blink/renderer/core/html/forms/html_form_control_element.h"
@@ -57,6 +58,7 @@
 #include "third_party/blink/renderer/core/html/html_slot_element.h"
 #include "third_party/blink/renderer/core/html/media/html_video_element.h"
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
+#include "third_party/blink/renderer/core/html/shadow/shadow_element_names.h"
 #include "third_party/blink/renderer/core/html/track/vtt/vtt_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/page/focus_controller.h"
@@ -82,6 +84,11 @@ static bool MatchesSpatialNavigationFocusPseudoClass(const Element& element) {
   auto* option_element = DynamicTo<HTMLOptionElement>(element);
   return option_element && option_element->SpatialNavigationFocused() &&
          IsFrameFocused(element);
+}
+
+static bool MatchesHasDatalistPseudoClass(const Element& element) {
+  auto* html_input_element = DynamicTo<HTMLInputElement>(element);
+  return html_input_element && html_input_element->list();
 }
 
 static bool MatchesListBoxPseudoClass(const Element& element) {
@@ -435,7 +442,7 @@ SelectorChecker::MatchStatus SelectorChecker::MatchForRelation(
 
   switch (relation) {
     case CSSSelector::kShadowDeepAsDescendant:
-      Deprecation::CountDeprecation(context.element->GetDocument(),
+      Deprecation::CountDeprecation(context.element->GetExecutionContext(),
                                     WebFeature::kCSSDeepCombinator);
       FALLTHROUGH;
     case CSSSelector::kDescendant:
@@ -620,7 +627,6 @@ SelectorChecker::MatchStatus SelectorChecker::MatchForRelation(
           return MatchSelector(next_context, result);
       }
       return kSelectorFailsCompletely;
-      break;
     case CSSSelector::kSubSelector:
       break;
   }
@@ -1090,10 +1096,13 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
     }
     case CSSSelector::kPseudoTarget:
       return element == element.GetDocument().CssTarget();
+    case CSSSelector::kPseudoIs:
+    case CSSSelector::kPseudoWhere:
     case CSSSelector::kPseudoAny: {
       SelectorCheckingContext sub_context(context);
       sub_context.is_sub_selector = true;
-      DCHECK(selector.SelectorList());
+      if (!selector.SelectorList())
+        break;
       for (sub_context.selector = selector.SelectorList()->First();
            sub_context.selector; sub_context.selector = CSSSelectorList::Next(
                                      *sub_context.selector)) {
@@ -1295,6 +1304,9 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
     case CSSSelector::kPseudoSpatialNavigationInterest:
       DCHECK(is_ua_rule_);
       return MatchesSpatialNavigationInterestPseudoClass(element);
+    case CSSSelector::kPseudoHasDatalist:
+      DCHECK(is_ua_rule_);
+      return MatchesHasDatalistPseudoClass(element);
     case CSSSelector::kPseudoIsHtml:
       DCHECK(is_ua_rule_);
       return IsA<HTMLDocument>(element.GetDocument());
@@ -1333,8 +1345,6 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
     case CSSSelector::kPseudoCornerPresent:
       return false;
     case CSSSelector::kPseudoUnknown:
-    case CSSSelector::kPseudoIs:
-    case CSSSelector::kPseudoWhere:
     default:
       NOTREACHED();
       break;
@@ -1368,7 +1378,6 @@ bool SelectorChecker::CheckPseudoClassForVTT(
       return false;
     default:
       return CheckPseudoClass(context, result);
-      break;
   }
   return false;
 }
@@ -1404,13 +1413,24 @@ bool SelectorChecker::CheckPseudoElement(const SelectorCheckingContext& context,
     case CSSSelector::kPseudoPlaceholder:
       if (ShadowRoot* root = element.ContainingShadowRoot()) {
         return root->IsUserAgent() &&
-               element.ShadowPseudoId() == "-webkit-input-placeholder";
+               element.ShadowPseudoId() ==
+                   shadow_element_names::kPseudoInputPlaceholder;
       }
       return false;
     case CSSSelector::kPseudoWebKitCustomElement: {
-      if (ShadowRoot* root = element.ContainingShadowRoot())
-        return root->IsUserAgent() &&
-               element.ShadowPseudoId() == selector.Value();
+      if (ShadowRoot* root = element.ContainingShadowRoot()) {
+        if (!root->IsUserAgent())
+          return false;
+        if (element.ShadowPseudoId() != selector.Value())
+          return false;
+        if (!is_ua_rule_ &&
+            selector.Value() ==
+                shadow_element_names::kPseudoWebKitDetailsMarker) {
+          UseCounter::Count(element.GetDocument(),
+                            WebFeature::kCSSSelectorPseudoWebKitDetailsMarker);
+        }
+        return true;
+      }
       return false;
     }
     case CSSSelector::kPseudoBlinkInternalElement:
@@ -1661,15 +1681,17 @@ bool SelectorChecker::MatchesFocusVisiblePseudoClass(const Element& element) {
     return false;
 
   const Document& document = element.GetDocument();
-  bool always_show_focus_ring = element.MayTriggerVirtualKeyboard();
+  const Settings* settings = document.GetSettings();
+  bool always_show_focus = settings->GetAccessibilityAlwaysShowFocus();
+  bool is_text_input = element.MayTriggerVirtualKeyboard();
   bool last_focus_from_mouse =
       document.GetFrame() &&
       document.GetFrame()->Selection().FrameIsFocusedAndActive() &&
       document.LastFocusType() == mojom::blink::FocusType::kMouse;
   bool had_keyboard_event = document.HadKeyboardEvent();
 
-  return (!last_focus_from_mouse || had_keyboard_event ||
-          always_show_focus_ring);
+  return (always_show_focus || is_text_input || !last_focus_from_mouse ||
+          had_keyboard_event);
 }
 
 // static

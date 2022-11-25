@@ -76,7 +76,7 @@ public:
             toGlobal = SkMatrix::I();
             layerMatrix = ctm;
         } else if (ctm.decomposeScale(&scale, &toGlobal)) {
-            layerMatrix = SkMatrix::MakeScale(scale.fWidth, scale.fHeight);
+            layerMatrix = SkMatrix::Scale(scale.fWidth, scale.fHeight);
         } else {
             toGlobal = ctm;
             layerMatrix = SkMatrix::I();
@@ -145,7 +145,7 @@ public:
 
 private:
 
-    typedef Sample INHERITED;
+    using INHERITED = Sample;
 };
 
 DEF_SAMPLE(return new BackdropBoundsSample();)

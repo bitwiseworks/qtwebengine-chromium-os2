@@ -10,7 +10,7 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/memory/ptr_util.h"
 #include "cc/layers/video_frame_provider_client_impl.h"
 #include "cc/trees/layer_tree_frame_sink.h"
@@ -125,7 +125,7 @@ bool VideoLayerImpl::WillDraw(DrawMode draw_mode,
   return true;
 }
 
-void VideoLayerImpl::AppendQuads(viz::RenderPass* render_pass,
+void VideoLayerImpl::AppendQuads(viz::CompositorRenderPass* render_pass,
                                  AppendQuadsData* append_quads_data) {
   DCHECK(frame_.get());
 

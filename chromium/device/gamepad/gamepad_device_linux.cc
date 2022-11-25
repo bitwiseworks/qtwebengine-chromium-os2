@@ -16,6 +16,7 @@
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "device/gamepad/dualshock4_controller.h"
 #include "device/gamepad/gamepad_data_fetcher.h"
@@ -121,6 +122,7 @@ size_t CheckSpecialKeys(const base::ScopedFD& fd,
 
 bool GetHidrawDevinfo(const base::ScopedFD& fd,
                       GamepadBusType* bus_type,
+                      std::string* product_name,
                       uint16_t* vendor_id,
                       uint16_t* product_id) {
   struct hidraw_devinfo info;
@@ -138,6 +140,15 @@ bool GetHidrawDevinfo(const base::ScopedFD& fd,
     *vendor_id = static_cast<uint16_t>(info.vendor);
   if (product_id)
     *product_id = static_cast<uint16_t>(info.product);
+
+  constexpr size_t kStringDescriptorMax = 256;
+  if (product_name &&
+      HANDLE_EINTR(ioctl(fd.get(), HIDIOCGRAWNAME(kStringDescriptorMax),
+                         base::WriteInto(product_name, kStringDescriptorMax))) <
+          0) {
+    product_name->clear();
+  }
+
   return true;
 }
 
@@ -185,6 +196,40 @@ uint16_t HexStringToUInt16WithDefault(base::StringPiece input,
   }
   return static_cast<uint16_t>(out);
 }
+
+#if defined(OS_CHROMEOS)
+void OnOpenPathSuccess(
+    chromeos::PermissionBrokerClient::OpenPathCallback callback,
+    scoped_refptr<base::SequencedTaskRunner> polling_runner,
+    base::ScopedFD fd) {
+  polling_runner->PostTask(FROM_HERE,
+                           base::BindOnce(std::move(callback), std::move(fd)));
+}
+
+void OnOpenPathError(
+    chromeos::PermissionBrokerClient::OpenPathCallback callback,
+    scoped_refptr<base::SequencedTaskRunner> polling_runner,
+    const std::string& error_name,
+    const std::string& error_message) {
+  polling_runner->PostTask(
+      FROM_HERE, base::BindOnce(std::move(callback), base::ScopedFD()));
+}
+
+void OpenPathWithPermissionBroker(
+    const std::string& path,
+    chromeos::PermissionBrokerClient::OpenPathCallback callback,
+    scoped_refptr<base::SequencedTaskRunner> polling_runner) {
+  auto* client = chromeos::PermissionBrokerClient::Get();
+  DCHECK(client) << "Could not get permission broker client.";
+  auto copyable_callback = base::AdaptCallbackForRepeating(std::move(callback));
+  auto success_callback =
+      base::BindOnce(&OnOpenPathSuccess, copyable_callback, polling_runner);
+  auto error_callback =
+      base::BindOnce(&OnOpenPathError, copyable_callback, polling_runner);
+  client->OpenPath(path, std::move(success_callback),
+                   std::move(error_callback));
+}
+#endif  // defined(OS_CHROMEOS)
 
 }  // namespace
 
@@ -239,6 +284,12 @@ void GamepadDeviceLinux::ReadPadState(Gamepad* pad) {
       pad_updated = true;
   }
 
+  // Mark used buttons.
+  for (size_t button_index = 0; button_index < Gamepad::kButtonsLengthCap;
+       ++button_index) {
+    pad->buttons[button_index].used = button_indices_used_[button_index];
+  }
+
   if (pad_updated)
     pad->timestamp = GamepadDataFetcher::CurrentTimeInMicroseconds();
 }
@@ -261,6 +312,7 @@ bool GamepadDeviceLinux::ReadJoydevState(Gamepad* pad) {
         continue;
 
       pad->axes[item] = event.value / kMaxLinuxAxisValue;
+      pad->axes_used |= 1 << item;
 
       if (item >= pad->axes_length)
         pad->axes_length = item + 1;
@@ -269,6 +321,7 @@ bool GamepadDeviceLinux::ReadJoydevState(Gamepad* pad) {
       if (item >= Gamepad::kButtonsLengthCap)
         continue;
 
+      pad->buttons[item].used = true;
       pad->buttons[item].pressed = event.value;
       pad->buttons[item].value = event.value ? 1.0 : 0.0;
 
@@ -361,7 +414,7 @@ bool GamepadDeviceLinux::ReadEvdevSpecialKeys(Gamepad* pad) {
 }
 
 GamepadStandardMappingFunction GamepadDeviceLinux::GetMappingFunction() const {
-  return GetGamepadStandardMappingFunction(vendor_id_, product_id_,
+  return GetGamepadStandardMappingFunction(name_, vendor_id_, product_id_,
                                            hid_specification_version_,
                                            version_number_, bus_type_);
 }
@@ -438,7 +491,8 @@ bool GamepadDeviceLinux::OpenJoydevNode(const UdevGamepadLinux& pad_info,
   hid_specification_version_ = hid_version_int;
   version_number_ = version_number_int;
   name_ = name_string;
-  gamepad_id_ = GamepadIdList::Get().GetGamepadId(vendor_id_, product_id_);
+  gamepad_id_ =
+      GamepadIdList::Get().GetGamepadId(name_, vendor_id_, product_id_);
 
   return true;
 }
@@ -518,9 +572,8 @@ void GamepadDeviceLinux::OpenHidrawNode(const UdevGamepadLinux& pad_info,
                        weak_factory_.GetWeakPtr(), std::move(callback));
     dbus_runner_->PostTask(
         FROM_HERE,
-        base::BindOnce(&GamepadDeviceLinux::OpenPathWithPermissionBroker,
-                       weak_factory_.GetWeakPtr(), pad_info.path,
-                       std::move(open_path_callback)));
+        base::BindOnce(&OpenPathWithPermissionBroker, pad_info.path,
+                       std::move(open_path_callback), polling_runner_));
     return;
   }
 #endif  // defined(OS_CHROMEOS)
@@ -542,22 +595,26 @@ void GamepadDeviceLinux::InitializeHidraw(base::ScopedFD fd) {
   DCHECK(fd.is_valid());
   hidraw_fd_ = std::move(fd);
 
+  std::string product_name;
   uint16_t vendor_id;
   uint16_t product_id;
+  GamepadId gamepad_id;
   bool is_dualshock4 = false;
   bool is_xbox_hid = false;
   bool is_hid_haptic = false;
-  if (GetHidrawDevinfo(hidraw_fd_, &bus_type_, &vendor_id, &product_id)) {
-    is_dualshock4 = Dualshock4Controller::IsDualshock4(vendor_id, product_id);
-    is_xbox_hid = XboxHidController::IsXboxHid(vendor_id, product_id);
+  if (GetHidrawDevinfo(hidraw_fd_, &bus_type_, &product_name, &vendor_id,
+                       &product_id)) {
+    gamepad_id =
+        GamepadIdList::Get().GetGamepadId(product_name, vendor_id, product_id);
+    is_dualshock4 = Dualshock4Controller::IsDualshock4(gamepad_id);
+    is_xbox_hid = XboxHidController::IsXboxHid(gamepad_id);
     is_hid_haptic = HidHapticGamepad::IsHidHaptic(vendor_id, product_id);
     DCHECK_LE(is_dualshock4 + is_xbox_hid + is_hid_haptic, 1);
   }
 
   if (is_dualshock4 && !dualshock4_) {
     dualshock4_ = std::make_unique<Dualshock4Controller>(
-        vendor_id, product_id, bus_type_,
-        std::make_unique<HidWriterLinux>(hidraw_fd_));
+        gamepad_id, bus_type_, std::make_unique<HidWriterLinux>(hidraw_fd_));
   }
 
   if (is_xbox_hid && !xbox_hid_) {
@@ -584,40 +641,6 @@ void GamepadDeviceLinux::CloseHidrawNode() {
   hid_haptics_.reset();
   hidraw_fd_.reset();
 }
-
-#if defined(OS_CHROMEOS)
-void GamepadDeviceLinux::OpenPathWithPermissionBroker(
-    const std::string& path,
-    OpenPathCallback callback) {
-  DCHECK(dbus_runner_->RunsTasksInCurrentSequence());
-  auto* client = chromeos::PermissionBrokerClient::Get();
-  DCHECK(client) << "Could not get permission broker client.";
-  auto copyable_callback = base::AdaptCallbackForRepeating(std::move(callback));
-  auto success_callback =
-      base::BindOnce(&GamepadDeviceLinux::OnOpenPathSuccess,
-                     weak_factory_.GetWeakPtr(), copyable_callback);
-  auto error_callback =
-      base::BindOnce(&GamepadDeviceLinux::OnOpenPathError,
-                     weak_factory_.GetWeakPtr(), copyable_callback);
-  client->OpenPath(path, std::move(success_callback),
-                   std::move(error_callback));
-}
-
-void GamepadDeviceLinux::OnOpenPathSuccess(OpenPathCallback callback,
-                                           base::ScopedFD fd) {
-  DCHECK(dbus_runner_->RunsTasksInCurrentSequence());
-  polling_runner_->PostTask(FROM_HERE,
-                            base::BindOnce(std::move(callback), std::move(fd)));
-}
-
-void GamepadDeviceLinux::OnOpenPathError(OpenPathCallback callback,
-                                         const std::string& error_name,
-                                         const std::string& error_message) {
-  DCHECK(dbus_runner_->RunsTasksInCurrentSequence());
-  polling_runner_->PostTask(
-      FROM_HERE, base::BindOnce(std::move(callback), base::ScopedFD()));
-}
-#endif
 
 void GamepadDeviceLinux::SetVibration(double strong_magnitude,
                                       double weak_magnitude) {
@@ -680,6 +703,7 @@ void GamepadDeviceLinux::SetZeroVibration() {
 }
 
 base::WeakPtr<AbstractHapticGamepad> GamepadDeviceLinux::GetWeakPtr() {
+  DCHECK(polling_runner_->RunsTasksInCurrentSequence());
   return weak_factory_.GetWeakPtr();
 }
 

@@ -17,6 +17,7 @@
 
 namespace blink {
 
+class XRFrame;
 class XRSession;
 class XRViewData;
 
@@ -24,28 +25,38 @@ class MODULES_EXPORT XRView final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  XRView(XRSession*, const XRViewData&);
+  XRView(XRFrame*, XRViewData*);
 
   enum XREye { kEyeNone = 0, kEyeLeft = 1, kEyeRight = 2 };
 
   const String& eye() const { return eye_string_; }
   XREye EyeValue() const { return eye_; }
+  XRViewData* ViewData() const { return view_data_; }
 
+  XRFrame* frame() const;
   XRSession* session() const;
   DOMFloat32Array* projectionMatrix() const;
   XRRigidTransform* transform() const;
 
-  void Trace(Visitor*) override;
+  // isFirstPersonObserver is only true for views that composed with a video
+  // feed that is not directly displayed on the viewer device. Primarily this is
+  // used for video streams from optically transparent AR headsets. Since Chrome
+  // does not directly support any such headset at this time we return false
+  // unconditionally.
+  bool isFirstPersonObserver() const { return false; }
+
+  void Trace(Visitor*) const override;
 
  private:
   XREye eye_;
   String eye_string_;
-  Member<XRSession> session_;
+  Member<XRFrame> frame_;
+  Member<XRViewData> view_data_;
   Member<XRRigidTransform> ref_space_from_eye_;
   Member<DOMFloat32Array> projection_matrix_;
 };
 
-class MODULES_EXPORT XRViewData {
+class MODULES_EXPORT XRViewData final : public GarbageCollected<XRViewData> {
  public:
   XRViewData(XRView::XREye eye) : eye_(eye) {}
 
@@ -73,6 +84,8 @@ class MODULES_EXPORT XRViewData {
   const TransformationMatrix& ProjectionMatrix() const {
     return projection_matrix_;
   }
+
+  void Trace(Visitor*) const {}
 
  private:
   const XRView::XREye eye_;

@@ -12,7 +12,7 @@ export class DropTarget {
    * @param {!Element} element
    * @param {!Array<{kind: string, type: !RegExp}>} transferTypes
    * @param {string} messageText
-   * @param {function(!DataTransfer)} handleDrop
+   * @param {function(!DataTransfer):*} handleDrop
    */
   constructor(element, transferTypes, messageText, handleDrop) {
     element.addEventListener('dragenter', this._onDragEnter.bind(this), true);
@@ -22,6 +22,8 @@ export class DropTarget {
     this._messageText = messageText;
     this._handleDrop = handleDrop;
     this._enabled = true;
+    /** @type {?Element} */
+    this._dragMaskElement = null;
   }
 
   /**
@@ -41,10 +43,14 @@ export class DropTarget {
   }
 
   /**
-   * @param {!Event} event
+   * @param {!Event} ev
    * @return {boolean}
    */
-  _hasMatchingType(event) {
+  _hasMatchingType(ev) {
+    const event = /** @type {!DragEvent} */ (ev);
+    if (!event.dataTransfer) {
+      return false;
+    }
     for (const transferType of this._transferTypes) {
       const found = Array.from(event.dataTransfer.items).find(item => {
         return transferType.kind === item.kind && !!transferType.type.exec(item.type);
@@ -57,13 +63,16 @@ export class DropTarget {
   }
 
   /**
-   * @param {!Event} event
+   * @param {!Event} ev
    */
-  _onDragOver(event) {
+  _onDragOver(ev) {
+    const event = /** @type {!DragEvent} */ (ev);
     if (!this._enabled || !this._hasMatchingType(event)) {
       return;
     }
-    event.dataTransfer.dropEffect = 'copy';
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'copy';
+    }
     event.consume(true);
     if (this._dragMaskElement) {
       return;
@@ -76,12 +85,13 @@ export class DropTarget {
   }
 
   /**
-   * @param {!Event} event
+   * @param {!Event} ev
    */
-  _onDrop(event) {
+  _onDrop(ev) {
+    const event = /** @type {!DragEvent} */ (ev);
     event.consume(true);
     this._removeMask();
-    if (this._enabled) {
+    if (this._enabled && event.dataTransfer) {
       this._handleDrop(event.dataTransfer);
     }
   }
@@ -95,8 +105,10 @@ export class DropTarget {
   }
 
   _removeMask() {
-    this._dragMaskElement.remove();
-    delete this._dragMaskElement;
+    if (this._dragMaskElement) {
+      this._dragMaskElement.remove();
+      this._dragMaskElement = null;
+    }
   }
 }
 

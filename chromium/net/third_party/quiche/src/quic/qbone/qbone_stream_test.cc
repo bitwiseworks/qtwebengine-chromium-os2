@@ -62,8 +62,10 @@ class MockQuicSession : public QboneSessionBase {
   QuicCryptoStream* GetMutableCryptoStream() override { return nullptr; }
 
   // Called by QuicStream when they want to close stream.
-  MOCK_METHOD3(SendRstStream,
-               void(QuicStreamId, QuicRstStreamErrorCode, QuicStreamOffset));
+  MOCK_METHOD(void,
+              SendRstStream,
+              (QuicStreamId, QuicRstStreamErrorCode, QuicStreamOffset, bool),
+              (override));
 
   // Sets whether data is written to buffer, or else if this is write blocked.
   void set_writable(bool writable) { writable_ = writable; }
@@ -87,8 +89,14 @@ class MockQuicSession : public QboneSessionBase {
     return nullptr;
   }
 
-  MOCK_METHOD1(ProcessPacketFromPeer, void(quiche::QuicheStringPiece));
-  MOCK_METHOD1(ProcessPacketFromNetwork, void(quiche::QuicheStringPiece));
+  MOCK_METHOD(void,
+              ProcessPacketFromPeer,
+              (quiche::QuicheStringPiece),
+              (override));
+  MOCK_METHOD(void,
+              ProcessPacketFromNetwork,
+              (quiche::QuicheStringPiece),
+              (override));
 
  private:
   // Whether data is written to write_buffer_.
@@ -123,9 +131,10 @@ class DummyPacketWriter : public QuicPacketWriter {
 
   bool IsBatchMode() const override { return false; }
 
-  char* GetNextWriteLocation(const QuicIpAddress& self_address,
-                             const QuicSocketAddress& peer_address) override {
-    return nullptr;
+  QuicPacketBuffer GetNextWriteLocation(
+      const QuicIpAddress& self_address,
+      const QuicSocketAddress& peer_address) override {
+    return {nullptr, nullptr};
   }
 
   WriteResult Flush() override { return WriteResult(WRITE_STATUS_OK, 0); }
@@ -235,7 +244,7 @@ TEST_F(QboneReadOnlyStreamTest, ReadBufferedTooLarge) {
   std::string packet = "0123456789";
   int iterations = (QboneConstants::kMaxQbonePacketBytes / packet.size()) + 2;
   EXPECT_CALL(*session_,
-              SendRstStream(kStreamId, QUIC_BAD_APPLICATION_PAYLOAD, _));
+              SendRstStream(kStreamId, QUIC_BAD_APPLICATION_PAYLOAD, _, _));
   for (int i = 0; i < iterations; ++i) {
     QuicStreamFrame frame(kStreamId, i == (iterations - 1), i * packet.size(),
                           packet);

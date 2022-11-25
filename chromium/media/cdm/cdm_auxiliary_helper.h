@@ -17,12 +17,11 @@
 #include "media/cdm/output_protection.h"
 #include "media/cdm/platform_verification.h"
 #include "media/media_buildflags.h"
+#include "url/origin.h"
 
 namespace cdm {
 class FileIO;
 class FileIOClient;
-class CdmProxy;
-class CdmProxyClient;
 }  // namespace cdm
 
 namespace media {
@@ -48,17 +47,9 @@ class MEDIA_EXPORT CdmAuxiliaryHelper : public CdmAllocator,
   // needed anymore.
   virtual cdm::FileIO* CreateCdmFileIO(cdm::FileIOClient* client);
 
-#if BUILDFLAG(ENABLE_CDM_PROXY)
-  // Creates a cdm::CdmProxy object and returns it.
-  // The caller does not own the returned object and should not delete it
-  // directly. Instead, it should call cdm::CdmProxy::Destroy() after it's not
-  // needed anymore.
-  virtual cdm::CdmProxy* CreateCdmProxy(cdm::CdmProxyClient* client);
-
-  // Returns a CDM ID associated with the last returned CdmProxy. Should only
-  // be called after the CdmProxy has been initialized.
-  virtual int GetCdmProxyCdmId();
-#endif  // BUILDFLAG(ENABLE_CDM_PROXY)
+  // Gets the origin of the frame associated with the CDM, which could be empty
+  // if the origin is unavailable or if error happened.
+  virtual url::Origin GetCdmOrigin();
 
   // CdmAllocator implementation.
   cdm::Buffer* CreateCdmBuffer(size_t capacity) override;

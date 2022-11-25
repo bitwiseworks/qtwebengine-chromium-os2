@@ -11,6 +11,7 @@
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/dom/nth_index_cache.h"
 #include "third_party/blink/renderer/core/dom/static_node_list.h"
+#include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/root_frame_viewport.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
@@ -84,7 +85,10 @@ static LayoutRect RelativeBounds(const LayoutObject* layout_object,
   PhysicalRect local_bounds;
   if (layout_object->IsBox()) {
     local_bounds = ToLayoutBox(layout_object)->PhysicalBorderBoxRect();
-    if (!layout_object->HasOverflowClip()) {
+    // If we clip overflow then we can use the `PhysicalBorderBoxRect()`
+    // as our bounds. If not, we expand the bounds by the layout overflow and
+    // lowest floating object.
+    if (!layout_object->ShouldClipOverflowAlongEitherAxis()) {
       // BorderBoxRect doesn't include overflow content and floats.
       LayoutUnit max_y =
           std::max(local_bounds.Bottom(),
@@ -119,7 +123,10 @@ static LayoutRect RelativeBounds(const LayoutObject* layout_object,
 static LayoutPoint ComputeRelativeOffset(const LayoutObject* layout_object,
                                          const ScrollableArea* scroller,
                                          Corner corner) {
-  return CornerPointOfRect(RelativeBounds(layout_object, scroller), corner);
+  LayoutPoint offset =
+      CornerPointOfRect(RelativeBounds(layout_object, scroller), corner);
+  const LayoutBox* scroller_box = ScrollerLayoutBox(scroller);
+  return scroller_box->FlipForWritingMode(PhysicalOffset(offset));
 }
 
 static bool CandidateMayMoveWithScroller(const LayoutObject* candidate,
@@ -315,12 +322,81 @@ ScrollAnchor::ExamineResult ScrollAnchor::Examine(
 void ScrollAnchor::FindAnchor() {
   TRACE_EVENT0("blink", "ScrollAnchor::findAnchor");
   SCOPED_BLINK_UMA_HISTOGRAM_TIMER("Layout.ScrollAnchor.TimeToFindAnchor");
-  FindAnchorRecursive(ScrollerLayoutBox(scroller_));
+
+  bool found_priority_anchor = FindAnchorInPriorityCandidates();
+  if (!found_priority_anchor)
+    FindAnchorRecursive(ScrollerLayoutBox(scroller_));
+
   if (anchor_object_) {
     anchor_object_->SetIsScrollAnchorObject();
     saved_relative_offset_ =
         ComputeRelativeOffset(anchor_object_, scroller_, corner_);
   }
+}
+
+bool ScrollAnchor::FindAnchorInPriorityCandidates() {
+  auto* scroller_box = ScrollerLayoutBox(scroller_);
+  if (!scroller_box)
+    return false;
+
+  auto& document = scroller_box->GetDocument();
+
+  // Focused area.
+  LayoutObject* candidate = nullptr;
+  ExamineResult result{kSkip};
+  auto* focused_element = document.FocusedElement();
+  if (focused_element && HasEditableStyle(*focused_element)) {
+    candidate = PriorityCandidateFromNode(focused_element);
+    if (candidate) {
+      result = ExaminePriorityCandidate(candidate);
+      if (result.viable) {
+        anchor_object_ = candidate;
+        corner_ = result.corner;
+        return true;
+      }
+    }
+  }
+
+  // Active find-in-page match.
+  candidate =
+      PriorityCandidateFromNode(document.GetFindInPageActiveMatchNode());
+  result = ExaminePriorityCandidate(candidate);
+  if (result.viable) {
+    anchor_object_ = candidate;
+    corner_ = result.corner;
+    return true;
+  }
+  return false;
+}
+
+LayoutObject* ScrollAnchor::PriorityCandidateFromNode(const Node* node) const {
+  while (node) {
+    if (auto* layout_object = node->GetLayoutObject()) {
+      if (!layout_object->IsAnonymous() &&
+          (!layout_object->IsInline() ||
+           layout_object->IsAtomicInlineLevel())) {
+        return layout_object;
+      }
+    }
+    node = FlatTreeTraversal::Parent(*node);
+  }
+  return nullptr;
+}
+
+ScrollAnchor::ExamineResult ScrollAnchor::ExaminePriorityCandidate(
+    const LayoutObject* candidate) const {
+  auto* ancestor = candidate;
+  auto* scroller_box = ScrollerLayoutBox(scroller_);
+  while (ancestor && ancestor != scroller_box) {
+    if (ancestor->StyleRef().OverflowAnchor() == EOverflowAnchor::kNone)
+      return ExamineResult(kSkip);
+
+    if (!CandidateMayMoveWithScroller(ancestor, scroller_))
+      return ExamineResult(kSkip);
+
+    ancestor = ancestor->Parent();
+  }
+  return ancestor ? Examine(candidate) : ExamineResult(kSkip);
 }
 
 bool ScrollAnchor::FindAnchorRecursive(LayoutObject* candidate) {
@@ -431,10 +507,16 @@ IntSize ScrollAnchor::ComputeAdjustment() const {
                   RoundedIntSize(saved_relative_offset_);
 
   // Only adjust on the block layout axis.
-  if (ScrollerLayoutBox(scroller_)->IsHorizontalWritingMode())
+  const LayoutBox* scroller_box = ScrollerLayoutBox(scroller_);
+  if (scroller_box->IsHorizontalWritingMode()) {
     delta.SetWidth(0);
-  else
+  } else {
+    // If block direction is flipped, delta is a logical value, so flip it to
+    // make it physical.
+    if (scroller_box->HasFlippedBlocksWritingMode())
+      delta.SetWidth(-delta.Width());
     delta.SetHeight(0);
+  }
   return delta;
 }
 
@@ -531,9 +613,13 @@ bool ScrollAnchor::RestoreAnchor(const SerializedAnchor& serialized_anchor) {
     // and attempt to re-find the anchor. The user-visible effect should end up
     // roughly the same.
     ScrollOffset current_offset = scroller_->GetScrollOffset();
-    FloatPoint desired_point =
-        anchor_object->AbsoluteBoundingBoxFloatRect().Location() +
-        current_offset;
+    FloatRect bounding_box = anchor_object->AbsoluteBoundingBoxFloatRect();
+    FloatPoint location_point =
+        anchor_object->Style()->IsFlippedBlocksWritingMode()
+            ? bounding_box.MaxXMinYCorner()
+            : bounding_box.Location();
+    FloatPoint desired_point = location_point + current_offset;
+
     ScrollOffset desired_offset =
         ScrollOffset(desired_point.X(), desired_point.Y());
     ScrollOffset delta =
@@ -581,6 +667,7 @@ const SerializedAnchor ScrollAnchor::GetSerializedAnchor() {
   SerializedAnchor new_anchor(
       ComputeUniqueSelector(anchor_object_->GetNode()),
       ComputeRelativeOffset(anchor_object_, scroller_, corner_));
+
   if (new_anchor.IsValid()) {
     saved_selector_ = new_anchor.selector;
   }

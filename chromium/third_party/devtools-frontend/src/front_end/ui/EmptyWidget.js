@@ -31,9 +31,7 @@
 import {VBox} from './Widget.js';
 import {XLink} from './XLink.js';
 
-/**
- * @unrestricted
- */
+
 export class EmptyWidget extends VBox {
   /**
    * @param {string} text
@@ -59,7 +57,7 @@ export class EmptyWidget extends VBox {
    * @return {!Node}
    */
   appendLink(link) {
-    return this._contentElement.appendChild(XLink.create(link, 'Learn more'));
+    return this._contentElement.appendChild(XLink.create(link, ls`Learn more`));
   }
 
   /**

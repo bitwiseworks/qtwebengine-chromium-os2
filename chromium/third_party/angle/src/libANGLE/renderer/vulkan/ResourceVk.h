@@ -180,13 +180,14 @@ class Resource : angle::NonCopyable
     angle::Result finishRunningCommands(ContextVk *contextVk);
 
     // Complete all recorded and in-flight commands involving this resource
-    angle::Result waitForIdle(ContextVk *contextVk);
+    angle::Result waitForIdle(ContextVk *contextVk, const char *debugMessage);
 
     // Adds the resource to a resource use list.
     void retain(ResourceUseList *resourceUseList);
 
   protected:
     Resource();
+    Resource(Resource &&other);
 
     // Current resource lifetime.
     SharedResourceUse mUse;

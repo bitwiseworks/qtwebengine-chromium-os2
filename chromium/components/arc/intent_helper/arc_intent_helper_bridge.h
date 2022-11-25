@@ -29,6 +29,7 @@ class BrowserContext;
 
 namespace arc {
 
+class AdaptiveIconDelegate;
 class ArcBridgeService;
 class ControlCameraAppDelegate;
 class FactoryResetDelegate;
@@ -61,6 +62,8 @@ class ArcIntentHelperBridge : public KeyedService,
                         ArcBridgeService* bridge_service);
   ~ArcIntentHelperBridge() override;
 
+  void SetAdaptiveIconDelegate(AdaptiveIconDelegate* delegate);
+
   void AddObserver(ArcIntentHelperObserver* observer);
   void RemoveObserver(ArcIntentHelperObserver* observer);
   bool HasObserver(ArcIntentHelperObserver* observer) const;
@@ -92,7 +95,8 @@ class ArcIntentHelperBridge : public KeyedService,
                        arc::mojom::CameraIntentMode mode,
                        bool should_handle_result,
                        bool should_down_scale,
-                       bool is_secure) override;
+                       bool is_secure,
+                       int32_t task_id) override;
   void OnIntentFiltersUpdatedForPackage(
       const std::string& package_name,
       std::vector<IntentFilter> intent_filters) override;

@@ -12,6 +12,7 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_tokenizer.h"
+#include "base/strings/string_util.h"
 #include "base/values.h"
 #include "build/branding_buildflags.h"
 #include "chrome/browser/browser_process.h"
@@ -45,7 +46,7 @@ const base::Feature kForceEnabled = {"NuxOnboardingForceEnabled",
                                      base::FEATURE_DISABLED_BY_DEFAULT};
 
 // The value of these FeatureParam values should be a comma-delimited list
-// of element names whitelisted in the MODULES_WHITELIST list, defined in
+// of element names allowlisted in the MODULES_WHITELIST list, defined in
 // chrome/browser/resources/welcome/welcome_app.js
 const base::FeatureParam<std::string> kNewUserModules{
     &kFeature, "new-user-modules", kDefaultNewUserModules};

@@ -17,7 +17,7 @@ namespace blink {
 
 CompositorElementId ScrollbarElementId(const cc::Scrollbar& scrollbar) {
   return CompositorElementIdFromUniqueObjectId(
-      13579, scrollbar.Orientation() == cc::HORIZONTAL
+      13579, scrollbar.Orientation() == cc::ScrollbarOrientation::HORIZONTAL
                  ? CompositorElementIdNamespace::kHorizontalScrollbar
                  : CompositorElementIdNamespace::kVerticalScrollbar);
 }
@@ -38,7 +38,7 @@ scoped_refptr<TransformPaintPropertyNode> CreateScrollTranslation() {
 
 TEST(ScrollbarDisplayItemTest, HorizontalSolidColorScrollbar) {
   auto scrollbar = base::MakeRefCounted<cc::FakeScrollbar>();
-  scrollbar->set_orientation(cc::HORIZONTAL);
+  scrollbar->set_orientation(cc::ScrollbarOrientation::HORIZONTAL);
   scrollbar->set_is_solid_color(true);
   scrollbar->set_is_overlay(true);
   scrollbar->set_track_rect(gfx::Rect(2, 90, 96, 10));
@@ -51,23 +51,26 @@ TEST(ScrollbarDisplayItemTest, HorizontalSolidColorScrollbar) {
   ScrollbarDisplayItem display_item(client, DisplayItem::kScrollbarHorizontal,
                                     scrollbar, scrollbar_rect,
                                     scroll_translation.get(), element_id);
-  auto layer = display_item.GetLayer();
+  auto layer = display_item.CreateOrReuseLayer(nullptr);
   ASSERT_EQ(cc::ScrollbarLayerBase::kSolidColor,
-            layer->ScrollbarLayerTypeForTesting());
+            layer->GetScrollbarLayerType());
+  EXPECT_FALSE(layer->HitTestable());
+
   auto* scrollbar_layer =
       static_cast<cc::SolidColorScrollbarLayer*>(layer.get());
-  EXPECT_EQ(cc::HORIZONTAL, scrollbar_layer->orientation());
+  EXPECT_EQ(cc::ScrollbarOrientation::HORIZONTAL,
+            scrollbar_layer->orientation());
   EXPECT_EQ(7, scrollbar_layer->thumb_thickness());
   EXPECT_EQ(2, scrollbar_layer->track_start());
   EXPECT_EQ(element_id, scrollbar_layer->element_id());
   EXPECT_EQ(ScrollElementId(), scrollbar_layer->scroll_element_id());
 
-  EXPECT_EQ(layer.get(), display_item.GetLayer().get());
+  EXPECT_EQ(layer.get(), display_item.CreateOrReuseLayer(layer.get()).get());
 }
 
 TEST(ScrollbarDisplayItemTest, VerticalSolidColorScrollbar) {
   auto scrollbar = base::MakeRefCounted<cc::FakeScrollbar>();
-  scrollbar->set_orientation(cc::VERTICAL);
+  scrollbar->set_orientation(cc::ScrollbarOrientation::VERTICAL);
   scrollbar->set_is_solid_color(true);
   scrollbar->set_is_overlay(true);
   scrollbar->set_track_rect(gfx::Rect(90, 2, 10, 96));
@@ -80,21 +83,23 @@ TEST(ScrollbarDisplayItemTest, VerticalSolidColorScrollbar) {
   ScrollbarDisplayItem display_item(client, DisplayItem::kScrollbarHorizontal,
                                     scrollbar, scrollbar_rect,
                                     scroll_translation.get(), element_id);
-  auto layer = display_item.GetLayer();
+  auto layer = display_item.CreateOrReuseLayer(nullptr);
   ASSERT_EQ(cc::ScrollbarLayerBase::kSolidColor,
-            layer->ScrollbarLayerTypeForTesting());
+            layer->GetScrollbarLayerType());
+  EXPECT_FALSE(layer->HitTestable());
+
   auto* scrollbar_layer =
       static_cast<cc::SolidColorScrollbarLayer*>(layer.get());
-  EXPECT_EQ(cc::VERTICAL, scrollbar_layer->orientation());
+  EXPECT_EQ(cc::ScrollbarOrientation::VERTICAL, scrollbar_layer->orientation());
   EXPECT_EQ(7, scrollbar_layer->thumb_thickness());
   EXPECT_EQ(2, scrollbar_layer->track_start());
   EXPECT_EQ(element_id, scrollbar_layer->element_id());
   EXPECT_EQ(ScrollElementId(), scrollbar_layer->scroll_element_id());
 
-  EXPECT_EQ(layer.get(), display_item.GetLayer().get());
+  EXPECT_EQ(layer.get(), display_item.CreateOrReuseLayer(layer.get()).get());
 }
 
-TEST(ScrollbarDisplayItemTest, PaintedColorScrollbar) {
+TEST(ScrollbarDisplayItemTest, PaintedScrollbar) {
   auto scrollbar = base::MakeRefCounted<cc::FakeScrollbar>();
 
   FakeDisplayItemClient client;
@@ -104,14 +109,14 @@ TEST(ScrollbarDisplayItemTest, PaintedColorScrollbar) {
   ScrollbarDisplayItem display_item(client, DisplayItem::kScrollbarHorizontal,
                                     scrollbar, scrollbar_rect,
                                     scroll_translation.get(), element_id);
-  auto layer = display_item.GetLayer();
-  ASSERT_EQ(cc::ScrollbarLayerBase::kPainted,
-            layer->ScrollbarLayerTypeForTesting());
+  auto layer = display_item.CreateOrReuseLayer(nullptr);
+  ASSERT_EQ(cc::ScrollbarLayerBase::kPainted, layer->GetScrollbarLayerType());
+  EXPECT_TRUE(layer->HitTestable());
 
-  EXPECT_EQ(layer.get(), display_item.GetLayer().get());
+  EXPECT_EQ(layer.get(), display_item.CreateOrReuseLayer(layer.get()).get());
 }
 
-TEST(ScrollbarDisplayItemTest, PaintedColorScrollbarOverlayNonNinePatch) {
+TEST(ScrollbarDisplayItemTest, PaintedScrollbarOverlayNonNinePatch) {
   auto scrollbar = base::MakeRefCounted<cc::FakeScrollbar>();
   scrollbar->set_has_thumb(true);
   scrollbar->set_is_overlay(true);
@@ -123,16 +128,16 @@ TEST(ScrollbarDisplayItemTest, PaintedColorScrollbarOverlayNonNinePatch) {
   ScrollbarDisplayItem display_item(client, DisplayItem::kScrollbarHorizontal,
                                     scrollbar, scrollbar_rect,
                                     scroll_translation.get(), element_id);
-  auto layer = display_item.GetLayer();
+  auto layer = display_item.CreateOrReuseLayer(nullptr);
   // We should create PaintedScrollbarLayer instead of
   // PaintedOverlayScrollbarLayer for non-nine-patch overlay scrollbars.
-  ASSERT_EQ(cc::ScrollbarLayerBase::kPainted,
-            layer->ScrollbarLayerTypeForTesting());
+  ASSERT_EQ(cc::ScrollbarLayerBase::kPainted, layer->GetScrollbarLayerType());
+  EXPECT_TRUE(layer->HitTestable());
 
-  EXPECT_EQ(layer.get(), display_item.GetLayer().get());
+  EXPECT_EQ(layer.get(), display_item.CreateOrReuseLayer(layer.get()).get());
 }
 
-TEST(ScrollbarDisplayItemTest, PaintedColorScrollbarOverlayNinePatch) {
+TEST(ScrollbarDisplayItemTest, PaintedScrollbarOverlayNinePatch) {
   auto scrollbar = base::MakeRefCounted<cc::FakeScrollbar>();
   scrollbar->set_has_thumb(true);
   scrollbar->set_is_overlay(true);
@@ -145,11 +150,50 @@ TEST(ScrollbarDisplayItemTest, PaintedColorScrollbarOverlayNinePatch) {
   ScrollbarDisplayItem display_item(client, DisplayItem::kScrollbarHorizontal,
                                     scrollbar, scrollbar_rect,
                                     scroll_translation.get(), element_id);
-  auto layer = display_item.GetLayer();
+  auto layer = display_item.CreateOrReuseLayer(nullptr);
   ASSERT_EQ(cc::ScrollbarLayerBase::kPaintedOverlay,
-            layer->ScrollbarLayerTypeForTesting());
+            layer->GetScrollbarLayerType());
+  EXPECT_TRUE(layer->HitTestable());
 
-  EXPECT_EQ(layer.get(), display_item.GetLayer().get());
+  EXPECT_EQ(layer.get(), display_item.CreateOrReuseLayer(layer.get()).get());
+}
+
+TEST(ScrollbarDisplayItemTest, CreateOrReuseLayer) {
+  auto scrollbar1 = base::MakeRefCounted<cc::FakeScrollbar>();
+
+  FakeDisplayItemClient client;
+  IntRect scrollbar_rect(0, 90, 100, 10);
+  auto scroll_translation = CreateScrollTranslation();
+  auto element_id = ScrollbarElementId(*scrollbar1);
+  ScrollbarDisplayItem display_item1a(client, DisplayItem::kScrollbarHorizontal,
+                                      scrollbar1, scrollbar_rect,
+                                      scroll_translation.get(), element_id);
+  auto layer1 = display_item1a.CreateOrReuseLayer(nullptr);
+
+  ScrollbarDisplayItem display_item1b(client, DisplayItem::kScrollbarHorizontal,
+                                      scrollbar1, scrollbar_rect,
+                                      scroll_translation.get(), element_id);
+  // Should reuse layer for a different display item and the same scrollbar.
+  EXPECT_EQ(layer1.get(), display_item1b.CreateOrReuseLayer(layer1.get()));
+
+  auto scrollbar2 = base::MakeRefCounted<cc::FakeScrollbar>();
+  ScrollbarDisplayItem display_item2(client, DisplayItem::kScrollbarHorizontal,
+                                     scrollbar2, scrollbar_rect,
+                                     scroll_translation.get(), element_id);
+  // Should create new layer for a different scrollbar.
+  EXPECT_NE(layer1.get(), display_item2.CreateOrReuseLayer(layer1.get()));
+
+  ASSERT_FALSE(scrollbar1->IsLeftSideVerticalScrollbar());
+  scrollbar1->set_is_left_side_vertical_scrollbar(true);
+  // Should create new layer for changed is_left_side_vertical_scrollbar of
+  // the same scrollbar.
+  EXPECT_NE(layer1.get(), display_item1a.CreateOrReuseLayer(layer1.get()));
+
+  ScrollbarDisplayItem display_item1c(client, DisplayItem::kScrollbarHorizontal,
+                                      scrollbar1, scrollbar_rect,
+                                      scroll_translation.get(), element_id);
+  // Should reuse layer for a different display item and the same scrollbar.
+  EXPECT_NE(layer1.get(), display_item1b.CreateOrReuseLayer(layer1.get()));
 }
 
 }  // namespace blink

@@ -28,6 +28,7 @@
 #include "base/gtest_prod_util.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink-forward.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
+#include "third_party/blink/renderer/bindings/core/v8/script_regexp.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/create_element_flags.h"
 #include "third_party/blink/renderer/core/html/forms/file_chooser.h"
@@ -54,12 +55,11 @@ class CORE_EXPORT HTMLInputElement
     : public TextControlElement,
       public ActiveScriptWrappable<HTMLInputElement> {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(HTMLInputElement);
 
  public:
   HTMLInputElement(Document&, const CreateElementFlags);
   ~HTMLInputElement() override;
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   bool HasPendingActivity() const final;
 
@@ -155,8 +155,6 @@ class CORE_EXPORT HTMLInputElement
   bool IsValidValue(const String&) const;
   bool HasDirtyValue() const;
 
-  String rawValue() const;
-
   String SanitizeValue(const String&) const;
 
   String LocalizeValue(const String&) const;
@@ -176,6 +174,11 @@ class CORE_EXPORT HTMLInputElement
       ExceptionState&,
       TextFieldEventBehavior = TextFieldEventBehavior::kDispatchNoEvent);
 
+  // For type=range, returns a ratio of the current value in the range between
+  // min and max.  i.e. (value - min) / (max - min)
+  // For other types, this function fails with DCHECK().
+  Decimal RatioValue() const;
+
   String ValueOrDefaultLabel() const;
 
   // This function dispatches 'input' event for non-textfield types. Callers
@@ -185,20 +188,9 @@ class CORE_EXPORT HTMLInputElement
 
   base::Optional<uint32_t> selectionStartForBinding(ExceptionState&) const;
   base::Optional<uint32_t> selectionEndForBinding(ExceptionState&) const;
-  // TODO(crbug.com/1060971): Remove |is_null| version.
-  unsigned selectionStartForBinding(bool&,
-                                    ExceptionState&) const;       // DEPRECATED
-  unsigned selectionEndForBinding(bool&, ExceptionState&) const;  // DEPRECATED
   String selectionDirectionForBinding(ExceptionState&) const;
   void setSelectionStartForBinding(base::Optional<uint32_t>, ExceptionState&);
   void setSelectionEndForBinding(base::Optional<uint32_t>, ExceptionState&);
-  // TODO(crbug.com/1060971): Remove |is_null| version.
-  void setSelectionStartForBinding(unsigned,
-                                   bool is_null,
-                                   ExceptionState&);  // DEPRECATED
-  void setSelectionEndForBinding(unsigned,
-                                 bool is_null,
-                                 ExceptionState&);  // DEPRECATED
   void setSelectionDirectionForBinding(const String&, ExceptionState&);
   void setSelectionRangeForBinding(unsigned start,
                                    unsigned end,
@@ -206,6 +198,12 @@ class CORE_EXPORT HTMLInputElement
   void setSelectionRangeForBinding(unsigned start,
                                    unsigned end,
                                    const String& direction,
+                                   ExceptionState&);
+  // This function can be used to allow tests to set the selection
+  // range for Number inputs, which do not support the ordinary
+  // selection API.
+  void SetSelectionRangeForTesting(unsigned start,
+                                   unsigned end,
                                    ExceptionState&);
 
   bool LayoutObjectIsNeeded(const ComputedStyle&) const final;
@@ -318,6 +316,8 @@ class CORE_EXPORT HTMLInputElement
 
   bool SupportsInputModeAttribute() const;
 
+  void CapsLockStateMayHaveChanged();
+  bool ShouldDrawCapsLockIndicator() const;
   void SetShouldRevealPassword(bool value);
   bool ShouldRevealPassword() const { return should_reveal_password_; }
   AXObject* PopupRootAXObject();
@@ -337,11 +337,20 @@ class CORE_EXPORT HTMLInputElement
 
   void ChildrenChanged(const ChildrenChange&) override;
 
-  PaintLayerScrollableArea* GetScrollableArea() const final;
+  LayoutBox* GetLayoutBoxForScrolling() const final;
 
   void SetHasBeenPasswordField() { has_been_password_field_ = true; }
 
   bool IsDraggedSlider() const;
+
+  FormElementPiiType GetFormElementPiiType() const override {
+    return form_element_pii_type_;
+  }
+
+  void SetFormElementPiiType(
+      FormElementPiiType form_element_pii_type) override {
+    form_element_pii_type_ = form_element_pii_type;
+  }
 
  protected:
   void DefaultEventHandler(Event&) override;
@@ -439,6 +448,8 @@ class CORE_EXPORT HTMLInputElement
   scoped_refptr<ComputedStyle> CustomStyleForLayoutObject() override;
   void DidRecalcStyle(const StyleRecalcChange) override;
 
+  void MaybeReportPiiMetrics();
+
   AtomicString name_;
   // The value string in |value| value mode.
   String non_attribute_value_;
@@ -468,6 +479,8 @@ class CORE_EXPORT HTMLInputElement
   // element lives on.
   Member<HTMLImageLoader> image_loader_;
   Member<ListAttributeTargetObserver> list_attribute_target_observer_;
+
+  FormElementPiiType form_element_pii_type_ = FormElementPiiType::kUnknown;
 
   FRIEND_TEST_ALL_PREFIXES(HTMLInputElementTest, RadioKeyDownDCHECKFailure);
 };

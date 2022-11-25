@@ -8,6 +8,8 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <limits>
+#include <utility>
 
 #include "base/metrics/histogram_functions.h"
 #include "base/stl_util.h"
@@ -261,6 +263,8 @@ Surface::QueueFrameResult Surface::QueueFrame(
 
 void Surface::RequestCopyOfOutput(
     std::unique_ptr<CopyOutputRequest> copy_request) {
+  TRACE_EVENT1("viz", "Surface::RequestCopyOfOutput", "has_active_frame_data",
+               !!active_frame_data_);
   if (!active_frame_data_)
     return;  // |copy_request| auto-sends empty result on out-of-scope.
 
@@ -701,21 +705,6 @@ void Surface::OnWillBeDrawn() {
   if (!seen_first_surface_embedding_) {
     seen_first_surface_embedding_ = true;
 
-    // Tests may not be sending valid time stamps.
-    // Additionally since the allocation time is not a member of LocalSurfaceId
-    // it has to be added to each new site that is sneding LocalSurfaceIds to
-    // Viz. Due to this, new embedders may initially be sending invalid time
-    // stamps. Do not calculate metrics for those.
-    if (!active_frame_data_->frame.metadata.local_surface_id_allocation_time
-             .is_null()) {
-      // Only send UMAs if we can calculate a valid delta.
-      base::TimeDelta delta =
-          base::TimeTicks::Now() -
-          active_frame_data_->frame.metadata.local_surface_id_allocation_time;
-      base::UmaHistogramTimes("Viz.DisplayCompositor.SurfaceEmbeddingTime",
-                              delta);
-    }
-
     TRACE_EVENT_WITH_FLOW2(
         TRACE_DISABLED_BY_DEFAULT("viz.surface_id_flow"),
         "LocalSurfaceId.Embed.Flow",
@@ -733,6 +722,11 @@ void Surface::ActivatePendingFrameForInheritedDeadline() {
   // so there shouldn't be an active frame.
   DCHECK(!HasActiveFrame());
   ActivatePendingFrameForDeadline();
+}
+
+std::unique_ptr<DelegatedInkMetadata> Surface::TakeDelegatedInkMetadata() {
+  DCHECK(active_frame_data_);
+  return active_frame_data_->TakeDelegatedInkMetadata();
 }
 
 }  // namespace viz

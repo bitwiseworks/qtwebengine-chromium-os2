@@ -4,7 +4,6 @@
 
 #include "extensions/browser/updater/extension_downloader_delegate.h"
 
-#include "base/logging.h"
 #include "base/version.h"
 
 namespace extensions {
@@ -28,6 +27,20 @@ ExtensionDownloaderDelegate::FailureData::FailureData(
     : network_error_code(net_error_code),
       response_code(response),
       fetch_tries(fetch_attempts) {}
+
+ExtensionDownloaderDelegate::FailureData::FailureData(
+    ManifestInvalidError manifest_invalid_error)
+    : manifest_invalid_error(manifest_invalid_error) {}
+
+ExtensionDownloaderDelegate::FailureData::FailureData(
+    ManifestInvalidError manifest_invalid_error,
+    const std::string& app_status_error)
+    : manifest_invalid_error(manifest_invalid_error),
+      app_status_error(app_status_error) {}
+
+ExtensionDownloaderDelegate::FailureData::FailureData(
+    const std::string& additional_info)
+    : additional_info(additional_info) {}
 
 ExtensionDownloaderDelegate::FailureData::~FailureData() = default;
 

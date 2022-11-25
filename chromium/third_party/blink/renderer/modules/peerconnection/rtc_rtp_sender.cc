@@ -18,6 +18,8 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_rtc_rtp_header_extension_capability.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_rtc_rtp_header_extension_parameters.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/streams/readable_stream.h"
 #include "third_party/blink/renderer/core/streams/writable_stream.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream_track.h"
@@ -36,6 +38,7 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_dtmf_sender_handler.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_encoded_audio_stream_transformer.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_encoded_video_stream_transformer.h"
@@ -71,7 +74,7 @@ class ReplaceTrackRequest : public RTCVoidRequest {
     resolver_->Reject(exception_state);
   }
 
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     visitor->Trace(sender_);
     visitor->Trace(with_track_);
     visitor->Trace(resolver_);
@@ -102,7 +105,7 @@ class SetParametersRequest : public RTCVoidRequestScriptPromiseResolverImpl {
     RTCVoidRequestScriptPromiseResolverImpl::RequestFailed(error);
   }
 
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     visitor->Trace(sender_);
     RTCVoidRequestScriptPromiseResolverImpl::Trace(visitor);
   }
@@ -287,13 +290,14 @@ webrtc::Priority PriorityToEnum(const WTF::String& priority) {
 
 std::tuple<Vector<webrtc::RtpEncodingParameters>,
            absl::optional<webrtc::DegradationPreference>>
-ToRtpParameters(const RTCRtpSendParameters* parameters) {
+ToRtpParameters(ExecutionContext* context,
+                const RTCRtpSendParameters* parameters) {
   Vector<webrtc::RtpEncodingParameters> encodings;
   if (parameters->hasEncodings()) {
     encodings.ReserveCapacity(parameters->encodings().size());
 
     for (const auto& encoding : parameters->encodings()) {
-      encodings.push_back(ToRtpEncodingParameters(encoding));
+      encodings.push_back(ToRtpEncodingParameters(context, encoding));
     }
   }
 
@@ -319,6 +323,7 @@ ToRtpParameters(const RTCRtpSendParameters* parameters) {
 }  // namespace
 
 webrtc::RtpEncodingParameters ToRtpEncodingParameters(
+    ExecutionContext* context,
     const RTCRtpEncodingParameters* encoding) {
   webrtc::RtpEncodingParameters webrtc_encoding;
   if (encoding->hasRid()) {
@@ -346,6 +351,10 @@ webrtc::RtpEncodingParameters ToRtpEncodingParameters(
       webrtc_encoding.num_temporal_layers = 3;
     }
   }
+  if (encoding->adaptivePtime()) {
+    UseCounter::Count(context, WebFeature::kRTCAdaptivePtime);
+  }
+  webrtc_encoding.adaptive_ptime = encoding->adaptivePtime();
   return webrtc_encoding;
 }
 
@@ -430,14 +439,14 @@ ScriptPromise RTCRtpSender::replaceTrack(ScriptState* script_state,
                                            "The peer connection is closed."));
     return promise;
   }
-  WebMediaStreamTrack web_track;
+  MediaStreamComponent* component = nullptr;
   if (with_track) {
     pc_->RegisterTrack(with_track);
-    web_track = with_track->Component();
+    component = with_track->Component();
   }
   ReplaceTrackRequest* request =
       MakeGarbageCollected<ReplaceTrackRequest>(this, with_track, resolver);
-  sender_->ReplaceTrack(web_track, request);
+  sender_->ReplaceTrack(component, request);
   return promise;
 }
 
@@ -503,6 +512,7 @@ RTCRtpSendParameters* RTCRtpSender::getParameters() {
                    << *webrtc_encoding.num_temporal_layers;
       }
     }
+    encoding->setAdaptivePtime(webrtc_encoding.adaptive_ptime);
     encodings.push_back(encoding);
   }
   parameters->setEncodings(encodings);
@@ -558,7 +568,8 @@ ScriptPromise RTCRtpSender::setParameters(
   // parameters.
   Vector<webrtc::RtpEncodingParameters> encodings;
   absl::optional<webrtc::DegradationPreference> degradation_preference;
-  std::tie(encodings, degradation_preference) = ToRtpParameters(parameters);
+  std::tie(encodings, degradation_preference) =
+      ToRtpParameters(pc_->GetExecutionContext(), parameters);
 
   auto* request = MakeGarbageCollected<SetParametersRequest>(resolver, this);
   sender_->SetParameters(std::move(encodings), degradation_preference, request);
@@ -644,6 +655,15 @@ void RTCRtpSender::setStreams(HeapVector<Member<MediaStream>> streams,
   sender_->SetStreams(stream_ids);
 }
 
+RTCInsertableStreams* RTCRtpSender::createEncodedStreams(
+    ScriptState* script_state,
+    ExceptionState& exception_state) {
+  if (kind_ == "audio")
+    return createEncodedAudioStreams(script_state, exception_state);
+  DCHECK_EQ(kind_, "video");
+  return createEncodedVideoStreams(script_state, exception_state);
+}
+
 RTCInsertableStreams* RTCRtpSender::createEncodedAudioStreams(
     ScriptState* script_state,
     ExceptionState& exception_state) {
@@ -682,7 +702,7 @@ RTCInsertableStreams* RTCRtpSender::createEncodedVideoStreams(
   return encoded_video_streams_;
 }
 
-void RTCRtpSender::Trace(Visitor* visitor) {
+void RTCRtpSender::Trace(Visitor* visitor) const {
   visitor->Trace(pc_);
   visitor->Trace(track_);
   visitor->Trace(transport_);
@@ -791,10 +811,12 @@ void RTCRtpSender::InitializeEncodedAudioStreams(ScriptState* script_state) {
           /*is_receiver=*/false);
   // The high water mark for the readable stream is set to 0 so that frames are
   // removed from the queue right away, without introducing any buffering.
-  encoded_audio_streams_->setReadableStream(
+  ReadableStream* readable_stream =
       ReadableStream::CreateWithCountQueueingStrategy(
           script_state, audio_from_encoder_underlying_source_,
-          /*high_water_mark=*/0));
+          /*high_water_mark=*/0);
+  encoded_audio_streams_->setReadableStream(readable_stream);
+  encoded_audio_streams_->setReadable(readable_stream);
 
   // Set up writable stream.
   audio_to_packetizer_underlying_sink_ =
@@ -809,10 +831,12 @@ void RTCRtpSender::InitializeEncodedAudioStreams(ScriptState* script_state) {
               WrapWeakPersistent(this)));
   // The high water mark for the stream is set to 1 so that the stream is
   // ready to write, but without queuing frames.
-  encoded_audio_streams_->setWritableStream(
+  WritableStream* writable_stream =
       WritableStream::CreateWithCountQueueingStrategy(
           script_state, audio_to_packetizer_underlying_sink_,
-          /*high_water_mark=*/1));
+          /*high_water_mark=*/1);
+  encoded_audio_streams_->setWritableStream(writable_stream);
+  encoded_audio_streams_->setWritable(writable_stream);
 }
 
 void RTCRtpSender::OnAudioFrameFromEncoder(
@@ -852,10 +876,12 @@ void RTCRtpSender::InitializeEncodedVideoStreams(ScriptState* script_state) {
                     WrapWeakPersistent(this)));
   // The high water mark for the readable stream is set to 0 so that frames are
   // removed from the queue right away, without introducing any buffering.
-  encoded_video_streams_->setReadableStream(
+  ReadableStream* readable_stream =
       ReadableStream::CreateWithCountQueueingStrategy(
           script_state, video_from_encoder_underlying_source_,
-          /*high_water_mark=*/0));
+          /*high_water_mark=*/0);
+  encoded_video_streams_->setReadableStream(readable_stream);
+  encoded_video_streams_->setReadable(readable_stream);
 
   // Set up writable stream.
   video_to_packetizer_underlying_sink_ =
@@ -867,13 +893,16 @@ void RTCRtpSender::InitializeEncodedVideoStreams(ScriptState* script_state) {
                                     ->GetEncodedVideoStreamTransformer()
                               : nullptr;
               },
-              WrapWeakPersistent(this)));
+              WrapWeakPersistent(this)),
+          webrtc::TransformableFrameInterface::Direction::kSender);
   // The high water mark for the stream is set to 1 so that the stream is
   // ready to write, but without queuing frames.
-  encoded_video_streams_->setWritableStream(
+  WritableStream* writable_stream =
       WritableStream::CreateWithCountQueueingStrategy(
           script_state, video_to_packetizer_underlying_sink_,
-          /*high_water_mark=*/1));
+          /*high_water_mark=*/1);
+  encoded_video_streams_->setWritableStream(writable_stream);
+  encoded_video_streams_->setWritable(writable_stream);
 }
 
 void RTCRtpSender::OnVideoFrameFromEncoder(

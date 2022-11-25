@@ -4,13 +4,7 @@
 
 // https://github.com/WICG/async-cookies-api/blob/gh-pages/explainer.md
 
-enum CookieMatchType {
-  "equals",
-  "starts-with"
-};
-
 dictionary CookieStoreGetOptions {
   USVString name;
   USVString url;
-  CookieMatchType matchType = "equals";
 };

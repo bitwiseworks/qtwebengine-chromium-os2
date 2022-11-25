@@ -126,14 +126,7 @@ config("config") {
       "blink-gc-plugin",
     ]
 
-    # Don't perform checks for GarbageCollectedFinalized.
-    cflags += [
-      "-Xclang",
-      "-plugin-arg-blink-gc-plugin",
-      "-Xclang",
-      "no-gc-finalized",
-    ]
-
+    # TODO(bikineev): Remove when clang pre-built has been updated.
     # Disallow members in stack allocated classes.
     cflags += [
       "-Xclang",
@@ -149,14 +142,6 @@ config("config") {
         "-plugin-arg-blink-gc-plugin",
         "-Xclang",
         "dump-graph",
-      ]
-    }
-    if (blink_gc_plugin_option_warn_unneeded_finalizer) {
-      cflags += [
-        "-Xclang",
-        "-plugin-arg-blink-gc-plugin",
-        "-Xclang",
-        "warn-unneeded-finalizer",
       ]
     }
   }

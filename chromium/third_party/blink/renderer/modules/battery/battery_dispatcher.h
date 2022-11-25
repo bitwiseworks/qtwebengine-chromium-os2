@@ -6,20 +6,18 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_BATTERY_BATTERY_DISPATCHER_H_
 
 #include "base/macros.h"
-#include "mojo/public/cpp/bindings/remote.h"
 #include "services/device/public/mojom/battery_monitor.mojom-blink.h"
 #include "third_party/blink/renderer/core/frame/platform_event_dispatcher.h"
 #include "third_party/blink/renderer/modules/battery/battery_manager.h"
 #include "third_party/blink/renderer/modules/battery/battery_status.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
 
 namespace blink {
 
 class MODULES_EXPORT BatteryDispatcher final
     : public GarbageCollected<BatteryDispatcher>,
       public PlatformEventDispatcher {
-  USING_GARBAGE_COLLECTED_MIXIN(BatteryDispatcher);
-
  public:
   static BatteryDispatcher& Instance();
 
@@ -28,6 +26,8 @@ class MODULES_EXPORT BatteryDispatcher final
   const BatteryStatus* LatestData() const {
     return has_latest_data_ ? &battery_status_ : nullptr;
   }
+
+  void Trace(Visitor*) const override;
 
  private:
   void QueryNextStatus();
@@ -38,7 +38,7 @@ class MODULES_EXPORT BatteryDispatcher final
   void StartListening(LocalFrame* frame) override;
   void StopListening() override;
 
-  mojo::Remote<device::mojom::blink::BatteryMonitor> monitor_;
+  HeapMojoRemote<device::mojom::blink::BatteryMonitor> monitor_;
   BatteryStatus battery_status_;
   bool has_latest_data_;
 

@@ -46,6 +46,7 @@ class Feature {
   enum Platform {
     UNSPECIFIED_PLATFORM,
     CHROMEOS_PLATFORM,
+    LACROS_PLATFORM,
     LINUX_PLATFORM,
     MACOSX_PLATFORM,
     WIN_PLATFORM
@@ -68,6 +69,7 @@ class Feature {
     UNSUPPORTED_CHANNEL,
     FOUND_IN_BLACKLIST,
     MISSING_COMMAND_LINE_SWITCH,
+    FEATURE_FLAG_DISABLED,
   };
 
   // Container for AvailabiltyResult that also exposes a user-visible error

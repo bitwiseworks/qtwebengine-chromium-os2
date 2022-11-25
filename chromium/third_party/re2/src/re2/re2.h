@@ -30,6 +30,19 @@
 //   "(?i)hello"           -- (?i) turns on case-insensitive matching
 //   "/\\*(.*?)\\*/"       -- .*? matches . minimum no. of times possible
 //
+// The double backslashes are needed when writing C++ string literals.
+// However, they should NOT be used when writing C++11 raw string literals:
+//
+//   R"(hello (\w+) world)"  -- \w matches a "word" character
+//   R"(version (\d+))"      -- \d matches a digit
+//   R"(hello\s+world)"      -- \s matches any whitespace character
+//   R"(\b(\w+)\b)"          -- \b matches non-empty string at word boundary
+//   R"((?i)hello)"          -- (?i) turns on case-insensitive matching
+//   R"(/\*(.*?)\*/)"        -- .*? matches . minimum no. of times possible
+//
+// When using UTF-8 encoding, case-insensitive matching will perform
+// simple case folding, not full case folding.
+//
 // -----------------------------------------------------------------------
 // MATCHING INTERFACE:
 //
@@ -195,6 +208,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
@@ -233,6 +247,7 @@ class RE2 {
     ErrorBadCharRange,       // bad character class range
     ErrorMissingBracket,     // missing closing ]
     ErrorMissingParen,       // missing closing )
+    ErrorUnexpectedParen,    // unexpected closing )
     ErrorTrailingBackslash,  // trailing \ at end of regexp
     ErrorRepeatArgument,     // repeat argument missing, e.g. "*"
     ErrorRepeatSize,         // bad repetition argument
@@ -291,11 +306,11 @@ class RE2 {
   int ProgramSize() const;
   int ReverseProgramSize() const;
 
-  // EXPERIMENTAL! SUBJECT TO CHANGE!
-  // Outputs the program fanout as a histogram bucketed by powers of 2.
+  // If histogram is not null, outputs the program fanout
+  // as a histogram bucketed by powers of 2.
   // Returns the number of the largest non-empty bucket.
-  int ProgramFanout(std::map<int, int>* histogram) const;
-  int ReverseProgramFanout(std::map<int, int>* histogram) const;
+  int ProgramFanout(std::vector<int>* histogram) const;
+  int ReverseProgramFanout(std::vector<int>* histogram) const;
 
   // Returns the underlying Regexp; not for general use.
   // Returns entire_regexp_ so that callers don't need
@@ -353,12 +368,12 @@ class RE2 {
   //    (void*)NULL     (the corresponding matched sub-pattern is not copied)
   //
   // Returns true iff all of the following conditions are satisfied:
-  //   a. "text" matches "re" exactly
-  //   b. The number of matched sub-patterns is >= number of supplied pointers
+  //   a. "text" matches "re" fully - from the beginning to the end of "text".
+  //   b. The number of matched sub-patterns is >= number of supplied pointers.
   //   c. The "i"th argument has a suitable type for holding the
   //      string captured as the "i"th sub-pattern.  If you pass in
   //      NULL for the "i"th argument, or pass fewer arguments than
-  //      number of sub-patterns, "i"th captured sub-pattern is
+  //      number of sub-patterns, the "i"th captured sub-pattern is
   //      ignored.
   //
   // CAVEAT: An optional sub-pattern that does not exist in the
@@ -372,8 +387,17 @@ class RE2 {
     return Apply(FullMatchN, text, re, Arg(std::forward<A>(a))...);
   }
 
-  // Exactly like FullMatch(), except that "re" is allowed to match
-  // a substring of "text".
+  // Like FullMatch(), except that "re" is allowed to match a substring
+  // of "text".
+  //
+  // Returns true iff all of the following conditions are satisfied:
+  //   a. "text" matches "re" partially - for some substring of "text".
+  //   b. The number of matched sub-patterns is >= number of supplied pointers.
+  //   c. The "i"th argument has a suitable type for holding the
+  //      string captured as the "i"th sub-pattern.  If you pass in
+  //      NULL for the "i"th argument, or pass fewer arguments than
+  //      number of sub-patterns, the "i"th captured sub-pattern is
+  //      ignored.
   template <typename... A>
   static bool PartialMatch(const StringPiece& text, const RE2& re, A&&... a) {
     return Apply(PartialMatchN, text, re, Arg(std::forward<A>(a))...);
@@ -382,7 +406,16 @@ class RE2 {
   // Like FullMatch() and PartialMatch(), except that "re" has to match
   // a prefix of the text, and "input" is advanced past the matched
   // text.  Note: "input" is modified iff this routine returns true
-  // and "re" matched a non-empty substring of "text".
+  // and "re" matched a non-empty substring of "input".
+  //
+  // Returns true iff all of the following conditions are satisfied:
+  //   a. "input" matches "re" partially - for some prefix of "input".
+  //   b. The number of matched sub-patterns is >= number of supplied pointers.
+  //   c. The "i"th argument has a suitable type for holding the
+  //      string captured as the "i"th sub-pattern.  If you pass in
+  //      NULL for the "i"th argument, or pass fewer arguments than
+  //      number of sub-patterns, the "i"th captured sub-pattern is
+  //      ignored.
   template <typename... A>
   static bool Consume(StringPiece* input, const RE2& re, A&&... a) {
     return Apply(ConsumeN, input, re, Arg(std::forward<A>(a))...);
@@ -392,6 +425,15 @@ class RE2 {
   // the text.  That is, "re" need not start its match at the beginning
   // of "input".  For example, "FindAndConsume(s, "(\\w+)", &word)" finds
   // the next word in "s" and stores it in "word".
+  //
+  // Returns true iff all of the following conditions are satisfied:
+  //   a. "input" matches "re" partially - for some substring of "input".
+  //   b. The number of matched sub-patterns is >= number of supplied pointers.
+  //   c. The "i"th argument has a suitable type for holding the
+  //      string captured as the "i"th sub-pattern.  If you pass in
+  //      NULL for the "i"th argument, or pass fewer arguments than
+  //      number of sub-patterns, the "i"th captured sub-pattern is
+  //      ignored.
   template <typename... A>
   static bool FindAndConsume(StringPiece* input, const RE2& re, A&&... a) {
     return Apply(FindAndConsumeN, input, re, Arg(std::forward<A>(a))...);
@@ -629,17 +671,6 @@ class RE2 {
 
     Encoding encoding() const { return encoding_; }
     void set_encoding(Encoding encoding) { encoding_ = encoding; }
-
-    // Legacy interface to encoding.
-    // TODO(rsc): Remove once clients have been converted.
-    bool utf8() const { return encoding_ == EncodingUTF8; }
-    void set_utf8(bool b) {
-      if (b) {
-        encoding_ = EncodingUTF8;
-      } else {
-        encoding_ = EncodingLatin1;
-      }
-    }
 
     bool posix_syntax() const { return posix_syntax_; }
     void set_posix_syntax(bool b) { posix_syntax_ = b; }

@@ -26,7 +26,6 @@
 #include "storage/browser/file_system/file_stream_reader.h"
 #include "storage/browser/file_system/file_system_context.h"
 #include "storage/browser/file_system/file_system_url.h"
-#include "storage/common/storage_histograms.h"
 #include "third_party/blink/public/common/blob/blob_utils.h"
 
 namespace storage {
@@ -727,14 +726,12 @@ std::unique_ptr<FileStreamReader> BlobReader::CreateFileStreamReader(
               : item.length() - additional_offset;
       if (file_stream_provider_for_testing_) {
         return file_stream_provider_for_testing_->CreateFileStreamReader(
-            item.filesystem_url(), item.offset() + additional_offset,
+            item.filesystem_url().ToGURL(), item.offset() + additional_offset,
             max_bytes_to_read, item.expected_modification_time());
       }
       return item.file_system_context()->CreateFileStreamReader(
-          FileSystemURL(
-              item.file_system_context()->CrackURL(item.filesystem_url())),
-          item.offset() + additional_offset, max_bytes_to_read,
-          item.expected_modification_time());
+          item.filesystem_url(), item.offset() + additional_offset,
+          max_bytes_to_read, item.expected_modification_time());
     }
     case BlobDataItem::Type::kBytes:
     case BlobDataItem::Type::kBytesDescription:
@@ -826,9 +823,6 @@ void BlobReader::RecordBytesReadFromDataHandle(int item_index, int result) {
   const auto& items = blob_data_->items();
   BlobDataItem& item = *items.at(item_index);
   DCHECK_EQ(item.type(), BlobDataItem::Type::kReadableDataHandle);
-  if (item.data_handle()->BytesReadHistogramLabel()) {
-    RecordBytesRead(item.data_handle()->BytesReadHistogramLabel(), result);
-  }
 }
 
 }  // namespace storage

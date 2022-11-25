@@ -23,14 +23,18 @@
 #include "content/public/renderer/url_loader_throttle_provider.h"
 #include "content/public/renderer/websocket_handshake_throttle_provider.h"
 #include "media/base/audio_parameters.h"
-#include "media/base/speech_recognition_client.h"
 #include "media/base/supported_types.h"
-#include "mojo/public/cpp/bindings/generic_pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "third_party/blink/public/platform/web_content_settings_client.h"
 #include "third_party/blink/public/web/web_navigation_policy.h"
 #include "third_party/blink/public/web/web_navigation_type.h"
 #include "ui/base/page_transition_types.h"
 #include "v8/include/v8.h"
+
+#if !defined(OS_ANDROID)
+#include "media/base/speech_recognition_client.h"
+#endif
 
 class GURL;
 class SkBitmap;
@@ -55,6 +59,7 @@ struct WebURLError;
 }  // namespace blink
 
 namespace media {
+class Demuxer;
 class KeySystemProperties;
 }
 
@@ -63,10 +68,8 @@ class BinderMap;
 }
 
 namespace content {
-class BrowserPluginDelegate;
 class RenderFrame;
 class RenderView;
-struct WebPluginInfo;
 
 // Embedder API for participating in renderer logic.
 class CONTENT_EXPORT ContentRendererClient {
@@ -124,30 +127,19 @@ class CONTENT_EXPORT ContentRendererClient {
       RenderFrame* render_frame,
       const base::FilePath& plugin_path);
 
-  // Creates a delegate for browser plugin.
-  virtual BrowserPluginDelegate* CreateBrowserPluginDelegate(
-      RenderFrame* render_frame,
-      const WebPluginInfo& info,
-      const std::string& mime_type,
-      const GURL& original_url);
-
   // Returns true if the embedder has an error page to show for the given http
   // status code.
   virtual bool HasErrorPage(int http_status_code);
-
-  // Returns true if the embedder prefers not to show an error page for a failed
-  // navigation to |url| in |render_frame|.
-  virtual bool ShouldSuppressErrorPage(RenderFrame* render_frame,
-                                       const GURL& url);
 
   // Returns false for new tab page activities, which should be filtered out in
   // UseCounter; returns true otherwise.
   virtual bool ShouldTrackUseCounter(const GURL& url);
 
   // Returns the information to display when a navigation error occurs.
-  // If |error_html| is not null then it may be set to a HTML page
-  // containing the details of the error and maybe links to more info.
-  // Note that |error_html| may be not written to in certain cases
+  // |error_html| should be set to null if this is a custom error page that will
+  // set its own html content, otherwise if |error_html| is not null then it may
+  // be set to a HTML page containing the details of the error and maybe links
+  // to more info. Note that |error_html| may be not written to in certain cases
   // (lack of information on the error code) so the caller should take care to
   // initialize it with a safe default before the call.
   virtual void PrepareErrorPage(content::RenderFrame* render_frame,
@@ -170,6 +162,14 @@ class CONTENT_EXPORT ContentRendererClient {
   virtual bool DeferMediaLoad(RenderFrame* render_frame,
                               bool has_played_media_before,
                               base::OnceClosure closure);
+
+  // Allows the embedder to override the Demuxer used for certain URLs.
+  // If a non-null value is returned, the object will be used as the source of
+  // media data by the media player instance for which this method was called.
+  virtual std::unique_ptr<media::Demuxer> OverrideDemuxerForUrl(
+      RenderFrame* render_frame,
+      const GURL& url,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
   // Allows the embedder to override the WebThemeEngine used. If it returns NULL
   // the content layer will provide an engine.
@@ -216,9 +216,10 @@ class CONTENT_EXPORT ContentRendererClient {
 
   // Notifies the embedder that the given frame is requesting the resource at
   // |url|. If the function returns a valid |new_url|, the request must be
-  // updated to use it. The |attach_same_site_cookies| output parameter
-  // determines whether SameSite cookies should be attached to the request.
-  // The |site_for_cookies| is the site_for_cookies of the request. (This is
+  // updated to use it. The |force_ignore_site_for_cookies| output parameter
+  // indicates whether SameSite cookies should be unconditionally attached to
+  // the request, bypassing the usual |site_for_cookies| checks. The
+  // |site_for_cookies| is the site_for_cookies of the request. (This is
   // approximately the URL of the main frame. It is empty in the case of
   // cross-site iframes.)
   //
@@ -231,7 +232,7 @@ class CONTENT_EXPORT ContentRendererClient {
                                const net::SiteForCookies& site_for_cookies,
                                const url::Origin* initiator_origin,
                                GURL* new_url,
-                               bool* attach_same_site_cookies);
+                               bool* force_ignore_site_for_cookies);
 
   // Returns true if the request is associated with a document that is in
   // ""prefetch only" mode, and will not be rendered.
@@ -287,15 +288,16 @@ class CONTENT_EXPORT ContentRendererClient {
   virtual std::unique_ptr<blink::WebContentSettingsClient>
   CreateWorkerContentSettingsClient(RenderFrame* render_frame);
 
+#if !defined(OS_ANDROID)
   // Creates a speech recognition client used to transcribe audio into captions.
   virtual std::unique_ptr<media::SpeechRecognitionClient>
-  CreateSpeechRecognitionClient(RenderFrame* render_frame);
+  CreateSpeechRecognitionClient(
+      RenderFrame* render_frame,
+      media::SpeechRecognitionClient::OnReadyCallback callback);
+#endif
 
   // Returns true if the page at |url| can use Pepper CameraDevice APIs.
   virtual bool IsPluginAllowedToUseCameraDeviceAPI(const GURL& url);
-
-  // Returns true if dev channel APIs are available for plugins.
-  virtual bool IsPluginAllowedToUseDevChannelAPIs();
 
   // Notifies that a document element has been inserted in the frame's document.
   // This may be called multiple times for the same document. This method may
@@ -313,6 +315,11 @@ class CONTENT_EXPORT ContentRendererClient {
   // Allows subclasses to enable some runtime features before Blink has
   // started.
   virtual void SetRuntimeFeaturesDefaultsBeforeBlinkInitialization() {}
+
+  // Returns whether or not V8 script extensions should be allowed for a
+  // service worker.
+  virtual bool AllowScriptExtensionForServiceWorker(
+      const url::Origin& script_origin);
 
   // Notifies that a service worker context is going to be initialized. No
   // meaningful task has run on the worker thread at this point. This
@@ -417,9 +424,11 @@ class CONTENT_EXPORT ContentRendererClient {
   GetAudioRendererAlgorithmParameters(
       ::media::AudioParameters audio_parameters);
 
-  // Handles a request from the browser to bind a receiver on the renderer
-  // processes's main thread.
-  virtual void BindReceiverOnMainThread(mojo::GenericPendingReceiver receiver);
+  // Proxies the URLLoaderFactory if the platform supports Chrome extensions.
+  virtual void MaybeProxyURLLoaderFactory(
+      RenderFrame* render_frame,
+      mojo::PendingReceiver<network::mojom::URLLoaderFactory>*
+          factory_receiver);
 };
 
 }  // namespace content

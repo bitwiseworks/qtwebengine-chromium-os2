@@ -27,30 +27,45 @@ class MultiStorePasswordSaveManager : public PasswordSaveManagerImpl {
                                 std::unique_ptr<FormSaver> account_form_saver);
   ~MultiStorePasswordSaveManager() override;
 
-  void SaveInternal(const std::vector<const autofill::PasswordForm*>& matches,
-                    const base::string16& old_password) override;
-
-  void UpdateInternal(const std::vector<const autofill::PasswordForm*>& matches,
-                      const base::string16& old_password) override;
-
   void PermanentlyBlacklist(
       const PasswordStore::FormDigest& form_digest) override;
   void Unblacklist(const PasswordStore::FormDigest& form_digest) override;
 
   std::unique_ptr<PasswordSaveManager> Clone() override;
 
-  void MoveCredentialsToAccountStore() override;
+  void MoveCredentialsToAccountStore(
+      metrics_util::MoveToAccountStoreTrigger trigger) override;
+
+  void BlockMovingToAccountStoreFor(
+      const autofill::GaiaIdHash& gaia_id_hash) override;
 
  protected:
-  std::pair<const autofill::PasswordForm*, PendingCredentialsState>
+  void SavePendingToStoreImpl(
+      const PasswordForm& parsed_submitted_form) override;
+  std::pair<const PasswordForm*, PendingCredentialsState>
   FindSimilarSavedFormAndComputeState(
-      const autofill::PasswordForm& parsed_submitted_form) const override;
+      const PasswordForm& parsed_submitted_form) const override;
   FormSaver* GetFormSaverForGeneration() override;
+  std::vector<const PasswordForm*> GetRelevantMatchesForGeneration(
+      const std::vector<const PasswordForm*>& matches) override;
 
  private:
-  bool IsOptedInForAccountStorage();
+  struct PendingCredentialsStates {
+    PendingCredentialsState profile_store_state = PendingCredentialsState::NONE;
+    PendingCredentialsState account_store_state = PendingCredentialsState::NONE;
+
+    const PasswordForm* similar_saved_form_from_profile_store = nullptr;
+    const PasswordForm* similar_saved_form_from_account_store = nullptr;
+  };
+  static PendingCredentialsStates ComputePendingCredentialsStates(
+      const PasswordForm& parsed_submitted_form,
+      const std::vector<const PasswordForm*>& matches);
+
+  bool IsOptedInForAccountStorage() const;
+  bool AccountStoreIsDefault() const;
 
   const std::unique_ptr<FormSaver> account_store_form_saver_;
+
   DISALLOW_COPY_AND_ASSIGN(MultiStorePasswordSaveManager);
 };
 

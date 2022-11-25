@@ -26,13 +26,15 @@ using CSSInterpolationTypes = Vector<std::unique_ptr<CSSInterpolationType>>;
 class CORE_EXPORT PropertyRegistration final
     : public GarbageCollected<PropertyRegistration> {
  public:
-  static PropertyRegistration* MaybeCreate(Document&,
-                                           const AtomicString& name,
-                                           StyleRuleProperty&);
+  static void DeclareProperty(Document&,
+                              const AtomicString& name,
+                              StyleRuleProperty&);
 
   static void registerProperty(ExecutionContext*,
                                const PropertyDefinition*,
                                ExceptionState&);
+
+  static void RemoveDeclaredProperties(Document&);
 
   static const PropertyRegistration* From(const ExecutionContext*,
                                           const AtomicString& property_name);
@@ -53,7 +55,7 @@ class CORE_EXPORT PropertyRegistration final
     return interpolation_types_;
   }
 
-  void Trace(Visitor* visitor) { visitor->Trace(initial_); }
+  void Trace(Visitor* visitor) const { visitor->Trace(initial_); }
 
  private:
   friend class ::blink::PropertyRegistry;
@@ -64,9 +66,6 @@ class CORE_EXPORT PropertyRegistration final
   const scoped_refptr<CSSVariableData> initial_variable_data_;
   const InterpolationTypes interpolation_types_;
   mutable bool referenced_;
-
-  FRIEND_TEST_ALL_PREFIXES(CSSVariableResolverTest,
-                           NeedsResolutionClearedByResolver);
 };
 
 }  // namespace blink

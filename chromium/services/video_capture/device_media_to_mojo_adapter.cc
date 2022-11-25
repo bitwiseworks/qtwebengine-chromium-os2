@@ -5,8 +5,8 @@
 #include "services/video_capture/device_media_to_mojo_adapter.h"
 
 #include "base/bind.h"
+#include "base/check.h"
 #include "base/command_line.h"
-#include "base/logging.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/capture/capture_switches.h"
 #include "media/capture/video/video_capture_buffer_pool_impl.h"
@@ -91,11 +91,8 @@ void DeviceMediaToMojoAdapter::Start(
   }
 
   // Create a dedicated buffer pool for the device usage session.
-  auto buffer_tracker_factory =
-      std::make_unique<media::VideoCaptureBufferTrackerFactoryImpl>();
   scoped_refptr<media::VideoCaptureBufferPool> buffer_pool(
-      new media::VideoCaptureBufferPoolImpl(std::move(buffer_tracker_factory),
-                                            requested_settings.buffer_type,
+      new media::VideoCaptureBufferPoolImpl(requested_settings.buffer_type,
                                             max_buffer_pool_buffer_count()));
 #if defined(OS_CHROMEOS)
   auto device_client = std::make_unique<media::VideoCaptureDeviceClient>(
@@ -184,7 +181,9 @@ int DeviceMediaToMojoAdapter::max_buffer_pool_buffer_count() {
   // concurrent streams of camera pipeline depth ~6. We allow at most 30 buffers
   // here to take into account the delay caused by the consumer (e.g. display or
   // video encoder).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableVideoCaptureUseGpuMemoryBuffer) &&
+      base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kVideoCaptureUseGpuMemoryBuffer)) {
     kMaxBufferCount = 30;
   }

@@ -50,6 +50,11 @@ class HTMLSelectElementTest : public PageTestBase {
     return select->isConnected();
   }
 
+  String MenuListLabel() const {
+    auto* select = To<HTMLSelectElement>(GetDocument().body()->firstChild());
+    return select->InnerElement().textContent();
+  }
+
  private:
   bool original_delegates_flag_;
 };
@@ -389,8 +394,13 @@ TEST_F(HTMLSelectElementTest, PreviousSelectableOption) {
 
 TEST_F(HTMLSelectElementTest, ActiveSelectionEndAfterOptionRemoval) {
   SetHtmlInnerHTML(
-      "<select><optgroup><option selected>o1</option></optgroup></select>");
+      "<select size=4>"
+      "<optgroup><option selected>o1</option></optgroup></select>");
   auto* select = To<HTMLSelectElement>(GetDocument().body()->firstChild());
+  // ActiveSelectionEnd*() work only in the listbox mode, which Android
+  // doesn't have.
+  if (select->UsesMenuList())
+    return;
   auto* option = To<HTMLOptionElement>(select->firstChild()->firstChild());
   EXPECT_EQ(1, select->ActiveSelectionEndListIndex());
   select->firstChild()->removeChild(option);
@@ -564,6 +574,39 @@ TEST_F(HTMLSelectElementTest, SelectMultipleOptionsByPopup) {
     EXPECT_FALSE(FirstSelectIsConnectedAfterSelectMultiple(Vector<int>{1}))
         << "Onchange handler should be executed.";
   }
+
+  // Check if the label is correctly updated.
+  {
+    SetHtmlInnerHTML(
+        "<select multiple>"
+        "<option selected>o0</option><option selected>o1</option></select>");
+    EXPECT_EQ("2 selected", MenuListLabel());
+    EXPECT_TRUE(FirstSelectIsConnectedAfterSelectMultiple(Vector<int>{1}));
+    EXPECT_EQ("o1", MenuListLabel());
+  }
+}
+
+TEST_F(HTMLSelectElementTest, IntrinsicInlineSizeOverflow) {
+  // crbug.com/1068338
+  // This test passes if UBSAN doesn't complain.
+  SetHtmlInnerHTML(
+      "<select style='word-spacing:1073741824em;'>"
+      "<option>abc def</option></select>");
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
+}
+
+TEST_F(HTMLSelectElementTest, AddingNotOwnedOption) {
+  // crbug.com/1077556
+  auto& doc = GetDocument();
+  SetHtmlInnerHTML("<select>");
+  auto* select = To<HTMLSelectElement>(doc.body()->firstChild());
+  // Append <div><optgroup></optgroup></div> to the SELECT.
+  // We can't do it with the HTML parser.
+  auto* optgroup = doc.CreateRawElement(html_names::kOptgroupTag);
+  select->appendChild(doc.CreateRawElement(html_names::kDivTag))
+      ->appendChild(optgroup);
+  optgroup->appendChild(doc.CreateRawElement(html_names::kOptionTag));
+  // This test passes if the above appendChild() doesn't cause a DCHECK failure.
 }
 
 }  // namespace blink

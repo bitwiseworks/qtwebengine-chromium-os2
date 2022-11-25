@@ -31,22 +31,28 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_PAGE_PAGE_POPUP_CONTROLLER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAGE_PAGE_POPUP_CONTROLLER_H_
 
+#include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
 
 class CSSFontSelector;
 class Document;
+class Page;
 class PagePopup;
 class PagePopupClient;
 
-class PagePopupController : public ScriptWrappable {
+class PagePopupController : public ScriptWrappable, public Supplement<Page> {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  PagePopupController(PagePopup&, PagePopupClient*);
+  static const char kSupplementName[];
+  PagePopupController(Page&, PagePopup&, PagePopupClient*);
+
+  static PagePopupController* From(Page&);
 
   void setValueAndClosePopup(int num_value, const String& string_value);
   void setValue(const String&);
@@ -61,6 +67,8 @@ class PagePopupController : public ScriptWrappable {
   void setWindowRect(int x, int y, int width, int height);
 
   static CSSFontSelector* CreateCSSFontSelector(Document& popup_document);
+
+  void Trace(Visitor*) const override;
 
  private:
   PagePopup& popup_;

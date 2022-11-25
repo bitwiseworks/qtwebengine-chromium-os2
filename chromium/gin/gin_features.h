@@ -12,9 +12,15 @@ namespace features {
 
 GIN_EXPORT extern const base::Feature kV8OptimizeJavascript;
 GIN_EXPORT extern const base::Feature kV8FlushBytecode;
+GIN_EXPORT extern const base::Feature kV8OffThreadFinalization;
 GIN_EXPORT extern const base::Feature kV8LazyFeedbackAllocation;
 GIN_EXPORT extern const base::Feature kV8ConcurrentInlining;
 GIN_EXPORT extern const base::Feature kV8PerContextMarkingWorklist;
+GIN_EXPORT extern const base::Feature kV8FlushEmbeddedBlobICache;
+GIN_EXPORT extern const base::Feature kV8ReduceConcurrentMarkingTasks;
+GIN_EXPORT extern const base::Feature kV8NoReclaimUnmodifiedWrappers;
+GIN_EXPORT extern const base::Feature kV8LocalHeaps;
+GIN_EXPORT extern const base::Feature kV8TurboDirectHeapAccess;
 
 }  // namespace features
 

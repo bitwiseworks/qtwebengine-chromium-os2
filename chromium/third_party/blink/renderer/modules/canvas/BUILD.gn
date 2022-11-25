@@ -25,6 +25,8 @@ blink_modules_sources("canvas") {
     "canvas2d/clip_list.h",
     "canvas2d/hit_region.cc",
     "canvas2d/hit_region.h",
+    "canvas2d/identifiability_study_helper.cc",
+    "canvas2d/identifiability_study_helper.h",
     "canvas2d/path_2d.h",
     "htmlcanvas/canvas_context_creation_attributes_helpers.cc",
     "htmlcanvas/canvas_context_creation_attributes_helpers.h",
@@ -39,6 +41,10 @@ blink_modules_sources("canvas") {
     "offscreencanvas2d/offscreen_canvas_rendering_context_2d.cc",
     "offscreencanvas2d/offscreen_canvas_rendering_context_2d.h",
   ]
+  jumbo_excluded_sources = [
+    "imagebitmap/image_bitmap_rendering_context_base.cc",
+    "offscreencanvas2d/offscreen_canvas_rendering_context_2d.cc",
+  ]
 }
 
 fuzzer_test("canvas_fuzzer") {
@@ -46,6 +52,12 @@ fuzzer_test("canvas_fuzzer") {
   seed_corpuses = [ "//third_party/blink/web_tests/fast/canvas" ]
   deps = [
     "../../platform:blink_fuzzer_test_support",
+    "//base/test:test_support",
     "//third_party/blink/renderer/core",
+    "//third_party/blink/renderer/core:testing",
+    "//third_party/blink/renderer/platform:test_support",
   ]
+
+  # Disabled due to many false positives (crbug.com/1124824).
+  additional_configs = [ "//testing/libfuzzer:no_clusterfuzz" ]
 }

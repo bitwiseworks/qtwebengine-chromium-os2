@@ -17,7 +17,9 @@ export class TextEditorFactory {
    * @param {!Options} options
    * @return {!TextEditor}
    */
-  createEditor(options) {}
+  createEditor(options) {
+    throw new Error('not implemented');
+  }
 }
 
 /**
@@ -28,18 +30,21 @@ export class TextEditor extends Common.EventTarget.EventTarget {
    * @return {!Widget}
    */
   widget() {
+    throw new Error('not implemented');
   }
 
   /**
    * @return {!TextUtils.TextRange.TextRange}
    */
   fullRange() {
+    throw new Error('not implemented');
   }
 
   /**
    * @return {!TextUtils.TextRange.TextRange}
    */
   selection() {
+    throw new Error('not implemented');
   }
 
   /**
@@ -53,12 +58,14 @@ export class TextEditor extends Common.EventTarget.EventTarget {
    * @return {string}
    */
   text(textRange) {
+    throw new Error('not implemented');
   }
 
   /**
    * @return {string}
    */
   textWithCurrentSuggestion() {
+    throw new Error('not implemented');
   }
 
   /**
@@ -72,13 +79,14 @@ export class TextEditor extends Common.EventTarget.EventTarget {
    * @return {string}
    */
   line(lineNumber) {
+    throw new Error('not implemented');
   }
 
   newlineAndIndent() {
   }
 
   /**
-   * @param {function(!KeyboardEvent)} handler
+   * @param {function(!KeyboardEvent):void} handler
    */
   addKeyDownHandler(handler) {
   }
@@ -98,6 +106,7 @@ export class TextEditor extends Common.EventTarget.EventTarget {
    * @return {!{x: number, y: number}}
    */
   visualCoordinates(lineNumber, columnNumber) {
+    throw new Error('not implemented');
   }
 
   /**
@@ -106,6 +115,7 @@ export class TextEditor extends Common.EventTarget.EventTarget {
    * @return {?{startColumn: number, endColumn: number, type: string}}
    */
   tokenAtTextPosition(lineNumber, columnNumber) {
+    throw new Error('not implemented');
   }
 
   /**
@@ -123,7 +133,7 @@ export const Events = {
 
 /**
  * @typedef {{
-  *  bracketMatchingSetting: (!Common.Settings.Setting|undefined),
+  *  bracketMatchingSetting: (!Common.Settings.Setting<*>|undefined),
   *  devtoolsAccessibleName: (string|undefined),
   *  lineNumbers: boolean,
   *  lineWrapping: boolean,
@@ -131,9 +141,11 @@ export const Events = {
   *  autoHeight: (boolean|undefined),
   *  padBottom: (boolean|undefined),
   *  maxHighlightLength: (number|undefined),
-  *  placeholder: (string|undefined)
+  *  placeholder: (string|undefined),
+  *  lineWiseCopyCut: (boolean|undefined)
   * }}
   */
+// @ts-ignore typedef
 export let Options;
 
 /**
@@ -145,4 +157,5 @@ export let Options;
   *     anchorBehavior: (AnchorBehavior|undefined)
   * }}
   */
+// @ts-ignore typedef
 export let AutocompleteConfig;

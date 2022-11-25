@@ -64,8 +64,6 @@ class QuicConnectionPeer {
       QuicConnection* connection,
       const QuicSocketAddress& effective_peer_address);
 
-  static bool IsSilentCloseEnabled(QuicConnection* connection);
-
   static void SwapCrypters(QuicConnection* connection, QuicFramer* framer);
 
   static void SetCurrentPacket(QuicConnection* connection,
@@ -81,9 +79,7 @@ class QuicConnectionPeer {
   static QuicAlarm* GetPingAlarm(QuicConnection* connection);
   static QuicAlarm* GetRetransmissionAlarm(QuicConnection* connection);
   static QuicAlarm* GetSendAlarm(QuicConnection* connection);
-  static QuicAlarm* GetTimeoutAlarm(QuicConnection* connection);
   static QuicAlarm* GetMtuDiscoveryAlarm(QuicConnection* connection);
-  static QuicAlarm* GetPathDegradingAlarm(QuicConnection* connection);
   static QuicAlarm* GetProcessUndecryptablePacketsAlarm(
       QuicConnection* connection);
 
@@ -106,9 +102,6 @@ class QuicConnectionPeer {
       QuicConnection* connection,
       QuicPacketCount packets_between_probes_base,
       QuicPacketNumber next_probe_at);
-  static void SetAckMode(QuicConnection* connection, AckMode ack_mode);
-  static void SetFastAckAfterQuiescence(QuicConnection* connection,
-                                        bool fast_ack_after_quiescence);
   static void SetAckDecimationDelay(QuicConnection* connection,
                                     float ack_decimation_delay);
   static bool HasRetransmittableFrames(QuicConnection* connection,
@@ -145,7 +138,25 @@ class QuicConnectionPeer {
 
   static QuicTime GetBlackholeDetectionDeadline(QuicConnection* connection);
 
+  static QuicTime GetPathMtuReductionDetectionDeadline(
+      QuicConnection* connection);
+
   static QuicAlarm* GetIdleNetworkDetectorAlarm(QuicConnection* connection);
+
+  static QuicTime GetIdleNetworkDeadline(QuicConnection* connection);
+
+  static QuicIdleNetworkDetector& GetIdleNetworkDetector(
+      QuicConnection* connection);
+
+  static void SetServerConnectionId(
+      QuicConnection* connection,
+      const QuicConnectionId& server_connection_id);
+
+  static size_t NumUndecryptablePackets(QuicConnection* connection);
+
+  static const QuicCircularDeque<
+      std::pair<QuicPathFrameBuffer, QuicSocketAddress>>&
+  pending_path_challenge_payloads(QuicConnection* connection);
 };
 
 }  // namespace test

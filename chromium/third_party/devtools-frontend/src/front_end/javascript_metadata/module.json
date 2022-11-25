@@ -6,9 +6,8 @@
     }
   ],
   "dependencies": [
-      "common"
+    "common"
   ],
-  "scripts": [],
   "modules": [
     "javascript_metadata.js",
     "javascript_metadata-legacy.js",

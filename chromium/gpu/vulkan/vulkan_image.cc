@@ -8,16 +8,13 @@
 
 #include <algorithm>
 
+#include "base/logging.h"
 #include "base/macros.h"
 #include "base/optional.h"
 #include "base/stl_util.h"
 #include "build/build_config.h"
 #include "gpu/vulkan/vulkan_device_queue.h"
 #include "gpu/vulkan/vulkan_function_pointers.h"
-
-#if defined(OS_FUCHSIA)
-#include "gpu/vulkan/fuchsia/vulkan_fuchsia_ext.h"
-#endif
 
 namespace gpu {
 
@@ -107,7 +104,9 @@ std::unique_ptr<VulkanImage> VulkanImage::Create(
     VkImageTiling image_tiling,
     VkDeviceSize device_size,
     uint32_t memory_type_index,
-    base::Optional<VulkanYCbCrInfo>& ycbcr_info) {
+    base::Optional<VulkanYCbCrInfo>& ycbcr_info,
+    VkImageUsageFlags usage,
+    VkImageCreateFlags flags) {
   auto image = std::make_unique<VulkanImage>(util::PassKey<VulkanImage>());
   image->device_queue_ = device_queue;
   image->image_ = vk_image;
@@ -118,6 +117,8 @@ std::unique_ptr<VulkanImage> VulkanImage::Create(
   image->device_size_ = device_size;
   image->memory_type_index_ = memory_type_index;
   image->ycbcr_info_ = ycbcr_info;
+  image->usage_ = usage;
+  image->flags_ = flags;
   return image;
 }
 
@@ -165,30 +166,7 @@ base::ScopedFD VulkanImage::GetMemoryFd(
 
   return base::ScopedFD(memory_fd);
 }
-#endif
-
-#if defined(OS_FUCHSIA)
-zx::vmo VulkanImage::GetMemoryZirconHandle() {
-  DCHECK(handle_types_ &
-         VK_EXTERNAL_MEMORY_HANDLE_TYPE_TEMP_ZIRCON_VMO_BIT_FUCHSIA);
-  VkMemoryGetZirconHandleInfoFUCHSIA get_handle_info = {
-      .sType = VK_STRUCTURE_TYPE_TEMP_MEMORY_GET_ZIRCON_HANDLE_INFO_FUCHSIA,
-      .memory = device_memory_,
-      .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_TEMP_ZIRCON_VMO_BIT_FUCHSIA,
-  };
-
-  VkDevice device = device_queue_->GetVulkanDevice();
-  zx::vmo vmo;
-  VkResult result = vkGetMemoryZirconHandleFUCHSIA(device, &get_handle_info,
-                                                   vmo.reset_and_get_address());
-  if (result != VK_SUCCESS) {
-    DLOG(ERROR) << "vkGetMemoryFuchsiaHandleKHR failed: " << result;
-    vmo.reset();
-  }
-
-  return vmo;
-}
-#endif
+#endif  // defined(OS_POSIX)
 
 bool VulkanImage::Initialize(VulkanDeviceQueue* device_queue,
                              const gfx::Size& size,
@@ -206,6 +184,7 @@ bool VulkanImage::Initialize(VulkanDeviceQueue* device_queue,
   device_queue_ = device_queue;
   size_ = size;
   format_ = format;
+  usage_ = usage;
   flags_ = flags;
   image_tiling_ = image_tiling;
 
@@ -231,7 +210,7 @@ bool VulkanImage::Initialize(VulkanDeviceQueue* device_queue,
       vkCreateImage(vk_device, &create_info, nullptr /* pAllocator */, &image_);
   if (result != VK_SUCCESS) {
     DLOG(ERROR) << "vkCreateImage failed result:" << result;
-    device_queue_ = VK_NULL_HANDLE;
+    device_queue_ = nullptr;
     return false;
   }
 
@@ -301,6 +280,8 @@ bool VulkanImage::InitializeWithExternalMemory(VulkanDeviceQueue* device_queue,
 #if defined(OS_FUCHSIA)
   constexpr auto kHandleType =
       VK_EXTERNAL_MEMORY_HANDLE_TYPE_TEMP_ZIRCON_VMO_BIT_FUCHSIA;
+#elif defined(OS_WIN)
+  constexpr auto kHandleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
 #else
   constexpr auto kHandleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
 #endif

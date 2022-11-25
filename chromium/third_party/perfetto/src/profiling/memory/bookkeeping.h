@@ -96,19 +96,22 @@ class HeapTracker {
   struct CallstackMaxAllocations {
     uint64_t max;
     uint64_t cur;
+    uint64_t max_count;
+    uint64_t cur_count;
   };
   struct CallstackTotalAllocations {
     uint64_t allocated;
     uint64_t freed;
+    uint64_t allocation_count;
+    uint64_t free_count;
   };
 
   // Sum of all the allocations for a given callstack.
   struct CallstackAllocations {
-    CallstackAllocations(GlobalCallstackTrie::Node* n) : node(n) {}
+    explicit CallstackAllocations(GlobalCallstackTrie::Node* n) : node(n) {}
 
     uint64_t allocs = 0;
-    uint64_t allocation_count = 0;
-    uint64_t free_count = 0;
+
     union {
       CallstackMaxAllocations retain_max;
       CallstackTotalAllocations totals;
@@ -145,8 +148,19 @@ class HeapTracker {
       auto& it = it_and_alloc.first;
       uint64_t allocated = it_and_alloc.second;
       const CallstackAllocations& alloc = it->second;
-      if (alloc.allocs == 0 && alloc.allocation_count == allocated)
+      // For non-dump-at-max, we need to check, even if there are still no
+      // allocations referencing this callstack, whether there were any
+      // allocations that happened but were freed again. If that was the case,
+      // we need to keep the callsite, because the next dump will indicate a
+      // different self_alloc and self_freed.
+      if (alloc.allocs == 0 &&
+          (dump_at_max_mode_ ||
+           alloc.value.totals.allocation_count == allocated)) {
+        // TODO(fmayer): We could probably be smarter than throw away
+        // our whole frames cache.
+        ClearFrameCache();
         callstack_allocations_.erase(it);
+      }
     }
     dead_callstack_allocations_.clear();
 
@@ -156,7 +170,8 @@ class HeapTracker {
       fn(alloc);
 
       if (alloc.allocs == 0)
-        dead_callstack_allocations_.emplace_back(it, alloc.allocation_count);
+        dead_callstack_allocations_.emplace_back(
+            it, !dump_at_max_mode_ ? alloc.value.totals.allocation_count : 0);
     }
   }
 
@@ -175,11 +190,15 @@ class HeapTracker {
     RecordOperation(sequence_number, {address, timestamp});
   }
 
+  void ClearFrameCache() { frame_cache_.clear(); }
+
   uint64_t committed_timestamp() { return committed_timestamp_; }
   uint64_t max_timestamp() { return max_timestamp_; }
 
   uint64_t GetSizeForTesting(const std::vector<FrameData>& stack);
   uint64_t GetMaxForTesting(const std::vector<FrameData>& stack);
+  uint64_t GetMaxCountForTesting(const std::vector<FrameData>& stack);
+
   uint64_t GetTimestampForTesting() { return committed_timestamp_; }
 
  private:
@@ -257,19 +276,21 @@ class HeapTracker {
                        const PendingOperation& operation);
 
   void AddToCallstackAllocations(uint64_t ts, const Allocation& alloc) {
-    alloc.callstack_allocations()->allocation_count++;
     if (dump_at_max_mode_) {
       current_unfreed_ += alloc.sample_size;
       alloc.callstack_allocations()->value.retain_max.cur += alloc.sample_size;
+      alloc.callstack_allocations()->value.retain_max.cur_count++;
 
       if (current_unfreed_ <= max_unfreed_)
         return;
 
       if (max_sequence_number_ == alloc.sequence_number - 1) {
+        // We know the only CallstackAllocation that has max != cur is the
+        // one we just updated.
         alloc.callstack_allocations()->value.retain_max.max =
-            // We know the only CallstackAllocation that has max != cur is the
-            // one we just updated.
             alloc.callstack_allocations()->value.retain_max.cur;
+        alloc.callstack_allocations()->value.retain_max.max_count =
+            alloc.callstack_allocations()->value.retain_max.cur_count;
       } else {
         for (auto& p : callstack_allocations_) {
           // We need to reset max = cur for every CallstackAllocation, as we
@@ -285,16 +306,18 @@ class HeapTracker {
     } else {
       alloc.callstack_allocations()->value.totals.allocated +=
           alloc.sample_size;
+      alloc.callstack_allocations()->value.totals.allocation_count++;
     }
   }
 
   void SubtractFromCallstackAllocations(const Allocation& alloc) {
-    alloc.callstack_allocations()->free_count++;
     if (dump_at_max_mode_) {
       current_unfreed_ -= alloc.sample_size;
       alloc.callstack_allocations()->value.retain_max.cur -= alloc.sample_size;
+      alloc.callstack_allocations()->value.retain_max.cur_count--;
     } else {
       alloc.callstack_allocations()->value.totals.freed += alloc.sample_size;
+      alloc.callstack_allocations()->value.totals.free_count++;
     }
   }
 
@@ -330,6 +353,10 @@ class HeapTracker {
   uint64_t current_unfreed_ = 0;
   uint64_t max_unfreed_ = 0;
   uint64_t max_timestamp_ = 0;
+
+  // We index by abspc, which is unique as long as the maps do not change.
+  // This is why we ClearFrameCache after we reparsed maps.
+  std::unordered_map<uint64_t /* abs pc */, Interned<Frame>> frame_cache_;
 };
 
 }  // namespace profiling

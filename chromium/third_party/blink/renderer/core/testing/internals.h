@@ -237,6 +237,10 @@ class Internals final : public ScriptWrappable {
   void setAutofilledValue(Element*, const String&, ExceptionState&);
   void setEditingValue(Element* input_element, const String&, ExceptionState&);
   void setAutofilled(Element*, bool enabled, ExceptionState&);
+  void setSelectionRangeForNumberType(Element* input_element,
+                                      uint32_t start,
+                                      uint32_t end,
+                                      ExceptionState&);
 
   Range* rangeFromLocationAndLength(Element* scope,
                                     int range_location,
@@ -376,9 +380,11 @@ class Internals final : public ScriptWrappable {
   int numberOfPages(float page_width_in_pixels,
                     float page_height_in_pixels,
                     ExceptionState&);
-  String pageProperty(String, int, ExceptionState& = ASSERT_NO_EXCEPTION) const;
+  String pageProperty(String,
+                      unsigned,
+                      ExceptionState& = ASSERT_NO_EXCEPTION) const;
   String pageSizeAndMarginsInPixels(
-      int,
+      unsigned,
       int,
       int,
       int,
@@ -393,7 +399,10 @@ class Internals final : public ScriptWrappable {
                                 float max_scale_factor,
                                 ExceptionState&);
 
+  float pageZoomFactor(ExceptionState&);
+
   void setIsCursorVisible(Document*, bool, ExceptionState&);
+  void setMaxNumberOfFramesToTen(bool);
 
   String effectivePreload(HTMLMediaElement*);
   void mediaPlayerRemoteRouteAvailabilityChanged(HTMLMediaElement*, bool);
@@ -484,7 +493,7 @@ class Internals final : public ScriptWrappable {
   ScriptPromise promiseCheckOverload(ScriptState*, Document*);
   ScriptPromise promiseCheckOverload(ScriptState*, Location*, int32_t, int32_t);
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   void setValueForUser(HTMLInputElement*, const String&);
 
@@ -493,18 +502,16 @@ class Internals final : public ScriptWrappable {
 
   Element* interestedElement();
 
+  // Check if frame associated with current internals object is
+  // active or not.
+  bool isActivated();
+
   bool isInCanvasFontCache(Document*, const String&);
   unsigned canvasFontCacheMaxFonts();
 
   void setScrollChain(ScrollState*,
                       const HeapVector<Member<Element>>& elements,
                       ExceptionState&);
-
-  // Schedule a forced Blink GC run (Oilpan) at the end of event loop.
-  // Note: This is designed to be only used from PerformanceTests/BlinkGC to
-  //       explicitly measure only Blink GC time.  Normal web tests should use
-  //       gc() instead as it would trigger both Blink GC and V8 GC.
-  void scheduleBlinkGC();
 
   String selectedHTMLForClipboard();
   String selectedTextForClipboard();
@@ -546,6 +553,10 @@ class Internals final : public ScriptWrappable {
   // document time in seconds
   double monotonicTimeToZeroBasedDocumentTime(double, ExceptionState&);
 
+  // Translate an event's DOMHighResTimeStamp in seconds into a monotonic time
+  // in milliseconds.
+  int64_t zeroBasedDocumentTimeToMonotonicTime(double dom_event_time);
+
   // Returns the current time ticks (in microseconds).
   int64_t currentTimeTicks();
 
@@ -558,9 +569,6 @@ class Internals final : public ScriptWrappable {
   // ScrollAnimatorCompositorCoordinater::RunState), or -1 if the node does not
   // have a scrollable area.
   String getProgrammaticScrollAnimationState(Node*) const;
-
-  // Returns the visual rect of a node's LayoutObject.
-  DOMRect* visualRect(Node*);
 
   // Intentional crash.
   void crash();
@@ -588,6 +596,8 @@ class Internals final : public ScriptWrappable {
   bool isSiteIsolated(HTMLIFrameElement* iframe) const;
   bool isTrackingOcclusionForIFrame(HTMLIFrameElement* iframe) const;
 
+  void DisableFrequencyCappingForOverlayPopupDetection() const;
+
   void addEmbedderCustomElementName(const AtomicString& name, ExceptionState&);
 
   LocalFrame* GetFrame() const;
@@ -600,6 +610,9 @@ class Internals final : public ScriptWrappable {
   bool overlayScrollbarsEnabled() const;
 
   void generateTestReport(const String& message);
+
+  void setIsAdSubframe(HTMLIFrameElement* iframe,
+                       ExceptionState& exception_state);
 
  private:
   Document* ContextDocument() const;

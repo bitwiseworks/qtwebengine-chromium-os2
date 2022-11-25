@@ -31,7 +31,7 @@ class PLATFORM_EXPORT ScrollbarDisplayItem final : public DisplayItem {
   ScrollbarDisplayItem(const DisplayItemClient&,
                        Type,
                        scoped_refptr<cc::Scrollbar>,
-                       const IntRect& rect,
+                       const IntRect& visual_rect,
                        const TransformPaintPropertyNode* scroll_translation,
                        CompositorElementId element_id);
 
@@ -45,7 +45,8 @@ class PLATFORM_EXPORT ScrollbarDisplayItem final : public DisplayItem {
   sk_sp<const PaintRecord> Paint() const;
 
   // Create or reuse the cc scrollbar layer, for composited scrollbar.
-  scoped_refptr<cc::ScrollbarLayerBase> GetLayer() const;
+  scoped_refptr<cc::ScrollbarLayerBase> CreateOrReuseLayer(
+      cc::ScrollbarLayerBase* existing_layer) const;
 
   // DisplayItem
   bool Equals(const DisplayItem&) const override;
@@ -60,21 +61,16 @@ class PLATFORM_EXPORT ScrollbarDisplayItem final : public DisplayItem {
                      const DisplayItemClient&,
                      DisplayItem::Type,
                      scoped_refptr<cc::Scrollbar>,
-                     const IntRect& rect,
+                     const IntRect& visual_rect,
                      const TransformPaintPropertyNode* scroll_translation,
                      CompositorElementId element_id);
 
  private:
-  scoped_refptr<cc::ScrollbarLayerBase> CreateLayer() const;
-
   scoped_refptr<cc::Scrollbar> scrollbar_;
-  IntRect rect_;
   const TransformPaintPropertyNode* scroll_translation_;
   CompositorElementId element_id_;
   // This is lazily created for non-composited scrollbar.
   mutable sk_sp<const PaintRecord> record_;
-  // This is lazily created for composited scrollbar.
-  mutable scoped_refptr<cc::ScrollbarLayerBase> layer_;
 };
 
 }  // namespace blink

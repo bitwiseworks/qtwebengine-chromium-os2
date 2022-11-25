@@ -11,13 +11,15 @@
 #include "include/core/SkColor.h"
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkMatrix.h"
+#include "include/core/SkRefCnt.h"
 #include "include/core/SkTileMode.h"
 #include "include/core/SkTypes.h"
-#include "include/private/SkNx.h"
 #include "include/private/SkTArray.h"
 #include "src/core/SkArenaAlloc.h"
 #include <functional>
 #include <vector>  // TODO: unused
+
+class SkData;
 
 /**
  * SkRasterPipeline provides a cheap way to chain together a pixel processing pipeline.
@@ -35,13 +37,12 @@
  */
 
 #define SK_RASTER_PIPELINE_STAGES(M)                               \
-    M(callback) M(interpreter)                                     \
+    M(callback)                                                    \
     M(move_src_dst) M(move_dst_src)                                \
     M(clamp_0) M(clamp_1) M(clamp_a) M(clamp_gamut)                \
     M(unpremul) M(premul) M(premul_dst)                            \
     M(force_opaque) M(force_opaque_dst)                            \
     M(set_rgb) M(unbounded_set_rgb) M(swap_rb) M(swap_rb_dst)      \
-    M(from_srgb) M(to_srgb)                                        \
     M(black_color) M(white_color)                                  \
     M(uniform_color) M(unbounded_uniform_color) M(uniform_color_dst) \
     M(seed_shader) M(dither)                                       \
@@ -161,22 +162,9 @@ struct SkRasterPipeline_CallbackCtx {
 };
 
 namespace SkSL {
+class ByteCode;
 class ByteCodeFunction;
-
-template<int width>
-class Interpreter;
-}
-
-struct SkRasterPipeline_InterpreterCtx {
-    static constexpr int VECTOR_WIDTH = 8;
-    SkSL::Interpreter<VECTOR_WIDTH>* interpreter;
-    const SkSL::ByteCodeFunction* fn;
-
-    SkColor4f   paintColor;
-    const void* inputs;
-    int         ninputs;
-    bool        shaderConvention;  // if false, we're a colorfilter
-};
+} // namespace SkSL
 
 struct SkRasterPipeline_GradientCtx {
     size_t stopCount;

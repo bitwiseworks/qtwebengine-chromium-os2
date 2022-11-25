@@ -49,6 +49,7 @@ class CPDFSDK_AnnotHandlerMgr {
   WideString Annot_GetText(CPDFSDK_Annot* pAnnot);
   WideString Annot_GetSelectedText(CPDFSDK_Annot* pAnnot);
   void Annot_ReplaceSelection(CPDFSDK_Annot* pAnnot, const WideString& text);
+  bool Annot_SelectAllText(CPDFSDK_Annot* pAnnot);
 
   bool Annot_CanUndo(CPDFSDK_Annot* pAnnot);
   bool Annot_CanRedo(CPDFSDK_Annot* pAnnot);
@@ -86,8 +87,8 @@ class CPDFSDK_AnnotHandlerMgr {
   bool Annot_OnMouseWheel(CPDFSDK_PageView* pPageView,
                           ObservedPtr<CPDFSDK_Annot>* pAnnot,
                           uint32_t nFlags,
-                          short zDelta,
-                          const CFX_PointF& point);
+                          const CFX_PointF& point,
+                          const CFX_Vector& delta);
   bool Annot_OnRButtonDown(CPDFSDK_PageView* pPageView,
                            ObservedPtr<CPDFSDK_Annot>* pAnnot,
                            uint32_t nFlags,
@@ -97,7 +98,10 @@ class CPDFSDK_AnnotHandlerMgr {
                          uint32_t nFlags,
                          const CFX_PointF& point);
   bool Annot_OnChar(CPDFSDK_Annot* pAnnot, uint32_t nChar, uint32_t nFlags);
-  bool Annot_OnKeyDown(CPDFSDK_Annot* pAnnot, int nKeyCode, int nFlag);
+  bool Annot_OnKeyDown(CPDFSDK_PageView* pPageView,
+                       CPDFSDK_Annot* pAnnot,
+                       int nKeyCode,
+                       int nFlag);
   bool Annot_OnSetFocus(ObservedPtr<CPDFSDK_Annot>* pAnnot, uint32_t nFlag);
   bool Annot_OnKillFocus(ObservedPtr<CPDFSDK_Annot>* pAnnot, uint32_t nFlag);
   bool Annot_SetIndexSelected(ObservedPtr<CPDFSDK_Annot>* pAnnot,
@@ -123,6 +127,8 @@ class CPDFSDK_AnnotHandlerMgr {
   IPDFSDK_AnnotHandler* GetAnnotHandlerOfType(
       CPDF_Annot::Subtype nAnnotSubtype) const;
   CPDFSDK_Annot* GetNextAnnot(CPDFSDK_Annot* pSDKAnnot, bool bNext);
+  CPDFSDK_Annot* GetFirstOrLastFocusableAnnot(CPDFSDK_PageView* page_view,
+                                              bool last) const;
 
   // |m_pBAAnnotHandler| and |m_pWidgetHandler| are always present, but
   // |m_pXFAWidgetHandler| is only present in XFA mode.

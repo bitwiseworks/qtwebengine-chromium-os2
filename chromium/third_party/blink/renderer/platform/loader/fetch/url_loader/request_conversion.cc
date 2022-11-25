@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/request_conversion.h"
 
+#include "media/media_buildflags.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/system/data_pipe.h"
@@ -18,6 +19,7 @@
 #include "services/network/public/mojom/data_pipe_getter.mojom.h"
 #include "services/network/public/mojom/trust_tokens.mojom-blink.h"
 #include "services/network/public/mojom/trust_tokens.mojom.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/blob/blob.mojom.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-shared.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom-shared.h"
@@ -28,6 +30,7 @@
 #include "third_party/blink/renderer/platform/exported/wrapped_resource_request.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/loader/fetch/trust_token_params_conversion.h"
+#include "third_party/blink/renderer/platform/network/encoded_form_data.h"
 #include "third_party/blink/renderer/platform/network/wrapped_data_pipe_getter.h"
 
 namespace blink {
@@ -35,7 +38,20 @@ namespace blink {
 namespace {
 
 constexpr char kStylesheetAcceptHeader[] = "text/css,*/*;q=0.1";
-constexpr char kImageAcceptHeader[] = "image/webp,image/apng,image/*,*/*;q=0.8";
+
+const char* ImageAcceptHeader() {
+  static constexpr char kImageAcceptHeaderWithAvif[] =
+      "image/avif,image/webp,image/apng,image/*,*/*;q=0.8";
+  static constexpr size_t kOffset = sizeof("image/avif,") - 1;
+#if BUILDFLAG(ENABLE_AV1_DECODER)
+  static const char* header = base::FeatureList::IsEnabled(features::kAVIF)
+                                  ? kImageAcceptHeaderWithAvif
+                                  : kImageAcceptHeaderWithAvif + kOffset;
+#else
+  static const char* header = kImageAcceptHeaderWithAvif + kOffset;
+#endif
+  return header;
+}
 
 // TODO(yhirano): Unify these with variables in
 // content/public/common/content_constants.h.
@@ -177,8 +193,6 @@ mojom::ResourceType RequestContextToResourceType(
   }
 }
 
-}  // namespace
-
 void PopulateResourceRequestBody(const EncodedFormData& src,
                                  network::ResourceRequestBody* dest) {
   for (const auto& element : src.Elements()) {
@@ -228,6 +242,8 @@ void PopulateResourceRequestBody(const EncodedFormData& src,
   }
 }
 
+}  // namespace
+
 void PopulateResourceRequest(const ResourceRequestHead& src,
                              ResourceRequestBody src_body,
                              network::ResourceRequest* dest) {
@@ -238,10 +254,12 @@ void PopulateResourceRequest(const ResourceRequestHead& src,
   dest->is_revalidating = src.IsRevalidating();
   if (src.RequestorOrigin()->ToString() == "null") {
     // "file:" origin is treated like an opaque unique origin when
-    // allow-file-access-from-files is not specified. Such origin is not
-    // opaque (i.e., IsOpaque() returns false) but still serializes to
-    // "null".
-    dest->request_initiator = url::Origin();
+    // allow-file-access-from-files is not specified. Such origin is not opaque
+    // (i.e., IsOpaque() returns false) but still serializes to "null". Derive a
+    // new opaque origin so that downstream consumers can make use of the
+    // origin's precursor.
+    dest->request_initiator =
+        src.RequestorOrigin()->DeriveNewOpaqueOrigin()->ToUrlOrigin();
   } else {
     dest->request_initiator = src.RequestorOrigin()->ToUrlOrigin();
   }
@@ -291,8 +309,7 @@ void PopulateResourceRequest(const ResourceRequestHead& src,
   mojom::ResourceType resource_type =
       RequestContextToResourceType(src.GetRequestContext());
 
-  // TODO(kinuko): Deprecate these.
-  dest->fetch_request_context_type = static_cast<int>(src.GetRequestContext());
+  // TODO(kinuko): Deprecate this.
   dest->resource_type = static_cast<int>(resource_type);
 
   if (resource_type == mojom::ResourceType::kXhr &&
@@ -333,6 +350,17 @@ void PopulateResourceRequest(const ResourceRequestHead& src,
     dest->request_body = base::MakeRefCounted<network::ResourceRequestBody>();
 
     PopulateResourceRequestBody(*body, dest->request_body.get());
+  } else if (src_body.StreamBody().is_valid()) {
+    DCHECK_NE(dest->method, net::HttpRequestHeaders::kGetMethod);
+    DCHECK_NE(dest->method, net::HttpRequestHeaders::kHeadMethod);
+    mojo::PendingRemote<network::mojom::blink::ChunkedDataPipeGetter>
+        stream_body = src_body.TakeStreamBody();
+    dest->request_body = base::MakeRefCounted<network::ResourceRequestBody>();
+    mojo::PendingRemote<network::mojom::ChunkedDataPipeGetter>
+        network_stream_body(stream_body.PassPipe(), 0u);
+    dest->request_body->SetToReadOnceStream(std::move(network_stream_body));
+    dest->request_body->SetAllowHTTP1ForStreamingUpload(
+        src.AllowHTTP1ForStreamingUpload());
   }
 
   if (resource_type == mojom::ResourceType::kStylesheet) {
@@ -341,7 +369,7 @@ void PopulateResourceRequest(const ResourceRequestHead& src,
   } else if (resource_type == mojom::ResourceType::kImage ||
              resource_type == mojom::ResourceType::kFavicon) {
     dest->headers.SetHeader(net::HttpRequestHeaders::kAccept,
-                            kImageAcceptHeader);
+                            ImageAcceptHeader());
   } else {
     // Calling SetHeaderIfMissing() instead of SetHeader() because JS can
     // manually set an accept header on an XHR.

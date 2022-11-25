@@ -7,11 +7,12 @@
 #include <stddef.h>
 #include <utility>
 #include "base/bind.h"
+#include "base/check_op.h"
 #include "base/format_macros.h"
-#include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -23,7 +24,6 @@
 #include "net/http/http_status_code.h"
 #include "net/http/http_util.h"
 #include "net/url_request/url_request.h"
-#include "net/url_request/url_request_status.h"
 #include "services/network/public/cpp/constants.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "storage/browser/blob/blob_data_handle.h"
@@ -45,34 +45,30 @@ scoped_refptr<net::HttpResponseHeaders> GenerateHeaders(
   status.append(net::GetHttpReasonPhrase(status_code));
   status.append("\0\0", 2);
   scoped_refptr<net::HttpResponseHeaders> headers =
-      new net::HttpResponseHeaders(status);
+      base::MakeRefCounted<net::HttpResponseHeaders>(status);
 
   if (status_code == net::HTTP_OK || status_code == net::HTTP_PARTIAL_CONTENT) {
-    std::string content_length_header(net::HttpRequestHeaders::kContentLength);
-    content_length_header.append(": ");
-    content_length_header.append(base::NumberToString(content_size));
-    headers->AddHeader(content_length_header);
+    headers->SetHeader(net::HttpRequestHeaders::kContentLength,
+                       base::NumberToString(content_size));
     if (status_code == net::HTTP_PARTIAL_CONTENT) {
       DCHECK(byte_range->IsValid());
-      std::string content_range_header(net::HttpResponseHeaders::kContentRange);
-      content_range_header.append(": bytes ");
+      std::string content_range_header;
+      content_range_header.append("bytes ");
       content_range_header.append(base::StringPrintf(
           "%" PRId64 "-%" PRId64, byte_range->first_byte_position(),
           byte_range->last_byte_position()));
       content_range_header.append("/");
       content_range_header.append(base::StringPrintf("%" PRId64, total_size));
-      headers->AddHeader(content_range_header);
+      headers->SetHeader(net::HttpResponseHeaders::kContentRange,
+                         content_range_header);
     }
     if (!blob_handle->content_type().empty()) {
-      std::string content_type_header(net::HttpRequestHeaders::kContentType);
-      content_type_header.append(": ");
-      content_type_header.append(blob_handle->content_type());
-      headers->AddHeader(content_type_header);
+      headers->SetHeader(net::HttpRequestHeaders::kContentType,
+                         blob_handle->content_type());
     }
     if (!blob_handle->content_disposition().empty()) {
-      std::string content_disposition_header("Content-Disposition: ");
-      content_disposition_header.append(blob_handle->content_disposition());
-      headers->AddHeader(content_disposition_header);
+      headers->SetHeader("Content-Disposition",
+                         blob_handle->content_disposition());
     }
   }
 
@@ -135,8 +131,7 @@ void BlobURLLoader::Start(const std::string& method,
   }
 
   std::string range_header;
-  if (headers.GetHeader(net::HttpRequestHeaders::kRange,
-                                &range_header)) {
+  if (headers.GetHeader(net::HttpRequestHeaders::kRange, &range_header)) {
     // We only care about "Range" header here.
     std::vector<net::HttpByteRange> ranges;
     if (net::HttpUtil::ParseRangeHeader(range_header, &ranges)) {
@@ -175,6 +170,7 @@ void BlobURLLoader::Start(const std::string& method,
 void BlobURLLoader::FollowRedirect(
     const std::vector<std::string>& removed_headers,
     const net::HttpRequestHeaders& modified_headers,
+    const net::HttpRequestHeaders& modified_cors_exempt_headers,
     const base::Optional<GURL>& new_url) {
   NOTREACHED();
 }

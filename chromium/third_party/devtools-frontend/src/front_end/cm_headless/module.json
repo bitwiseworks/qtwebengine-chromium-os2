@@ -1,10 +1,8 @@
 {
-    "scripts": [],
-    "modules": [
-        "cm_headless.js",
-        "headlesscodemirror.js"
-    ],
-    "skip_compilation": [
-        "headlesscodemirror.js"
-    ]
+  "modules": [
+    "cm_headless.js",
+    "../third_party/codemirror/package/addon/runmode/runmode-standalone.js"
+  ],  "skip_compilation": [
+    "../third_party/codemirror/package/addon/runmode/runmode-standalone.js"
+  ]
 }

@@ -16,10 +16,11 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/notreached.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "net/base/address_list.h"
@@ -128,7 +129,6 @@ DnsConfig GetFuzzedDnsConfig(FuzzedDataProvider* data_provider) {
 
   config.unhandled_options = data_provider->ConsumeBool();
   config.append_to_multi_label_name = data_provider->ConsumeBool();
-  config.randomize_ports = data_provider->ConsumeBool();
   config.ndots = data_provider->ConsumeIntegralInRange(0, 3);
   config.attempts = data_provider->ConsumeIntegralInRange(1, 3);
 

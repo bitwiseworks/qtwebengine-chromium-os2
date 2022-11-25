@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include <memory>
+#include <vector>
 
 #include "base/base_paths.h"
 #include "base/files/file_path.h"
@@ -409,6 +410,78 @@ TEST_F(AutofillFieldFillerTest, FillFormField_AutocompleteOff_CreditCardField) {
 
   // Verify that the field is filled.
   EXPECT_EQ(ASCIIToUTF16("4111111111111111"), field.value);
+}
+
+// Verify that the correct value is returned if the maximum length of the credit
+// card value exceeds the actual length.
+TEST_F(AutofillFieldFillerTest,
+       FillFormField_MaxLength_CreditCardField_MaxLenghtExceedsLength) {
+  AutofillField field;
+  field.max_length = 30;
+  field.set_credit_card_number_offset(2);
+  field.set_heuristic_type(CREDIT_CARD_NUMBER);
+
+  // Credit card related field.
+  credit_card()->SetNumber(ASCIIToUTF16("0123456789999999"));
+  FieldFiller filler(/*app_locale=*/"en-US", /*address_normalizer=*/nullptr);
+  filler.FillFormField(field, *credit_card(), &field, /*cvc=*/base::string16());
+
+  // Verify that the field is filled with the fourth digit of the credit card
+  // number.
+  EXPECT_EQ(ASCIIToUTF16("23456789999999"), field.value);
+}
+
+// Verify that the full credit card number is returned if the offset exceeds the
+// length.
+TEST_F(AutofillFieldFillerTest,
+       FillFormField_MaxLength_CreditCardField_OffsetExceedsLength) {
+  AutofillField field;
+  field.max_length = 18;
+  field.set_credit_card_number_offset(30);
+  field.set_heuristic_type(CREDIT_CARD_NUMBER);
+
+  // Credit card related field.
+  credit_card()->SetNumber(ASCIIToUTF16("0123456789999999"));
+  FieldFiller filler(/*app_locale=*/"en-US", /*address_normalizer=*/nullptr);
+  filler.FillFormField(field, *credit_card(), &field, /*cvc=*/base::string16());
+
+  // Verify that the field is filled with the full credit card number.
+  EXPECT_EQ(ASCIIToUTF16("0123456789999999"), field.value);
+}
+
+// Verify that only the truncated and offsetted value of the credit card number
+// is set.
+TEST_F(AutofillFieldFillerTest,
+       FillFormField_MaxLength_CreditCardField_WithOffset) {
+  AutofillField field;
+  field.max_length = 1;
+  field.set_credit_card_number_offset(3);
+  field.set_heuristic_type(CREDIT_CARD_NUMBER);
+
+  // Credit card related field.
+  credit_card()->SetNumber(ASCIIToUTF16("0123456789999999"));
+  FieldFiller filler(/*app_locale=*/"en-US", /*address_normalizer=*/nullptr);
+  filler.FillFormField(field, *credit_card(), &field, /*cvc=*/base::string16());
+
+  // Verify that the field is filled with the third digit of the credit card
+  // number.
+  EXPECT_EQ(ASCIIToUTF16("3"), field.value);
+}
+
+// Verify that only the truncated value of the credit card number is set.
+TEST_F(AutofillFieldFillerTest, FillFormField_MaxLength_CreditCardField) {
+  AutofillField field;
+  field.max_length = 1;
+  field.set_heuristic_type(CREDIT_CARD_NUMBER);
+
+  // Credit card related field.
+  credit_card()->SetNumber(ASCIIToUTF16("4111111111111111"));
+  FieldFiller filler(/*app_locale=*/"en-US", /*address_normalizer=*/nullptr);
+  filler.FillFormField(field, *credit_card(), &field, /*cvc=*/base::string16());
+
+  // Verify that the field is filled with only the first digit of the credit
+  // card number.
+  EXPECT_EQ(ASCIIToUTF16("4"), field.value);
 }
 
 // Verify that when the relevant feature is enabled, the invalid fields don't
@@ -1421,5 +1494,133 @@ INSTANTIATE_TEST_SUITE_P(
         // fill at all.
         FillStateTextTestCase{HTML_TYPE_ADDRESS_LEVEL1, 3, "Quebec", "",
                               false}));
+
+// Tests that the correct option is chosen in the selection box when one of the
+// options exactly matches the phone country code.
+TEST_F(AutofillFieldFillerTest,
+       FillSelectControlPhoneCountryCodeWithExactMatch) {
+  base::test::ScopedFeatureList enabled;
+  enabled.InitAndEnableFeature(
+      features::kAutofillEnableAugmentedPhoneCountryCode);
+
+  std::vector<const char*> kPhoneCountryCode = {"91", "1", "20", "49"};
+  AutofillField field;
+  test::CreateTestSelectField(kPhoneCountryCode, &field);
+  field.set_heuristic_type(PHONE_HOME_COUNTRY_CODE);
+
+  AutofillProfile address;
+  address.SetRawInfo(PHONE_HOME_WHOLE_NUMBER, ASCIIToUTF16("+15145554578"));
+  FieldFiller filler(/*app_locale=*/"en-US", /*address_normalizer=*/nullptr);
+  filler.FillFormField(field, address, &field, /*cvc=*/base::string16());
+  EXPECT_EQ(ASCIIToUTF16("1"), field.value);
+}
+
+// Tests that the correct option is chosen in the selection box when the options
+// are preceded by a plus sign and the field is of |PHONE_HOME_COUNTRY_CODE|
+// type.
+TEST_F(AutofillFieldFillerTest,
+       FillSelectControlPhoneCountryCodePrecededByPlus) {
+  base::test::ScopedFeatureList enabled;
+  enabled.InitAndEnableFeature(
+      features::kAutofillEnableAugmentedPhoneCountryCode);
+
+  std::vector<const char*> kPhoneCountryCode = {"+91", "+1", "+20", "+49"};
+  AutofillField field;
+  test::CreateTestSelectField(kPhoneCountryCode, &field);
+  field.set_heuristic_type(PHONE_HOME_COUNTRY_CODE);
+
+  AutofillProfile address;
+  address.SetRawInfo(PHONE_HOME_WHOLE_NUMBER, ASCIIToUTF16("+918890888888"));
+  FieldFiller filler(/*app_locale=*/"en-US", /*address_normalizer=*/nullptr);
+  filler.FillFormField(field, address, &field, /*cvc=*/base::string16());
+  EXPECT_EQ(ASCIIToUTF16("+91"), field.value);
+}
+
+// Tests that the correct option is chosen in the selection box when the options
+// are preceded by a '00' and the field is of |PHONE_HOME_COUNTRY_CODE|
+// type.
+TEST_F(AutofillFieldFillerTest,
+       FillSelectControlPhoneCountryCodePrecededByDoubleZeros) {
+  base::test::ScopedFeatureList enabled;
+  enabled.InitAndEnableFeature(
+      features::kAutofillEnableAugmentedPhoneCountryCode);
+
+  std::vector<const char*> kPhoneCountryCode = {"0091", "001", "0020", "0049"};
+  AutofillField field;
+  test::CreateTestSelectField(kPhoneCountryCode, &field);
+  field.set_heuristic_type(PHONE_HOME_COUNTRY_CODE);
+
+  AutofillProfile address;
+  address.SetRawInfo(PHONE_HOME_WHOLE_NUMBER, ASCIIToUTF16("+918890888888"));
+  FieldFiller filler(/*app_locale=*/"en-US", /*address_normalizer=*/nullptr);
+  filler.FillFormField(field, address, &field, /*cvc=*/base::string16());
+  EXPECT_EQ(ASCIIToUTF16("0091"), field.value);
+}
+
+// Tests that the correct option is chosen in the selection box when the options
+// are composed of the country code and the country name.
+TEST_F(AutofillFieldFillerTest, FillSelectControlAugmentedPhoneCountryCode) {
+  base::test::ScopedFeatureList enabled;
+  enabled.InitAndEnableFeature(
+      features::kAutofillEnableAugmentedPhoneCountryCode);
+
+  std::vector<const char*> kPhoneCountryCode = {
+      "Please select an option", "+91 (India)", "+1 (United States)",
+      "+20 (Egypt)", "+49 (Germany)"};
+  AutofillField field;
+  test::CreateTestSelectField(kPhoneCountryCode, &field);
+  field.set_heuristic_type(PHONE_HOME_COUNTRY_CODE);
+
+  AutofillProfile address;
+  address.SetRawInfo(PHONE_HOME_WHOLE_NUMBER, ASCIIToUTF16("+49151669087345"));
+  FieldFiller filler(/*app_locale=*/"en-US", /*address_normalizer=*/nullptr);
+  filler.FillFormField(field, address, &field, /*cvc=*/base::string16());
+  EXPECT_EQ(ASCIIToUTF16("+49 (Germany)"), field.value);
+}
+
+// Tests that the correct option is chosen in the selection box when the options
+// are composed of the country code having whitespace and the country name.
+TEST_F(AutofillFieldFillerTest,
+       FillSelectControlAugmentedPhoneCountryCodeWithWhiteSpaces) {
+  base::test::ScopedFeatureList enabled;
+  enabled.InitAndEnableFeature(
+      features::kAutofillEnableAugmentedPhoneCountryCode);
+
+  std::vector<const char*> kPhoneCountryCode = {
+      "Please select an option", "(00 91) India", "(00 1) United States",
+      "(00 20) Egypt", "(00 49) Germany"};
+  AutofillField field;
+  test::CreateTestSelectField(kPhoneCountryCode, &field);
+  field.set_heuristic_type(PHONE_HOME_COUNTRY_CODE);
+
+  AutofillProfile address;
+  address.SetRawInfo(PHONE_HOME_WHOLE_NUMBER, ASCIIToUTF16("+49151669087345"));
+  FieldFiller filler(/*app_locale=*/"en-US", /*address_normalizer=*/nullptr);
+  filler.FillFormField(field, address, &field, /*cvc=*/base::string16());
+  EXPECT_EQ(ASCIIToUTF16("(00 49) Germany"), field.value);
+}
+
+// Tests that the correct option is chosen in the selection box when the options
+// are composed of the country code that is preceded by '00' and the country
+// name.
+TEST_F(AutofillFieldFillerTest,
+       FillSelectControlAugmentedPhoneCountryCodeHavingDoubleZeros) {
+  base::test::ScopedFeatureList enabled;
+  enabled.InitAndEnableFeature(
+      features::kAutofillEnableAugmentedPhoneCountryCode);
+
+  std::vector<const char*> kPhoneCountryCode = {
+      "Please select an option", "(0091) India", "(001) United States",
+      "(0020) Egypt", "(0049) Germany"};
+  AutofillField field;
+  test::CreateTestSelectField(kPhoneCountryCode, &field);
+  field.set_heuristic_type(PHONE_HOME_COUNTRY_CODE);
+
+  AutofillProfile address;
+  address.SetRawInfo(PHONE_HOME_WHOLE_NUMBER, ASCIIToUTF16("+49151669087345"));
+  FieldFiller filler(/*app_locale=*/"en-US", /*address_normalizer=*/nullptr);
+  filler.FillFormField(field, address, &field, /*cvc=*/base::string16());
+  EXPECT_EQ(ASCIIToUTF16("(0049) Germany"), field.value);
+}
 
 }  // namespace autofill

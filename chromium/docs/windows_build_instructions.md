@@ -50,7 +50,7 @@ $ PATH_TO_INSTALLER.EXE ^
 --includeRecommended
 ```
 
-You must have the version 10.0.18362 or higher Windows 10 SDK installed. This
+You must have the version 10.0.19041 or higher Windows 10 SDK installed. This
 can be installed separately or by checking the appropriate box in the Visual
 Studio Installer.
 
@@ -89,6 +89,11 @@ if your system PATH has a Python in it, you will be out of luck.
 Also, add a DEPOT_TOOLS_WIN_TOOLCHAIN system variable in the same way, and set
 it to 0. This tells depot_tools to use your locally installed version of Visual
 Studio (by default, depot_tools will try to use a google-internal version).
+
+You may also have to set variable `vs2017_install` or `vs2019_install` to your
+installation path of Visual Studio 2017 or 19, like
+`set vs2019_install=C:\Program Files (x86)\Microsoft Visual Studio\2019\Professional`
+for Visual Studio 2019.
 
 From a cmd.exe shell, run the command gclient (without arguments). On first
 run, gclient will install all the Windows-specific bits needed to work with
@@ -249,10 +254,13 @@ don't' set enable_nacl = false then build times may get worse.
 * `blink_symbol_level = 0` - turn off source-level debugging for
 blink to reduce build times, appropriate if you don't plan to debug blink.
 
-In order to speed up linking you can set `symbol_level = 1` - this option
-reduces the work the linker has to do but when this option is set you cannot do
-source-level debugging. Switching from `symbol_level = 2` (the default) to
-`symbol_level = 1` requires recompiling everything.
+In order to speed up linking you can set `symbol_level = 1` or
+`symbol_level = 0` - these options reduce the work the compiler and linker have
+to do. With `symbol_level = 1` the compiler emits file name and line number
+information so you can still do source-level debugging but there will be no
+local variable or type information. With `symbol_level = 0` there is no
+source-level debugging but call stacks still have function names. Changing
+`symbol_level` requires recompiling everything.
 
 In addition, Google employees should use goma, a distributed compilation system.
 Detailed information is available internally but the relevant gn arg is:

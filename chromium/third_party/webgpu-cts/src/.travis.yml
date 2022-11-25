@@ -2,14 +2,21 @@ language: node_js
 node_js:
   - 'node'
 
-before_install: yarn global add grunt-cli
-
 deploy:
   provider: pages
   skip_cleanup: true
   github_token: $GITHUB_TOKEN
   on:
-    branch: master
+    branch: main
+
+deploy:
+  repo: gpuweb-cts-glsl/gpuweb-cts-glsl.github.io
+  target_branch: master
+  provider: pages
+  skip_cleanup: true
+  github_token: $GITHUB_TOKEN
+  on:
+    branch: glsl-dependent
 
 before_deploy:
   - sed -i '/out\//d' .gitignore

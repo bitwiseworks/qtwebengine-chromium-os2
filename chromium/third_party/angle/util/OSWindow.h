@@ -25,8 +25,9 @@ class ANGLE_UTIL_EXPORT OSWindow
     static OSWindow *New();
     static void Delete(OSWindow **osWindow);
 
-    virtual bool initialize(const std::string &name, int width, int height) = 0;
-    virtual void destroy()                                                  = 0;
+    bool initialize(const std::string &name, int width, int height);
+    virtual void destroy()                   = 0;
+    virtual void disableErrorMessageDialog() = 0;
 
     int getX() const;
     int getY() const;
@@ -53,19 +54,25 @@ class ANGLE_UTIL_EXPORT OSWindow
     bool popEvent(Event *event);
     virtual void pushEvent(Event event);
 
-    virtual void setMousePosition(int x, int y) = 0;
-    virtual bool setPosition(int x, int y)      = 0;
-    virtual bool resize(int width, int height)  = 0;
-    virtual void setVisible(bool isVisible)     = 0;
+    virtual void setMousePosition(int x, int y)        = 0;
+    virtual bool setOrientation(int width, int height) = 0;
+    virtual bool setPosition(int x, int y)             = 0;
+    virtual bool resize(int width, int height)         = 0;
+    virtual void setVisible(bool isVisible)            = 0;
 
     virtual void signalTestEvent() = 0;
 
     // Pops events look for the test event
     bool didTestEventFire();
 
+    // Whether window has been successfully initialized.
+    bool valid() const { return mValid; }
+
   protected:
     OSWindow();
     virtual ~OSWindow();
+
+    virtual bool initializeImpl(const std::string &name, int width, int height) = 0;
 
     int mX;
     int mY;
@@ -73,6 +80,8 @@ class ANGLE_UTIL_EXPORT OSWindow
     int mHeight;
 
     std::list<Event> mEvents;
+
+    bool mValid;
 };
 
 #endif  // UTIL_OSWINDOW_H_

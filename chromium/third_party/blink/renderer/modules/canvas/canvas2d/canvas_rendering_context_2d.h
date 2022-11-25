@@ -30,18 +30,23 @@
 #include <random>
 
 #include "base/macros.h"
+#include "services/metrics/public/cpp/ukm_recorder.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_canvas_rendering_context_2d_settings.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_context_creation_attributes_core.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context_factory.h"
+#include "third_party/blink/renderer/core/html/canvas/image_data.h"
 #include "third_party/blink/renderer/core/style/filter_operations.h"
 #include "third_party/blink/renderer/core/svg/svg_resource_client.h"
 #include "third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.h"
 #include "third_party/blink/renderer/modules/canvas/canvas2d/canvas_rendering_context_2d_state.h"
+#include "third_party/blink/renderer/modules/canvas/canvas2d/identifiability_study_helper.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_types.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/privacy_budget/identifiability_digest_helpers.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/wtf/linked_hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -71,7 +76,6 @@ class MODULES_EXPORT CanvasRenderingContext2D final
       public BaseRenderingContext2D,
       public SVGResourceClient {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(CanvasRenderingContext2D);
 
  public:
   class Factory : public CanvasRenderingContextFactory {
@@ -184,7 +188,7 @@ class MODULES_EXPORT CanvasRenderingContext2D final
   cc::PaintCanvas* GetPaintCanvas() const final;
 
   void DidDraw(const SkIRect& dirty_rect) final;
-  scoped_refptr<StaticBitmapImage> GetImage(AccelerationHint) final;
+  scoped_refptr<StaticBitmapImage> GetImage() final;
 
   bool StateHasFilter() final;
   sk_sp<PaintFilter> StateGetFilter() final;
@@ -200,9 +204,27 @@ class MODULES_EXPORT CanvasRenderingContext2D final
 
   void WillDrawImage(CanvasImageSource*) const final;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
+
+  ImageData* getImageData(int sx,
+                          int sy,
+                          int sw,
+                          int sh,
+                          ExceptionState&) override;
 
   CanvasColorParams ColorParamsForTest() const { return ColorParams(); }
+
+  IdentifiableToken IdentifiableTextToken() const override {
+    return identifiability_study_helper_.GetToken();
+  }
+
+  bool IdentifiabilityEncounteredSkippedOps() const override {
+    return identifiability_study_helper_.encountered_skipped_ops();
+  }
+
+  bool IdentifiabilityEncounteredSensitiveOps() const override {
+    return identifiability_study_helper_.encountered_sensitive_ops();
+  }
 
  protected:
   CanvasColorParams ColorParams() const override;
@@ -244,7 +266,7 @@ class MODULES_EXPORT CanvasRenderingContext2D final
   String ColorSpaceAsString() const override;
   CanvasPixelFormat PixelFormat() const override;
 
-  bool Is2d() const override { return true; }
+  bool IsRenderingContext2D() const override { return true; }
   bool IsComposited() const override;
   bool IsAccelerated() const override;
   bool IsOriginTopLeft() const override;
@@ -276,6 +298,9 @@ class MODULES_EXPORT CanvasRenderingContext2D final
   static constexpr float kRasterMetricProbability = 0.01;
   std::mt19937 random_generator_;
   std::bernoulli_distribution bernoulli_distribution_;
+
+  ukm::UkmRecorder* ukm_recorder_;
+  ukm::SourceId ukm_source_id_;
 };
 
 }  // namespace blink

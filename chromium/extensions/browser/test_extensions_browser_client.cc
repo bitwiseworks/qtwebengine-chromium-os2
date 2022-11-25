@@ -23,12 +23,7 @@ namespace extensions {
 
 TestExtensionsBrowserClient::TestExtensionsBrowserClient(
     BrowserContext* main_context)
-    : main_context_(nullptr),
-      incognito_context_(nullptr),
-      lock_screen_context_(nullptr),
-      process_manager_delegate_(nullptr),
-      extension_system_factory_(nullptr),
-      extension_cache_(std::make_unique<NullExtensionCache>()) {
+    : extension_cache_(std::make_unique<NullExtensionCache>()) {
   if (main_context)
     SetMainContext(main_context);
 }
@@ -36,7 +31,7 @@ TestExtensionsBrowserClient::TestExtensionsBrowserClient(
 TestExtensionsBrowserClient::TestExtensionsBrowserClient()
     : TestExtensionsBrowserClient(nullptr) {}
 
-TestExtensionsBrowserClient::~TestExtensionsBrowserClient() {}
+TestExtensionsBrowserClient::~TestExtensionsBrowserClient() = default;
 
 void TestExtensionsBrowserClient::SetUpdateClientFactory(
     const base::Callback<update_client::UpdateClient*(void)>& factory) {
@@ -207,8 +202,7 @@ TestExtensionsBrowserClient::GetExtensionSystemFactory() {
 }
 
 void TestExtensionsBrowserClient::RegisterBrowserInterfaceBindersForFrame(
-    service_manager::BinderMapWithContext<content::RenderFrameHost*>*
-        binder_map,
+    mojo::BinderMapWithContext<content::RenderFrameHost*>* binder_map,
     content::RenderFrameHost* render_frame_host,
     const Extension* extension) const {}
 

@@ -32,12 +32,8 @@ jumbo_source_set("common") {
     "constants.h",
     "logging/encoding_event_subscriber.cc",
     "logging/encoding_event_subscriber.h",
-    "logging/log_deserializer.cc",
-    "logging/log_deserializer.h",
     "logging/log_event_dispatcher.cc",
     "logging/log_event_dispatcher.h",
-    "logging/log_serializer.cc",
-    "logging/log_serializer.h",
     "logging/logging_defines.cc",
     "logging/logging_defines.h",
     "logging/proto/proto_utils.cc",
@@ -168,16 +164,14 @@ jumbo_source_set("sender") {
     "//ui/gfx/geometry",
   ]
 
-  libs = []
-
   # iOS and OS X encoders
-  if (is_ios || is_mac) {
+  if (is_apple) {
     sources += [
       "sender/h264_vt_encoder.cc",
       "sender/h264_vt_encoder.h",
     ]
 
-    libs += [
+    frameworks = [
       "AudioToolbox.framework",
       "CoreFoundation.framework",
       "CoreMedia.framework",
@@ -284,12 +278,13 @@ static_library("test_support") {
 }
 
 test("cast_unittests") {
+  use_xvfb = use_xvfb_in_this_config
+
   sources = [
     "common/expanded_value_base_unittest.cc",
     "common/rtp_time_unittest.cc",
     "logging/encoding_event_subscriber_unittest.cc",
     "logging/receiver_time_offset_estimator_impl_unittest.cc",
-    "logging/serialize_deserialize_test.cc",
     "logging/simple_event_subscriber_unittest.cc",
     "logging/stats_event_subscriber_unittest.cc",
     "net/cast_transport_impl_unittest.cc",
@@ -362,7 +357,7 @@ test("cast_unittests") {
     ]
   }
 
-  if (is_ios || is_mac) {
+  if (is_apple) {
     sources += [ "sender/h264_vt_encoder_unittest.cc" ]
 
     deps += [ "//third_party/ffmpeg" ]
@@ -406,6 +401,7 @@ if (is_win || is_mac || (is_linux && !is_chromeos)) {
   executable("cast_receiver_app") {
     testonly = true
     sources = [ "test/receiver.cc" ]
+    public_deps = []
     deps = [
       ":common",
       ":net",
@@ -415,6 +411,7 @@ if (is_win || is_mac || (is_linux && !is_chromeos)) {
       "//build/win:default_exe_manifest",
       "//media:test_support",
       "//net",
+      "//ui/base:features",
       "//ui/gfx/geometry",
     ]
 
@@ -423,11 +420,11 @@ if (is_win || is_mac || (is_linux && !is_chromeos)) {
         "test/linux_output_window.cc",
         "test/linux_output_window.h",
       ]
-      configs += [
-        "//build/config/linux:x11",
-        "//build/config/linux:xext",
+      public_deps += [ "//ui/gfx/x" ]
+      deps += [
+        "//cc/paint",
+        "//ui/base/x",
       ]
-      deps += [ "//third_party/libyuv" ]
     }
   }
 

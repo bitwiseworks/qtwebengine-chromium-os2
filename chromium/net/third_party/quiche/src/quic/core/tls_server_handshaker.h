@@ -9,6 +9,7 @@
 
 #include "third_party/boringssl/src/include/openssl/pool.h"
 #include "third_party/boringssl/src/include/openssl/ssl.h"
+#include "net/third_party/quiche/src/quic/core/crypto/quic_crypto_server_config.h"
 #include "net/third_party/quiche/src/quic/core/crypto/tls_server_connection.h"
 #include "net/third_party/quiche/src/quic/core/proto/cached_network_parameters_proto.h"
 #include "net/third_party/quiche/src/quic/core/quic_crypto_server_stream_base.h"
@@ -27,8 +28,7 @@ class QUIC_EXPORT_PRIVATE TlsServerHandshaker
       public QuicCryptoServerStreamBase {
  public:
   TlsServerHandshaker(QuicSession* session,
-                      SSL_CTX* ssl_ctx,
-                      ProofSource* proof_source);
+                      const QuicCryptoServerConfig& crypto_config);
   TlsServerHandshaker(const TlsServerHandshaker&) = delete;
   TlsServerHandshaker& operator=(const TlsServerHandshaker&) = delete;
 
@@ -40,23 +40,31 @@ class QUIC_EXPORT_PRIVATE TlsServerHandshaker
   void SendServerConfigUpdate(
       const CachedNetworkParameters* cached_network_params) override;
   bool IsZeroRtt() const override;
+  bool IsResumption() const override;
+  bool ResumptionAttempted() const override;
   int NumServerConfigUpdateMessagesSent() const override;
   const CachedNetworkParameters* PreviousCachedNetworkParams() const override;
-  bool ZeroRttAttempted() const override;
   void SetPreviousCachedNetworkParams(
       CachedNetworkParameters cached_network_params) override;
   void OnPacketDecrypted(EncryptionLevel level) override;
   void OnOneRttPacketAcknowledged() override {}
+  void OnHandshakePacketSent() override {}
+  void OnConnectionClosed(QuicErrorCode error,
+                          ConnectionCloseSource source) override;
   void OnHandshakeDoneReceived() override;
   bool ShouldSendExpectCTHeader() const override;
+  const ProofSource::Details* ProofSourceDetails() const override;
 
   // From QuicCryptoServerStreamBase and TlsHandshaker
+  ssl_early_data_reason_t EarlyDataReason() const override;
   bool encryption_established() const override;
   bool one_rtt_keys_available() const override;
   const QuicCryptoNegotiatedParameters& crypto_negotiated_params()
       const override;
   CryptoMessageParser* crypto_message_parser() override;
   HandshakeState GetHandshakeState() const override;
+  void SetServerApplicationStateForResumption(
+      std::unique_ptr<ApplicationState> state) override;
   size_t BufferSizeLimitForLevel(EncryptionLevel level) const override;
   void SetWriteSecret(EncryptionLevel level,
                       const SSL_CIPHER* cipher,
@@ -71,19 +79,8 @@ class QUIC_EXPORT_PRIVATE TlsServerHandshaker
     return &tls_connection_;
   }
 
-  ProofSource::Details* proof_source_details() const {
-    return proof_source_details_.get();
-  }
-
   virtual void ProcessAdditionalTransportParameters(
       const TransportParameters& /*params*/) {}
-
-  // Override of TlsHandshaker::SetReadSecret so that setting the read secret
-  // for ENCRYPTION_FORWARD_SECURE can be delayed until the handshake is
-  // complete.
-  bool SetReadSecret(EncryptionLevel level,
-                     const SSL_CIPHER* cipher,
-                     const std::vector<uint8_t>& read_secret) override;
 
   // Called when a new message is received on the crypto stream and is available
   // for the TLS stack to read.
@@ -106,6 +103,16 @@ class QUIC_EXPORT_PRIVATE TlsServerHandshaker
   ssl_private_key_result_t PrivateKeyComplete(uint8_t* out,
                                               size_t* out_len,
                                               size_t max_out) override;
+  size_t SessionTicketMaxOverhead() override;
+  int SessionTicketSeal(uint8_t* out,
+                        size_t* out_len,
+                        size_t max_out_len,
+                        quiche::QuicheStringPiece in) override;
+  ssl_ticket_aead_result_t SessionTicketOpen(
+      uint8_t* out,
+      size_t* out_len,
+      size_t max_out_len,
+      quiche::QuicheStringPiece in) override;
   TlsConnection::Delegate* ConnectionDelegate() override { return this; }
 
  private:
@@ -124,8 +131,22 @@ class QUIC_EXPORT_PRIVATE TlsServerHandshaker
     TlsServerHandshaker* handshaker_;
   };
 
+  class QUIC_EXPORT_PRIVATE DecryptCallback
+      : public ProofSource::DecryptCallback {
+   public:
+    explicit DecryptCallback(TlsServerHandshaker* handshaker);
+    void Run(std::vector<uint8_t> plaintext) override;
+
+    // If called, Cancel causes the pending callback to be a no-op.
+    void Cancel();
+
+   private:
+    TlsServerHandshaker* handshaker_;
+  };
+
   enum State {
     STATE_LISTENING,
+    STATE_TICKET_DECRYPTION_PENDING,
     STATE_SIGNATURE_PENDING,
     STATE_SIGNATURE_COMPLETE,
     STATE_ENCRYPTION_HANDSHAKE_DATA_PROCESSED,
@@ -146,14 +167,28 @@ class QUIC_EXPORT_PRIVATE TlsServerHandshaker
   ProofSource* proof_source_;
   SignatureCallback* signature_callback_ = nullptr;
 
+  // State to handle potentially asynchronous session ticket decryption.
+  // |ticket_decryption_callback_| points to the non-owned callback that was
+  // passed to ProofSource::TicketCrypter::Decrypt but hasn't finished running
+  // yet.
+  DecryptCallback* ticket_decryption_callback_ = nullptr;
+  // |decrypted_session_ticket_| contains the decrypted session ticket after the
+  // callback has run but before it is passed to BoringSSL.
+  std::vector<uint8_t> decrypted_session_ticket_;
+  // |ticket_received_| tracks whether we received a resumption ticket from the
+  // client. It does not matter whether we were able to decrypt said ticket or
+  // if we actually resumed a session with it - the presence of this ticket
+  // indicates that the client attempted a resumption.
+  bool ticket_received_ = false;
+
   std::string hostname_;
   std::string cert_verify_sig_;
   std::unique_ptr<ProofSource::Details> proof_source_details_;
 
-  // Used to hold the ENCRYPTION_FORWARD_SECURE read secret until the handshake
-  // is complete. This is temporary until
-  // https://bugs.chromium.org/p/boringssl/issues/detail?id=303 is resolved.
-  std::vector<uint8_t> app_data_read_secret_;
+  std::unique_ptr<ApplicationState> application_state_;
+
+  // Pre-shared key used during the handshake.
+  std::string pre_shared_key_;
 
   bool encryption_established_ = false;
   bool one_rtt_keys_available_ = false;

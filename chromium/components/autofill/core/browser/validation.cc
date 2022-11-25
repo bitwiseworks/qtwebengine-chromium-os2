@@ -6,7 +6,8 @@
 
 #include <stddef.h>
 
-#include "base/logging.h"
+#include "base/check.h"
+#include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
@@ -79,6 +80,8 @@ bool HasCorrectLength(const base::string16& number) {
   if (type == kMasterCard && number.size() != 16)
     return false;
   if (type == kMirCard && number.size() != 16)
+    return false;
+  if (type == kTroyCard && number.size() != 16)
     return false;
   if (type == kUnionPay && (number.size() < 16 || number.size() > 19))
     return false;

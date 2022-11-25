@@ -9,6 +9,7 @@
 #include "content/browser/devtools/protocol/devtools_protocol_test_support.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/common/content_features.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
@@ -64,7 +65,7 @@ const char* kExpectedFontFamilyNames[] = {"AndroidClock",
                                           "Roboto Condensed",
                                           "Roboto Condensed",
                                           "Roboto"};
-#elif defined(OS_LINUX)
+#elif defined(OS_LINUX) || defined(OS_CHROMEOS)
 const char* kExpectedFontFamilyNames[] = {"Ahem",
                                           "Arimo",
                                           "Arimo",
@@ -91,7 +92,7 @@ const char* kExpectedFontFamilyNames[] = {"Ahem",
                                           "Tinos",
                                           "Mukti Narrow",
                                           "Tinos"};
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
 const char* kExpectedFontFamilyNames[] = {"American Typewriter",
                                           "Arial Narrow",
                                           "Baskerville",

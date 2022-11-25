@@ -23,7 +23,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_HTML_HTML_OBJECT_ELEMENT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_HTML_HTML_OBJECT_ELEMENT_H_
 
-#include "third_party/blink/public/common/frame/frame_owner_element_type.h"
+#include "third_party/blink/public/mojom/frame/frame_owner_element_type.mojom-blink.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/html/forms/form_associated.h"
 #include "third_party/blink/renderer/core/html/forms/listed_element.h"
@@ -41,12 +41,11 @@ class CORE_EXPORT HTMLObjectElement final : public HTMLPlugInElement,
                                             public ListedElement,
                                             public FormAssociated {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(HTMLObjectElement);
 
  public:
   HTMLObjectElement(Document&, const CreateElementFlags);
   ~HTMLObjectElement() override;
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   // Returns attributes that should be checked against Trusted Types
   const AttrNameToTrustedType& GetCheckedAttributeTypes() const override;
@@ -69,8 +68,8 @@ class CORE_EXPORT HTMLObjectElement final : public HTMLPlugInElement,
 
   bool ChildrenCanHaveStyle() const override { return UseFallbackContent(); }
 
-  FrameOwnerElementType OwnerType() const final {
-    return FrameOwnerElementType::kObject;
+  mojom::blink::FrameOwnerElementType OwnerType() const final {
+    return mojom::blink::FrameOwnerElementType::kObject;
   }
 
   // Implementations of constraint validation API.

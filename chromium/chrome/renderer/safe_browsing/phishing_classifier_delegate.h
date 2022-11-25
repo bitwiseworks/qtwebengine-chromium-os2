@@ -25,19 +25,17 @@ class ClientPhishingRequest;
 class PhishingClassifier;
 class Scorer;
 
-class PhishingClassifierFilter : public mojom::PhishingModelSetter {
- public:
-  PhishingClassifierFilter();
-  ~PhishingClassifierFilter() override;
-
-  static void Create(
-      mojo::PendingReceiver<mojom::PhishingModelSetter> receiver);
-
- private:
-  // mojom::PhishingModelSetter
-  void SetPhishingModel(const std::string& model) override;
-
-  DISALLOW_COPY_AND_ASSIGN(PhishingClassifierFilter);
+enum class SBPhishingClassifierEvent {
+  kPhishingDetectionRequested = 0,
+  kPageTextCaptured = 1,
+  // Phishing detection could not start because the page text was not loaded.
+  kPageTextNotLoaded = 2,
+  // Phishing detection could not start because the url was not specified to be
+  // classified.
+  kUrlShouldNotBeClassified = 3,
+  // Phishing detection could not finish because the class was destructed.
+  kDestructedBeforeClassificationDone = 4,
+  kMaxValue = kDestructedBeforeClassificationDone,
 };
 
 class PhishingClassifierDelegate : public content::RenderFrameObserver,
@@ -49,6 +47,9 @@ class PhishingClassifierDelegate : public content::RenderFrameObserver,
   static PhishingClassifierDelegate* Create(content::RenderFrame* render_frame,
                                             PhishingClassifier* classifier);
   ~PhishingClassifierDelegate() override;
+
+  // mojom::PhishingDetector
+  void SetPhishingModel(const std::string& model) override;
 
   // Called by the RenderFrame once there is a phishing scorer available.
   // The scorer is passed on to the classifier.
@@ -65,10 +66,11 @@ class PhishingClassifierDelegate : public content::RenderFrameObserver,
 
   // Called by the RenderFrame when a page has started loading in the given
   // WebFrame.  Typically, this will cause any pending classification to be
-  // cancelled.  However, if the navigation is within the same page, we
-  // continue running the current classification.
-  void DidCommitProvisionalLoad(bool is_same_document_navigation,
-                                ui::PageTransition transition) override;
+  // cancelled.
+  void DidCommitProvisionalLoad(ui::PageTransition transition) override;
+  // Called by the RenderFrame when the same-document navigation has been
+  // committed. We continue running the current classification.
+  void DidFinishSameDocumentNavigation() override;
 
  private:
   friend class PhishingClassifierDelegateTest;
@@ -90,6 +92,9 @@ class PhishingClassifierDelegate : public content::RenderFrameObserver,
 
   // Cancels any pending classification and frees the page text.
   void CancelPendingClassification(CancelClassificationReason reason);
+
+  // Records in UMA of a specific event that happens in the phishing classifier.
+  void RecordEvent(SBPhishingClassifierEvent event);
 
   void OnDestruct() override;
 
@@ -149,6 +154,10 @@ class PhishingClassifierDelegate : public content::RenderFrameObserver,
 
   // Set to true if the classifier is currently running.
   bool is_classifying_;
+
+  // Set to true when StartPhishingDetection method is called. It is
+  // set to false whenever phishing detection has finished.
+  bool is_phishing_detection_running_ = false;
 
   // The callback from the most recent call to StartPhishingDetection.
   StartPhishingDetectionCallback callback_;

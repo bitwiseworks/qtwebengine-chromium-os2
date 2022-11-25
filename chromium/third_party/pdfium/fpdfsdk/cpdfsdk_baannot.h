@@ -12,6 +12,7 @@
 #include "core/fpdfdoc/cpdf_annot.h"
 #include "core/fxcrt/fx_coordinates.h"
 #include "core/fxcrt/fx_string.h"
+#include "core/fxcrt/unowned_ptr.h"
 #include "core/fxge/cfx_renderdevice.h"
 #include "fpdfsdk/cpdfsdk_annot.h"
 
@@ -65,6 +66,8 @@ class CPDFSDK_BAAnnot : public CPDFSDK_Annot {
   CPDF_AAction GetAAction() const;
 
   void SetOpenState(bool bOpenState);
+
+  CPDF_Dest GetDestination() const;
 
  protected:
   CPDF_Dictionary* GetAPDict() const;

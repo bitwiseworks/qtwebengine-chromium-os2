@@ -154,11 +154,13 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
   void SetWebSocketHandshakeStreamCreateHelper(
       WebSocketHandshakeStreamBase::CreateHelper* create_helper) override;
   void SetBeforeNetworkStartCallback(
-      const BeforeNetworkStartCallback& callback) override;
+      BeforeNetworkStartCallback callback) override;
+  void SetConnectedCallback(const ConnectedCallback& callback) override;
   void SetRequestHeadersCallback(RequestHeadersCallback callback) override;
   void SetResponseHeadersCallback(ResponseHeadersCallback callback) override;
   int ResumeNetworkStart() override;
   void GetConnectionAttempts(ConnectionAttempts* out) const override;
+  void CloseConnectionOnDestruction() override;
 
   // Invoked when parallel validation cannot proceed due to response failure
   // and this transaction needs to be restarted.
@@ -379,6 +381,10 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
   // Validates the entry headers against the requested range and continues with
   // the validation of the rest of the entry.  Returns a network error code.
   int ValidateEntryHeadersAndContinue();
+
+  // Returns whether the current externally conditionalized request's validation
+  // headers match the current cache entry's headers.
+  bool ExternallyConditionalizedValidationHeadersMatchEntry() const;
 
   // Called to start requests which were given an "if-modified-since" or
   // "if-none-match" validation header by the caller (NOT when the request was
@@ -644,7 +650,6 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
   base::TimeTicks send_request_since_;
   base::TimeTicks read_headers_since_;
   base::Time open_entry_last_used_;
-  bool cant_conditionalize_zero_freshness_from_memhint_;
   bool recorded_histograms_;
   ParallelWritingPattern parallel_writing_pattern_;
 
@@ -667,6 +672,7 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
       websocket_handshake_stream_base_create_helper_;
 
   BeforeNetworkStartCallback before_network_start_callback_;
+  ConnectedCallback connected_callback_;
   RequestHeadersCallback request_headers_callback_;
   ResponseHeadersCallback response_headers_callback_;
 

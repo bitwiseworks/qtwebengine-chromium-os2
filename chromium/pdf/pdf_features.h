@@ -14,10 +14,12 @@ namespace chrome_pdf {
 namespace features {
 
 extern const base::Feature kAccessiblePDFForm;
-extern const base::Feature kAccessiblePDFHighlight;
-extern const base::Feature kPDFAnnotations;
-extern const base::Feature kPDFTwoUpView;
+extern const base::Feature kPdfHonorJsContentSettings;
+extern const base::Feature kPdfIncrementalLoading;
+extern const base::Feature kPdfPartialLoading;
+extern const base::Feature kPDFViewerUpdate;
 extern const base::Feature kSaveEditedPDFForm;
+extern const base::Feature kTabAcrossPDFAnnotations;
 
 }  // namespace features
 }  // namespace chrome_pdf

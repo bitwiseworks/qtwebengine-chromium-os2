@@ -33,6 +33,8 @@ class GPUDeviceDescriptor;
 class GPUDeviceLostInfo;
 class GPUPipelineLayout;
 class GPUPipelineLayoutDescriptor;
+class GPUQuerySet;
+class GPUQuerySetDescriptor;
 class GPUQueue;
 class GPURenderBundleEncoder;
 class GPURenderBundleEncoderDescriptor;
@@ -50,7 +52,6 @@ class ScriptState;
 class GPUDevice final : public EventTargetWithInlineData,
                         public ExecutionContextClient,
                         public DawnObject<WGPUDevice> {
-  USING_GARBAGE_COLLECTED_MIXIN(GPUDevice);
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -61,27 +62,25 @@ class GPUDevice final : public EventTargetWithInlineData,
                      const GPUDeviceDescriptor* descriptor);
   ~GPUDevice() override;
 
-  void Trace(Visitor* visitor) override;
-
-  uint64_t GetClientID() const;
+  void Trace(Visitor* visitor) const override;
 
   // gpu_device.idl
   GPUAdapter* adapter() const;
+  Vector<String> extensions() const;
   ScriptPromise lost(ScriptState* script_state);
 
   GPUQueue* defaultQueue();
 
   GPUBuffer* createBuffer(const GPUBufferDescriptor* descriptor);
-  HeapVector<GPUBufferOrArrayBuffer> createBufferMapped(
-      const GPUBufferDescriptor* descriptor,
-      ExceptionState& exception_state);
   GPUTexture* createTexture(const GPUTextureDescriptor* descriptor,
                             ExceptionState& exception_state);
   GPUSampler* createSampler(const GPUSamplerDescriptor* descriptor);
 
-  GPUBindGroup* createBindGroup(const GPUBindGroupDescriptor* descriptor);
+  GPUBindGroup* createBindGroup(const GPUBindGroupDescriptor* descriptor,
+                                ExceptionState& exception_state);
   GPUBindGroupLayout* createBindGroupLayout(
-      const GPUBindGroupLayoutDescriptor* descriptor);
+      const GPUBindGroupLayoutDescriptor* descriptor,
+      ExceptionState& exception_state);
   GPUPipelineLayout* createPipelineLayout(
       const GPUPipelineLayoutDescriptor* descriptor);
 
@@ -99,6 +98,8 @@ class GPUDevice final : public EventTargetWithInlineData,
   GPURenderBundleEncoder* createRenderBundleEncoder(
       const GPURenderBundleEncoderDescriptor* descriptor);
 
+  GPUQuerySet* createQuerySet(const GPUQuerySetDescriptor* descriptor);
+
   void pushErrorScope(const WTF::String& filter);
   ScriptPromise popErrorScope(ScriptState* script_state);
 
@@ -108,26 +109,31 @@ class GPUDevice final : public EventTargetWithInlineData,
   const AtomicString& InterfaceName() const override;
   ExecutionContext* GetExecutionContext() const override;
 
+  void AddConsoleWarning(const char* message);
+
  private:
   using LostProperty =
       ScriptPromiseProperty<Member<GPUDeviceLostInfo>, ToV8UndefinedGenerator>;
 
-  void OnUncapturedError(ExecutionContext* execution_context,
-                         WGPUErrorType errorType,
-                         const char* message);
+  void OnUncapturedError(WGPUErrorType errorType, const char* message);
+  void OnDeviceLostError(const char* message);
 
   void OnPopErrorScopeCallback(ScriptPromiseResolver* resolver,
                                WGPUErrorType type,
                                const char* message);
 
   Member<GPUAdapter> adapter_;
+  Vector<String> extension_name_list_;
   Member<GPUQueue> queue_;
   Member<LostProperty> lost_property_;
   std::unique_ptr<
       DawnCallback<base::RepeatingCallback<void(WGPUErrorType, const char*)>>>
       error_callback_;
+  std::unique_ptr<DawnCallback<base::OnceCallback<void(const char*)>>>
+      lost_callback_;
 
-  uint64_t client_id_;
+  static constexpr int kMaxAllowedConsoleWarnings = 500;
+  int allowed_console_warnings_remaining_ = kMaxAllowedConsoleWarnings;
 
   DISALLOW_COPY_AND_ASSIGN(GPUDevice);
 };

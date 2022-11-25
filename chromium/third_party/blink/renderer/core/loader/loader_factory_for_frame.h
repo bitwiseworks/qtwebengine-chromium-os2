@@ -12,24 +12,26 @@
 
 namespace blink {
 
-class FrameOrImportedDocument;
+class DocumentLoader;
+class LocalDOMWindow;
 class PrefetchedSignedExchangeManager;
 
 class LoaderFactoryForFrame final : public ResourceFetcher::LoaderFactory {
  public:
-  explicit LoaderFactoryForFrame(const FrameOrImportedDocument&);
+  LoaderFactoryForFrame(DocumentLoader& loader, LocalDOMWindow& window);
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   // LoaderFactory implementations
   std::unique_ptr<WebURLLoader> CreateURLLoader(
       const ResourceRequest&,
       const ResourceLoaderOptions&,
       scoped_refptr<base::SingleThreadTaskRunner>) override;
-  std::unique_ptr<CodeCacheLoader> CreateCodeCacheLoader() override;
+  std::unique_ptr<WebCodeCacheLoader> CreateCodeCacheLoader() override;
 
  private:
-  const Member<const FrameOrImportedDocument> frame_or_imported_document_;
+  const Member<DocumentLoader> document_loader_;
+  const Member<LocalDOMWindow> window_;
   const Member<PrefetchedSignedExchangeManager>
       prefetched_signed_exchange_manager_;
 };

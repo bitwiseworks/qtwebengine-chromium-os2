@@ -4,18 +4,29 @@
 
 import * as SDK from '../sdk/sdk.js';
 
+// We extend Protocol.Media.PlayerEvent here to allow for displayTimestamp.
 /**
  * @typedef {{
- *     name: string,
  *     value: *,
  *     timestamp: (number|string|undefined),
- *     displayTimestamp: string
+ *     displayTimestamp: string,
+ *     event: string,
  * }}
  */
-export let Event;
+// @ts-ignore typedef
+export let PlayerEvent;
+
+/** @enum {symbol} */
+export const ProtocolTriggers = {
+  PlayerPropertiesChanged: Symbol('PlayerPropertiesChanged'),
+  PlayerEventsAdded: Symbol('PlayerEventsAdded'),
+  PlayerMessagesLogged: Symbol('PlayerMessagesLogged'),
+  PlayerErrorsRaised: Symbol('PlayerErrorsRaised'),
+  PlayersCreated: Symbol('PlayersCreated')
+};
 
 /**
- * @implements {Protocol.MediaDispatcher}
+ * @implements {ProtocolProxyApi.MediaDispatcher}
  */
 export class MediaModel extends SDK.SDKModel.SDKModel {
   /**
@@ -32,59 +43,66 @@ export class MediaModel extends SDK.SDKModel.SDKModel {
 
   /**
    * @override
-   * @return {!Promise}
+   * @return {!Promise<void>}
    */
-  resumeModel() {
+  async resumeModel() {
     if (!this._enabled) {
       return Promise.resolve();
     }
-    return this._agent.enable();
+    await this._agent.invoke_enable();
   }
 
   ensureEnabled() {
-    this._agent.enable();
+    this._agent.invoke_enable();
     this._enabled = true;
   }
 
   /**
-   * @param {!Protocol.Media.PlayerId} playerId
-   * @param {!Array.<!Protocol.Media.PlayerProperty>} properties
+   * @param {!Protocol.Media.PlayerPropertiesChangedEvent} event
    * @override
    */
-  playerPropertiesChanged(playerId, properties) {
-    this.dispatchEventToListeners(
-        Events.PlayerPropertiesChanged, {playerId: playerId, properties: properties});
+  playerPropertiesChanged(event) {
+    this.dispatchEventToListeners(ProtocolTriggers.PlayerPropertiesChanged, event);
   }
 
   /**
-   * @param {!Protocol.Media.PlayerId} playerId
-   * @param {!Array.<!Protocol.Media.PlayerEvent>} events
+   * @param {!Protocol.Media.PlayerEventsAddedEvent} event
    * @override
    */
-  playerEventsAdded(playerId, events) {
-    this.dispatchEventToListeners(Events.PlayerEventsAdded, {playerId: playerId, events: events});
+  playerEventsAdded(event) {
+    this.dispatchEventToListeners(ProtocolTriggers.PlayerEventsAdded, event);
   }
 
   /**
-   * @param {!Array.<!Protocol.Media.PlayerId>} playerIds
+   * @param {!Protocol.Media.PlayerMessagesLoggedEvent} event
    * @override
    */
-  playersCreated(playerIds) {
-    this.dispatchEventToListeners(Events.PlayersCreated, playerIds);
+  playerMessagesLogged(event) {
+    this.dispatchEventToListeners(ProtocolTriggers.PlayerMessagesLogged, event);
+  }
+
+  /**
+   * @param {!Protocol.Media.PlayerErrorsRaisedEvent} event
+   * @override
+   */
+  playerErrorsRaised(event) {
+    this.dispatchEventToListeners(ProtocolTriggers.PlayerErrorsRaised, event);
+  }
+
+  /**
+   * @param {!Protocol.Media.PlayersCreatedEvent} event
+   * @override
+   */
+  playersCreated({players}) {
+    this.dispatchEventToListeners(ProtocolTriggers.PlayersCreated, players);
+  }
+
+  /**
+   * @return {!Protocol.UsesObjectNotation}
+   */
+  usesObjectNotation() {
+    return true;
   }
 }
 
 SDK.SDKModel.SDKModel.register(MediaModel, SDK.SDKModel.Capability.DOM, false);
-
-/** @enum {symbol} */
-export const Events = {
-  PlayerPropertiesChanged: Symbol('PlayerPropertiesChanged'),
-  PlayerEventsAdded: Symbol('PlayerEventsAdded'),
-  PlayersCreated: Symbol('PlayersCreated')
-};
-
-/** @enum {string} */
-export const MediaChangeTypeKeys = {
-  Event: 'Events',
-  Property: 'Properties'
-};

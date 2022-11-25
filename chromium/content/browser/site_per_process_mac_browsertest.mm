@@ -8,15 +8,16 @@
 
 #include "base/bind.h"
 #include "base/mac/mac_util.h"
-#include "base/task/post_task.h"
 #include "content/browser/renderer_host/render_widget_host_input_event_router.h"
 #include "content/browser/renderer_host/render_widget_host_view_mac.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/hit_test_region_observer.h"
 #include "content/public/test/test_utils.h"
+#include "content/test/render_document_feature.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
 #import "third_party/ocmock/ocmock_extensions.h"
@@ -54,8 +55,8 @@ class TextInputClientMacHelper {
  private:
   void OnResult(const std::string& string, const gfx::Point& point) {
     if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-      base::PostTask(FROM_HERE, {BrowserThread::UI},
-                     base::BindOnce(&TextInputClientMacHelper::OnResult,
+      GetUIThreadTaskRunner({})->PostTask(
+          FROM_HERE, base::BindOnce(&TextInputClientMacHelper::OnResult,
                                     base::Unretained(this), string, point));
       return;
     }
@@ -84,7 +85,7 @@ class SitePerProcessMacBrowserTest : public SitePerProcessBrowserTest {};
 // point to query the text again and verifies that correct result is returned.
 // Finally, the returned words are compared against the first word in the html
 // file which is "This".
-IN_PROC_BROWSER_TEST_F(SitePerProcessMacBrowserTest,
+IN_PROC_BROWSER_TEST_P(SitePerProcessMacBrowserTest,
                        GetStringFromRangeAndPointChildFrame) {
   GURL main_url(embedded_test_server()->GetURL(
       "a.com", "/cross_site_iframe_factory.html?a(b)"));
@@ -93,6 +94,8 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessMacBrowserTest,
   FrameTreeNode* child = root->child_at(0);
   NavigateFrameToURL(child,
                      embedded_test_server()->GetURL("b.com", "/title1.html"));
+  web_contents()->GetFrameTree()->SetFocusedFrame(
+      child, web_contents()->GetSiteInstance());
 
   RenderWidgetHost* child_widget_host =
       child->current_frame_host()->GetRenderWidgetHost();
@@ -113,13 +116,15 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessMacBrowserTest,
 // includes the first word. Then it uses the returned point to query the text
 // again and verifies that correct result is returned. Finally, the returned
 // words are compared against the first word in the html file which is "This".
-IN_PROC_BROWSER_TEST_F(SitePerProcessMacBrowserTest,
+IN_PROC_BROWSER_TEST_P(SitePerProcessMacBrowserTest,
                        GetStringFromRangeAndPointMainFrame) {
   GURL main_url(embedded_test_server()->GetURL("a.com", "/title1.html"));
   EXPECT_TRUE(NavigateToURL(shell(), main_url));
   FrameTreeNode* root = web_contents()->GetFrameTree()->root();
   RenderWidgetHost* widget_host =
       root->current_frame_host()->GetRenderWidgetHost();
+  web_contents()->GetFrameTree()->SetFocusedFrame(
+      root, web_contents()->GetSiteInstance());
   TextInputClientMacHelper helper;
 
   // Get string from range.
@@ -138,7 +143,7 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessMacBrowserTest,
 // of 0. These should not be dropped, otherwise MouseWheelEventQueue will not
 // be informed that the user's gesture has ended.
 // See crbug.com/628742
-IN_PROC_BROWSER_TEST_F(SitePerProcessMacBrowserTest,
+IN_PROC_BROWSER_TEST_P(SitePerProcessMacBrowserTest,
                        ForwardWheelEventsWithPhaseEndingInformation) {
   GURL main_url(embedded_test_server()->GetURL(
       "a.com", "/cross_site_iframe_factory.html?a(b)"));
@@ -154,16 +159,20 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessMacBrowserTest,
       child_iframe_node->current_frame_host()->GetRenderWidgetHost();
 
   InputEventAckWaiter gesture_scroll_begin_ack_observer(
-      child_rwh, base::BindRepeating([](InputEventAckSource, InputEventAckState,
+      child_rwh, base::BindRepeating([](blink::mojom::InputEventResultSource,
+                                        blink::mojom::InputEventResultState,
                                         const blink::WebInputEvent& event) {
-        return event.GetType() == blink::WebInputEvent::kGestureScrollBegin &&
+        return event.GetType() ==
+                   blink::WebInputEvent::Type::kGestureScrollBegin &&
                !static_cast<const blink::WebGestureEvent&>(event)
                     .data.scroll_begin.synthetic;
       }));
   InputEventAckWaiter gesture_scroll_end_ack_observer(
-      child_rwh, base::BindRepeating([](InputEventAckSource, InputEventAckState,
+      child_rwh, base::BindRepeating([](blink::mojom::InputEventResultSource,
+                                        blink::mojom::InputEventResultState,
                                         const blink::WebInputEvent& event) {
-        return event.GetType() == blink::WebInputEvent::kGestureScrollEnd &&
+        return event.GetType() ==
+                   blink::WebInputEvent::Type::kGestureScrollEnd &&
                !static_cast<const blink::WebGestureEvent&>(event)
                     .data.scroll_end.synthetic;
       }));
@@ -172,7 +181,8 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessMacBrowserTest,
       static_cast<RenderWidgetHostViewBase*>(child_rwh->GetView());
 
   blink::WebMouseWheelEvent scroll_event(
-      blink::WebInputEvent::kMouseWheel, blink::WebInputEvent::kNoModifiers,
+      blink::WebInputEvent::Type::kMouseWheel,
+      blink::WebInputEvent::kNoModifiers,
       blink::WebInputEvent::GetStaticTimeStampForTests());
   scroll_event.SetPositionInWidget(1, 1);
   scroll_event.delta_units = ui::ScrollGranularity::kScrollByPrecisePixel;
@@ -268,7 +278,7 @@ void SendMacTouchpadPinchSequenceWithExpectedTarget(
   // isn't sent until the first PinchUpdate.
 
   InputEventAckWaiter waiter(expected_target->GetRenderWidgetHost(),
-                             blink::WebInputEvent::kGesturePinchBegin);
+                             blink::WebInputEvent::Type::kGesturePinchBegin);
   NSEvent* pinchUpdateEvent =
       MockGestureEvent(NSEventTypeMagnify, 0.25, gesture_point.x(),
                        gesture_point.y(), NSEventPhaseChanged);
@@ -287,7 +297,7 @@ void SendMacTouchpadPinchSequenceWithExpectedTarget(
 
 }  // namespace
 
-IN_PROC_BROWSER_TEST_F(SitePerProcessMacBrowserTest,
+IN_PROC_BROWSER_TEST_P(SitePerProcessMacBrowserTest,
                        InputEventRouterTouchpadGestureTargetTest) {
   GURL main_url(embedded_test_server()->GetURL(
       "/frame_tree/page_with_positioned_nested_frames.html"));
@@ -329,4 +339,7 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessMacBrowserTest,
       rwhv_parent, child_center, router->touchpad_gesture_target_, rwhv_child);
 }
 
+INSTANTIATE_TEST_SUITE_P(All,
+                         SitePerProcessMacBrowserTest,
+                         testing::ValuesIn(RenderDocumentFeatureLevelValues()));
 }  // namespace content

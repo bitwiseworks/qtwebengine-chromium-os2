@@ -26,9 +26,11 @@ android_library("java") {
   ]
 
   sources = [
+    "java/src/org/chromium/components/signin/AccessTokenData.java",
     "java/src/org/chromium/components/signin/AccountManagerDelegate.java",
     "java/src/org/chromium/components/signin/AccountManagerDelegateException.java",
     "java/src/org/chromium/components/signin/AccountManagerFacade.java",
+    "java/src/org/chromium/components/signin/AccountManagerFacadeImpl.java",
     "java/src/org/chromium/components/signin/AccountManagerFacadeProvider.java",
     "java/src/org/chromium/components/signin/AccountManagerResult.java",
     "java/src/org/chromium/components/signin/AccountTrackerService.java",
@@ -37,7 +39,6 @@ android_library("java") {
     "java/src/org/chromium/components/signin/AuthException.java",
     "java/src/org/chromium/components/signin/ChildAccountInfoFetcher.java",
     "java/src/org/chromium/components/signin/ChildAccountStatus.java",
-    "java/src/org/chromium/components/signin/ChromeSigninController.java",
     "java/src/org/chromium/components/signin/GmsAvailabilityException.java",
     "java/src/org/chromium/components/signin/GmsJustUpdatedException.java",
     "java/src/org/chromium/components/signin/MutableObservableValue.java",
@@ -50,7 +51,10 @@ android_library("java") {
   annotation_processor_deps = [ "//base/android/jni_generator:jni_processor" ]
 }
 
-junit_binary("components_signin_junit_tests") {
+java_library("components_signin_junit_tests") {
+  # Platform checks are broken for Robolectric. See https://crbug.com/1071638.
+  bypass_platform_checks = true
+  testonly = true
   sources = [
     "junit/src/org/chromium/components/signin/test/AccountManagerFacadeRobolectricTest.java",
     "junit/src/org/chromium/components/signin/test/ObservableValueTest.java",
@@ -62,8 +66,16 @@ junit_binary("components_signin_junit_tests") {
     "//base:base_java",
     "//base:base_java_test_support",
     "//base:base_junit_test_support",
+    "//testing/android/junit:junit_test_support",
     "//third_party/android_deps:androidx_annotation_annotation_java",
+    "//third_party/android_deps:androidx_test_runner_java",
+    "//third_party/android_deps:robolectric_all_java",
+    "//third_party/android_sdk:android_test_base_java",
+    "//third_party/android_support_test_runner:rules_java",
+    "//third_party/android_support_test_runner:runner_java",
+    "//third_party/guava:guava_android_java",
     "//third_party/junit",
+    "//third_party/mockito:mockito_java",
   ]
 }
 
@@ -76,9 +88,10 @@ android_library("signin_javatests") {
     "//base:base_java_test_support",
     "//third_party/android_deps:androidx_annotation_annotation_java",
     "//third_party/android_deps:androidx_test_monitor_java",
+    "//third_party/android_deps:androidx_test_runner_java",
+    "//third_party/android_deps:com_google_code_findbugs_jsr305_java",
     "//third_party/android_support_test_runner:rules_java",
     "//third_party/android_support_test_runner:runner_java",
-    "//third_party/jsr-305:jsr_305_javalib",
     "//third_party/junit",
   ]
 
@@ -92,14 +105,15 @@ android_library("signin_java_test_support") {
     "//base:base_java",
     "//base:base_java_test_support",
     "//third_party/android_deps:androidx_annotation_annotation_java",
-    "//third_party/jsr-305:jsr_305_javalib",
+    "//third_party/android_deps:androidx_test_runner_java",
+    "//third_party/android_deps:com_google_code_findbugs_jsr305_java",
     "//third_party/junit",
   ]
 
   sources = [
     "javatests/src/org/chromium/components/signin/test/util/AccountHolder.java",
-    "javatests/src/org/chromium/components/signin/test/util/AccountManagerTestRule.java",
     "javatests/src/org/chromium/components/signin/test/util/FakeAccountManagerDelegate.java",
+    "javatests/src/org/chromium/components/signin/test/util/FakeAccountManagerFacade.java",
     "javatests/src/org/chromium/components/signin/test/util/FakeProfileDataSource.java",
   ]
 }

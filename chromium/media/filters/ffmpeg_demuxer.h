@@ -115,7 +115,6 @@ class MEDIA_EXPORT FFmpegDemuxerStream : public DemuxerStream {
   Type type() const override;
   Liveness liveness() const override;
   void Read(ReadCB read_cb) override;
-  bool IsReadPending() const override;
   void EnableBitstreamConverter() override;
   bool SupportsConfigChanges() override;
   AudioDecoderConfig audio_decoder_config() override;
@@ -231,6 +230,8 @@ class MEDIA_EXPORT FFmpegDemuxer : public Demuxer {
   std::vector<DemuxerStream*> GetAllStreams() override;
   base::TimeDelta GetStartTime() const override;
   int64_t GetMemoryUsage() const override;
+  base::Optional<container_names::MediaContainerName> GetContainerForMetrics()
+      const override;
 
   // Calls |encrypted_media_init_data_cb_| with the initialization data
   // encountered in the file.

@@ -8,20 +8,20 @@
 #include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
-#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "content/browser/utility_process_host.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/test_service.mojom.h"
 #include "mojo/public/cpp/bindings/remote.h"
-#include "services/service_manager/sandbox/linux/sandbox_linux.h"
-#include "services/service_manager/sandbox/switches.h"
+#include "sandbox/policy/linux/sandbox_linux.h"
+#include "sandbox/policy/switches.h"
 #include "services/service_manager/tests/sandbox_status.test-mojom.h"
 
-using service_manager::SandboxLinux;
-using service_manager::SandboxType;
+using sandbox::policy::SandboxLinux;
+using sandbox::policy::SandboxType;
 
 namespace {
 
@@ -29,7 +29,7 @@ std::vector<SandboxType> GetSandboxTypesToTest() {
   std::vector<SandboxType> types;
   // We need the standard sandbox config to run this test.
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          service_manager::switches::kNoSandbox)) {
+          sandbox::policy::switches::kNoSandbox)) {
     return types;
   }
 
@@ -38,6 +38,10 @@ std::vector<SandboxType> GetSandboxTypesToTest() {
     // These sandbox types can't be spawned in a utility process.
     if (t == SandboxType::kRenderer || t == SandboxType::kGpu)
       continue;
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+    if (t == SandboxType::kZygoteIntermediateSandbox)
+      continue;
+#endif
 
     types.push_back(t);
   }
@@ -64,8 +68,8 @@ class UtilityProcessSandboxBrowserTest
     done_closure_ =
         base::BindOnce(&UtilityProcessSandboxBrowserTest::DoneRunning,
                        base::Unretained(this), run_loop.QuitClosure());
-    base::PostTask(
-        FROM_HERE, {BrowserThread::IO},
+    GetIOThreadTaskRunner({})->PostTask(
+        FROM_HERE,
         base::BindOnce(
             &UtilityProcessSandboxBrowserTest::RunUtilityProcessOnIOThread,
             base::Unretained(this)));
@@ -91,10 +95,13 @@ class UtilityProcessSandboxBrowserTest
   void OnGotSandboxStatusOnIOThread(int32_t sandbox_status) {
     DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-    // Aside from kNoSandox, every utility process launched explicitly with a
+    // Aside from kNoSandbox, every utility process launched explicitly with a
     // sandbox type should always end up with a sandbox.
+    // kVideoCapture is equivalent to kNoSandbox on all platforms except
+    // Fuchsia.
     switch (GetParam()) {
       case SandboxType::kNoSandbox:
+      case SandboxType::kVideoCapture:
         EXPECT_EQ(sandbox_status, 0);
         break;
 
@@ -114,9 +121,10 @@ class UtilityProcessSandboxBrowserTest
       case SandboxType::kAudio:
 #if defined(OS_CHROMEOS)
       case SandboxType::kIme:
+      case SandboxType::kTts:
 #endif
       case SandboxType::kNetwork:
-      case SandboxType::kSoda: {
+      case SandboxType::kSpeechRecognition: {
         constexpr int kExpectedPartialSandboxFlags =
             SandboxLinux::kSeccompBPF | SandboxLinux::kYama |
             SandboxLinux::kSeccompTSYNC;
@@ -125,14 +133,14 @@ class UtilityProcessSandboxBrowserTest
       }
 
       case SandboxType::kGpu:
-      case SandboxType::kInvalid:
       case SandboxType::kRenderer:
+      case SandboxType::kZygoteIntermediateSandbox:
         NOTREACHED();
         break;
     }
 
     service_.reset();
-    base::PostTask(FROM_HERE, {BrowserThread::UI}, std::move(done_closure_));
+    GetUIThreadTaskRunner({})->PostTask(FROM_HERE, std::move(done_closure_));
   }
 
   void DoneRunning(base::OnceClosure quit_closure) {
@@ -156,7 +164,7 @@ INSTANTIATE_TEST_SUITE_P(
     testing::ValuesIn(GetSandboxTypesToTest()),
     [](const testing::TestParamInfo<
         UtilityProcessSandboxBrowserTest::ParamType>& info) {
-      auto name = service_manager::StringFromUtilitySandboxType(info.param);
+      auto name = sandbox::policy::StringFromUtilitySandboxType(info.param);
       name[0] = base::ToUpperASCII(name[0]);
       return name;
     });

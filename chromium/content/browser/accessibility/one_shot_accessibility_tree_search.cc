@@ -236,7 +236,6 @@ bool AccessibilityButtonPredicate(BrowserAccessibility* start,
                                   BrowserAccessibility* node) {
   switch (node->GetRole()) {
     case ax::mojom::Role::kButton:
-    case ax::mojom::Role::kMenuButton:
     case ax::mojom::Role::kPopUpButton:
     case ax::mojom::Role::kSwitch:
     case ax::mojom::Role::kToggleButton:
@@ -412,11 +411,6 @@ bool AccessibilityMediaPredicate(BrowserAccessibility* start,
   const std::string& tag =
       node->GetStringAttribute(ax::mojom::StringAttribute::kHtmlTag);
   return tag == "audio" || tag == "video";
-}
-
-bool AccessibilityPopupButtonPredicate(BrowserAccessibility* start,
-                                       BrowserAccessibility* node) {
-  return (node->GetRole() == ax::mojom::Role::kPopUpButton);
 }
 
 bool AccessibilityRadioButtonPredicate(BrowserAccessibility* start,

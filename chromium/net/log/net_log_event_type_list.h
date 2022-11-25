@@ -111,12 +111,12 @@ EVENT_TYPE(HOST_RESOLVER_IMPL_CREATE_JOB)
 EVENT_TYPE(HOST_RESOLVER_IMPL_JOB)
 
 // This event is created when a HostResolverImpl::Job is evicted from
-// PriorityDispatch before it can start, because the limit on number of queued
-// Jobs was reached.
+// PrioritizedDispatcher before it can start, because the limit on number of
+// queued Jobs was reached.
 EVENT_TYPE(HOST_RESOLVER_IMPL_JOB_EVICTED)
 
 // This event is created when a HostResolverImpl::Job is started by
-// PriorityDispatch.
+// PrioritizedDispatcher.
 EVENT_TYPE(HOST_RESOLVER_IMPL_JOB_STARTED)
 
 // This event is created when HostResolverImpl::ProcJob is about to start a new
@@ -831,7 +831,7 @@ EVENT_TYPE(SOCKET_POOL_CLOSING_SOCKET)
 //      "initiator": <Initiator origin of the request, if any, or else "not an
 //                    origin">,
 //      "load_flags": <Numeric value of the combined load flags>,
-//      "privacy_mode": <True if privacy mode is enabled for the request>,
+//      "privacy_mode": <Privacy mode associated with the request>,
 //      "network_isolation_key": <NIK associated with the request>,
 //      "priority": <Numeric priority of the request>,
 //      "site_for_cookies": <SiteForCookies associated with the request>,
@@ -1567,6 +1567,16 @@ EVENT_TYPE(HTTP2_SESSION_INITIAL_WINDOW_SIZE_OUT_OF_RANGE)
 //   }
 EVENT_TYPE(HTTP2_SESSION_UPDATE_STREAMS_SEND_WINDOW_SIZE)
 
+// Sending a greased frame (a frame of reserved type)
+//   {
+//     "stream_id": <The stream ID for the window update>,
+//     "type"     : <Frame type>,
+//     "flags"    : <Frame flags>,
+//     "length"   : <Frame payload length>,
+//     "priority" : <RequestPriority of the stream>,
+//   }
+EVENT_TYPE(HTTP2_SESSION_SEND_GREASED_FRAME)
+
 // ------------------------------------------------------------------------
 // SpdySessionPool
 // ------------------------------------------------------------------------
@@ -1670,7 +1680,10 @@ EVENT_TYPE(HTTP2_PROXY_CLIENT_SESSION)
 // Measures the time taken to execute the QuicStreamFactory::Job.
 // The event parameters are:
 //   {
-//     "server_id": <The quic::QuicServerId that the Job serves>,
+//     "host": <The origin hostname that the Job serves>,
+//     "port": <The origin port>,
+//     "privacy_mode": <The privacy mode of the Job>,
+//     "network_isolation_key": <The NetworkIsolationKey of the Job>,
 //   }
 EVENT_TYPE(QUIC_STREAM_FACTORY_JOB)
 
@@ -1714,7 +1727,14 @@ EVENT_TYPE(QUIC_STREAM_FACTORY_JOB_STALE_HOST_RESOLUTION_MATCHED)
 
 // The start/end of a quic::QuicSession.
 //   {
-//     "host": <The host-port string>,
+//     "host": <The origin hostname string>,
+//     "port": <The origin port>,
+//     "privacy_mode": <The privacy mode of the session>,
+//     "network_isolation_key": <The NetworkIsolationKey of the session>,
+//     "require_confirmation": <True if the session will wait for a successful
+//                              QUIC handshake before vending streams>,
+//     "cert_verify_flags": <The certificate verification flags for the
+//                           session>,
 //   }
 EVENT_TYPE(QUIC_SESSION)
 
@@ -1823,37 +1843,29 @@ EVENT_TYPE(QUIC_SESSION_STREAM_FRAME_COALESCED)
 
 // Session received an ACK frame.
 //   {
-//     "sent_info": <Details of packet sent by the peer>
-//       {
-//         "least_unacked": <Lowest sequence number of a packet sent by the peer
-//                           for which it has not received an ACK>,
-//       }
-//     "received_info": <Details of packet received by the peer>
-//       {
-//         "largest_observed": <The largest sequence number of a packet received
-//                               by (or inferred by) the peer>,
-//         "missing": <List of sequence numbers of packets lower than
-//                     largest_observed which have not been received by the
-//                     peer>,
-//       }
+//     "largest_observed": <The largest packet number of a packet the peer has
+//       received, a.k.a. Largest Acknowledged>,
+//     "smallest_observed": <The smallest packet number covered by this ACK>,
+//     "delta_time_largest_observed_us": <Time between when the largest
+//       packet number was received and the ACK sent, a.k.a. Ack Delay>,
+//     "missing_packets": <List of packet numbers of packets between
+//       smallest_observed and largest_observed which were not received>,
+//     "received_packet_times": <List of dictionaries containing
+//       "packet_number" and "received" timestamps (if enabled)>,
 //   }
 EVENT_TYPE(QUIC_SESSION_ACK_FRAME_RECEIVED)
 
 // Session sent an ACK frame.
 //   {
-//     "sent_info": <Details of packet sent by the peer>
-//       {
-//         "least_unacked": <Lowest sequence number of a packet sent by the peer
-//                           for which it has not received an ACK>,
-//       }
-//     "received_info": <Details of packet received by the peer>
-//       {
-//         "largest_observed": <The largest sequence number of a packet received
-//                               by (or inferred by) the peer>,
-//         "missing": <List of sequence numbers of packets lower than
-//                     largest_observed which have not been received by the
-//                     peer>,
-//       }
+//     "largest_observed": <The largest packet number of a packet we have
+//       received, a.k.a. Largest Acknowledged>,
+//     "smallest_observed": <The smallest packet number covered by this ACK>,
+//     "delta_time_largest_observed_us": <Time between when the largest
+//       packet number was received and the ACK sent, a.k.a. Ack Delay>,
+//     "missing_packets": <List of packet numbers of packets between
+//       smallest_observed and largest_observed which were not received>,
+//     "received_packet_times": <List of dictionaries containing
+//       "packet_number" and "received" timestamps (if enabled)>,
 //   }
 EVENT_TYPE(QUIC_SESSION_ACK_FRAME_SENT)
 
@@ -2003,6 +2015,30 @@ EVENT_TYPE(QUIC_SESSION_CRYPTO_HANDSHAKE_MESSAGE_RECEIVED)
 //                                       contents>
 //   }
 EVENT_TYPE(QUIC_SESSION_CRYPTO_HANDSHAKE_MESSAGE_SENT)
+
+// A QUIC connection received transport parameters.
+//   {
+//     "quic_transport_parameters": <Human readable view of the transport
+//                                   parameters>
+//   }
+EVENT_TYPE(QUIC_SESSION_TRANSPORT_PARAMETERS_RECEIVED)
+
+// A QUIC connection sent transport parameters.
+//   {
+//     "quic_transport_parameters": <Human readable view of the transport
+//                                   parameters>
+//   }
+EVENT_TYPE(QUIC_SESSION_TRANSPORT_PARAMETERS_SENT)
+
+// A QUIC connection resumed transport parameters for 0-RTT.
+//   {
+//     "quic_transport_parameters": <Human readable view of the transport
+//                                   parameters>
+//   }
+EVENT_TYPE(QUIC_SESSION_TRANSPORT_PARAMETERS_RESUMED)
+
+// QUIC with TLS gets 0-RTT rejected.
+EVENT_TYPE(QUIC_SESSION_ZERO_RTT_REJECTED)
 
 // A QUIC connection received a PUSH_PROMISE frame.  The following
 // parameters are attached:
@@ -2193,6 +2229,24 @@ EVENT_TYPE(QUIC_SESSION_HANDSHAKE_DONE_FRAME_RECEIVED)
 // }
 EVENT_TYPE(QUIC_SESSION_COALESCED_PACKET_SENT)
 
+// Session buffered an undecryptable packet.
+// {
+//   "encryption_level": <the encryption level of the packet>
+// }
+EVENT_TYPE(QUIC_SESSION_BUFFERED_UNDECRYPTABLE_PACKET)
+
+// Session dropped an undecryptable packet.
+// {
+//   "encryption_level": <the encryption level of the packet>
+// }
+EVENT_TYPE(QUIC_SESSION_DROPPED_UNDECRYPTABLE_PACKET)
+
+// Session is attempting to process an undecryptable packet.
+// {
+//   "encryption_level": <the encryption level of the packet>
+// }
+EVENT_TYPE(QUIC_SESSION_ATTEMPTING_TO_PROCESS_UNDECRYPTABLE_PACKET)
+
 // ------------------------------------------------------------------------
 // QuicHttpStream
 // ------------------------------------------------------------------------
@@ -2266,6 +2320,13 @@ EVENT_TYPE(QUIC_CONNECTION_MIGRATION_TRIGGERED)
 //  }
 EVENT_TYPE(QUIC_CONNECTION_MIGRATION_FAILURE)
 
+// This event is emitted whenenver a platform notification is received that
+// could possibly trigger connection migration.
+//   {
+//     "signal": <Type of the platform notification>
+//   }
+EVENT_TYPE(QUIC_CONNECTION_MIGRATION_PLATFORM_NOTIFICATION)
+
 // Records a successful QUIC connection migration attempt of the session
 // identified by connection_id.
 //  {
@@ -2338,6 +2399,15 @@ EVENT_TYPE(QUIC_CONNECTIVITY_PROBING_MANAGER_PROBE_SENT)
 //     "peer_address": <Peer address on the probed path>
 //  }
 EVENT_TYPE(QUIC_CONNECTIVITY_PROBING_MANAGER_PROBE_RECEIVED)
+
+// Records that QUIC connectivity probing manager receives STATLESS_RESET on the
+// following path:
+//  {
+//     "network": <ID of the network being probed>
+//     "self_address": <Self address on the probed path>
+//     "peer_address": <Peer address on the probed path>
+//  }
+EVENT_TYPE(QUIC_CONNECTIVITY_PROBING_MANAGER_STATELESS_RESET_RECEIVED)
 
 // ------------------------------------------------------------------------
 // QuicPortMigration
@@ -2532,6 +2602,15 @@ EVENT_TYPE(AUTH_CONTROLLER)
 //  }
 EVENT_TYPE(AUTH_BOUND_TO_CONTROLLER)
 
+// Record the result of attempting to create a HttpAuthHandler.
+//
+//  {
+//      "scheme": <scheme>
+//      "net_error": <Net Error. Only present in case of error.>
+//      "challenge": <challenge string, if NetLogCaptureIncludesSensitive>
+//  }
+EVENT_TYPE(AUTH_HANDLER_CREATE_RESULT)
+
 // Record the initialization of an HttpAuthHandler derivative.
 //
 // The END phase has the following parameters:
@@ -2610,13 +2689,21 @@ EVENT_TYPE(AUTH_LIBRARY_ACQUIRE_CREDS)
 // This operation involves invoking an external library which may perform disk,
 // IPC, and network IO as a part of its work.
 //
-// On Posix platforms, the END phase has the following parameters.
+// On Windows, the BEGIN phase has the following parameters:
+//   {
+//     "spn": <Service Principle Name>,
+//     "context_flags": <Integer with bitfield value>
+//   }
+//
+// The END phase has the following parameters.
+//
+// On Posix platforms:
 //   {
 //     "context": <GSSAPI Context Description>,
 //     "status" : <GSSAPI Status if the operation failed>
 //   }
 //
-// On Windows, the END phase has the following parameters.
+// On Windows:
 //   {
 //     "context": <SSPI Context Description>
 //     "status" : <SSPI SECURITY_STATUS>
@@ -3695,6 +3782,11 @@ EVENT_TYPE(HTTP3_UNKNOWN_FRAME_RECEIVED)
 // <setting identifier>: <setting value>
 EVENT_TYPE(HTTP3_SETTINGS_SENT)
 
+// Event emitted when an HTTP/3 SETTINGS frame is resumed for 0-RTT.
+// A list of settings will be logged by
+// <setting identifier>: <setting value>
+EVENT_TYPE(HTTP3_SETTINGS_RESUMED)
+
 // Event emitted when an HTTP/3 GOAWAY frame is sent.
 //  {
 //    "stream_id": <The stream_id field of the GOAWAY frame>
@@ -3738,3 +3830,52 @@ EVENT_TYPE(HTTP3_HEADERS_SENT)
 //    "headers": <A dictionary of the headers sent>
 //  }
 EVENT_TYPE(HTTP3_PUSH_PROMISE_SENT)
+
+// -----------------------------------------------------------------------------
+// Trust Tokens-related events
+// -----------------------------------------------------------------------------
+
+// Event emitted when a request with an associated Trust Tokens operation
+// reaches the net stack (TrustTokenRequestHelperFactory).
+//
+// The BEGIN event contains the operation type:
+// {
+//  "Operation type (mojom.TrustTokenOperationType)": <The operation type>
+// }
+//
+// The END event contains a human-readable explanation of whether creating a
+// Trust Tokens helper (i.e., moving on to the bulk of the operation-specific
+// logic) succeeded or failed:
+// {
+//  "outcome": <human-readable explanation of the outcome>
+// }
+EVENT_TYPE(TRUST_TOKEN_OPERATION_REQUESTED)
+
+// For each of the BEGIN/FINALIZE event type pairs below:
+//
+// The BEGIN event type's BEGIN event is emitted when a request with an
+// associated Trust Tokens operation starts the "Begin" (outbound) phase of the
+// operation. Its END event contains a description of why the outbound phase of
+// the operation succeeded or failed:
+// {
+//  "outcome": <human-readable explanation of the outcome>
+// }
+//
+// The FINALIZE event type is the analogue for the "Finalize" (inbound) phase of
+// the operation.
+//
+// BEGIN_ISSUANCE's BEGIN event is the only event containing a dynamic parameter
+// populated with data from an operation (rather than just a success-or-error
+// description). On success, it contains the number of signed tokens that the
+// issuance operation yielded.
+// {
+//  "outcome": <human-readable explanation of the outcome>,
+//  "# tokens obtained": <number of tokens>
+// }
+EVENT_TYPE(TRUST_TOKEN_OPERATION_BEGIN_ISSUANCE)
+EVENT_TYPE(TRUST_TOKEN_OPERATION_FINALIZE_ISSUANCE)
+
+EVENT_TYPE(TRUST_TOKEN_OPERATION_BEGIN_REDEMPTION)
+EVENT_TYPE(TRUST_TOKEN_OPERATION_FINALIZE_REDEMPTION)
+
+EVENT_TYPE(TRUST_TOKEN_OPERATION_BEGIN_SIGNING)

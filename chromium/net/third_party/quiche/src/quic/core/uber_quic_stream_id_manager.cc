@@ -17,17 +17,18 @@ UberQuicStreamIdManager::UberQuicStreamIdManager(
     QuicStreamCount max_open_outgoing_unidirectional_streams,
     QuicStreamCount max_open_incoming_bidirectional_streams,
     QuicStreamCount max_open_incoming_unidirectional_streams)
-    : bidirectional_stream_id_manager_(delegate,
+    : version_(version),
+      bidirectional_stream_id_manager_(delegate,
                                        /*unidirectional=*/false,
                                        perspective,
-                                       version.transport_version,
+                                       version,
                                        max_open_outgoing_bidirectional_streams,
                                        max_open_incoming_bidirectional_streams),
       unidirectional_stream_id_manager_(
           delegate,
           /*unidirectional=*/true,
           perspective,
-          version.transport_version,
+          version,
           max_open_outgoing_unidirectional_streams,
           max_open_incoming_unidirectional_streams) {}
 
@@ -69,7 +70,7 @@ QuicStreamId UberQuicStreamIdManager::GetNextOutgoingUnidirectionalStreamId() {
 bool UberQuicStreamIdManager::MaybeIncreaseLargestPeerStreamId(
     QuicStreamId id,
     std::string* error_details) {
-  if (QuicUtils::IsBidirectionalStreamId(id)) {
+  if (QuicUtils::IsBidirectionalStreamId(id, version_)) {
     return bidirectional_stream_id_manager_.MaybeIncreaseLargestPeerStreamId(
         id, error_details);
   }
@@ -78,7 +79,7 @@ bool UberQuicStreamIdManager::MaybeIncreaseLargestPeerStreamId(
 }
 
 void UberQuicStreamIdManager::OnStreamClosed(QuicStreamId id) {
-  if (QuicUtils::IsBidirectionalStreamId(id)) {
+  if (QuicUtils::IsBidirectionalStreamId(id, version_)) {
     bidirectional_stream_id_manager_.OnStreamClosed(id);
     return;
   }
@@ -96,15 +97,8 @@ bool UberQuicStreamIdManager::OnStreamsBlockedFrame(
                                                                 error_details);
 }
 
-bool UberQuicStreamIdManager::IsIncomingStream(QuicStreamId id) const {
-  if (QuicUtils::IsBidirectionalStreamId(id)) {
-    return bidirectional_stream_id_manager_.IsIncomingStream(id);
-  }
-  return unidirectional_stream_id_manager_.IsIncomingStream(id);
-}
-
 bool UberQuicStreamIdManager::IsAvailableStream(QuicStreamId id) const {
-  if (QuicUtils::IsBidirectionalStreamId(id)) {
+  if (QuicUtils::IsBidirectionalStreamId(id, version_)) {
     return bidirectional_stream_id_manager_.IsAvailableStream(id);
   }
   return unidirectional_stream_id_manager_.IsAvailableStream(id);
@@ -167,6 +161,16 @@ QuicStreamCount
 UberQuicStreamIdManager::advertised_max_incoming_unidirectional_streams()
     const {
   return unidirectional_stream_id_manager_.incoming_advertised_max_streams();
+}
+
+QuicStreamCount UberQuicStreamIdManager::outgoing_bidirectional_stream_count()
+    const {
+  return bidirectional_stream_id_manager_.outgoing_stream_count();
+}
+
+QuicStreamCount UberQuicStreamIdManager::outgoing_unidirectional_stream_count()
+    const {
+  return unidirectional_stream_id_manager_.outgoing_stream_count();
 }
 
 }  // namespace quic

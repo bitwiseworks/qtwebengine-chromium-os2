@@ -9,6 +9,7 @@
 #define SKSL_VARIABLEREFERENCE
 
 #include "src/sksl/ir/SkSLExpression.h"
+#include "src/sksl/ir/SkSLVariable.h"
 
 namespace SkSL {
 
@@ -22,6 +23,8 @@ class IRGenerator;
  * there is only one Variable 'x', but two VariableReferences to it.
  */
 struct VariableReference : public Expression {
+    static constexpr Kind kExpressionKind = Kind::kVariableReference;
+
     enum RefKind {
         kRead_RefKind,
         kWrite_RefKind,
@@ -31,7 +34,7 @@ struct VariableReference : public Expression {
         kPointer_RefKind
     };
 
-    VariableReference(int offset, const Variable& variable, RefKind refKind = kRead_RefKind);
+    VariableReference(int offset, const Variable* variable, RefKind refKind = kRead_RefKind);
 
     ~VariableReference() override;
 
@@ -47,40 +50,38 @@ struct VariableReference : public Expression {
     bool hasProperty(Property property) const override {
         switch (property) {
             case Property::kSideEffects:      return false;
-            case Property::kContainsRTAdjust: return fVariable.fName == "sk_RTAdjust";
+            case Property::kContainsRTAdjust: return fVariable->fName == "sk_RTAdjust";
             default:
                 SkASSERT(false);
                 return false;
         }
     }
 
-    bool isConstant() const override {
-        return 0 != (fVariable.fModifiers.fFlags & Modifiers::kConst_Flag);
+    bool isConstantOrUniform() const override {
+        return (fVariable->fModifiers.fFlags & Modifiers::kUniform_Flag) != 0;
     }
 
     std::unique_ptr<Expression> clone() const override {
         return std::unique_ptr<Expression>(new VariableReference(fOffset, fVariable, fRefKind));
     }
 
-#ifdef SK_DEBUG
     String description() const override {
-        return fVariable.fName;
+        return fVariable->fName;
     }
-#endif
-
-    static std::unique_ptr<Expression> copy_constant(const IRGenerator& irGenerator,
-                                                     const Expression* expr);
 
     std::unique_ptr<Expression> constantPropagate(const IRGenerator& irGenerator,
                                                   const DefinitionMap& definitions) override;
 
-    const Variable& fVariable;
+    const Variable* fVariable;
     RefKind fRefKind;
 
 private:
-    typedef Expression INHERITED;
+    void incrementRefs() const;
+    void decrementRefs() const;
+
+    using INHERITED = Expression;
 };
 
-} // namespace
+}  // namespace SkSL
 
 #endif

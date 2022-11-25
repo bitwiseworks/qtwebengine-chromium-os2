@@ -171,7 +171,6 @@ using crash_reporter::ScopedCrashKeyString;
 // static
 void CdmAdapter::Create(
     const std::string& key_system,
-    const url::Origin& security_origin,
     const CdmConfig& cdm_config,
     CreateCdmFunc create_cdm_func,
     std::unique_ptr<CdmAuxiliaryHelper> helper,
@@ -187,8 +186,8 @@ void CdmAdapter::Create(
   DCHECK(session_expiration_update_cb);
 
   scoped_refptr<CdmAdapter> cdm =
-      new CdmAdapter(key_system, security_origin, cdm_config, create_cdm_func,
-                     std::move(helper), session_message_cb, session_closed_cb,
+      new CdmAdapter(key_system, cdm_config, create_cdm_func, std::move(helper),
+                     session_message_cb, session_closed_cb,
                      session_keys_change_cb, session_expiration_update_cb);
 
   // |cdm| ownership passed to the promise.
@@ -198,7 +197,6 @@ void CdmAdapter::Create(
 
 CdmAdapter::CdmAdapter(
     const std::string& key_system,
-    const url::Origin& security_origin,
     const CdmConfig& cdm_config,
     CreateCdmFunc create_cdm_func,
     std::unique_ptr<CdmAuxiliaryHelper> helper,
@@ -207,7 +205,6 @@ CdmAdapter::CdmAdapter(
     const SessionKeysChangeCB& session_keys_change_cb,
     const SessionExpirationUpdateCB& session_expiration_update_cb)
     : key_system_(key_system),
-      origin_string_(security_origin.Serialize()),
       cdm_config_(cdm_config),
       create_cdm_func_(create_cdm_func),
       helper_(std::move(helper)),
@@ -215,6 +212,7 @@ CdmAdapter::CdmAdapter(
       session_closed_cb_(session_closed_cb),
       session_keys_change_cb_(session_keys_change_cb),
       session_expiration_update_cb_(session_expiration_update_cb),
+      cdm_origin_(helper_->GetCdmOrigin().Serialize()),
       task_runner_(base::ThreadTaskRunnerHandle::Get()),
       pool_(new AudioBufferMemoryPool()) {
   DVLOG(1) << __func__;
@@ -407,60 +405,27 @@ CdmContext* CdmAdapter::GetCdmContext() {
 
 std::unique_ptr<CallbackRegistration> CdmAdapter::RegisterEventCB(
     EventCB event_cb) {
-  NOTIMPLEMENTED();
-  return nullptr;
+  return event_callbacks_.Register(std::move(event_cb));
 }
 
 Decryptor* CdmAdapter::GetDecryptor() {
   DCHECK(task_runner_->BelongsToCurrentThread());
-
-  // When using HW secure codecs, we cannot and should not use the CDM instance
-  // to do decrypt and/or decode. Instead, we should use the CdmProxy.
-  // TODO(xhwang): Fix External Clear Key key system to be able to set
-  // |use_hw_secure_codecs| so that we don't have to check both.
-  // TODO(xhwang): Update this logic to support transcryption.
-  if (cdm_config_.use_hw_secure_codecs || cdm_proxy_created_) {
-    DVLOG(2) << __func__ << ": GetDecryptor() returns null";
-    return nullptr;
-  }
-
   return this;
 }
 
-int CdmAdapter::GetCdmId() const {
+base::Optional<base::UnguessableToken> CdmAdapter::GetCdmId() const {
   DCHECK(task_runner_->BelongsToCurrentThread());
-#if BUILDFLAG(ENABLE_CDM_PROXY)
-  int cdm_id = helper_->GetCdmProxyCdmId();
-  DVLOG(2) << __func__ << ": cdm_id = " << cdm_id;
-  return cdm_id;
-#else
-  return CdmContext::kInvalidCdmId;
-#endif  // BUILDFLAG(ENABLE_CDM_PROXY)
-}
-
-void CdmAdapter::RegisterNewKeyCB(StreamType stream_type,
-                                  NewKeyCB key_added_cb) {
-  DVLOG(3) << __func__;
-  DCHECK(task_runner_->BelongsToCurrentThread());
-  switch (stream_type) {
-    case kAudio:
-      new_audio_key_cb_ = std::move(key_added_cb);
-      return;
-    case kVideo:
-      new_video_key_cb_ = std::move(key_added_cb);
-      return;
-  }
-
-  NOTREACHED() << "Unexpected StreamType " << stream_type;
+  return base::nullopt;
 }
 
 void CdmAdapter::Decrypt(StreamType stream_type,
                          scoped_refptr<DecoderBuffer> encrypted,
                          DecryptCB decrypt_cb) {
-  DVLOG(3) << __func__ << ": " << encrypted->AsHumanReadableString();
+  DVLOG(3) << __func__ << ": "
+           << encrypted->AsHumanReadableString(/*verbose=*/true);
   DCHECK(task_runner_->BelongsToCurrentThread());
 
-  ScopedCrashKeyString scoped_crash_key(&g_origin_crash_key, origin_string_);
+  ScopedCrashKeyString scoped_crash_key(&g_origin_crash_key, cdm_origin_);
 
   cdm::InputBuffer_2 input_buffer = {};
   std::vector<cdm::SubsampleEntry> subsamples;
@@ -576,10 +541,11 @@ void CdmAdapter::InitializeVideoDecoder(const VideoDecoderConfig& config,
 
 void CdmAdapter::DecryptAndDecodeAudio(scoped_refptr<DecoderBuffer> encrypted,
                                        const AudioDecodeCB& audio_decode_cb) {
-  DVLOG(3) << __func__ << ": " << encrypted->AsHumanReadableString();
+  DVLOG(3) << __func__ << ": "
+           << encrypted->AsHumanReadableString(/*verbose=*/true);
   DCHECK(task_runner_->BelongsToCurrentThread());
 
-  ScopedCrashKeyString scoped_crash_key(&g_origin_crash_key, origin_string_);
+  ScopedCrashKeyString scoped_crash_key(&g_origin_crash_key, cdm_origin_);
 
   cdm::InputBuffer_2 input_buffer = {};
   std::vector<cdm::SubsampleEntry> subsamples;
@@ -614,10 +580,11 @@ void CdmAdapter::DecryptAndDecodeAudio(scoped_refptr<DecoderBuffer> encrypted,
 
 void CdmAdapter::DecryptAndDecodeVideo(scoped_refptr<DecoderBuffer> encrypted,
                                        const VideoDecodeCB& video_decode_cb) {
-  DVLOG(3) << __func__ << ": " << encrypted->AsHumanReadableString();
+  DVLOG(3) << __func__ << ": "
+           << encrypted->AsHumanReadableString(/*verbose=*/true);
   DCHECK(task_runner_->BelongsToCurrentThread());
 
-  ScopedCrashKeyString scoped_crash_key(&g_origin_crash_key, origin_string_);
+  ScopedCrashKeyString scoped_crash_key(&g_origin_crash_key, cdm_origin_);
 
   cdm::InputBuffer_2 input_buffer = {};
   std::vector<cdm::SubsampleEntry> subsamples;
@@ -650,10 +617,7 @@ void CdmAdapter::DecryptAndDecodeVideo(scoped_refptr<DecoderBuffer> encrypted,
     return;
   }
 
-  if (is_video_encrypted_) {
-    decoded_frame->metadata()->SetBoolean(VideoFrameMetadata::PROTECTED_VIDEO,
-                                          true);
-  }
+  decoded_frame->metadata()->protected_video = is_video_encrypted_;
 
   video_decode_cb.Run(Decryptor::kSuccess, decoded_frame);
 }
@@ -829,14 +793,8 @@ void CdmAdapter::OnSessionKeysChange(const char* session_id,
         info.system_code));
   }
 
-  // TODO(jrummell): Handling resume playback should be done in the media
-  // player, not in the Decryptors. http://crbug.com/413413.
-  if (has_additional_usable_key) {
-    if (new_audio_key_cb_)
-      new_audio_key_cb_.Run();
-    if (new_video_key_cb_)
-      new_video_key_cb_.Run();
-  }
+  if (has_additional_usable_key)
+    event_callbacks_.Notify(Event::kHasAdditionalUsableKey);
 
   session_keys_change_cb_.Run(session_id_str, has_additional_usable_key,
                               std::move(keys));
@@ -1065,27 +1023,6 @@ void CdmAdapter::RequestStorageId(uint32_t version) {
   helper_->GetStorageId(version,
                         base::BindOnce(&CdmAdapter::OnStorageIdObtained,
                                        weak_factory_.GetWeakPtr()));
-}
-
-cdm::CdmProxy* CdmAdapter::RequestCdmProxy(cdm::CdmProxyClient* client) {
-  DVLOG(3) << __func__;
-  DCHECK(task_runner_->BelongsToCurrentThread());
-
-#if BUILDFLAG(ENABLE_CDM_PROXY)
-  // CdmProxy should only be created once, at CDM initialization time.
-  if (cdm_proxy_created_ ||
-      init_promise_id_ == CdmPromiseAdapter::kInvalidPromiseId) {
-    DVLOG(1) << __func__
-             << ": CdmProxy can only be created once, and must be created "
-                "during CDM initialization.";
-    return nullptr;
-  }
-
-  cdm_proxy_created_ = true;
-  return helper_->CreateCdmProxy(client);
-#else
-  return nullptr;
-#endif  // BUILDFLAG(ENABLE_CDM_PROXY)
 }
 
 void CdmAdapter::OnStorageIdObtained(uint32_t version,

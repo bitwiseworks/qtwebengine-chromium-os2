@@ -223,7 +223,7 @@ class CryptoServerTest : public QuicTestWithParam<TestParams> {
     bool called = false;
     QuicSocketAddress server_address(QuicIpAddress::Any4(), 5);
     config_.ValidateClientHello(
-        message, client_address_.host(), server_address,
+        message, client_address_, server_address,
         supported_versions_.front().transport_version, &clock_, signed_config_,
         std::make_unique<ValidateCallback>(this, true, "", &called));
     EXPECT_TRUE(called);
@@ -241,7 +241,7 @@ class CryptoServerTest : public QuicTestWithParam<TestParams> {
                             bool* called) {
     QuicSocketAddress server_address(QuicIpAddress::Any4(), 5);
     config_.ValidateClientHello(
-        message, client_address_.host(), server_address,
+        message, client_address_, server_address,
         supported_versions_.front().transport_version, &clock_, signed_config_,
         std::make_unique<ValidateCallback>(this, false, error_substr, called));
   }
@@ -502,16 +502,6 @@ TEST_P(CryptoServerTest, RejectTooLargeButValidSTK) {
   EXPECT_TRUE(out_.GetStringPiece(kCertificateSCTTag, &cert_sct));
   EXPECT_NE(0u, cert.size());
   EXPECT_NE(0u, proof.size());
-  const HandshakeFailureReason kRejectReasons[] = {
-      SERVER_CONFIG_INCHOATE_HELLO_FAILURE};
-  CheckRejectReasons(kRejectReasons, QUICHE_ARRAYSIZE(kRejectReasons));
-}
-
-TEST_P(CryptoServerTest, TooSmall) {
-  ShouldFailMentioning(
-      "too small", crypto_test_utils::CreateCHLO(
-                       {{"PDMD", "X509"}, {"VER\0", client_version_string_}}));
-
   const HandshakeFailureReason kRejectReasons[] = {
       SERVER_CONFIG_INCHOATE_HELLO_FAILURE};
   CheckRejectReasons(kRejectReasons, QUICHE_ARRAYSIZE(kRejectReasons));

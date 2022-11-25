@@ -20,8 +20,8 @@
 
 namespace content {
 
+class ServiceWorkerClientInfo;
 enum class EmbeddedWorkerStatus;
-struct ServiceWorkerClientInfo;
 
 struct CONTENT_EXPORT ServiceWorkerVersionInfo {
  public:
@@ -45,7 +45,7 @@ struct CONTENT_EXPORT ServiceWorkerVersionInfo {
   ServiceWorkerVersion::FetchHandlerExistence fetch_handler_existence;
   blink::mojom::NavigationPreloadState navigation_preload_state;
   GURL script_url;
-  url::Origin script_origin;
+  url::Origin origin;
   int64_t registration_id;
   int64_t version_id;
   int process_id;

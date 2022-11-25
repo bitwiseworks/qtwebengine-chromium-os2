@@ -15,8 +15,10 @@
 #include "third_party/blink/renderer/core/layout/ng/ng_break_token.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_fragmentation_utils.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_layout_result.h"
+#include "third_party/blink/renderer/core/layout/ng/ng_length_utils.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_physical_box_fragment.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_positioned_float.h"
+#include "third_party/blink/renderer/core/layout/ng/ng_relative_utils.h"
 #include "third_party/blink/renderer/core/paint/ng/ng_paint_fragment.h"
 
 namespace blink {
@@ -77,8 +79,9 @@ void GatherInlineContainerFragmentsFromLinebox(
   }
 }
 
+template <class Items>
 void GatherInlineContainerFragmentsFromItems(
-    const Vector<std::unique_ptr<NGFragmentItem>>& items,
+    const Items& items,
     const PhysicalOffset& box_offset,
     NGBoxFragmentBuilder::InlineContainingBlockMap* inline_containing_block_map,
     HashMap<const LayoutObject*, LineBoxPair>* containing_linebox_map) {
@@ -157,7 +160,12 @@ void NGBoxFragmentBuilder::AddBreakBeforeChild(
   }
 
   DCHECK(has_block_fragmentation_);
-  SetDidBreak();
+
+  if (!has_inflow_child_break_inside_)
+    has_inflow_child_break_inside_ = !child.IsFloatingOrOutOfFlowPositioned();
+  if (!has_float_break_inside_)
+    has_float_break_inside_ = child.IsFloating();
+
   if (auto* child_inline_node = DynamicTo<NGInlineNode>(child)) {
     if (inline_break_tokens_.IsEmpty()) {
       // In some cases we may want to break before the first line, as a last
@@ -176,8 +184,7 @@ void NGBoxFragmentBuilder::AddBreakBeforeChild(
 }
 
 void NGBoxFragmentBuilder::AddResult(const NGLayoutResult& child_layout_result,
-                                     const LogicalOffset offset,
-                                     const LayoutInline* inline_container) {
+                                     const LogicalOffset offset) {
   const auto& fragment = child_layout_result.PhysicalFragment();
   if (items_builder_) {
     if (const NGPhysicalLineBoxFragment* line =
@@ -187,15 +194,99 @@ void NGBoxFragmentBuilder::AddResult(const NGLayoutResult& child_layout_result,
       // maybe OOF objects. Investigate how to handle them.
     }
   }
-  AddChild(fragment, offset, inline_container);
+
+  NGMarginStrut end_margin_strut = child_layout_result.EndMarginStrut();
+  // No margins should pierce outside formatting-context roots.
+  DCHECK(!fragment.IsFormattingContextRoot() || end_margin_strut.IsEmpty());
+
+  AddChild(fragment, offset, /* inline_container */ nullptr, &end_margin_strut);
   if (fragment.IsBox())
     PropagateBreak(child_layout_result);
 }
 
+void NGBoxFragmentBuilder::AddChild(const NGPhysicalContainerFragment& child,
+                                    const LogicalOffset& child_offset,
+                                    const LayoutInline* inline_container,
+                                    const NGMarginStrut* margin_strut) {
+  LogicalOffset adjusted_offset = child_offset;
+
+  if (box_type_ != NGPhysicalBoxFragment::NGBoxType::kInlineBox) {
+    if (child.IsCSSBox()) {
+      // Apply the relative position offset.
+      const auto& box_child = To<NGPhysicalBoxFragment>(child);
+      if (box_child.Style().GetPosition() == EPosition::kRelative) {
+        adjusted_offset += ComputeRelativeOffsetForBoxFragment(
+            box_child, GetWritingDirection(), child_available_size_);
+      }
+
+      // The |may_have_descendant_above_block_start_| flag is used to determine
+      // if a fragment can be re-used when preceding floats are present. This
+      // is relatively rare, and is true if:
+      //  - An inflow child is positioned above our block-start edge.
+      //  - Any inflow descendants (within the same formatting-context) which
+      //    *may* have a child positioned above our block-start edge.
+      if ((child_offset.block_offset < LayoutUnit() &&
+           !box_child.IsOutOfFlowPositioned()) ||
+          (!box_child.IsFormattingContextRoot() &&
+           box_child.MayHaveDescendantAboveBlockStart()))
+        may_have_descendant_above_block_start_ = true;
+    }
+
+    // If we are a scroll container, we need to track the maximum bounds of any
+    // inflow children (including line-boxes) to calculate the layout-overflow.
+    //
+    // This is used for determining the "padding-box" of the scroll container
+    // which is *sometimes* considered as part of the scrollable area. Inflow
+    // children contribute to this area, out-of-flow positioned children don't.
+    //
+    // Out-of-flow positioned children still contribute to the layout-overflow,
+    // but just don't influence where this padding is.
+    if (Node().IsScrollContainer() && !child.IsOutOfFlowPositioned()) {
+      NGBoxStrut margins;
+      if (child.IsCSSBox()) {
+        margins =
+            ComputeMarginsFor(child.Style(), child_available_size_.inline_size,
+                              GetWritingMode(), Direction());
+      }
+
+      // If we are in block-flow layout we use the end *margin-strut* as the
+      // block-end "margin" (instead of just the block-end margin).
+      if (margin_strut) {
+        NGMarginStrut end_margin_strut = *margin_strut;
+        end_margin_strut.Append(margins.block_end, /* is_quirky */ false);
+        margins.block_end = end_margin_strut.Sum();
+      }
+
+      NGFragment fragment(GetWritingMode(), child);
+
+      // Use the original offset (*without* relative-positioning applied), and
+      // clamp any negative margins to zero.
+      margins.ClampNegativeToZero();
+      LogicalRect bounds = {
+          LogicalOffset(child_offset.inline_offset - margins.inline_start,
+                        child_offset.block_offset - margins.block_start),
+          LogicalSize(
+              margins.inline_start + fragment.InlineSize() + margins.inline_end,
+              margins.block_start + fragment.BlockSize() + margins.block_end)};
+
+      // Even an empty (0x0) fragment contributes to the inflow-bounds.
+      if (!inflow_bounds_)
+        inflow_bounds_ = bounds;
+      else
+        inflow_bounds_->UniteEvenIfEmpty(bounds);
+    }
+  }
+
+  PropagateChildData(child, adjusted_offset, inline_container);
+  AddChildInternal(&child, adjusted_offset);
+}
+
 void NGBoxFragmentBuilder::AddBreakToken(
-    scoped_refptr<const NGBreakToken> token) {
+    scoped_refptr<const NGBreakToken> token,
+    bool is_in_parallel_flow) {
   DCHECK(token.get());
   child_break_tokens_.push_back(std::move(token));
+  has_inflow_child_break_inside_ |= !is_in_parallel_flow;
 }
 
 void NGBoxFragmentBuilder::AddOutOfFlowLegacyCandidate(
@@ -244,9 +335,22 @@ void NGBoxFragmentBuilder::PropagateBreak(
     const NGLayoutResult& child_layout_result) {
   if (LIKELY(!has_block_fragmentation_))
     return;
-  if (!did_break_) {
-    const auto* token = child_layout_result.PhysicalFragment().BreakToken();
-    did_break_ = token && !token->IsFinished();
+  if (!has_inflow_child_break_inside_ || !has_float_break_inside_) {
+    // Figure out if this child break is in the same flow as this parent. If
+    // it's an out-of-flow positioned box, it's not. If it's in a parallel flow,
+    // it's also not.
+    const auto& child_fragment =
+        To<NGPhysicalBoxFragment>(child_layout_result.PhysicalFragment());
+    if (const auto* token = child_fragment.BreakToken()) {
+      if (!token->IsFinished() &&
+          (!token->IsBlockType() ||
+           !To<NGBlockBreakToken>(token)->IsAtBlockEnd())) {
+        if (child_fragment.IsFloating())
+          has_float_break_inside_ = true;
+        else if (!child_fragment.IsOutOfFlowPositioned())
+          has_inflow_child_break_inside_ = true;
+      }
+    }
   }
   if (child_layout_result.HasForcedBreak()) {
     SetHasForcedBreak();
@@ -279,11 +383,8 @@ scoped_refptr<const NGLayoutResult> NGBoxFragmentBuilder::ToBoxFragment(
           child_break_tokens_.push_back(std::move(token));
       }
     }
-    if (did_break_) {
-      break_token_ = NGBlockBreakToken::Create(
-          node_, consumed_block_size_, sequence_number_, child_break_tokens_,
-          break_appeal_, has_seen_all_children_);
-    }
+    if (DidBreakSelf() || HasChildBreakInside())
+      break_token_ = NGBlockBreakToken::Create(*this);
   }
 
   if (!has_floating_descendants_for_paint_ && items_builder_) {
@@ -350,7 +451,7 @@ void NGBoxFragmentBuilder::ComputeInlineContainerGeometryFromFragmentTree(
   // This function has detailed knowledge of inline fragment tree structure,
   // and will break if this changes.
   DCHECK_GE(InlineSize(), LayoutUnit());
-  DCHECK_GE(BlockSize(), LayoutUnit());
+  DCHECK_GE(FragmentBlockSize(), LayoutUnit());
 #if DCHECK_IS_ON()
   // Make sure all entries are continuation root.
   for (const auto& entry : *inline_containing_block_map)
@@ -406,7 +507,7 @@ void NGBoxFragmentBuilder::ComputeInlineContainerGeometry(
   // This function requires that we have the final size of the fragment set
   // upon the builder.
   DCHECK_GE(InlineSize(), LayoutUnit());
-  DCHECK_GE(BlockSize(), LayoutUnit());
+  DCHECK_GE(FragmentBlockSize(), LayoutUnit());
 
 #if DCHECK_IS_ON()
   // Make sure all entries are a continuation root.
@@ -419,9 +520,10 @@ void NGBoxFragmentBuilder::ComputeInlineContainerGeometry(
   if (items_builder_) {
     // To access the items correctly we need to convert them to the physical
     // coordinate space.
+    DCHECK_EQ(items_builder_->GetWritingMode(), GetWritingMode());
+    DCHECK_EQ(items_builder_->Direction(), Direction());
     GatherInlineContainerFragmentsFromItems(
-        items_builder_->Items(GetWritingMode(), Direction(),
-                              ToPhysicalSize(Size(), GetWritingMode())),
+        items_builder_->Items(ToPhysicalSize(Size(), GetWritingMode())),
         PhysicalOffset(), inline_containing_block_map, &containing_linebox_map);
     return;
   }
@@ -451,10 +553,26 @@ void NGBoxFragmentBuilder::ComputeInlineContainerGeometry(
   }
 }
 
+void NGBoxFragmentBuilder::SetLastBaselineToBlockEndMarginEdgeIfNeeded() {
+  if (ConstraintSpace()->BaselineAlgorithmType() !=
+      NGBaselineAlgorithmType::kInlineBlock)
+    return;
+
+  if (!node_.UseBlockEndMarginEdgeForInlineBlockBaseline())
+    return;
+
+  // When overflow is present (within an atomic-inline baseline context) we
+  // should always use the block-end margin edge as the baseline.
+  NGBoxStrut margins = ComputeMarginsForSelf(*ConstraintSpace(), Style());
+  SetLastBaseline(FragmentBlockSize() + margins.block_end);
+}
+
 #if DCHECK_IS_ON()
 
 void NGBoxFragmentBuilder::CheckNoBlockFragmentation() const {
-  DCHECK(!did_break_);
+  DCHECK(!HasChildBreakInside());
+  DCHECK(!HasInflowChildBreakInside());
+  DCHECK(!DidBreakSelf());
   DCHECK(!has_forced_break_);
   DCHECK_EQ(consumed_block_size_, LayoutUnit());
   DCHECK_EQ(minimal_space_shortage_, LayoutUnit::Max());

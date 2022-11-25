@@ -17,6 +17,7 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -31,6 +32,7 @@
 #include "components/autofill/core/browser/form_types.h"
 #include "components/autofill/core/browser/metrics/address_form_event_logger.h"
 #include "components/autofill/core/browser/metrics/credit_card_form_event_logger.h"
+#include "components/autofill/core/browser/payments/autofill_offer_manager.h"
 #include "components/autofill/core/browser/payments/card_unmask_delegate.h"
 #include "components/autofill/core/browser/payments/credit_card_access_manager.h"
 #include "components/autofill/core/browser/payments/full_card_request.h"
@@ -38,11 +40,7 @@
 #include "components/autofill/core/browser/sync_utils.h"
 #include "components/autofill/core/browser/ui/popup_types.h"
 #include "components/autofill/core/common/form_data.h"
-#include "components/autofill/core/common/signatures_util.h"
-
-#if defined(OS_ANDROID) || defined(OS_IOS)
-#include "components/autofill/core/browser/autofill_assistant.h"
-#endif
+#include "components/autofill/core/common/signatures.h"
 
 namespace gfx {
 class RectF;
@@ -228,8 +226,6 @@ class AutofillManager : public AutofillHandler,
   void OnDidPreviewAutofillFormData() override;
   void OnDidEndTextFieldEditing() override;
   void OnHidePopup() override;
-  void OnSetDataList(const std::vector<base::string16>& values,
-                     const std::vector<base::string16>& labels) override;
   void SelectFieldOptionsDidChange(const FormData& form) override;
   void Reset() override;
 
@@ -262,6 +258,15 @@ class AutofillManager : public AutofillHandler,
   // Returns the last form the autofill manager considered in this frame.
   virtual const FormData& last_query_form() const;
 
+  // Exposed to ContentAutofillDriver to help with recording WebOTP metrics.
+  bool has_parsed_forms() const { return has_parsed_forms_; }
+  bool has_observed_phone_number_field() const {
+    return has_observed_phone_number_field_;
+  }
+  bool has_observed_one_time_code_field() const {
+    return has_observed_one_time_code_field_;
+  }
+
 #if defined(UNIT_TEST)
   // A public wrapper that calls |DeterminePossibleFieldTypesForUpload| for
   // testing purposes only.
@@ -280,8 +285,8 @@ class AutofillManager : public AutofillHandler,
   // purposes only.
   void OnLoadedServerPredictionsForTest(
       std::string response,
-      const std::vector<std::string>& form_signatures) {
-    OnLoadedServerPredictions(response, form_signatures);
+      const std::vector<FormSignature>& queried_form_signatures) {
+    OnLoadedServerPredictions(response, queried_form_signatures);
   }
 
   // A public wrapper that calls |MakeFrontendID| for testing purposes only.
@@ -368,7 +373,7 @@ class AutofillManager : public AutofillHandler,
                                     const gfx::RectF& bounding_box) override;
   bool ShouldParseForms(const std::vector<FormData>& forms,
                         const base::TimeTicks timestamp) override;
-  void OnFormsParsed(const std::vector<FormStructure*>& form_structures,
+  void OnFormsParsed(const std::vector<const FormData*>& forms,
                      const base::TimeTicks timestamp) override;
 
   AutofillMetrics::FormInteractionsUkmLogger* form_interactions_ukm_logger() {
@@ -386,17 +391,25 @@ class AutofillManager : public AutofillHandler,
  private:
   // Keeps track of the filling context for a form, used to make refill attemps.
   struct FillingContext {
-    FillingContext();
+    // |optional_profile| or |optional_credit_card| must be non-null.
+    // If |optional_credit_card| is non-null, |optional_cvc| may be non-null.
+    FillingContext(const AutofillField& field,
+                   const AutofillProfile* optional_profile,
+                   const CreditCard* optional_credit_card,
+                   const base::string16* optional_cvc);
     ~FillingContext();
 
     // Whether a refill attempt was made.
     bool attempted_refill = false;
-    // The profile that was used for the initial fill.
-    AutofillProfile temp_data_model;
+    // The profile or credit card that was used for the initial fill.
+    // The std::string associated with the credit card is the CVC, which may be
+    // empty.
+    const base::Optional<AutofillProfile> profile;
+    const base::Optional<std::pair<CreditCard, base::string16>> credit_card;
     // The name of the field that was initially filled.
-    base::string16 filled_field_name;
-    // The time at which the initial fill occured.
-    base::TimeTicks original_fill_time;
+    const base::string16 filled_field_name;
+    // The time at which the initial fill occurred.
+    const base::TimeTicks original_fill_time;
     // The timer used to trigger a refill.
     base::OneShotTimer on_refill_timer;
     // The field type groups that were initially filled.
@@ -412,6 +425,10 @@ class AutofillManager : public AutofillHandler,
     // Address suggestions are not shown because the field is annotated with
     // autocomplete=off and the directive is being observed by the browser.
     kAutocompleteOff,
+    // Suggestions are not shown because this form is on a secure site, but
+    // submits insecurely. This is only used when the user has started typing,
+    // otherwise a warning is shown.
+    kInsecureForm,
   };
 
   // The context for the list of suggestions available for a given field to be
@@ -430,7 +447,7 @@ class AutofillManager : public AutofillHandler,
   // AutofillDownloadManager::Observer:
   void OnLoadedServerPredictions(
       std::string response,
-      const std::vector<std::string>& form_signatures) override;
+      const std::vector<FormSignature>& queried_form_signatures) override;
 
   // CreditCardAccessManager::Accessor
   void OnCreditCardFetched(
@@ -477,9 +494,9 @@ class AutofillManager : public AutofillHandler,
                                   int query_id,
                                   const FormData& form,
                                   const FormFieldData& field,
-                                  const AutofillDataModel& data_model,
-                                  bool is_credit_card,
-                                  const base::string16& cvc,
+                                  const AutofillProfile* optional_profile,
+                                  const CreditCard* optional_credit_card,
+                                  const base::string16* optional_cvc,
                                   FormStructure* form_structure,
                                   AutofillField* autofill_field,
                                   bool is_refill = false);
@@ -562,7 +579,8 @@ class AutofillManager : public AutofillHandler,
                           FormFieldData* field_data,
                           bool should_notify,
                           const base::string16& cvc,
-                          uint32_t profile_form_bitmask);
+                          uint32_t profile_form_bitmask,
+                          std::string* failure_to_fill);
 
   // Whether there should be an attemps to refill the form. Returns true if all
   // the following are satisfied:
@@ -585,6 +603,9 @@ class AutofillManager : public AutofillHandler,
                                std::vector<Suggestion>* suggestions,
                                SuggestionsContext* context);
 
+  // Retrieves the page language from |client_|
+  std::string GetPageLanguage() const override;
+
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
   // Whether to show the option to use virtual card in the autofill popup.
   bool ShouldShowVirtualCardOption(FormStructure* form_structure);
@@ -595,6 +616,8 @@ class AutofillManager : public AutofillHandler,
   FormEventLoggerBase* GetEventFormLogger(
       FieldTypeGroup field_type_group) const;
 
+  void SetDataList(const std::vector<base::string16>& values,
+                   const std::vector<base::string16>& labels);
   AutofillClient* const client_;
 
   LogManager* log_manager_;
@@ -642,6 +665,13 @@ class AutofillManager : public AutofillHandler,
   // Has the user edited a field that was previously autofilled?
   bool user_did_edit_autofilled_field_ = false;
 
+  // Does |this| have any parsed forms?
+  bool has_parsed_forms_ = false;
+  // Is there a field with autocomplete="one-time-code" observed?
+  bool has_observed_one_time_code_field_ = false;
+  // Is there a field with phone number collection observed?
+  bool has_observed_phone_number_field_ = false;
+
   // When the user first interacted with a potentially fillable form on this
   // page.
   base::TimeTicks initial_interaction_timestamp_;
@@ -651,6 +681,10 @@ class AutofillManager : public AutofillHandler,
 
   // The credit card access manager, used to access local and server cards.
   std::unique_ptr<CreditCardAccessManager> credit_card_access_manager_;
+
+  // The autofill offer manager, used to to retrieve offers for card
+  // suggestions.
+  AutofillOfferManager* offer_manager_;
 
   // Collected information about the autofill form where a credit card will be
   // filled.
@@ -677,10 +711,6 @@ class AutofillManager : public AutofillHandler,
 
   // Delegate used in test to get notifications on certain events.
   AutofillManagerTestDelegate* test_delegate_ = nullptr;
-
-#if defined(OS_ANDROID) || defined(OS_IOS)
-  AutofillAssistant autofill_assistant_;
-#endif
 
   // A map of form names to FillingContext instances used to make refill
   // attempts for dynamic forms.

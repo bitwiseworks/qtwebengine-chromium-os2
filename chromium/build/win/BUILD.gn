@@ -6,6 +6,13 @@ import("//build/config/clang/clang.gni")
 import("//build/config/sanitizers/sanitizers.gni")
 import("//build/config/win/manifest.gni")
 
+# This file depends on the legacy global sources assignment filter. It should
+# be converted to check target platform before assigning source files to the
+# sources variable. Remove this import and set_sources_assignment_filter call
+# when the file has been converted. See https://crbug.com/1018739 for details.
+import("//build/config/deprecated_default_sources_assignment_filter.gni")
+set_sources_assignment_filter(deprecated_default_sources_assignment_filter)
+
 # Depending on this target will cause the manifests for Chrome's default
 # Windows and common control compatibility and elevation for executables.
 windows_manifest("default_exe_manifest") {
@@ -79,6 +86,7 @@ if (is_win) {
         "$root_out_dir/cdb/api-ms-win-crt-string-l1-1-0.dll",
         "$root_out_dir/cdb/api-ms-win-crt-time-l1-1-0.dll",
         "$root_out_dir/cdb/api-ms-win-crt-utility-l1-1-0.dll",
+        "$root_out_dir/cdb/api-ms-win-downlevel-kernel32-l2-1-0.dll",
         "$root_out_dir/cdb/api-ms-win-eventing-provider-l1-1-0.dll",
         "$root_out_dir/cdb/ucrtbase.dll",
       ]
@@ -108,6 +116,9 @@ if (is_win) {
         "$root_out_dir/vccorlib140${vcrt_suffix}.dll",
         "$root_out_dir/vcruntime140${vcrt_suffix}.dll",
       ]
+      if (current_cpu == "x64") {
+        data += [ "$root_out_dir/vcruntime140_1${vcrt_suffix}.dll" ]
+      }
       if (is_debug) {
         data += [ "$root_out_dir/ucrtbased.dll" ]
       }
@@ -159,6 +170,8 @@ if (is_win) {
           "$root_out_dir/api-ms-win-crt-string-l1-1-0.dll",
           "$root_out_dir/api-ms-win-crt-time-l1-1-0.dll",
           "$root_out_dir/api-ms-win-crt-utility-l1-1-0.dll",
+          "$root_out_dir/api-ms-win-downlevel-kernel32-l2-1-0.dll",
+          "$root_out_dir/api-ms-win-eventing-provider-l1-1-0.dll",
         ]
         if (!is_debug) {
           data += [ "$root_out_dir/ucrtbase.dll" ]

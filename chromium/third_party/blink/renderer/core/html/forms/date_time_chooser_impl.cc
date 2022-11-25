@@ -69,7 +69,7 @@ DateTimeChooserImpl::DateTimeChooserImpl(
 
 DateTimeChooserImpl::~DateTimeChooserImpl() = default;
 
-void DateTimeChooserImpl::Trace(Visitor* visitor) {
+void DateTimeChooserImpl::Trace(Visitor* visitor) const {
   visitor->Trace(frame_);
   visitor->Trace(client_);
   DateTimeChooser::Trace(visitor);
@@ -123,7 +123,10 @@ void DateTimeChooserImpl::WriteDocument(SharedBuffer* data) {
         GetLocale().QueryString(IDS_FORM_OTHER_DATE_LABEL);
   }
 
-  AddString("<!DOCTYPE html><head><meta charset='UTF-8'><style>\n", data);
+  AddString(
+      "<!DOCTYPE html><head><meta charset='UTF-8'><meta name='color-scheme' "
+      "content='light dark'><style>\n",
+      data);
 
   data->Append(ChooserResourceLoader::GetPickerCommonStyleSheet());
   if (!features::IsFormControlsRefreshEnabled())
@@ -156,30 +159,23 @@ void DateTimeChooserImpl::WriteDocument(SharedBuffer* data) {
       "currentValue",
       ValueToDateTimeString(parameters_->double_value, parameters_->type),
       data);
+  AddProperty("focusedFieldIndex", parameters_->focused_field_index, data);
   AddProperty("locale", parameters_->locale.GetString(), data);
   AddProperty("todayLabel", today_label_string, data);
-  AddProperty("clearLabel", GetLocale().QueryString(IDS_FORM_CALENDAR_CLEAR),
-              data);
-  AddProperty("weekLabel", GetLocale().QueryString(IDS_FORM_WEEK_NUMBER_LABEL),
-              data);
-  AddProperty("axShowMonthSelector",
-              GetLocale().QueryString(IDS_AX_CALENDAR_SHOW_MONTH_SELECTOR),
-              data);
-  AddProperty("axShowNextMonth",
-              GetLocale().QueryString(IDS_AX_CALENDAR_SHOW_NEXT_MONTH), data);
-  AddProperty("axShowPreviousMonth",
-              GetLocale().QueryString(IDS_AX_CALENDAR_SHOW_PREVIOUS_MONTH),
-              data);
-  AddProperty("axHourLabel", GetLocale().QueryString(IDS_AX_HOUR_FIELD_TEXT),
-              data);
-  AddProperty("axMinuteLabel",
-              GetLocale().QueryString(IDS_AX_MINUTE_FIELD_TEXT), data);
-  AddProperty("axSecondLabel",
-              GetLocale().QueryString(IDS_AX_SECOND_FIELD_TEXT), data);
-  AddProperty("axMillisecondLabel",
-              GetLocale().QueryString(IDS_AX_MILLISECOND_FIELD_TEXT), data);
-  AddProperty("axAmPmLabel", GetLocale().QueryString(IDS_AX_AM_PM_FIELD_TEXT),
-              data);
+  AddLocalizedProperty("clearLabel", IDS_FORM_CALENDAR_CLEAR, data);
+  AddLocalizedProperty("weekLabel", IDS_FORM_WEEK_NUMBER_LABEL, data);
+  AddLocalizedProperty("axShowMonthSelector",
+                       IDS_AX_CALENDAR_SHOW_MONTH_SELECTOR, data);
+  AddLocalizedProperty("axShowNextMonth", IDS_AX_CALENDAR_SHOW_NEXT_MONTH,
+                       data);
+  AddLocalizedProperty("axShowPreviousMonth",
+                       IDS_AX_CALENDAR_SHOW_PREVIOUS_MONTH, data);
+  AddLocalizedProperty("axHourLabel", IDS_AX_HOUR_FIELD_TEXT, data);
+  AddLocalizedProperty("axMinuteLabel", IDS_AX_MINUTE_FIELD_TEXT, data);
+  AddLocalizedProperty("axSecondLabel", IDS_AX_SECOND_FIELD_TEXT, data);
+  AddLocalizedProperty("axMillisecondLabel", IDS_AX_MILLISECOND_FIELD_TEXT,
+                       data);
+  AddLocalizedProperty("axAmPmLabel", IDS_AX_AM_PM_FIELD_TEXT, data);
   AddProperty("weekStartDay", locale_->FirstDayOfWeek(), data);
   AddProperty("shortMonthLabels", locale_->ShortMonthLabels(), data);
   AddProperty("dayLabels", locale_->WeekDayShortLabels(), data);
@@ -188,7 +184,7 @@ void DateTimeChooserImpl::WriteDocument(SharedBuffer* data) {
   AddProperty("isRTL", parameters_->is_anchor_element_rtl, data);
   AddProperty("isFormControlsRefreshEnabled",
               features::IsFormControlsRefreshEnabled(), data);
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   AddProperty("isBorderTransparent", features::IsFormControlsRefreshEnabled(),
               data);
 #endif
@@ -221,9 +217,9 @@ void DateTimeChooserImpl::WriteDocument(SharedBuffer* data) {
         data);
     AddProperty("otherDateLabel", other_date_label_string, data);
 
-    DCHECK(OwnerElement().GetComputedStyle());
-    WebColorScheme color_scheme =
-        OwnerElement().GetComputedStyle()->UsedColorScheme();
+    const ComputedStyle* style = OwnerElement().GetComputedStyle();
+    ColorScheme color_scheme =
+        style ? style->UsedColorScheme() : ColorScheme::kLight;
 
     AddProperty("suggestionHighlightColor",
                 LayoutTheme::GetTheme()

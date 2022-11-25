@@ -28,6 +28,12 @@ const char kMetricsDefaultOptIn[] = "user_experience_metrics.default_opt_in";
 // count info, etc.
 const char kMetricsInitialLogs[] = "user_experience_metrics.initial_logs2";
 
+// An dictionary of information about the unsent initial logs, it was
+// recorded when the unsent log is persisted and will be written into the
+// metrics at the next browser starts up.
+const char kMetricsInitialLogsMetadata[] =
+    "user_experience_metrics.unsent_log_metadata.initial_logs";
+
 // Low entropy source values. The new source (with suffix "3") was created
 // because the old source (with suffix "2") is biased in the wild. Clients which
 // have an old source still incorporate it into the high entropy source, to
@@ -50,6 +56,11 @@ const char kMetricsMachineId[] = "user_experience_metrics.machine_id";
 // user activities.
 const char kMetricsOngoingLogs[] = "user_experience_metrics.ongoing_logs2";
 
+// An dictionary that is same as kUnsentLogMetkMetricsInitialLogsMetadata,
+// but for the ongoing logs.
+const char kMetricsOngoingLogsMetadata[] =
+    "user_experience_metrics.unsent_log_metadata.ongoing_logs";
+
 // Boolean that indicates a cloned install has been detected and the metrics
 // client id and low entropy source should be reset.
 const char kMetricsResetIds[] = "user_experience_metrics.reset_metrics_ids";
@@ -71,6 +82,10 @@ const char kMetricsSessionID[] = "user_experience_metrics.session_id";
 // Values are named for the files themselves.
 const char kMetricsLastSeenPrefix[] =
     "user_experience_metrics.last_seen.";
+
+// Array of the number of samples in the memory mapped file.
+const char kMetricsFileMetricsMetadata[] =
+    "user_experience_metrics.file_metrics_metadata";
 
 // Number of times the browser has been able to register crash reporting.
 const char kStabilityBreakpadRegistrationSuccess[] =
@@ -103,12 +118,6 @@ const char kStabilityCrashCount[] =
 const char kStabilityCrashCountDueToGmsCoreUpdate[] =
     "user_experience_metrics.stability.crash_count_due_to_gms_core_update";
 
-// Number of times the application exited uncleanly since the last report
-// without gms core update (Deprecated 2018-09).
-// TODO(wnwen): Remove this after 2019-09.
-const char kStabilityCrashCountWithoutGmsCoreUpdateObsolete[] =
-    "user_experience_metrics.stability.crash_count_without_gms_core_update";
-
 // Number of times the initial stability log upload was deferred to the next
 // startup.
 const char kStabilityDeferredCount[] =
@@ -127,11 +136,6 @@ const char kStabilityDebuggerPresent[] =
 const char kStabilityDebuggerNotPresent[] =
     "user_experience_metrics.stability.debugger_not_present";
 
-// An enum value to indicate the execution phase the browser was in.
-// TODO(asvitkine): Remove this after 2019-12.
-const char kStabilityExecutionPhase[] =
-    "user_experience_metrics.stability.execution_phase";
-
 // True if the previous run of the program exited cleanly.
 const char kStabilityExitedCleanly[] =
     "user_experience_metrics.stability.exited_cleanly";
@@ -149,6 +153,17 @@ const char kStabilityExtensionRendererFailedLaunchCount[] =
 // last report.
 const char kStabilityExtensionRendererLaunchCount[] =
     "user_experience_metrics.stability.extension_renderer_launch_count";
+
+// The total number of samples that will be lost if ASSOCIATE_INTERNAL_PROFILE
+// isn't enabled since the previous stability recorded, this is different than
+// the previous browser run, because one file was just uploaded before the
+// stability is recorded.
+const char kStabilityFileMetricsUnsentSamplesCount[] =
+    "user_experience_metrics.stability.file_metrics_unsent_samples_count";
+
+// The number of the unsent files at the time the stability recorded.
+const char kStabilityFileMetricsUnsentFilesCount[] =
+    "user_experience_metrics.stability.file_metrics_unsent_files_count";
 
 // The GMS core version used in Chrome.
 const char kStabilityGmsCoreVersion[] =

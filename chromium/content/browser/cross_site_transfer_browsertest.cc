@@ -12,8 +12,8 @@
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "content/browser/child_process_security_policy_impl.h"
-#include "content/browser/frame_host/frame_tree_node.h"
-#include "content/browser/frame_host/render_frame_host_impl.h"
+#include "content/browser/renderer_host/frame_tree_node.h"
+#include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/frame_messages.h"
 #include "content/public/browser/navigation_entry.h"
@@ -22,6 +22,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -34,8 +35,6 @@
 #include "net/base/escape.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
-#include "net/url_request/url_request.h"
-#include "net/url_request/url_request_status.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "url/gurl.h"
 
@@ -287,8 +286,7 @@ IN_PROC_BROWSER_TEST_F(CrossSiteTransferTest, PostWithFileData) {
   std::string file_content("test-file-content");
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   ASSERT_TRUE(base::CreateTemporaryFileInDir(temp_dir.GetPath(), &file_path));
-  ASSERT_LT(
-      0, base::WriteFile(file_path, file_content.data(), file_content.size()));
+  ASSERT_TRUE(base::WriteFile(file_path, file_content));
 
   base::RunLoop run_loop;
   // Fill out the form to refer to the test file.
@@ -381,8 +379,7 @@ IN_PROC_BROWSER_TEST_F(CrossSiteTransferTest, MaliciousPostWithFileData) {
   std::string file_content("test-file-content");
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   ASSERT_TRUE(base::CreateTemporaryFileInDir(temp_dir.GetPath(), &file_path));
-  ASSERT_LT(
-      0, base::WriteFile(file_path, file_content.data(), file_content.size()));
+  ASSERT_TRUE(base::WriteFile(file_path, file_content));
 
   base::RunLoop run_loop;
   // Fill out the form to refer to the test file.
@@ -439,7 +436,7 @@ IN_PROC_BROWSER_TEST_F(CrossSiteTransferTest, NoDeliveryToDetachedFrame) {
                             ->GetFrameTree()
                             ->root();
 
-  RenderFrameHost* child_frame = root->child_at(0)->current_frame_host();
+  RenderFrameHostImpl* child_frame = root->child_at(0)->current_frame_host();
 
   // Attacker initiates a navigation to a cross-site document. Under --site-per-
   // process, these bytes must not be sent to the attacker process.
@@ -456,11 +453,10 @@ IN_PROC_BROWSER_TEST_F(CrossSiteTransferTest, NoDeliveryToDetachedFrame) {
   EXPECT_TRUE(target_navigation.WaitForRequestStart());
   target_navigation.ResumeNavigation();
 
-  // Inject a frame detach message. An attacker-controlled renderer could do
-  // this without also cancelling the pending navigation (as blink would, if you
-  // removed the iframe from the document via js).
-  child_frame->OnMessageReceived(
-      FrameHostMsg_Detach(child_frame->GetRoutingID()));
+  // Call a frame detach. An attacker-controlled renderer could do this without
+  // also cancelling the pending navigation (as blink would, if you removed the
+  // iframe from the document via js).
+  child_frame->DetachForTesting();
 
   // This should cancel the navigation.
   EXPECT_FALSE(target_navigation.WaitForResponse())

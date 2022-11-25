@@ -6,7 +6,7 @@ cr.define('accessibility', function() {
   'use strict';
 
   // Note: keep these values in sync with the values in
-  // content/common/accessibility_mode_enums.h
+  // ui/accessibility/ax_mode.h
   const AXMode = {
     kNativeAPIs: 1 << 0,
     kWebContents: 1 << 1,
@@ -14,6 +14,7 @@ cr.define('accessibility', function() {
     kScreenReader: 1 << 3,
     kHTML: 1 << 4,
     kLabelImages: 1 << 5,
+    kPDF: 1 << 6,
 
     get kAXModeWebContentsOnly() {
       return AXMode.kWebContents | AXMode.kInlineTextBoxes |
@@ -79,7 +80,7 @@ cr.define('accessibility', function() {
     // function with the result.
     const requestType = element.id.split(':')[1];
     if (data.type == 'browser') {
-      const delay = $('native_ui_delay').value;
+      const delay = $('native-ui-delay').value;
       setTimeout(() => {
         chrome.send(
             'requestNativeUITree', [{
@@ -206,7 +207,7 @@ cr.define('accessibility', function() {
     browsers.appendChild(row);
   }
 
-  function formatRow(row, data) {
+  function formatRow(row, data, requestType) {
     if (!('url' in data)) {
       if ('error' in data) {
         row.appendChild(createErrorMessageElement(data));
@@ -229,6 +230,7 @@ cr.define('accessibility', function() {
       row.appendChild(createModeElement(AXMode.kHTML, data, 'web'));
       row.appendChild(
           createModeElement(AXMode.kLabelImages, data, 'labelImages'));
+      row.appendChild(createModeElement(AXMode.kPDF, data, 'pdf'));
     } else {
       const siteInfo = document.createElement('span');
       siteInfo.appendChild(formatValue(data, 'name'));
@@ -238,7 +240,8 @@ cr.define('accessibility', function() {
     row.appendChild(document.createTextNode(' | '));
 
     const hasTree = 'tree' in data;
-    row.appendChild(createShowAccessibilityTreeElement(data, row.id, hasTree));
+    row.appendChild(
+        createShowAccessibilityTreeElement(data, row.id, requestType, hasTree));
     if (navigator.clipboard) {
       row.appendChild(createCopyAccessibilityTreeElement(data, row.id));
     }
@@ -313,6 +316,8 @@ cr.define('accessibility', function() {
         return 'HTML';
       case AXMode.kLabelImages:
         return 'Label images';
+      case AXMode.kPDF:
+        return 'PDF';
     }
     return 'unknown';
   }
@@ -337,12 +342,18 @@ cr.define('accessibility', function() {
     return link;
   }
 
-  function createShowAccessibilityTreeElement(data, id, opt_refresh) {
+  function createShowAccessibilityTreeElement(
+      data, id, requestType, opt_refresh) {
     const show = document.createElement('button');
-    if (opt_refresh) {
-      show.textContent = 'Refresh accessibility tree';
+    if (requestType == 'showOrRefreshTree') {
+      // Give feedback that the tree has loaded.
+      show.textContent = 'Accessibility tree loaded';
+      setTimeout(() => {
+        show.textContent = 'Refresh accessibility tree';
+      }, 5000);
     } else {
-      show.textContent = 'Show accessibility tree';
+      show.textContent = opt_refresh ? 'Refresh accessibility tree' :
+                                       'Show accessibility tree';
     }
     show.id = id + ':showOrRefreshTree';
     show.setAttribute('aria-expanded', String(opt_refresh));
@@ -391,7 +402,8 @@ cr.define('accessibility', function() {
   function createErrorMessageElement(data) {
     const errorMessageElement = document.createElement('div');
     const errorMessage = data.error;
-    errorMessageElement.innerHTML = errorMessage + '&nbsp;';
+    const nbsp = '\u00a0';
+    errorMessageElement.textContent = errorMessage + nbsp;
     const closeLink = document.createElement('a');
     closeLink.href = '#';
     closeLink.textContent = '[close]';
@@ -415,7 +427,7 @@ cr.define('accessibility', function() {
     }
 
     row.textContent = '';
-    formatRow(row, data);
+    formatRow(row, data, 'showOrRefreshTree');
     $(id + ':showOrRefreshTree').focus();
   }
 

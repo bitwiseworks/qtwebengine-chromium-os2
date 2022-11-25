@@ -26,8 +26,8 @@
 #include "content/common/content_constants_internal.h"
 #include "content/common/frame_messages.h"
 #include "content/public/common/content_constants.h"
+#include "content/public/common/use_zoom_for_dsf_policy.h"
 #include "content/public/renderer/content_renderer_client.h"
-#include "content/renderer/media/audio/audio_device_factory.h"
 #include "content/renderer/pepper/event_conversion.h"
 #include "content/renderer/pepper/fullscreen_container.h"
 #include "content/renderer/pepper/gfx_conversion.h"
@@ -91,35 +91,33 @@
 #include "ppapi/thunk/enter.h"
 #include "ppapi/thunk/ppb_buffer_api.h"
 #include "printing/buildflags/buildflags.h"
+#include "printing/mojom/print.mojom.h"
 #include "skia/ext/platform_canvas.h"
+#include "third_party/blink/public/common/input/web_coalesced_input_event.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/common/input/web_keyboard_event.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "third_party/blink/public/common/input/web_pointer_event.h"
 #include "third_party/blink/public/common/input/web_touch_event.h"
 #include "third_party/blink/public/platform/url_conversion.h"
-#include "third_party/blink/public/platform/web_coalesced_input_event.h"
-#include "third_party/blink/public/platform/web_float_rect.h"
 #include "third_party/blink/public/platform/web_rect.h"
 #include "third_party/blink/public/platform/web_security_origin.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/platform/web_url_error.h"
 #include "third_party/blink/public/platform/web_url_request.h"
+#include "third_party/blink/public/web/modules/media/audio/web_audio_device_factory.h"
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/public/web/web_document_loader.h"
 #include "third_party/blink/public/web/web_frame_widget.h"
-#include "third_party/blink/public/web/web_ime_text_span.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/public/web/web_plugin_container.h"
 #include "third_party/blink/public/web/web_plugin_script_forbidden_scope.h"
 #include "third_party/blink/public/web/web_print_params.h"
 #include "third_party/blink/public/web/web_print_preset_options.h"
-#include "third_party/blink/public/web/web_print_scaling_option.h"
 #include "third_party/blink/public/web/web_script_source.h"
 #include "third_party/blink/public/web/web_view.h"
 #include "third_party/khronos/GLES2/gl2.h"
-#include "ui/base/cursor/cursor_lookup.h"
 #include "ui/events/blink/blink_event_util.h"
 #include "ui/events/blink/web_input_event.h"
 #include "ui/events/keycodes/dom/dom_code.h"
@@ -174,7 +172,6 @@ using blink::WebLocalFrame;
 using blink::WebPlugin;
 using blink::WebPluginContainer;
 using blink::WebPrintParams;
-using blink::WebPrintScalingOption;
 using blink::WebString;
 using blink::WebURLError;
 using blink::WebAssociatedURLLoaderClient;
@@ -285,13 +282,13 @@ STATIC_ASSERT_MATCHING_ENUM(kMiddlePanningHorizontal,
 
 #undef STATIC_ASSERT_MATCHING_ENUM
 
-STATIC_ASSERT_ENUM(blink::kWebPrintScalingOptionNone,
+STATIC_ASSERT_ENUM(printing::mojom::PrintScalingOption::kNone,
                    PP_PRINTSCALINGOPTION_NONE);
-STATIC_ASSERT_ENUM(blink::kWebPrintScalingOptionFitToPrintableArea,
+STATIC_ASSERT_ENUM(printing::mojom::PrintScalingOption::kFitToPrintableArea,
                    PP_PRINTSCALINGOPTION_FIT_TO_PRINTABLE_AREA);
-STATIC_ASSERT_ENUM(blink::kWebPrintScalingOptionSourceSize,
+STATIC_ASSERT_ENUM(printing::mojom::PrintScalingOption::kSourceSize,
                    PP_PRINTSCALINGOPTION_SOURCE_SIZE);
-STATIC_ASSERT_ENUM(blink::kWebPrintScalingOptionFitToPaper,
+STATIC_ASSERT_ENUM(printing::mojom::PrintScalingOption::kFitToPaper,
                    PP_PRINTSCALINGOPTION_FIT_TO_PAPER);
 
 #undef STATIC_ASSERT_ENUM
@@ -328,8 +325,8 @@ std::unique_ptr<const char* []> StringVectorToArgArray(
 // for things like screen brightness and volume control.
 bool IsReservedSystemInputEvent(const blink::WebInputEvent& event) {
 #if defined(OS_CHROMEOS)
-  if (event.GetType() != WebInputEvent::kKeyDown &&
-      event.GetType() != WebInputEvent::kKeyUp)
+  if (event.GetType() != WebInputEvent::Type::kKeyDown &&
+      event.GetType() != WebInputEvent::Type::kKeyUp)
     return false;
   const blink::WebKeyboardEvent& key_event =
       static_cast<const blink::WebKeyboardEvent&>(event);
@@ -386,6 +383,29 @@ void PrintPDFOutput(PP_Resource print_output,
 
   metafile->InitFromData(mapper);
 #endif  // BUILDFLAG(ENABLE_PRINTING)
+}
+
+constexpr char kChromePrint[] = "chrome://print/";
+
+bool IsPrintPreviewUrl(const GURL& document_url) {
+  return url::Origin::Create(document_url.GetOrigin()) ==
+         url::Origin::Create(GURL(kChromePrint));
+}
+
+WebElement FindPdfViewerScroller(const WebLocalFrame* frame,
+                                 const WebElement& plugin) {
+  if (!plugin.HasAttribute("pdf-viewer-update-enabled"))
+    return WebElement();
+
+  WebElement viewer = frame->GetDocument().GetElementById("viewer");
+  if (viewer.IsNull())
+    return WebElement();
+
+  blink::WebNode shadow_root = viewer.ShadowRoot();
+  if (shadow_root.IsNull())
+    return WebElement();
+
+  return shadow_root.QuerySelector("#scroller");
 }
 
 }  // namespace
@@ -511,7 +531,6 @@ PepperPluginInstanceImpl::PepperPluginInstanceImpl(
       sent_initial_did_change_view_(false),
       bound_graphics_2d_platform_(nullptr),
       has_webkit_focus_(false),
-      has_content_area_focus_(false),
       find_identifier_(-1),
       plugin_find_interface_(nullptr),
       plugin_input_event_interface_(nullptr),
@@ -550,10 +569,7 @@ PepperPluginInstanceImpl::PepperPluginInstanceImpl(
   if (render_frame_) {  // NULL in tests or if the frame has been destroyed.
     render_frame_->PepperInstanceCreated(this);
     view_data_.is_page_visible =
-        !render_frame_->GetLocalRootRenderWidget()->is_hidden();
-
-    // Set the initial focus.
-    SetContentAreaFocus(render_frame_->GetLocalRootRenderWidget()->has_focus());
+        !render_frame_->GetLocalRootRenderWidget()->GetWebWidget()->IsHidden();
 
     if (!module_->IsProxied()) {
       created_in_process_instance_ = true;
@@ -887,7 +903,7 @@ bool PepperPluginInstanceImpl::HandleDocumentLoad(
 
   if (module()->is_crashed() || !render_frame_) {
     // Don't create a resource for a crashed plugin.
-    container()->GetDocument().GetFrame()->StopLoading();
+    container()->GetDocument().GetFrame()->DeprecatedStopLoading();
     return false;
   }
 
@@ -927,7 +943,7 @@ bool PepperPluginInstanceImpl::HandleDocumentLoad(
 bool PepperPluginInstanceImpl::SendCompositionEventToPlugin(
     PP_InputEvent_Type type,
     const base::string16& text) {
-  std::vector<blink::WebImeTextSpan> empty;
+  std::vector<ui::ImeTextSpan> empty;
   return SendCompositionEventWithImeTextSpanInformationToPlugin(
       type, text, empty, static_cast<int>(text.size()),
       static_cast<int>(text.size()));
@@ -937,7 +953,7 @@ bool PepperPluginInstanceImpl::
     SendCompositionEventWithImeTextSpanInformationToPlugin(
         PP_InputEvent_Type type,
         const base::string16& text,
-        const std::vector<blink::WebImeTextSpan>& ime_text_spans,
+        const std::vector<ui::ImeTextSpan>& ime_text_spans,
         int selection_start,
         int selection_end) {
   // Keep a reference on the stack. See NOTE above.
@@ -986,8 +1002,7 @@ bool PepperPluginInstanceImpl::
 
   // Set the composition target.
   for (size_t i = 0; i < ime_text_spans.size(); ++i) {
-    if (ime_text_spans[i].thickness ==
-        ui::mojom::ImeTextSpanThickness::kThick) {
+    if (ime_text_spans[i].thickness == ui::ImeTextSpan::Thickness::kThick) {
       auto it = std::find(event.composition_segment_offsets.begin(),
                           event.composition_segment_offsets.end(),
                           utf8_offsets[2 * i + 2]);
@@ -1028,7 +1043,7 @@ bool PepperPluginInstanceImpl::HandleCompositionStart(
 
 bool PepperPluginInstanceImpl::HandleCompositionUpdate(
     const base::string16& text,
-    const std::vector<blink::WebImeTextSpan>& ime_text_spans,
+    const std::vector<ui::ImeTextSpan>& ime_text_spans,
     int selection_start,
     int selection_end) {
   return SendCompositionEventWithImeTextSpanInformationToPlugin(
@@ -1109,17 +1124,13 @@ bool PepperPluginInstanceImpl::HandleInputEvent(
     return false;
 
   if (!has_been_clicked_ && is_flash_plugin_ &&
-      event.GetType() == blink::WebInputEvent::kMouseDown &&
+      event.GetType() == blink::WebInputEvent::Type::kMouseDown &&
       (event.GetModifiers() & blink::WebInputEvent::kLeftButtonDown)) {
     has_been_clicked_ = true;
   }
 
   if (throttler_ && throttler_->ConsumeInputEvent(event))
     return true;
-
-  if (WebInputEvent::IsMouseEventType(event.GetType())) {
-    render_frame_->PepperDidReceiveMouseEvent(this);
-  }
 
   // Don't dispatch input events to crashed plugins.
   if (module()->is_crashed())
@@ -1253,10 +1264,15 @@ void PepperPluginInstanceImpl::ViewChanged(
   view_data_.device_scale = container_->DeviceScaleFactor();
   view_data_.css_scale =
       container_->PageZoomFactor() * container_->PageScaleFactor();
-  blink::WebFloatRect windowToViewportScale(0, 0, 1.0f, 0);
-  render_frame()->GetLocalRootRenderWidget()->ConvertWindowToViewport(
-      &windowToViewportScale);
-  viewport_to_dip_scale_ = 1.0f / windowToViewportScale.width;
+  if (IsUseZoomForDSFEnabled()) {
+    WebWidget* widget =
+        render_frame()->GetLocalRootRenderWidget()->GetWebWidget();
+
+    viewport_to_dip_scale_ =
+        1.0f / widget->GetOriginalScreenInfo().device_scale_factor;
+  } else {
+    viewport_to_dip_scale_ = 1.0f;
+  }
   ConvertRectToDIP(&view_data_.rect);
   ConvertRectToDIP(&view_data_.clip_rect);
   view_data_.css_scale *= viewport_to_dip_scale_;
@@ -1277,7 +1293,9 @@ void PepperPluginInstanceImpl::ViewChanged(
   if (desired_fullscreen_state_ || view_data_.is_fullscreen) {
     bool is_fullscreen_element = container_->IsFullscreenElement();
     if (!view_data_.is_fullscreen && desired_fullscreen_state_ &&
-        render_frame()->GetLocalRootRenderWidget()->is_fullscreen_granted() &&
+        render_frame()
+            ->GetLocalRootRenderWidget()
+            ->IsFullscreenGrantedForFrame() &&
         is_fullscreen_element) {
       // Entered fullscreen. Only possible via SetFullscreen().
       view_data_.is_fullscreen = true;
@@ -1317,16 +1335,6 @@ void PepperPluginInstanceImpl::SetWebKitFocus(bool has_focus) {
 
   bool old_plugin_focus = PluginHasFocus();
   has_webkit_focus_ = has_focus;
-  if (PluginHasFocus() != old_plugin_focus)
-    SendFocusChangeNotification();
-}
-
-void PepperPluginInstanceImpl::SetContentAreaFocus(bool has_focus) {
-  if (has_content_area_focus_ == has_focus)
-    return;
-
-  bool old_plugin_focus = PluginHasFocus();
-  has_content_area_focus_ = has_focus;
   if (PluginHasFocus() != old_plugin_focus)
     SendFocusChangeNotification();
 }
@@ -1725,7 +1733,7 @@ void PepperPluginInstanceImpl::UpdateLayerTransform() {
 }
 
 bool PepperPluginInstanceImpl::PluginHasFocus() const {
-  return flash_fullscreen_ || (has_webkit_focus_ && has_content_area_focus_);
+  return flash_fullscreen_ || has_webkit_focus_;
 }
 
 void PepperPluginInstanceImpl::SendFocusChangeNotification() {
@@ -2013,16 +2021,17 @@ bool PepperPluginInstanceImpl::GetPrintPresetOptionsFromDocument(
   preset_options->is_scaling_disabled = PP_ToBool(options.is_scaling_disabled);
   switch (options.duplex) {
     case PP_PRIVATEDUPLEXMODE_SIMPLEX:
-      preset_options->duplex_mode = blink::kWebSimplex;
+      preset_options->duplex_mode = printing::mojom::DuplexMode::kSimplex;
       break;
     case PP_PRIVATEDUPLEXMODE_SHORT_EDGE:
-      preset_options->duplex_mode = blink::kWebShortEdge;
+      preset_options->duplex_mode = printing::mojom::DuplexMode::kShortEdge;
       break;
     case PP_PRIVATEDUPLEXMODE_LONG_EDGE:
-      preset_options->duplex_mode = blink::kWebLongEdge;
+      preset_options->duplex_mode = printing::mojom::DuplexMode::kLongEdge;
       break;
     default:
-      preset_options->duplex_mode = blink::kWebUnknownDuplexMode;
+      preset_options->duplex_mode =
+          printing::mojom::DuplexMode::kUnknownDuplexMode;
       break;
   }
   preset_options->copies = options.copies;
@@ -2229,6 +2238,12 @@ void PepperPluginInstanceImpl::OnHiddenForPlaceholder(bool hidden) {
   UpdateLayer(false /* device_changed */);
 }
 
+bool PepperPluginInstanceImpl::SupportsKeyboardFocus() {
+  // Only PDF plugin supports keyboard focus. PDF plugin shouldn't be focusable
+  // if it's embedded in Print Preview.
+  return LoadPdfInterface() && !IsPrintPreviewUrl(document_url_);
+}
+
 void PepperPluginInstanceImpl::AddPluginObject(PluginObject* plugin_object) {
   DCHECK(live_plugin_objects_.find(plugin_object) ==
          live_plugin_objects_.end());
@@ -2279,8 +2294,9 @@ void PepperPluginInstanceImpl::SimulateInputEvent(
       CreateSimulatedWebInputEvents(
           input_event, view_data_.rect.point.x + view_data_.rect.size.width / 2,
           view_data_.rect.point.y + view_data_.rect.size.height / 2);
-  for (auto it = events.begin(); it != events.end(); ++it) {
-    widget->HandleInputEvent(blink::WebCoalescedInputEvent(*it->get()));
+  for (auto& event : events) {
+    widget->HandleInputEvent(
+        blink::WebCoalescedInputEvent(std::move(event), ui::LatencyInfo()));
   }
   if (input_event.event_type == PP_INPUTEVENT_TYPE_TOUCHSTART ||
       input_event.event_type == PP_INPUTEVENT_TYPE_TOUCHMOVE ||
@@ -2305,7 +2321,7 @@ bool PepperPluginInstanceImpl::SimulateIMEEvent(
         return false;
       render_frame_->SimulateImeCommitText(
           base::UTF8ToUTF16(input_event.character_text),
-          std::vector<blink::WebImeTextSpan>(), gfx::Range());
+          std::vector<ui::ImeTextSpan>(), gfx::Range());
       break;
     default:
       return false;
@@ -2328,13 +2344,13 @@ void PepperPluginInstanceImpl::SimulateImeSetCompositionEvent(
   base::string16 utf16_text =
       base::UTF8ToUTF16AndAdjustOffsets(input_event.character_text, &offsets);
 
-  std::vector<blink::WebImeTextSpan> ime_text_spans;
+  std::vector<ui::ImeTextSpan> ime_text_spans;
   for (size_t i = 2; i + 1 < offsets.size(); ++i) {
-    blink::WebImeTextSpan ime_text_span;
+    ui::ImeTextSpan ime_text_span;
     ime_text_span.start_offset = offsets[i];
     ime_text_span.end_offset = offsets[i + 1];
     if (input_event.composition_target_segment == static_cast<int32_t>(i - 2))
-      ime_text_span.thickness = ui::mojom::ImeTextSpanThickness::kThick;
+      ime_text_span.thickness = ui::ImeTextSpan::Thickness::kThick;
     ime_text_spans.push_back(ime_text_span);
   }
 
@@ -2501,29 +2517,31 @@ PP_Var PepperPluginInstanceImpl::ExecuteScript(PP_Instance instance,
 
 uint32_t PepperPluginInstanceImpl::GetAudioHardwareOutputSampleRate(
     PP_Instance instance) {
-  return render_frame() ? AudioDeviceFactory::GetOutputDeviceInfo(
-                              render_frame()->GetRoutingID(),
-                              media::AudioSinkParameters())
-                              .output_params()
-                              .sample_rate()
-                        : 0;
+  return render_frame()
+             ? blink::WebAudioDeviceFactory::GetOutputDeviceInfo(
+                   render_frame()->GetWebFrame()->GetLocalFrameToken(),
+                   media::AudioSinkParameters())
+                   .output_params()
+                   .sample_rate()
+             : 0;
 }
 
 uint32_t PepperPluginInstanceImpl::GetAudioHardwareOutputBufferSize(
     PP_Instance instance) {
-  return render_frame() ? AudioDeviceFactory::GetOutputDeviceInfo(
-                              render_frame()->GetRoutingID(),
-                              media::AudioSinkParameters())
-                              .output_params()
-                              .frames_per_buffer()
-                        : 0;
+  return render_frame()
+             ? blink::WebAudioDeviceFactory::GetOutputDeviceInfo(
+                   render_frame()->GetWebFrame()->GetLocalFrameToken(),
+                   media::AudioSinkParameters())
+                   .output_params()
+                   .frames_per_buffer()
+             : 0;
 }
 
 PP_Var PepperPluginInstanceImpl::GetDefaultCharSet(PP_Instance instance) {
   if (!render_frame_)
     return PP_MakeUndefined();
   return StringVar::StringToPPVar(
-      render_frame_->render_view()->webkit_preferences().default_encoding);
+      render_frame_->render_view()->GetBlinkPreferences().default_encoding);
 }
 
 void PepperPluginInstanceImpl::SetPluginToHandleFindRequests(
@@ -2578,8 +2596,12 @@ void PepperPluginInstanceImpl::SetTickmarks(PP_Instance instance,
     tickmark.Scale(1 / viewport_to_dip_scale_);
     tickmarks_converted[i] = blink::WebRect(gfx::ToEnclosedRect(tickmark));
   }
+
   WebLocalFrame* frame = render_frame_->GetWebFrame();
-  frame->SetTickmarks(tickmarks_converted);
+  WebElement target;
+  if (LoadPdfInterface())
+    target = FindPdfViewerScroller(frame, container_->GetElement());
+  frame->SetTickmarks(target, tickmarks_converted);
 }
 
 PP_Bool PepperPluginInstanceImpl::IsFullscreen(PP_Instance instance) {
@@ -2605,9 +2627,10 @@ PP_Bool PepperPluginInstanceImpl::GetScreenSize(PP_Instance instance,
     // All other cases: Report the screen size.
     if (!render_frame_)
       return PP_FALSE;
-    blink::WebScreenInfo info =
-        render_frame_->GetLocalRootRenderWidget()->GetScreenInfo();
-    *size = PP_MakeSize(info.rect.width, info.rect.height);
+    blink::ScreenInfo info = render_frame_->GetLocalRootRenderWidget()
+                                 ->GetWebWidget()
+                                 ->GetScreenInfo();
+    *size = PP_MakeSize(info.rect.width(), info.rect.height());
   }
   return PP_TRUE;
 }
@@ -2707,7 +2730,7 @@ PP_Bool PepperPluginInstanceImpl::SetCursor(PP_Instance instance,
   SkBitmap bitmap(image_data->GetMappedBitmap());
   // Make a deep copy, so that the cursor remains valid even after the original
   // image data gets freed.
-  SkBitmap dst = GetCursorBitmap(*custom_cursor);
+  SkBitmap dst = custom_cursor->custom_bitmap();
   if (!dst.tryAllocPixels(bitmap.info()) ||
       !bitmap.readPixels(dst.info(), dst.getPixels(), dst.rowBytes(), 0, 0)) {
     return PP_FALSE;
@@ -3030,11 +3053,23 @@ void PepperPluginInstanceImpl::SetAlwaysOnTop(bool on_top) {
 }
 
 void PepperPluginInstanceImpl::DoSetCursor(std::unique_ptr<ui::Cursor> cursor) {
+  if (is_deleted_)
+    return;
+
   cursor_ = std::move(cursor);
-  if (fullscreen_container_)
+  if (fullscreen_container_) {
     fullscreen_container_->PepperDidChangeCursor(*cursor_);
-  else if (render_frame_)
-    render_frame_->PepperDidChangeCursor(this, *cursor_);
+  } else if (render_frame_) {
+    // Update the cursor appearance immediately if the requesting plugin is the
+    // one which receives the last mouse event. Otherwise, the new cursor won't
+    // be picked up until the plugin gets the next input event. That is bad if,
+    // e.g., the plugin would like to set an invisible cursor when there isn't
+    // any user input for a while.
+    if (container()->WasTargetForLastMouseEvent()) {
+      render_frame_->GetLocalRootRenderWidget()->GetWebWidget()->SetCursor(
+          *cursor_);
+    }
+  }
 }
 
 bool PepperPluginInstanceImpl::IsFullPagePlugin() {
@@ -3189,9 +3224,10 @@ void PepperPluginInstanceImpl::SetSizeAttributesForFullscreen() {
   // behavior, the width and height should probably be set to 100%, rather than
   // a fixed screen size.
 
-  blink::WebScreenInfo info =
-      render_frame_->GetLocalRootRenderWidget()->GetScreenInfo();
-  screen_size_for_fullscreen_ = gfx::Size(info.rect.width, info.rect.height);
+  blink::ScreenInfo info = render_frame_->GetLocalRootRenderWidget()
+                               ->GetWebWidget()
+                               ->GetScreenInfo();
+  screen_size_for_fullscreen_ = info.rect.size();
   std::string width = base::NumberToString(screen_size_for_fullscreen_.width());
   std::string height =
       base::NumberToString(screen_size_for_fullscreen_.height());

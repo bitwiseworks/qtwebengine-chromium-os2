@@ -13,17 +13,14 @@
 
 class SkSVGClipPath final : public SkSVGHiddenContainer {
 public:
-    virtual ~SkSVGClipPath() = default;
     static sk_sp<SkSVGClipPath> Make() {
         return sk_sp<SkSVGClipPath>(new SkSVGClipPath());
     }
 
-protected:
-
 private:
     SkSVGClipPath();
 
-    typedef SkSVGHiddenContainer INHERITED;
+    using INHERITED = SkSVGHiddenContainer;
 };
 
 #endif // SkSVGClipPath_DEFINED

@@ -6,6 +6,7 @@
 
 #include "base/json/json_reader.h"
 #include "base/memory/ptr_util.h"
+#include "base/metrics/histogram.h"
 #include "base/strings/string_util.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "content/public/browser/browser_thread.h"
@@ -101,7 +102,7 @@ ValueStore::Status LazyLevelDb::Read(const std::string& key,
     return ToValueStoreError(s);
 
   base::Optional<base::Value> read_value =
-      base::JSONReader().ReadToValue(value_as_json);
+      base::JSONReader::Read(value_as_json);
   if (!read_value) {
     return ValueStore::Status(ValueStore::CORRUPTION, FixCorruption(&key),
                               kInvalidJson);

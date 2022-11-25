@@ -91,6 +91,7 @@ android_library("cast_audio_manager_java") {
   deps = [
     "//base:base_java",
     "//chromecast/base:base_java",
+    "//third_party/android_deps:androidx_annotation_annotation_java",
   ]
 }
 
@@ -116,13 +117,18 @@ android_library("reactive_android_java") {
   deps = [
     "//base:base_java",
     "//chromecast/base:base_java",
-    "//third_party/android_deps:androidx_legacy_legacy_support_core_utils_java",
     "//third_party/android_deps:androidx_localbroadcastmanager_localbroadcastmanager_java",
   ]
 }
 
 generate_product_config_srcjar("chromecast_product_config") {
   java_package = "org.chromium.chromecast.shell"
+}
+
+android_library("resume_intents_java") {
+  java_src_dir = "//chromecast/browser/android/apk/src"
+  sources = [ "$java_src_dir/org/chromium/chromecast/shell/ResumeIntents.java" ]
+  deps = [ "//chromecast/base:base_java" ]
 }
 
 android_library("cast_shell_java") {
@@ -150,11 +156,10 @@ android_library("cast_shell_java") {
     "$java_src_dir/org/chromium/chromecast/shell/ElidedLogcatProvider.java",
     "$java_src_dir/org/chromium/chromecast/shell/ExternalServiceDeviceLogcatProvider.java",
     "$java_src_dir/org/chromium/chromecast/shell/LogcatElision.java",
+    "$java_src_dir/org/chromium/chromecast/shell/WebContentsRegistry.java",
   ]
 
-  android_manifest_for_lint = cast_shell_android_manifest
-  min_sdk_version = 21
-
+  resources_package = "org.chromium.chromecast.shell"
   srcjar_deps = [
     ":cast_shell_build_config_gen",
     ":chromecast_product_config",
@@ -170,6 +175,7 @@ android_library("cast_shell_java") {
     ":cast_shell_android_resources",
     ":cast_shell_manifest",
     ":reactive_android_java",
+    ":resume_intents_java",
     "//base:base_java",
     "//base:jni_java",
     "//chromecast/base:base_java",
@@ -181,11 +187,15 @@ android_library("cast_shell_java") {
     "//content/public/android:content_java",
     "//media/base/android:media_java",
     "//net/android:net_java",
+    "//third_party/android_deps:androidx_annotation_annotation_java",
     "//third_party/android_deps:androidx_core_core_java",
-    "//third_party/android_deps:androidx_localbroadcastmanager_localbroadcastmanager_java",
 
     # TODO(slan): We may need to pass this in as a parameter.
-    "//third_party/android_deps:androidx_legacy_legacy_support_core_utils_java",
+    "//third_party/android_deps:androidx_localbroadcastmanager_localbroadcastmanager_java",
+    "//third_party/android_deps:androidx_slice_slice_builders_java",
+
+    # Used internally for Settings UI.
+    "//third_party/android_deps:androidx_slice_slice_core_java",
     "//ui/android:ui_java",
   ]
   annotation_processor_deps = [ "//base/android/jni_generator:jni_processor" ]
@@ -195,6 +205,8 @@ android_library("cast_shell_java") {
     if (enable_assistant) {
       deps += [ "//chromecast/internal/assistant/ui:boot_parameters_java" ]
     }
+  } else if (is_android_appliance) {
+    deps += [ "//chromecast/internal/assistant/ui:boot_parameters_java" ]
   }
 }
 
@@ -232,13 +244,17 @@ junit_binary("cast_shell_junit_tests") {
   srcjar_deps = [ ":cast_shell_build_config_gen" ]
 
   deps = [
+    ":cast_audio_manager_java",
     ":cast_intents_java",
     ":cast_shell_java",
+    ":reactive_android_java",
+    "//base:base_java",
     "//base:base_java_test_support",
     "//base:base_junit_test_support",
+    "//chromecast/base:base_java",
     "//chromecast/base:cast_base_test_utils_java",
     "//content/public/android:content_java",
-    "//third_party/android_deps:androidx_legacy_legacy_support_core_utils_java",
+    "//third_party/android_deps:androidx_localbroadcastmanager_localbroadcastmanager_java",
     "//third_party/hamcrest:hamcrest_java",
   ]
 }

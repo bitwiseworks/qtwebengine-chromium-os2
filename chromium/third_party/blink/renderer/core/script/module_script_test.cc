@@ -8,13 +8,14 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features.h"
-#include "third_party/blink/renderer/bindings/core/v8/script_controller.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_source_code.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
+#include "third_party/blink/renderer/core/script/classic_script.h"
 #include "third_party/blink/renderer/core/script/js_module_script.h"
 #include "third_party/blink/renderer/core/script/value_wrapper_synthetic_module_script.h"
 #include "third_party/blink/renderer/core/testing/dummy_modulator.h"
+#include "third_party/blink/renderer/core/testing/module_test_base.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/platform/loader/fetch/cached_metadata.h"
 #include "third_party/blink/renderer/platform/loader/fetch/cached_metadata_handler.h"
@@ -39,7 +40,7 @@ class ModuleScriptTestModulator final : public DummyModulator {
     return Vector<ModuleRequest>();
   }
 
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     visitor->Trace(script_state_);
     DummyModulator::Trace(visitor);
   }
@@ -62,7 +63,7 @@ static const int kScriptRepeatLength = 500;
 
 }  // namespace
 
-class ModuleScriptTest : public ::testing::Test {
+class ModuleScriptTest : public ::testing::Test, public ParametrizedModuleTest {
  protected:
   static String LargeSourceText() {
     StringBuilder builder;
@@ -97,20 +98,16 @@ class ModuleScriptTest : public ::testing::Test {
   // Tests |window.foo| is set correctly, and reset |window.foo| for the next
   // test.
   static void TestFoo(V8TestingScope& scope) {
-    v8::Local<v8::Value> value = scope.GetFrame()
-                                     .GetScriptController()
-                                     .ExecuteScriptInMainWorldAndReturnValue(
-                                         ScriptSourceCode("window.foo"), KURL(),
-                                         SanitizeScriptErrors::kSanitize);
+    v8::Local<v8::Value> value =
+        ClassicScript::CreateUnspecifiedScript(ScriptSourceCode("window.foo"))
+            ->RunScriptAndReturnValue(&scope.GetFrame());
     EXPECT_TRUE(value->IsNumber());
     EXPECT_EQ(kScriptRepeatLength,
               value->NumberValue(scope.GetContext()).ToChecked());
 
-    scope.GetFrame()
-        .GetScriptController()
-        .ExecuteScriptInMainWorldAndReturnValue(
-            ScriptSourceCode("window.foo = undefined;"), KURL(),
-            SanitizeScriptErrors::kSanitize);
+    ClassicScript::CreateUnspecifiedScript(
+        ScriptSourceCode("window.foo = undefined;"))
+        ->RunScript(&scope.GetFrame());
   }
 
   // Accessors for ModuleScript private members.
@@ -127,13 +124,20 @@ class ModuleScriptTest : public ::testing::Test {
     return handler->cached_metadata_discarded_;
   }
 
+  void SetUp() override { ParametrizedModuleTest::SetUp(); }
+
+  void TearDown() override {
+    feature_list_.Reset();
+    ParametrizedModuleTest::TearDown();
+  }
+
   base::test::ScopedFeatureList feature_list_;
 };
 
 // Test expectations depends on heuristics in V8CodeCache and therefore these
 // tests should be updated if necessary when V8CodeCache is modified. The
 // version without code cache discarding.
-TEST_F(ModuleScriptTest, V8CodeCacheWithoutDiscarding) {
+TEST_P(ModuleScriptTest, V8CodeCacheWithoutDiscarding) {
   feature_list_.InitAndDisableFeature(
       blink::features::kDiscardCodeCacheAfterFirstUse);
   using Checkpoint = testing::StrictMock<testing::MockFunction<void(int)>>;
@@ -163,10 +167,11 @@ TEST_F(ModuleScriptTest, V8CodeCacheWithoutDiscarding) {
                                           module_script->V8Module(),
                                           module_script->SourceURL())
                     .IsEmpty());
-    ASSERT_TRUE(ModuleRecord::Evaluate(scope.GetScriptState(),
-                                       module_script->V8Module(),
-                                       module_script->SourceURL())
-                    .IsEmpty());
+    ASSERT_EQ(ModuleRecord::Evaluate(scope.GetScriptState(),
+                                     module_script->V8Module(),
+                                     module_script->SourceURL())
+                  .GetResultType(),
+              ScriptEvaluationResult::ResultType::kSuccess);
     TestFoo(scope);
 
     Checkpoint checkpoint;
@@ -242,10 +247,10 @@ TEST_F(ModuleScriptTest, V8CodeCacheWithoutDiscarding) {
   // via ScriptSourceCode+ScriptResource, but here they are passed via
   // ScriptSourceCode constructor for inline scripts. So far, this is sufficient
   // for unit testing.
-  scope.GetFrame().GetScriptController().ExecuteScriptInMainWorldAndReturnValue(
+  ClassicScript::CreateUnspecifiedScript(
       ScriptSourceCode(LargeSourceText(), ScriptSourceLocationType::kInternal,
-                       cache_handler),
-      KURL(), SanitizeScriptErrors::kSanitize);
+                       cache_handler))
+      ->RunScript(&scope.GetFrame());
 
   checkpoint.Call(4);
 
@@ -259,7 +264,7 @@ TEST_F(ModuleScriptTest, V8CodeCacheWithoutDiscarding) {
 // Test expectations depends on heuristics in V8CodeCache and therefore these
 // tests should be updated if necessary when V8CodeCache is modified. The
 // version with code cache discarding.
-TEST_F(ModuleScriptTest, V8CodeCacheWithDiscarding) {
+TEST_P(ModuleScriptTest, V8CodeCacheWithDiscarding) {
   feature_list_.InitAndEnableFeature(
       blink::features::kDiscardCodeCacheAfterFirstUse);
   using Checkpoint = testing::StrictMock<testing::MockFunction<void(int)>>;
@@ -289,10 +294,11 @@ TEST_F(ModuleScriptTest, V8CodeCacheWithDiscarding) {
                                           module_script->V8Module(),
                                           module_script->SourceURL())
                     .IsEmpty());
-    ASSERT_TRUE(ModuleRecord::Evaluate(scope.GetScriptState(),
-                                       module_script->V8Module(),
-                                       module_script->SourceURL())
-                    .IsEmpty());
+    ASSERT_EQ(ModuleRecord::Evaluate(scope.GetScriptState(),
+                                     module_script->V8Module(),
+                                     module_script->SourceURL())
+                  .GetResultType(),
+              ScriptEvaluationResult::ResultType::kSuccess);
     TestFoo(scope);
 
     Checkpoint checkpoint;
@@ -383,11 +389,10 @@ TEST_F(ModuleScriptTest, V8CodeCacheWithDiscarding) {
   // via ScriptSourceCode+ScriptResource, but here they are passed via
   // ScriptSourceCode constructor for inline scripts. So far, this is sufficient
   // for unit testing.
-  scope.GetFrame().GetScriptController().ExecuteScriptInMainWorldAndReturnValue(
+  ClassicScript::CreateUnspecifiedScript(
       ScriptSourceCode(LargeSourceText(), ScriptSourceLocationType::kInternal,
-                       cache_handler),
-      KURL(), SanitizeScriptErrors::kSanitize);
-
+                       cache_handler))
+      ->RunScript(&scope.GetFrame());
   checkpoint.Call(4);
 
   TestFoo(scope);
@@ -397,7 +402,7 @@ TEST_F(ModuleScriptTest, V8CodeCacheWithDiscarding) {
   EXPECT_FALSE(cache_handler->GetCachedMetadata(kCodeTag));
 }
 
-TEST_F(ModuleScriptTest, ValueWrapperSyntheticModuleScript) {
+TEST_P(ModuleScriptTest, ValueWrapperSyntheticModuleScript) {
   V8TestingScope scope;
   v8::Local<v8::Value> local_value(v8::Number::New(scope.GetIsolate(), 1234));
   Modulator* modulator =
@@ -406,5 +411,11 @@ TEST_F(ModuleScriptTest, ValueWrapperSyntheticModuleScript) {
       CreateValueWrapperSyntheticModuleScript(modulator, local_value);
   ASSERT_FALSE(module_script->V8Module().IsEmpty());
 }
+
+// Instantiate tests once with TLA and once without:
+INSTANTIATE_TEST_SUITE_P(ModuleScriptTestGroup,
+                         ModuleScriptTest,
+                         testing::Bool(),
+                         ParametrizedModuleTestParamName());
 
 }  // namespace blink

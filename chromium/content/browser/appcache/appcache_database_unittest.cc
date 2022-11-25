@@ -11,6 +11,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/strings/stringprintf.h"
+#include "base/test/scoped_feature_list.h"
 #include "content/browser/appcache/appcache_database.h"
 #include "content/browser/appcache/appcache_entry.h"
 #include "sql/database.h"
@@ -20,6 +21,7 @@
 #include "sql/test/test_helpers.h"
 #include "sql/transaction.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/sqlite/sqlite3.h"
 
 namespace {
@@ -32,6 +34,11 @@ namespace content {
 
 class AppCacheDatabaseTest : public testing::Test {
  public:
+  AppCacheDatabaseTest() {
+    appcache_require_origin_trial_feature_.InitAndDisableFeature(
+        blink::features::kAppCacheRequireOriginTrial);
+  }
+
   int64_t GetCacheManifestParserVersion(const content::AppCacheDatabase& db,
                                         int64_t cache_id) {
     static const char kSql[] =
@@ -55,6 +62,9 @@ class AppCacheDatabaseTest : public testing::Test {
     EXPECT_TRUE(statement.Step());
     return statement.ColumnString(0);
   }
+
+ private:
+  base::test::ScopedFeatureList appcache_require_origin_trial_feature_;
 };
 
 TEST_F(AppCacheDatabaseTest, LazyOpen) {
@@ -87,7 +97,7 @@ TEST_F(AppCacheDatabaseTest, ReCreate) {
   const base::FilePath kNestedDir = temp_dir.GetPath().AppendASCII("nested");
   const base::FilePath kOtherFile =  kNestedDir.AppendASCII("other_file");
   EXPECT_TRUE(base::CreateDirectory(kNestedDir));
-  EXPECT_EQ(3, base::WriteFile(kOtherFile, "foo", 3));
+  EXPECT_TRUE(base::WriteFile(kOtherFile, "foo"));
 
   AppCacheDatabase db(kDbFile);
   EXPECT_FALSE(db.LazyOpen(false));
@@ -120,7 +130,7 @@ TEST_F(AppCacheDatabaseTest, QuickIntegrityCheck) {
 
   const base::FilePath kDbFile = mock_dir.AppendASCII("appcache.db");
   const base::FilePath kOtherFile = mock_dir.AppendASCII("other_file");
-  EXPECT_EQ(3, base::WriteFile(kOtherFile, "foo", 3));
+  EXPECT_TRUE(base::WriteFile(kOtherFile, "foo"));
 
   // First create a valid db file.
   {
@@ -183,7 +193,7 @@ TEST_F(AppCacheDatabaseTest, ExperimentalFlags) {
   const base::FilePath kDbFile = temp_dir.GetPath().AppendASCII("appcache.db");
   const base::FilePath kOtherFile =
       temp_dir.GetPath().AppendASCII("other_file");
-  EXPECT_EQ(3, base::WriteFile(kOtherFile, "foo", 3));
+  EXPECT_TRUE(base::WriteFile(kOtherFile, "foo"));
   EXPECT_TRUE(base::PathExists(kOtherFile));
 
   // Inject a non empty flags value, and verify it got there.
@@ -497,8 +507,7 @@ TEST_F(AppCacheDatabaseTest, GroupAccessAndEvictionTimes) {
   // See that the methods behave as expected with an empty db.
   // To accommodate lazy updating, for consistency, none of them fail
   // given ids not found in the db.
-  EXPECT_TRUE(
-      db.UpdateEvictionTimesAndTokenExpires(1, kDayOne, kDayTwo, kDayTwo));
+  EXPECT_TRUE(db.UpdateEvictionTimes(1, kDayOne, kDayTwo));
   EXPECT_TRUE(db.UpdateLastAccessTime(1, kDayOne));
   EXPECT_TRUE(db.CommitLazyLastAccessTimes());
   EXPECT_TRUE(db.LazyUpdateLastAccessTime(1, kDayTwo));
@@ -513,7 +522,6 @@ TEST_F(AppCacheDatabaseTest, GroupAccessAndEvictionTimes) {
   record.last_access_time = kDayOne;
   record.last_full_update_check_time = kDayOne;
   record.first_evictable_error_time = kDayOne;
-  record.token_expires = kDayOne;
   EXPECT_TRUE(db.InsertGroup(&record));
 
   // Verify the round trip.
@@ -522,18 +530,15 @@ TEST_F(AppCacheDatabaseTest, GroupAccessAndEvictionTimes) {
   EXPECT_EQ(kDayOne, record.last_access_time);
   EXPECT_EQ(kDayOne, record.last_full_update_check_time);
   EXPECT_EQ(kDayOne, record.first_evictable_error_time);
-  EXPECT_EQ(kDayOne, record.token_expires);
 
   // Update the times to DAY2 and verify.
-  EXPECT_TRUE(
-      db.UpdateEvictionTimesAndTokenExpires(1, kDayTwo, kDayTwo, kDayTwo));
+  EXPECT_TRUE(db.UpdateEvictionTimes(1, kDayTwo, kDayTwo));
   EXPECT_TRUE(db.UpdateLastAccessTime(1, kDayTwo));
   record = AppCacheDatabase::GroupRecord();
   EXPECT_TRUE(db.FindGroup(1, &record));
   EXPECT_EQ(kDayTwo, record.last_access_time);
   EXPECT_EQ(kDayTwo, record.last_full_update_check_time);
   EXPECT_EQ(kDayTwo, record.first_evictable_error_time);
-  EXPECT_EQ(kDayTwo, record.token_expires);
 
   // Lazy update back to DAY1 and verify its reflected without having committed.
   EXPECT_TRUE(db.lazy_last_access_times_.empty());
@@ -666,7 +671,7 @@ TEST_F(AppCacheDatabaseTest, NamespaceRecords) {
   ASSERT_TRUE(expecter.SawExpectedErrors());
 }
 
-TEST_F(AppCacheDatabaseTest, OnlineWhiteListRecords) {
+TEST_F(AppCacheDatabaseTest, OnlineSafeListRecords) {
   const base::FilePath kEmptyPath;
   AppCacheDatabase db(kEmptyPath);
   EXPECT_TRUE(db.LazyOpen(true));
@@ -675,22 +680,22 @@ TEST_F(AppCacheDatabaseTest, OnlineWhiteListRecords) {
   const GURL kFooNameSpace2("http://foo/namespace2");
   const GURL kBarNameSpace1("http://bar/namespace1");
 
-  const AppCacheDatabase::OnlineWhiteListRecord kZeroRecord;
-  AppCacheDatabase::OnlineWhiteListRecord record;
-  std::vector<AppCacheDatabase::OnlineWhiteListRecord> records;
+  const AppCacheDatabase::OnlineSafeListRecord kZeroRecord;
+  AppCacheDatabase::OnlineSafeListRecord record;
+  std::vector<AppCacheDatabase::OnlineSafeListRecord> records;
 
   // Behavior with an empty table
-  EXPECT_TRUE(db.FindOnlineWhiteListForCache(1, &records));
+  EXPECT_TRUE(db.FindOnlineSafeListForCache(1, &records));
   EXPECT_TRUE(records.empty());
-  EXPECT_TRUE(db.DeleteOnlineWhiteListForCache(1));
+  EXPECT_TRUE(db.DeleteOnlineSafeListForCache(1));
 
   record.cache_id = 1;
   record.namespace_url = kFooNameSpace1;
-  EXPECT_TRUE(db.InsertOnlineWhiteList(&record));
+  EXPECT_TRUE(db.InsertOnlineSafeList(&record));
   record.namespace_url = kFooNameSpace2;
-  EXPECT_TRUE(db.InsertOnlineWhiteList(&record));
+  EXPECT_TRUE(db.InsertOnlineSafeList(&record));
   records.clear();
-  EXPECT_TRUE(db.FindOnlineWhiteListForCache(1, &records));
+  EXPECT_TRUE(db.FindOnlineSafeListForCache(1, &records));
   EXPECT_EQ(2U, records.size());
   EXPECT_EQ(1, records[0].cache_id);
   EXPECT_EQ(kFooNameSpace1, records[0].namespace_url);
@@ -699,14 +704,14 @@ TEST_F(AppCacheDatabaseTest, OnlineWhiteListRecords) {
 
   record.cache_id = 2;
   record.namespace_url = kBarNameSpace1;
-  EXPECT_TRUE(db.InsertOnlineWhiteList(&record));
+  EXPECT_TRUE(db.InsertOnlineSafeList(&record));
   records.clear();
-  EXPECT_TRUE(db.FindOnlineWhiteListForCache(2, &records));
+  EXPECT_TRUE(db.FindOnlineSafeListForCache(2, &records));
   EXPECT_EQ(1U, records.size());
 
-  EXPECT_TRUE(db.DeleteOnlineWhiteListForCache(1));
+  EXPECT_TRUE(db.DeleteOnlineSafeListForCache(1));
   records.clear();
-  EXPECT_TRUE(db.FindOnlineWhiteListForCache(1, &records));
+  EXPECT_TRUE(db.FindOnlineSafeListForCache(1, &records));
   EXPECT_TRUE(records.empty());
 }
 

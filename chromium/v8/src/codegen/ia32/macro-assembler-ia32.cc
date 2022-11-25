@@ -15,7 +15,7 @@
 #include "src/debug/debug.h"
 #include "src/execution/frame-constants.h"
 #include "src/execution/frames-inl.h"
-#include "src/heap/heap-inl.h"  // For MemoryChunk.
+#include "src/heap/memory-chunk.h"
 #include "src/init/bootstrapper.h"
 #include "src/logging/counters.h"
 #include "src/runtime/runtime.h"
@@ -133,6 +133,31 @@ void MacroAssembler::JumpIfIsInRange(Register value, unsigned lower_limit,
     cmp(value, Immediate(higher_limit));
   }
   j(below_equal, on_in_range, near_jump);
+}
+
+void TurboAssembler::PushArray(Register array, Register size, Register scratch,
+                               PushArrayOrder order) {
+  DCHECK(!AreAliased(array, size, scratch));
+  Register counter = scratch;
+  Label loop, entry;
+  if (order == PushArrayOrder::kReverse) {
+    mov(counter, 0);
+    jmp(&entry);
+    bind(&loop);
+    Push(Operand(array, counter, times_system_pointer_size, 0));
+    inc(counter);
+    bind(&entry);
+    cmp(counter, size);
+    j(less, &loop, Label::kNear);
+  } else {
+    mov(counter, size);
+    jmp(&entry);
+    bind(&loop);
+    Push(Operand(array, counter, times_system_pointer_size, 0));
+    bind(&entry);
+    dec(counter);
+    j(greater_equal, &loop, Label::kNear);
+  }
 }
 
 Operand TurboAssembler::ExternalReferenceAsOperand(ExternalReference reference,
@@ -390,10 +415,8 @@ void TurboAssembler::CallEphemeronKeyBarrier(Register object, Register address,
 void TurboAssembler::CallRecordWriteStub(
     Register object, Register address,
     RememberedSetAction remembered_set_action, SaveFPRegsMode fp_mode) {
-  CallRecordWriteStub(
-      object, address, remembered_set_action, fp_mode,
-      isolate()->builtins()->builtin_handle(Builtins::kRecordWrite),
-      kNullAddress);
+  CallRecordWriteStub(object, address, remembered_set_action, fp_mode,
+                      Builtins::kRecordWrite, kNullAddress);
 }
 
 void TurboAssembler::CallRecordWriteStub(
@@ -401,14 +424,15 @@ void TurboAssembler::CallRecordWriteStub(
     RememberedSetAction remembered_set_action, SaveFPRegsMode fp_mode,
     Address wasm_target) {
   CallRecordWriteStub(object, address, remembered_set_action, fp_mode,
-                      Handle<Code>::null(), wasm_target);
+                      Builtins::kNoBuiltinId, wasm_target);
 }
 
 void TurboAssembler::CallRecordWriteStub(
     Register object, Register address,
     RememberedSetAction remembered_set_action, SaveFPRegsMode fp_mode,
-    Handle<Code> code_target, Address wasm_target) {
-  DCHECK_NE(code_target.is_null(), wasm_target == kNullAddress);
+    int builtin_index, Address wasm_target) {
+  DCHECK_NE(builtin_index == Builtins::kNoBuiltinId,
+            wasm_target == kNullAddress);
   // TODO(albertnetymk): For now we ignore remembered_set_action and fp_mode,
   // i.e. always emit remember set and save FP registers in RecordWriteStub. If
   // large performance regression is observed, we should use these values to
@@ -436,10 +460,14 @@ void TurboAssembler::CallRecordWriteStub(
 
   Move(remembered_set_parameter, Smi::FromEnum(remembered_set_action));
   Move(fp_mode_parameter, Smi::FromEnum(fp_mode));
-  if (code_target.is_null()) {
+  if (builtin_index == Builtins::kNoBuiltinId) {
     // Use {wasm_call} for direct Wasm call within a module.
     wasm_call(wasm_target, RelocInfo::WASM_STUB_CALL);
+  } else if (options().inline_offheap_trampolines) {
+    CallBuiltin(builtin_index);
   } else {
+    Handle<Code> code_target =
+        isolate()->builtins()->builtin_handle(Builtins::kRecordWrite);
     Call(code_target, RelocInfo::CODE_TARGET);
   }
 
@@ -570,6 +598,28 @@ void TurboAssembler::Cvttsd2ui(Register dst, Operand src, XMMRegister tmp) {
   addsd(tmp, src);
   cvttsd2si(dst, tmp);
   add(dst, Immediate(0x80000000));
+}
+
+void TurboAssembler::Roundps(XMMRegister dst, XMMRegister src,
+                             RoundingMode mode) {
+  if (CpuFeatures::IsSupported(AVX)) {
+    CpuFeatureScope scope(this, AVX);
+    vroundps(dst, src, mode);
+  } else {
+    CpuFeatureScope scope(this, SSE4_1);
+    roundps(dst, src, mode);
+  }
+}
+
+void TurboAssembler::Roundpd(XMMRegister dst, XMMRegister src,
+                             RoundingMode mode) {
+  if (CpuFeatures::IsSupported(AVX)) {
+    CpuFeatureScope scope(this, AVX);
+    vroundpd(dst, src, mode);
+  } else {
+    CpuFeatureScope scope(this, SSE4_1);
+    roundpd(dst, src, mode);
+  }
 }
 
 void TurboAssembler::ShlPair(Register high, Register low, uint8_t shift) {
@@ -758,8 +808,9 @@ void TurboAssembler::StubPrologue(StackFrame::Type type) {
 void TurboAssembler::Prologue() {
   push(ebp);  // Caller's frame pointer.
   mov(ebp, esp);
-  push(esi);  // Callee's context.
-  push(edi);  // Callee's JS function.
+  push(kContextRegister);                 // Callee's context.
+  push(kJSFunctionRegister);              // Callee's JS function.
+  push(kJavaScriptCallArgCountRegister);  // Actual argument count.
 }
 
 void TurboAssembler::EnterFrame(StackFrame::Type type) {
@@ -2020,9 +2071,9 @@ void TurboAssembler::CheckPageFlag(Register object, Register scratch, int mask,
     and_(scratch, object);
   }
   if (mask < (1 << kBitsPerByte)) {
-    test_b(Operand(scratch, MemoryChunk::kFlagsOffset), Immediate(mask));
+    test_b(Operand(scratch, BasicMemoryChunk::kFlagsOffset), Immediate(mask));
   } else {
-    test(Operand(scratch, MemoryChunk::kFlagsOffset), Immediate(mask));
+    test(Operand(scratch, BasicMemoryChunk::kFlagsOffset), Immediate(mask));
   }
   j(cc, condition_met, condition_met_distance);
 }

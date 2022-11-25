@@ -2,9 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import * as TextUtils from '../text_utils/text_utils.js';
+
 import {CSSMedia} from './CSSMedia.js';
 import {CSSModel, Edit} from './CSSModel.js';  // eslint-disable-line no-unused-vars
 import {CSSStyleDeclaration, Type} from './CSSStyleDeclaration.js';
+import {CSSStyleSheetHeader} from './CSSStyleSheetHeader.js';  // eslint-disable-line no-unused-vars
 
 /**
  * @unrestricted
@@ -19,7 +22,7 @@ export class CSSRule {
     this.styleSheetId = payload.styleSheetId;
 
     if (this.styleSheetId) {
-      const styleSheetHeader = cssModel.styleSheetHeaderForId(this.styleSheetId);
+      const styleSheetHeader = this._getStyleSheetHeader(this.styleSheetId);
       this.sourceURL = styleSheetHeader.sourceURL;
     }
     this.origin = payload.origin;
@@ -43,7 +46,7 @@ export class CSSRule {
     if (!this.styleSheetId) {
       return '';
     }
-    const styleSheetHeader = this._cssModel.styleSheetHeaderForId(this.styleSheetId);
+    const styleSheetHeader = this._getStyleSheetHeader(this.styleSheetId);
     return styleSheetHeader.resourceURL();
   }
 
@@ -81,11 +84,19 @@ export class CSSRule {
   cssModel() {
     return this._cssModel;
   }
+
+  /**
+   * @param {string} styleSheetId
+   * @return {!CSSStyleSheetHeader}
+   */
+  _getStyleSheetHeader(styleSheetId) {
+    const styleSheetHeader = this._cssModel.styleSheetHeaderForId(styleSheetId);
+    console.assert(styleSheetHeader !== null);
+    return /** @type {!CSSStyleSheetHeader} */ (styleSheetHeader);
+  }
 }
 
-/**
- * @unrestricted
- */
+
 class CSSValue {
   /**
    * @param {!Protocol.CSS.Value} payload
@@ -93,7 +104,7 @@ class CSSValue {
   constructor(payload) {
     this.text = payload.text;
     if (payload.range) {
-      this.range = TextUtils.TextRange.fromObject(payload.range);
+      this.range = TextUtils.TextRange.TextRange.fromObject(payload.range);
     }
   }
 
@@ -108,9 +119,7 @@ class CSSValue {
   }
 }
 
-/**
- * @unrestricted
- */
+
 export class CSSStyleRule extends CSSRule {
   /**
    * @param {!CSSModel} cssModel
@@ -118,8 +127,11 @@ export class CSSStyleRule extends CSSRule {
    * @param {boolean=} wasUsed
    */
   constructor(cssModel, payload, wasUsed) {
-    super(cssModel, payload);
+    // TODO(crbug.com/1011811): Replace with spread operator or better types once Closure is gone.
+    super(cssModel, {origin: payload.origin, style: payload.style, styleSheetId: payload.styleSheetId});
 
+    /** @type {!Array.<!CSSValue>} */
+    this.selectors;
     this._reinitializeSelectors(payload.selectorList);
     this.media = payload.media ? CSSMedia.parseMediaArrayPayload(cssModel, payload.media) : [];
     this.wasUsed = wasUsed || false;
@@ -133,18 +145,25 @@ export class CSSStyleRule extends CSSRule {
   static createDummyRule(cssModel, selectorText) {
     const dummyPayload = {
       selectorList: {
-        selectors: [{text: selectorText}],
+        text: '',
+        selectors: [{text: selectorText, value: undefined}],
       },
-      style: {styleSheetId: '0', range: new TextUtils.TextRange(0, 0, 0, 0), shorthandEntries: [], cssProperties: []}
+      style: {
+        styleSheetId: '0',
+        range: new TextUtils.TextRange.TextRange(0, 0, 0, 0),
+        shorthandEntries: [],
+        cssProperties: []
+      },
+      origin: Protocol.CSS.StyleSheetOrigin.Inspector,
     };
     return new CSSStyleRule(cssModel, /** @type {!Protocol.CSS.CSSRule} */ (dummyPayload));
   }
+
 
   /**
    * @param {!Protocol.CSS.SelectorList} selectorList
    */
   _reinitializeSelectors(selectorList) {
-    /** @type {!Array.<!CSSValue>} */
     this.selectors = [];
     for (let i = 0; i < selectorList.selectors.length; ++i) {
       this.selectors.push(new CSSValue(selectorList.selectors[i]));
@@ -175,15 +194,15 @@ export class CSSStyleRule extends CSSRule {
   }
 
   /**
-   * @return {?TextUtils.TextRange}
+   * @return {?TextUtils.TextRange.TextRange}
    */
   selectorRange() {
     const firstRange = this.selectors[0].range;
-    if (!firstRange) {
+    const lastRange = this.selectors[this.selectors.length - 1].range;
+    if (!firstRange || !lastRange) {
       return null;
     }
-    const lastRange = this.selectors.peekLast().range;
-    return new TextUtils.TextRange(
+    return new TextUtils.TextRange.TextRange(
         firstRange.startLine, firstRange.startColumn, lastRange.endLine, lastRange.endColumn);
   }
 
@@ -196,7 +215,7 @@ export class CSSStyleRule extends CSSRule {
     if (!selector || !selector.range || !this.styleSheetId) {
       return 0;
     }
-    const styleSheetHeader = this._cssModel.styleSheetHeaderForId(this.styleSheetId);
+    const styleSheetHeader = this._getStyleSheetHeader(this.styleSheetId);
     return styleSheetHeader.lineNumberInSource(selector.range.startLine);
   }
 
@@ -209,8 +228,7 @@ export class CSSStyleRule extends CSSRule {
     if (!selector || !selector.range || !this.styleSheetId) {
       return undefined;
     }
-    const styleSheetHeader = this._cssModel.styleSheetHeaderForId(this.styleSheetId);
-    console.assert(styleSheetHeader);
+    const styleSheetHeader = this._getStyleSheetHeader(this.styleSheetId);
     return styleSheetHeader.columnNumberInSource(selector.range.startLine, selector.range.startColumn);
   }
 
@@ -222,7 +240,8 @@ export class CSSStyleRule extends CSSRule {
     if (this.styleSheetId !== edit.styleSheetId) {
       return;
     }
-    if (this.selectorRange().equal(edit.oldRange)) {
+    const range = this.selectorRange();
+    if (range && range.equal(edit.oldRange)) {
       this._reinitializeSelectors(/** @type {!Protocol.CSS.SelectorList} */ (edit.payload));
     } else {
       for (let i = 0; i < this.selectors.length; ++i) {
@@ -238,9 +257,6 @@ export class CSSStyleRule extends CSSRule {
 }
 
 
-/**
- * @unrestricted
- */
 export class CSSKeyframesRule {
   /**
    * @param {!CSSModel} cssModel
@@ -276,7 +292,10 @@ export class CSSKeyframeRule extends CSSRule {
    * @param {!Protocol.CSS.CSSKeyframeRule} payload
    */
   constructor(cssModel, payload) {
-    super(cssModel, payload);
+    // TODO(crbug.com/1011811): Replace with spread operator or better types once Closure is gone.
+    super(cssModel, {origin: payload.origin, style: payload.style, styleSheetId: payload.styleSheetId});
+    /** @type {!CSSValue} */
+    this._keyText;
     this._reinitializeKey(payload.keyText);
   }
 

@@ -30,15 +30,14 @@
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "third_party/blink/public/common/web_preferences/image_animation_policy.h"
 #include "third_party/blink/renderer/platform/geometry/float_point.h"
 #include "third_party/blink/renderer/platform/geometry/float_size.h"
 #include "third_party/blink/renderer/platform/geometry/int_rect.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_types.h"
-#include "third_party/blink/renderer/platform/graphics/image_animation_policy.h"
 #include "third_party/blink/renderer/platform/graphics/image_observer.h"
 #include "third_party/blink/renderer/platform/graphics/image_orientation.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_image.h"
-#include "third_party/blink/renderer/platform/graphics/paint/paint_record.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
@@ -57,13 +56,12 @@ class ImageDecodeCache;
 
 namespace blink {
 
-class DarkModeImageClassifier;
 class FloatRect;
 class GraphicsContext;
 class Image;
-class KURL;
 class WebGraphicsContext3DProvider;
 class WebGraphicsContext3DProviderWrapper;
+class DarkModeImageCache;
 
 class PLATFORM_EXPORT Image : public ThreadSafeRefCounted<Image> {
   friend class GeneratedImage;
@@ -157,9 +155,9 @@ class PLATFORM_EXPORT Image : public ThreadSafeRefCounted<Image> {
   virtual bool MaybeAnimated() { return false; }
 
   // Set animationPolicy
-  virtual void SetAnimationPolicy(ImageAnimationPolicy) {}
-  virtual ImageAnimationPolicy AnimationPolicy() {
-    return kImageAnimationPolicyAllowed;
+  virtual void SetAnimationPolicy(web_pref::ImageAnimationPolicy) {}
+  virtual web_pref::ImageAnimationPolicy AnimationPolicy() {
+    return web_pref::kImageAnimationPolicyAllowed;
   }
 
   // Advances an animated image. For BitmapImage (e.g., animated gifs) this
@@ -250,45 +248,12 @@ class PLATFORM_EXPORT Image : public ThreadSafeRefCounted<Image> {
     return nullptr;
   }
 
-  virtual sk_sp<PaintRecord> PaintRecordForContainer(
-      const KURL& url,
-      const IntSize& container_size,
-      const IntRect& draw_src_rect,
-      const IntRect& draw_dst_rect,
-      bool flip_y) {
-    return nullptr;
-  }
-
-  // This function is implemented by the derived classes which might
-  // have certain conditions or default classification decisions which
-  // need to be checked before the classification algorithms are applied
-  // on the image.
-  virtual DarkModeClassification CheckTypeSpecificConditionsForDarkMode(
-      const FloatRect& dest_rect,
-      DarkModeImageClassifier* classifier) {
-    return DarkModeClassification::kDoNotApplyFilter;
-  }
-
-  // This function returns true if it can create the bitmap of the
-  // image using |src_rect| for the location and dimensions of the image.
-  // For Bitmap and SVG (and any other type) images the implementation
-  // of this function differs when it comes to the implementation of
-  // PaintImageForCurrentFrame(). Once the PaintImage is available,
-  // the method used to extract the bitmap is the same for any image.
-  bool GetBitmap(const FloatRect& src_rect, SkBitmap* bitmap);
-
   PaintImage::Id paint_image_id() const { return stable_image_id_; }
 
   // Returns an SkBitmap that is a copy of the image's current frame.
   SkBitmap AsSkBitmapForCurrentFrame(RespectImageOrientationEnum);
 
-  DarkModeClassification GetDarkModeClassification(const FloatRect& src_rect);
-
-  // Dark mode classification result is cached to be consistent and have
-  // higher performance for future paints.
-  void AddDarkModeClassification(
-      const FloatRect& src_rect,
-      const DarkModeClassification dark_mode_classification);
+  DarkModeImageCache* GetDarkModeImageCache();
 
  protected:
   Image(ImageObserver* = nullptr, bool is_multipart = false);
@@ -309,9 +274,6 @@ class PLATFORM_EXPORT Image : public ThreadSafeRefCounted<Image> {
   // Whether or not size is available yet.
   virtual bool IsSizeAvailable() { return true; }
 
-  typedef FloatPoint ClassificationKey;
-  HashMap<ClassificationKey, DarkModeClassification> dark_mode_classifications_;
-
  private:
   bool image_observer_disabled_;
   scoped_refptr<SharedBuffer> encoded_image_data_;
@@ -325,6 +287,7 @@ class PLATFORM_EXPORT Image : public ThreadSafeRefCounted<Image> {
   WeakPersistent<ImageObserver> image_observer_;
   PaintImage::Id stable_image_id_;
   const bool is_multipart_;
+  std::unique_ptr<DarkModeImageCache> dark_mode_image_cache_;
   DISALLOW_COPY_AND_ASSIGN(Image);
 };
 

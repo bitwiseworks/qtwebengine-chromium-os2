@@ -44,9 +44,9 @@ PageTimingMetricsSender::PageTimingMetricsSender(
       new_deferred_resource_data_(mojom::DeferredResourceCounts::New()),
       buffer_timer_delay_ms_(kBufferTimerDelayMillis),
       metadata_recorder_(initial_monotonic_timing) {
+  const auto resource_id = initial_request->resource_id();
   page_resource_data_use_.emplace(
-      std::piecewise_construct,
-      std::forward_as_tuple(initial_request->resource_id()),
+      std::piecewise_construct, std::forward_as_tuple(resource_id),
       std::forward_as_tuple(std::move(initial_request)));
   buffer_timer_delay_ms_ = base::GetFieldTrialParamByFeatureAsInt(
       kPageLoadMetricsTimerDelayFeature, "BufferTimerDelayMillis",
@@ -108,6 +108,17 @@ void PageTimingMetricsSender::DidObserveLayoutShift(
   EnsureSendTimer();
 }
 
+void PageTimingMetricsSender::DidObserveLayoutNg(uint32_t all_block_count,
+                                                 uint32_t ng_block_count,
+                                                 uint32_t all_call_count,
+                                                 uint32_t ng_call_count) {
+  render_data_.all_layout_block_count_delta += all_block_count;
+  render_data_.ng_layout_block_count_delta += ng_block_count;
+  render_data_.all_layout_call_count_delta += all_call_count;
+  render_data_.ng_layout_call_count_delta += ng_call_count;
+  EnsureSendTimer();
+}
+
 void PageTimingMetricsSender::DidObserveLazyLoadBehavior(
     blink::WebLocalFrameClient::LazyLoadBehavior lazy_load_behavior) {
   switch (lazy_load_behavior) {
@@ -130,16 +141,14 @@ void PageTimingMetricsSender::DidStartResponse(
     const GURL& response_url,
     int resource_id,
     const network::mojom::URLResponseHead& response_head,
-    network::mojom::RequestDestination request_destination,
-    content::PreviewsState previews_state) {
+    network::mojom::RequestDestination request_destination) {
   DCHECK(!base::Contains(page_resource_data_use_, resource_id));
 
   auto resource_it = page_resource_data_use_.emplace(
       std::piecewise_construct, std::forward_as_tuple(resource_id),
       std::forward_as_tuple(std::make_unique<PageResourceDataUse>()));
   resource_it.first->second->DidStartResponse(
-      response_url, resource_id, response_head, request_destination,
-      previews_state);
+      response_url, resource_id, response_head, request_destination);
 }
 
 void PageTimingMetricsSender::DidReceiveTransferSizeUpdate(
@@ -208,10 +217,10 @@ void PageTimingMetricsSender::DidLoadResourceFromMemoryCache(
   modified_resources_.insert(resource_it.first->second.get());
 }
 
-void PageTimingMetricsSender::OnMainFrameDocumentIntersectionChanged(
-    const blink::WebRect& main_frame_document_intersection) {
-  metadata_->intersection_update = mojom::FrameIntersectionUpdate::New(
-      gfx::Rect(main_frame_document_intersection));
+void PageTimingMetricsSender::OnMainFrameIntersectionChanged(
+    const blink::WebRect& main_frame_intersection) {
+  metadata_->intersection_update =
+      mojom::FrameIntersectionUpdate::New(gfx::Rect(main_frame_intersection));
   EnsureSendTimer();
 }
 
@@ -235,6 +244,11 @@ void PageTimingMetricsSender::UpdateResourceMetadata(
     it->second->SetCompletedBeforeFCP(completed_before_fcp);
 
   it->second->SetIsMainFrameResource(is_main_frame_resource);
+}
+
+void PageTimingMetricsSender::SetUpSmoothnessReporting(
+    base::ReadOnlySharedMemoryRegion shared_memory) {
+  sender_->SetUpSmoothnessReporting(std::move(shared_memory));
 }
 
 void PageTimingMetricsSender::Update(
@@ -305,6 +319,10 @@ void PageTimingMetricsSender::SendNow() {
   modified_resources_.clear();
   render_data_.layout_shift_delta = 0;
   render_data_.layout_shift_delta_before_input_or_scroll = 0;
+  render_data_.all_layout_block_count_delta = 0;
+  render_data_.ng_layout_block_count_delta = 0;
+  render_data_.all_layout_call_count_delta = 0;
+  render_data_.ng_layout_call_count_delta = 0;
 }
 
 void PageTimingMetricsSender::DidObserveInputDelay(

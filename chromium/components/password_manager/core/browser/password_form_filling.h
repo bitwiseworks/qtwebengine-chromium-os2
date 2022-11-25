@@ -9,9 +9,10 @@
 
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
+#include "components/password_manager/core/browser/password_form_forward.h"
 
 namespace autofill {
-struct PasswordForm;
+struct PasswordFormFillData;
 }  // namespace autofill
 
 namespace password_manager {
@@ -41,11 +42,21 @@ enum class LikelyFormFilling {
 LikelyFormFilling SendFillInformationToRenderer(
     PasswordManagerClient* client,
     PasswordManagerDriver* driver,
-    const autofill::PasswordForm& observed_form,
-    const std::vector<const autofill::PasswordForm*>& best_matches,
-    const std::vector<const autofill::PasswordForm*>& federated_matches,
-    const autofill::PasswordForm* preferred_match,
+    const PasswordForm& observed_form,
+    const std::vector<const PasswordForm*>& best_matches,
+    const std::vector<const PasswordForm*>& federated_matches,
+    const PasswordForm* preferred_match,
     PasswordFormMetricsRecorder* metrics_recorder);
+
+// Create a PasswordFormFillData structure in preparation for filling a form
+// identified by |form_on_page|, with credentials from |preferred_match| and
+// |matches|. |preferred_match| should equal to one of matches.
+// If |wait_for_username| is true then fill on account select will be used.
+autofill::PasswordFormFillData CreatePasswordFormFillData(
+    const PasswordForm& form_on_page,
+    const std::vector<const PasswordForm*>& matches,
+    const PasswordForm& preferred_match,
+    bool wait_for_username);
 
 }  // namespace password_manager
 

@@ -8,8 +8,8 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "content/browser/frame_host/navigation_request.h"
-#include "content/browser/frame_host/render_frame_host_impl.h"
+#include "content/browser/renderer_host/navigation_request.h"
+#include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/view_messages.h"
@@ -17,6 +17,7 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/common/frame_navigate_params.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -111,7 +112,7 @@ IN_PROC_BROWSER_TEST_F(RenderViewHostTest, IsFocusedElementEditable) {
 }
 
 // Flaky on Linux (https://crbug.com/559192).
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
 #define MAYBE_ReleaseSessionOnCloseACK DISABLED_ReleaseSessionOnCloseACK
 #else
 #define MAYBE_ReleaseSessionOnCloseACK ReleaseSessionOnCloseACK

@@ -57,8 +57,7 @@ TEST_F(BrowserAccessibilityTest, TestCanFireEvents) {
   std::unique_ptr<BrowserAccessibilityManager> manager(
       BrowserAccessibilityManager::Create(
           MakeAXTreeUpdate(root, para1, text1),
-          test_browser_accessibility_delegate_.get(),
-          new BrowserAccessibilityFactory()));
+          test_browser_accessibility_delegate_.get()));
 
   BrowserAccessibility* root_obj = manager->GetRoot();
   EXPECT_FALSE(root_obj->PlatformIsLeaf());
@@ -74,7 +73,13 @@ TEST_F(BrowserAccessibilityTest, TestCanFireEvents) {
 
   BrowserAccessibility* text_obj = manager->GetFromID(111);
   EXPECT_TRUE(text_obj->PlatformIsLeaf());
+#if !defined(OS_ANDROID)
   EXPECT_TRUE(text_obj->CanFireEvents());
+#endif
+  BrowserAccessibility* retarget = manager->RetargetForEvents(
+      text_obj, BrowserAccessibilityManager::RetargetEventType::
+                    RetargetEventTypeBlinkHover);
+  EXPECT_TRUE(retarget->CanFireEvents());
 
   manager.reset();
 }
@@ -172,13 +177,11 @@ TEST_F(BrowserAccessibilityTest, PlatformChildIterator) {
 
   std::unique_ptr<BrowserAccessibilityManager> parent_manager(
       BrowserAccessibilityManager::Create(
-          parent_tree_update, test_browser_accessibility_delegate_.get(),
-          new BrowserAccessibilityFactory()));
+          parent_tree_update, test_browser_accessibility_delegate_.get()));
 
   std::unique_ptr<BrowserAccessibilityManager> child_manager(
       BrowserAccessibilityManager::Create(
-          child_tree_update, test_browser_accessibility_delegate_.get(),
-          new BrowserAccessibilityFactory()));
+          child_tree_update, test_browser_accessibility_delegate_.get()));
 
   BrowserAccessibility* root_obj = parent_manager->GetRoot();
   // Test traversal
@@ -276,17 +279,17 @@ TEST_F(BrowserAccessibilityTest, GetInnerTextRangeBoundsRect) {
 
   ui::AXNodeData static_text;
   static_text.id = 2;
-  static_text.SetName("Hello, world.");
   static_text.role = ax::mojom::Role::kStaticText;
+  static_text.SetName("Hello, world.");
   static_text.relative_bounds.bounds = gfx::RectF(100, 100, 29, 18);
   root.child_ids.push_back(2);
 
   ui::AXNodeData inline_text1;
   inline_text1.id = 3;
-  inline_text1.SetName("Hello, ");
   inline_text1.role = ax::mojom::Role::kInlineTextBox;
+  inline_text1.SetName("Hello, ");
   inline_text1.relative_bounds.bounds = gfx::RectF(100, 100, 29, 9);
-  inline_text1.SetTextDirection(ax::mojom::TextDirection::kLtr);
+  inline_text1.SetTextDirection(ax::mojom::WritingDirection::kLtr);
   std::vector<int32_t> character_offsets1;
   character_offsets1.push_back(6);
   character_offsets1.push_back(11);
@@ -301,10 +304,10 @@ TEST_F(BrowserAccessibilityTest, GetInnerTextRangeBoundsRect) {
 
   ui::AXNodeData inline_text2;
   inline_text2.id = 4;
-  inline_text2.SetName("world.");
   inline_text2.role = ax::mojom::Role::kInlineTextBox;
+  inline_text2.SetName("world.");
   inline_text2.relative_bounds.bounds = gfx::RectF(100, 109, 28, 9);
-  inline_text2.SetTextDirection(ax::mojom::TextDirection::kLtr);
+  inline_text2.SetTextDirection(ax::mojom::WritingDirection::kLtr);
   std::vector<int32_t> character_offsets2;
   character_offsets2.push_back(5);
   character_offsets2.push_back(10);
@@ -319,8 +322,7 @@ TEST_F(BrowserAccessibilityTest, GetInnerTextRangeBoundsRect) {
   std::unique_ptr<BrowserAccessibilityManager> browser_accessibility_manager(
       BrowserAccessibilityManager::Create(
           MakeAXTreeUpdate(root, static_text, inline_text1, inline_text2),
-          test_browser_accessibility_delegate_.get(),
-          new BrowserAccessibilityFactory()));
+          test_browser_accessibility_delegate_.get()));
 
   BrowserAccessibility* root_accessible =
       browser_accessibility_manager->GetRoot();
@@ -398,17 +400,17 @@ TEST_F(BrowserAccessibilityTest, GetInnerTextRangeBoundsRectMultiElement) {
 
   ui::AXNodeData static_text;
   static_text.id = 2;
-  static_text.SetName("ABC");
   static_text.role = ax::mojom::Role::kStaticText;
+  static_text.SetName("ABC");
   static_text.relative_bounds.bounds = gfx::RectF(0, 20, 33, 9);
   root.child_ids.push_back(2);
 
   ui::AXNodeData inline_text1;
   inline_text1.id = 3;
-  inline_text1.SetName("ABC");
   inline_text1.role = ax::mojom::Role::kInlineTextBox;
+  inline_text1.SetName("ABC");
   inline_text1.relative_bounds.bounds = gfx::RectF(0, 20, 33, 9);
-  inline_text1.SetTextDirection(ax::mojom::TextDirection::kLtr);
+  inline_text1.SetTextDirection(ax::mojom::WritingDirection::kLtr);
   std::vector<int32_t> character_offsets{10, 21, 33};
   inline_text1.AddIntListAttribute(
       ax::mojom::IntListAttribute::kCharacterOffsets, character_offsets);
@@ -416,17 +418,17 @@ TEST_F(BrowserAccessibilityTest, GetInnerTextRangeBoundsRectMultiElement) {
 
   ui::AXNodeData static_text2;
   static_text2.id = 4;
-  static_text2.SetName("ABC");
   static_text2.role = ax::mojom::Role::kStaticText;
+  static_text2.SetName("ABC");
   static_text2.relative_bounds.bounds = gfx::RectF(10, 40, 33, 9);
   root.child_ids.push_back(4);
 
   ui::AXNodeData inline_text2;
   inline_text2.id = 5;
-  inline_text2.SetName("ABC");
   inline_text2.role = ax::mojom::Role::kInlineTextBox;
+  inline_text2.SetName("ABC");
   inline_text2.relative_bounds.bounds = gfx::RectF(10, 40, 33, 9);
-  inline_text2.SetTextDirection(ax::mojom::TextDirection::kLtr);
+  inline_text2.SetTextDirection(ax::mojom::WritingDirection::kLtr);
   inline_text2.AddIntListAttribute(
       ax::mojom::IntListAttribute::kCharacterOffsets, character_offsets);
   static_text2.child_ids.push_back(5);
@@ -435,8 +437,7 @@ TEST_F(BrowserAccessibilityTest, GetInnerTextRangeBoundsRectMultiElement) {
       BrowserAccessibilityManager::Create(
           MakeAXTreeUpdate(root, static_text, inline_text1, static_text2,
                            inline_text2),
-          test_browser_accessibility_delegate_.get(),
-          new BrowserAccessibilityFactory()));
+          test_browser_accessibility_delegate_.get()));
 
   BrowserAccessibility* root_accessible =
       browser_accessibility_manager->GetRoot();
@@ -526,17 +527,17 @@ TEST_F(BrowserAccessibilityTest, GetInnerTextRangeBoundsRectBiDi) {
 
   ui::AXNodeData static_text;
   static_text.id = 2;
-  static_text.SetName("123abc");
   static_text.role = ax::mojom::Role::kStaticText;
+  static_text.SetName("123abc");
   static_text.relative_bounds.bounds = gfx::RectF(100, 100, 60, 20);
   root.child_ids.push_back(2);
 
   ui::AXNodeData inline_text1;
   inline_text1.id = 3;
-  inline_text1.SetName("123");
   inline_text1.role = ax::mojom::Role::kInlineTextBox;
+  inline_text1.SetName("123");
   inline_text1.relative_bounds.bounds = gfx::RectF(100, 100, 30, 20);
-  inline_text1.SetTextDirection(ax::mojom::TextDirection::kLtr);
+  inline_text1.SetTextDirection(ax::mojom::WritingDirection::kLtr);
   std::vector<int32_t> character_offsets1;
   character_offsets1.push_back(10);  // 0
   character_offsets1.push_back(20);  // 1
@@ -547,10 +548,10 @@ TEST_F(BrowserAccessibilityTest, GetInnerTextRangeBoundsRectBiDi) {
 
   ui::AXNodeData inline_text2;
   inline_text2.id = 4;
-  inline_text2.SetName("abc");
   inline_text2.role = ax::mojom::Role::kInlineTextBox;
+  inline_text2.SetName("abc");
   inline_text2.relative_bounds.bounds = gfx::RectF(130, 100, 30, 20);
-  inline_text2.SetTextDirection(ax::mojom::TextDirection::kRtl);
+  inline_text2.SetTextDirection(ax::mojom::WritingDirection::kRtl);
   std::vector<int32_t> character_offsets2;
   character_offsets2.push_back(10);
   character_offsets2.push_back(20);
@@ -562,8 +563,7 @@ TEST_F(BrowserAccessibilityTest, GetInnerTextRangeBoundsRectBiDi) {
   std::unique_ptr<BrowserAccessibilityManager> browser_accessibility_manager(
       BrowserAccessibilityManager::Create(
           MakeAXTreeUpdate(root, static_text, inline_text1, inline_text2),
-          test_browser_accessibility_delegate_.get(),
-          new BrowserAccessibilityFactory()));
+          test_browser_accessibility_delegate_.get()));
 
   BrowserAccessibility* root_accessible =
       browser_accessibility_manager->GetRoot();
@@ -627,17 +627,17 @@ TEST_F(BrowserAccessibilityTest, GetInnerTextRangeBoundsRectScrolledWindow) {
 
   ui::AXNodeData static_text;
   static_text.id = 2;
-  static_text.SetName("ABC");
   static_text.role = ax::mojom::Role::kStaticText;
+  static_text.SetName("ABC");
   static_text.relative_bounds.bounds = gfx::RectF(100, 100, 16, 9);
   root.child_ids.push_back(2);
 
   ui::AXNodeData inline_text;
   inline_text.id = 3;
-  inline_text.SetName("ABC");
   inline_text.role = ax::mojom::Role::kInlineTextBox;
+  inline_text.SetName("ABC");
   inline_text.relative_bounds.bounds = gfx::RectF(100, 100, 16, 9);
-  inline_text.SetTextDirection(ax::mojom::TextDirection::kLtr);
+  inline_text.SetTextDirection(ax::mojom::WritingDirection::kLtr);
   std::vector<int32_t> character_offsets1;
   character_offsets1.push_back(6);   // 0
   character_offsets1.push_back(11);  // 1
@@ -649,8 +649,7 @@ TEST_F(BrowserAccessibilityTest, GetInnerTextRangeBoundsRectScrolledWindow) {
   std::unique_ptr<BrowserAccessibilityManager> browser_accessibility_manager(
       BrowserAccessibilityManager::Create(
           MakeAXTreeUpdate(root, static_text, inline_text),
-          test_browser_accessibility_delegate_.get(),
-          new BrowserAccessibilityFactory()));
+          test_browser_accessibility_delegate_.get()));
 
   browser_accessibility_manager
       ->SetUseRootScrollOffsetsWhenComputingBoundsForTesting(true);
@@ -688,8 +687,7 @@ TEST_F(BrowserAccessibilityTest, GetAuthorUniqueId) {
 
   std::unique_ptr<BrowserAccessibilityManager> browser_accessibility_manager(
       BrowserAccessibilityManager::Create(
-          MakeAXTreeUpdate(root), test_browser_accessibility_delegate_.get(),
-          new BrowserAccessibilityFactory()));
+          MakeAXTreeUpdate(root), test_browser_accessibility_delegate_.get()));
   ASSERT_NE(nullptr, browser_accessibility_manager.get());
 
   BrowserAccessibility* root_accessible =
@@ -710,14 +708,14 @@ TEST_F(BrowserAccessibilityTest, NextWordPositionWithHypertext) {
   ui::AXNodeData input;
   input.id = 2;
   input.role = ax::mojom::Role::kTextField;
-  input.child_ids = {3};
   input.SetName("Search the web");
+  input.child_ids = {3};
 
   ui::AXNodeData static_text;
   static_text.id = 3;
   static_text.role = ax::mojom::Role::kStaticText;
-  static_text.child_ids = {4};
   static_text.SetName("Search the web");
+  static_text.child_ids = {4};
 
   ui::AXNodeData inline_text;
   inline_text.id = 4;
@@ -731,8 +729,7 @@ TEST_F(BrowserAccessibilityTest, NextWordPositionWithHypertext) {
   std::unique_ptr<BrowserAccessibilityManager> browser_accessibility_manager(
       BrowserAccessibilityManager::Create(
           MakeAXTreeUpdate(root, input, static_text, inline_text),
-          test_browser_accessibility_delegate_.get(),
-          new BrowserAccessibilityFactory()));
+          test_browser_accessibility_delegate_.get()));
   ASSERT_NE(nullptr, browser_accessibility_manager.get());
 
   BrowserAccessibility* root_accessible =
@@ -810,13 +807,11 @@ TEST_F(BrowserAccessibilityTest, PortalName) {
 
   std::unique_ptr<BrowserAccessibilityManager> parent_manager(
       BrowserAccessibilityManager::Create(
-          parent_tree_update, test_browser_accessibility_delegate_.get(),
-          new BrowserAccessibilityFactory()));
+          parent_tree_update, test_browser_accessibility_delegate_.get()));
 
   std::unique_ptr<BrowserAccessibilityManager> child_manager(
       BrowserAccessibilityManager::Create(
-          child_tree_update, test_browser_accessibility_delegate_.get(),
-          new BrowserAccessibilityFactory()));
+          child_tree_update, test_browser_accessibility_delegate_.get()));
 
   // Portal node should use name from root of child tree.
   EXPECT_EQ("name", child_manager->GetRoot()->GetName());
@@ -841,14 +836,13 @@ TEST_F(BrowserAccessibilityTest, GetIndexInParent) {
 
   ui::AXNodeData static_text;
   static_text.id = 2;
-  static_text.SetName("ABC");
   static_text.role = ax::mojom::Role::kStaticText;
+  static_text.SetName("ABC");
 
   std::unique_ptr<BrowserAccessibilityManager> browser_accessibility_manager(
       BrowserAccessibilityManager::Create(
           MakeAXTreeUpdate(root, static_text),
-          test_browser_accessibility_delegate_.get(),
-          new BrowserAccessibilityFactory()));
+          test_browser_accessibility_delegate_.get()));
   ASSERT_NE(nullptr, browser_accessibility_manager.get());
 
   BrowserAccessibility* root_accessible =

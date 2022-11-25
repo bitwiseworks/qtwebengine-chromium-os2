@@ -17,7 +17,6 @@
 #include "core/fxge/dib/cfx_dibitmap.h"
 #include "core/fxge/dib/cfx_imagerenderer.h"
 #include "core/fxge/dib/cfx_imagestretcher.h"
-#include "third_party/base/ptr_util.h"
 #include "third_party/base/span.h"
 #include "third_party/base/stl_util.h"
 
@@ -47,26 +46,6 @@ CFX_PointF HardClip(const CFX_PointF& pos) {
                     pdfium::clamp(pos.y, -kMaxPos, kMaxPos));
 }
 
-void RgbByteOrderSetPixel(const RetainPtr<CFX_DIBitmap>& pBitmap,
-                          int x,
-                          int y,
-                          uint32_t argb) {
-  if (x < 0 || x >= pBitmap->GetWidth() || y < 0 || y >= pBitmap->GetHeight())
-    return;
-
-  uint8_t* pos = pBitmap->GetBuffer() + y * pBitmap->GetPitch() +
-                 x * pBitmap->GetBPP() / 8;
-  if (pBitmap->GetFormat() == FXDIB_Argb) {
-    FXARGB_SETRGBORDERDIB(pos, argb);
-    return;
-  }
-
-  int alpha = FXARGB_A(argb);
-  pos[0] = (FXARGB_R(argb) * alpha + pos[0] * (255 - alpha)) / 255;
-  pos[1] = (FXARGB_G(argb) * alpha + pos[1] * (255 - alpha)) / 255;
-  pos[2] = (FXARGB_B(argb) * alpha + pos[2] * (255 - alpha)) / 255;
-}
-
 void RgbByteOrderCompositeRect(const RetainPtr<CFX_DIBitmap>& pBitmap,
                                int left,
                                int top,
@@ -91,9 +70,7 @@ void RgbByteOrderCompositeRect(const RetainPtr<CFX_DIBitmap>& pBitmap,
       uint8_t* dest_scan =
           pBuffer + row * pBitmap->GetPitch() + rect.left * Bpp;
       if (Bpp == 4) {
-        uint32_t* scan = reinterpret_cast<uint32_t*>(dest_scan);
-        for (int col = 0; col < width; col++)
-          *scan++ = dib_argb;
+        std::fill_n(reinterpret_cast<uint32_t*>(dest_scan), width, dib_argb);
       } else {
         for (int col = 0; col < width; col++) {
           *dest_scan++ = src_r;
@@ -111,8 +88,7 @@ void RgbByteOrderCompositeRect(const RetainPtr<CFX_DIBitmap>& pBitmap,
       for (int col = 0; col < width; col++) {
         uint8_t back_alpha = dest_scan[3];
         if (back_alpha == 0) {
-          FXARGB_SETRGBORDERDIB(dest_scan,
-                                ArgbEncode(src_alpha, src_r, src_g, src_b));
+          FXARGB_SETRGBORDERDIB(dest_scan, argb);
           dest_scan += 4;
           continue;
         }
@@ -171,8 +147,8 @@ void RgbByteOrderTransferBitmap(const RetainPtr<CFX_DIBitmap>& pBitmap,
           pSrcBitmap->GetScanline(src_top + row) + src_left * Bpp;
       if (Bpp == 4) {
         for (int col = 0; col < width; col++) {
-          FXARGB_SETDIB(dest_scan, ArgbEncode(src_scan[3], src_scan[0],
-                                              src_scan[1], src_scan[2]));
+          FXARGB_SETRGBORDERDIB(dest_scan,
+                                *reinterpret_cast<const uint32_t*>(src_scan));
           dest_scan += 4;
           src_scan += 4;
         }
@@ -236,20 +212,6 @@ void RgbByteOrderTransferBitmap(const RetainPtr<CFX_DIBitmap>& pBitmap,
   }
 }
 
-bool DibSetPixel(const RetainPtr<CFX_DIBitmap>& pDevice,
-                 int x,
-                 int y,
-                 uint32_t color) {
-  int alpha = FXARGB_A(color);
-  if (pDevice->IsCmykImage())
-    return false;
-
-  pDevice->SetPixel(x, y, color);
-  if (pDevice->m_pAlphaMask)
-    pDevice->m_pAlphaMask->SetPixel(x, y, alpha << 24);
-  return true;
-}
-
 void RasterizeStroke(agg::rasterizer_scanline_aa* rasterizer,
                      agg::path_storage* path_data,
                      const CFX_Matrix* pObject2Device,
@@ -293,7 +255,7 @@ void RasterizeStroke(agg::rasterizer_scanline_aa* rasterizer,
     for (size_t i = 0; i < (pGraphState->m_DashArray.size() + 1) / 2; i++) {
       float on = pGraphState->m_DashArray[i * 2];
       if (on <= 0.000001f)
-        on = 1.0f / 10;
+        on = 0.1f;
       float off = i * 2 + 1 == pGraphState->m_DashArray.size()
                       ? on
                       : pGraphState->m_DashArray[i * 2 + 1];
@@ -318,19 +280,9 @@ void RasterizeStroke(agg::rasterizer_scanline_aa* rasterizer,
   rasterizer->add_path_transformed(stroke, pObject2Device);
 }
 
-constexpr int kAlternateOrWindingFillModeMask =
-    FXFILL_ALTERNATE | FXFILL_WINDING;
-
-int GetAlternateOrWindingFillMode(int fill_mode) {
-  return fill_mode & kAlternateOrWindingFillModeMask;
-}
-
-bool IsAlternateOrWindingFillMode(int fill_mode) {
-  return !!GetAlternateOrWindingFillMode(fill_mode);
-}
-
-agg::filling_rule_e GetAlternateOrWindingFillType(int fill_mode) {
-  return GetAlternateOrWindingFillMode(fill_mode) == FXFILL_WINDING
+agg::filling_rule_e GetAlternateOrWindingFillType(
+    const CFX_FillRenderOptions& fill_options) {
+  return fill_options.fill_type == CFX_FillRenderOptions::FillType::kWinding
              ? agg::fill_non_zero
              : agg::fill_even_odd;
 }
@@ -1152,7 +1104,7 @@ uint8_t* CFX_AggDeviceDriver::GetBuffer() const {
   return m_pBitmap->GetBuffer();
 }
 
-#if !defined(OS_MACOSX)
+#if !defined(OS_APPLE)
 void CFX_AggDeviceDriver::InitPlatform() {}
 
 void CFX_AggDeviceDriver::DestroyPlatform() {}
@@ -1162,10 +1114,11 @@ bool CFX_AggDeviceDriver::DrawDeviceText(int nChars,
                                          CFX_Font* pFont,
                                          const CFX_Matrix& mtObject2Device,
                                          float font_size,
-                                         uint32_t color) {
+                                         uint32_t color,
+                                         const CFX_TextRenderOptions& options) {
   return false;
 }
-#endif  // !defined(OS_MACOSX)
+#endif  // !defined(OS_APPLE)
 
 DeviceType CFX_AggDeviceDriver::GetDeviceType() const {
   return DeviceType::kDisplay;
@@ -1206,7 +1159,7 @@ int CFX_AggDeviceDriver::GetDeviceCaps(int caps_id) const {
 void CFX_AggDeviceDriver::SaveState() {
   std::unique_ptr<CFX_ClipRgn> pClip;
   if (m_pClipRgn)
-    pClip = pdfium::MakeUnique<CFX_ClipRgn>(*m_pClipRgn);
+    pClip = std::make_unique<CFX_ClipRgn>(*m_pClipRgn);
   m_StateStack.push_back(std::move(pClip));
 }
 
@@ -1218,7 +1171,7 @@ void CFX_AggDeviceDriver::RestoreState(bool bKeepSaved) {
 
   if (bKeepSaved) {
     if (m_StateStack.back())
-      m_pClipRgn = pdfium::MakeUnique<CFX_ClipRgn>(*m_StateStack.back());
+      m_pClipRgn = std::make_unique<CFX_ClipRgn>(*m_StateStack.back());
   } else {
     m_pClipRgn = std::move(m_StateStack.back());
     m_StateStack.pop_back();
@@ -1242,20 +1195,19 @@ void CFX_AggDeviceDriver::SetClipMask(agg::rasterizer_scanline_aa& rasterizer) {
   final_render.color(agg::gray8(255));
   agg::scanline_u8 scanline;
   agg::render_scanlines(rasterizer, scanline, final_render,
-                        (m_FillFlags & FXFILL_NOPATHSMOOTH) != 0);
+                        m_FillOptions.aliased_path);
   m_pClipRgn->IntersectMaskF(path_rect.left, path_rect.top, pThisLayer);
 }
 
-bool CFX_AggDeviceDriver::SetClip_PathFill(const CFX_PathData* pPathData,
-                                           const CFX_Matrix* pObject2Device,
-                                           int fill_mode) {
-  ASSERT(IsAlternateOrWindingFillMode(fill_mode));
-  ASSERT(GetAlternateOrWindingFillMode(fill_mode) !=
-         kAlternateOrWindingFillModeMask);
+bool CFX_AggDeviceDriver::SetClip_PathFill(
+    const CFX_PathData* pPathData,
+    const CFX_Matrix* pObject2Device,
+    const CFX_FillRenderOptions& fill_options) {
+  ASSERT(fill_options.fill_type != CFX_FillRenderOptions::FillType::kNoFill);
 
-  m_FillFlags = fill_mode;
+  m_FillOptions = fill_options;
   if (!m_pClipRgn) {
-    m_pClipRgn = pdfium::MakeUnique<CFX_ClipRgn>(
+    m_pClipRgn = std::make_unique<CFX_ClipRgn>(
         GetDeviceCaps(FXDC_PIXEL_WIDTH), GetDeviceCaps(FXDC_PIXEL_HEIGHT));
   }
   size_t size = pPathData->GetPoints().size();
@@ -1279,7 +1231,7 @@ bool CFX_AggDeviceDriver::SetClip_PathFill(const CFX_PathData* pPathData,
                       static_cast<float>(GetDeviceCaps(FXDC_PIXEL_WIDTH)),
                       static_cast<float>(GetDeviceCaps(FXDC_PIXEL_HEIGHT)));
   rasterizer.add_path(path_data.m_PathData);
-  rasterizer.filling_rule(GetAlternateOrWindingFillType(fill_mode));
+  rasterizer.filling_rule(GetAlternateOrWindingFillType(fill_options));
   SetClipMask(rasterizer);
   return true;
 }
@@ -1289,7 +1241,7 @@ bool CFX_AggDeviceDriver::SetClip_PathStroke(
     const CFX_Matrix* pObject2Device,
     const CFX_GraphStateData* pGraphState) {
   if (!m_pClipRgn) {
-    m_pClipRgn = pdfium::MakeUnique<CFX_ClipRgn>(
+    m_pClipRgn = std::make_unique<CFX_ClipRgn>(
         GetDeviceCaps(FXDC_PIXEL_WIDTH), GetDeviceCaps(FXDC_PIXEL_HEIGHT));
   }
   CAgg_PathData path_data;
@@ -1322,7 +1274,7 @@ bool CFX_AggDeviceDriver::RenderRasterizer(
   }
   agg::scanline_u8 scanline;
   agg::render_scanlines(rasterizer, scanline, render,
-                        (m_FillFlags & FXFILL_NOPATHSMOOTH) != 0);
+                        m_FillOptions.aliased_path);
   return true;
 }
 
@@ -1331,19 +1283,17 @@ bool CFX_AggDeviceDriver::DrawPath(const CFX_PathData* pPathData,
                                    const CFX_GraphStateData* pGraphState,
                                    uint32_t fill_color,
                                    uint32_t stroke_color,
-                                   int fill_mode,
+                                   const CFX_FillRenderOptions& fill_options,
                                    BlendMode blend_type) {
-  ASSERT(GetAlternateOrWindingFillMode(fill_mode) !=
-         kAlternateOrWindingFillModeMask);
-
   if (blend_type != BlendMode::kNormal)
     return false;
 
   if (!GetBuffer())
     return true;
 
-  m_FillFlags = fill_mode;
-  if (IsAlternateOrWindingFillMode(fill_mode) && fill_color) {
+  m_FillOptions = fill_options;
+  if (fill_options.fill_type != CFX_FillRenderOptions::FillType::kNoFill &&
+      fill_color) {
     CAgg_PathData path_data;
     path_data.BuildPath(pPathData, pObject2Device);
     agg::rasterizer_scanline_aa rasterizer;
@@ -1351,9 +1301,9 @@ bool CFX_AggDeviceDriver::DrawPath(const CFX_PathData* pPathData,
                         static_cast<float>(GetDeviceCaps(FXDC_PIXEL_WIDTH)),
                         static_cast<float>(GetDeviceCaps(FXDC_PIXEL_HEIGHT)));
     rasterizer.add_path(path_data.m_PathData);
-    rasterizer.filling_rule(GetAlternateOrWindingFillType(fill_mode));
-    if (!RenderRasterizer(rasterizer, fill_color,
-                          !!(fill_mode & FXFILL_FULLCOVER), false)) {
+    rasterizer.filling_rule(GetAlternateOrWindingFillType(fill_options));
+    if (!RenderRasterizer(rasterizer, fill_color, fill_options.full_cover,
+                          false)) {
       return false;
     }
   }
@@ -1361,7 +1311,7 @@ bool CFX_AggDeviceDriver::DrawPath(const CFX_PathData* pPathData,
   if (!pGraphState || !stroke_alpha)
     return true;
 
-  if (fill_mode & FX_ZEROAREA_FILL) {
+  if (fill_options.zero_area) {
     CAgg_PathData path_data;
     path_data.BuildPath(pPathData, pObject2Device);
     agg::rasterizer_scanline_aa rasterizer;
@@ -1369,9 +1319,9 @@ bool CFX_AggDeviceDriver::DrawPath(const CFX_PathData* pPathData,
                         static_cast<float>(GetDeviceCaps(FXDC_PIXEL_WIDTH)),
                         static_cast<float>(GetDeviceCaps(FXDC_PIXEL_HEIGHT)));
     RasterizeStroke(&rasterizer, &path_data.m_PathData, nullptr, pGraphState, 1,
-                    !!(fill_mode & FX_STROKE_TEXT_MODE));
-    return RenderRasterizer(rasterizer, stroke_color,
-                            !!(fill_mode & FXFILL_FULLCOVER), m_bGroupKnockout);
+                    fill_options.stroke_text_mode);
+    return RenderRasterizer(rasterizer, stroke_color, fill_options.full_cover,
+                            m_bGroupKnockout);
   }
   CFX_Matrix matrix1;
   CFX_Matrix matrix2;
@@ -1392,41 +1342,9 @@ bool CFX_AggDeviceDriver::DrawPath(const CFX_PathData* pPathData,
                       static_cast<float>(GetDeviceCaps(FXDC_PIXEL_WIDTH)),
                       static_cast<float>(GetDeviceCaps(FXDC_PIXEL_HEIGHT)));
   RasterizeStroke(&rasterizer, &path_data.m_PathData, &matrix2, pGraphState,
-                  matrix1.a, !!(fill_mode & FX_STROKE_TEXT_MODE));
-  return RenderRasterizer(rasterizer, stroke_color,
-                          !!(fill_mode & FXFILL_FULLCOVER), m_bGroupKnockout);
-}
-
-bool CFX_AggDeviceDriver::SetPixel(int x, int y, uint32_t color) {
-  if (!m_pBitmap->GetBuffer())
-    return true;
-
-  if (!m_pClipRgn) {
-    if (!m_bRgbByteOrder)
-      return DibSetPixel(m_pBitmap, x, y, color);
-    RgbByteOrderSetPixel(m_pBitmap, x, y, color);
-    return true;
-  }
-  if (!m_pClipRgn->GetBox().Contains(x, y))
-    return true;
-
-  if (m_pClipRgn->GetType() == CFX_ClipRgn::RectI) {
-    if (!m_bRgbByteOrder)
-      return DibSetPixel(m_pBitmap, x, y, color);
-    RgbByteOrderSetPixel(m_pBitmap, x, y, color);
-    return true;
-  }
-  if (m_pClipRgn->GetType() != CFX_ClipRgn::MaskF)
-    return true;
-
-  int new_alpha =
-      FXARGB_A(color) * m_pClipRgn->GetMask()->GetScanline(y)[x] / 255;
-  color = (color & 0xffffff) | (new_alpha << 24);
-  if (m_bRgbByteOrder) {
-    RgbByteOrderSetPixel(m_pBitmap, x, y, color);
-    return true;
-  }
-  return DibSetPixel(m_pBitmap, x, y, color);
+                  matrix1.a, fill_options.stroke_text_mode);
+  return RenderRasterizer(rasterizer, stroke_color, fill_options.full_cover,
+                          m_bGroupKnockout);
 }
 
 bool CFX_AggDeviceDriver::FillRectWithBlend(const FX_RECT& rect,
@@ -1576,7 +1494,7 @@ bool CFX_AggDeviceDriver::StartDIBits(
   if (!m_pBitmap->GetBuffer())
     return true;
 
-  *handle = pdfium::MakeUnique<CFX_ImageRenderer>(
+  *handle = std::make_unique<CFX_ImageRenderer>(
       m_pBitmap, m_pClipRgn.get(), pSource, bitmap_alpha, argb, matrix, options,
       m_bRgbByteOrder);
   return true;
@@ -1587,10 +1505,10 @@ bool CFX_AggDeviceDriver::ContinueDIBits(CFX_ImageRenderer* pHandle,
   return !m_pBitmap->GetBuffer() || pHandle->Continue(pPause);
 }
 
-#ifndef _SKIA_SUPPORT_
+#if !defined(_SKIA_SUPPORT_)
 CFX_DefaultRenderDevice::CFX_DefaultRenderDevice() {}
 
-CFX_DefaultRenderDevice::~CFX_DefaultRenderDevice() {}
+CFX_DefaultRenderDevice::~CFX_DefaultRenderDevice() = default;
 
 bool CFX_DefaultRenderDevice::Attach(
     const RetainPtr<CFX_DIBitmap>& pBitmap,
@@ -1601,7 +1519,7 @@ bool CFX_DefaultRenderDevice::Attach(
     return false;
 
   SetBitmap(pBitmap);
-  SetDeviceDriver(pdfium::MakeUnique<CFX_AggDeviceDriver>(
+  SetDeviceDriver(std::make_unique<CFX_AggDeviceDriver>(
       pBitmap, bRgbByteOrder, pBackdropBitmap, bGroupKnockout));
   return true;
 }
@@ -1616,9 +1534,9 @@ bool CFX_DefaultRenderDevice::Create(
     return false;
 
   SetBitmap(pBitmap);
-  SetDeviceDriver(pdfium::MakeUnique<CFX_AggDeviceDriver>(
+  SetDeviceDriver(std::make_unique<CFX_AggDeviceDriver>(
       pBitmap, false, pBackdropBitmap, false));
   return true;
 }
 
-#endif
+#endif  // !defined(_SKIA_SUPPORT_)

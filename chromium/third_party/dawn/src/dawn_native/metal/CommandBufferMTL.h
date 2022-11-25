@@ -15,8 +15,8 @@
 #ifndef DAWNNATIVE_METAL_COMMANDBUFFERMTL_H_
 #define DAWNNATIVE_METAL_COMMANDBUFFERMTL_H_
 
-#include "dawn_native/CommandAllocator.h"
 #include "dawn_native/CommandBuffer.h"
+#include "dawn_native/Error.h"
 
 #import <Metal/Metal.h>
 
@@ -29,26 +29,23 @@ namespace dawn_native { namespace metal {
     class CommandRecordingContext;
     class Device;
 
-    class CommandBuffer : public CommandBufferBase {
+    class CommandBuffer final : public CommandBufferBase {
       public:
         CommandBuffer(CommandEncoder* encoder, const CommandBufferDescriptor* descriptor);
-        ~CommandBuffer();
 
-        void FillCommands(CommandRecordingContext* commandContext);
+        MaybeError FillCommands(CommandRecordingContext* commandContext);
 
       private:
-        void EncodeComputePass(CommandRecordingContext* commandContext);
-        void EncodeRenderPass(CommandRecordingContext* commandContext,
-                              MTLRenderPassDescriptor* mtlRenderPass,
-                              uint32_t width,
-                              uint32_t height);
+        MaybeError EncodeComputePass(CommandRecordingContext* commandContext);
+        MaybeError EncodeRenderPass(CommandRecordingContext* commandContext,
+                                    MTLRenderPassDescriptor* mtlRenderPass,
+                                    uint32_t width,
+                                    uint32_t height);
 
-        void EncodeRenderPassInternal(CommandRecordingContext* commandContext,
-                                      MTLRenderPassDescriptor* mtlRenderPass,
-                                      uint32_t width,
-                                      uint32_t height);
-
-        CommandIterator mCommands;
+        MaybeError EncodeRenderPassInternal(CommandRecordingContext* commandContext,
+                                            MTLRenderPassDescriptor* mtlRenderPass,
+                                            uint32_t width,
+                                            uint32_t height);
     };
 
 }}  // namespace dawn_native::metal

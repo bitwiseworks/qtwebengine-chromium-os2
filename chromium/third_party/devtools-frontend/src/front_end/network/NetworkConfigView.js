@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as MobileThrottling from '../mobile_throttling/mobile_throttling.js';
 import * as SDK from '../sdk/sdk.js';
@@ -51,7 +54,8 @@ export class NetworkConfigView extends UI.Widget.VBox {
     otherUserAgentElement.required = true;
     UI.ARIAUtils.setAccessibleName(otherUserAgentElement, otherUserAgentElement.placeholder);
 
-    const errorElement = createElementWithClass('div', 'network-config-input-validation-error');
+    const errorElement = document.createElement('div');
+    errorElement.classList.add('network-config-input-validation-error');
     UI.ARIAUtils.markAsAlert(errorElement);
     if (!otherUserAgentElement.value) {
       errorElement.textContent = ls`Custom user agent field is required`;
@@ -148,7 +152,7 @@ export class NetworkConfigView extends UI.Widget.VBox {
       if (autoCheckbox.checked) {
         return;
       }
-      self.SDK.multitargetNetworkManager.setCustomUserAgentOverride(customUserAgentSetting.get());
+      SDK.NetworkManager.MultitargetNetworkManager.instance().setCustomUserAgentOverride(customUserAgentSetting.get());
     });
     const customUserAgentSelectBox = section.createChild('div', 'network-config-ua-custom');
     autoCheckbox.addEventListener('change', userAgentSelectBoxChanged);
@@ -166,7 +170,7 @@ export class NetworkConfigView extends UI.Widget.VBox {
       customSelectAndInput.input.disabled = !useCustomUA;
       customSelectAndInput.error.hidden = !useCustomUA;
       const customUA = useCustomUA ? customUserAgentSetting.get() : '';
-      self.SDK.multitargetNetworkManager.setCustomUserAgentOverride(customUA);
+      SDK.NetworkManager.MultitargetNetworkManager.instance().setCustomUserAgentOverride(customUA);
     }
   }
 }

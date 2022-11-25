@@ -30,7 +30,7 @@ class PLATFORM_EXPORT PageScheduler {
     // Returns true if the request has been succcessfully relayed to the
     // compositor.
     virtual bool RequestBeginMainFrameNotExpected(bool new_state) = 0;
-    virtual void SetLifecycleState(PageLifecycleState) = 0;
+    virtual void OnSetPageFrozen(bool is_frozen) = 0;
     // Returns true iff the network is idle for the local main frame.
     // Always returns false if the main frame is remote.
     virtual bool LocalMainFrameNetworkIsAlmostIdle() const { return true; }
@@ -38,10 +38,15 @@ class PLATFORM_EXPORT PageScheduler {
 
   virtual ~PageScheduler() = default;
 
+  // Signals that communications with the user took place via either a title
+  // updates or a change to the favicon.
+  virtual void OnTitleOrFaviconUpdated() = 0;
   // The scheduler may throttle tasks associated with background pages.
   virtual void SetPageVisible(bool) = 0;
   // The scheduler transitions app to and from FROZEN state in background.
   virtual void SetPageFrozen(bool) = 0;
+  // Handles operations required for storing the page in the back-forward cache.
+  virtual void SetPageBackForwardCached(bool) = 0;
   // Tells the scheduler about "keep-alive" state which can be due to:
   // service workers, shared workers, or fetch keep-alive.
   // If true, then the scheduler should not freeze relevant task queues.

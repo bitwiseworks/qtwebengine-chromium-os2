@@ -30,24 +30,27 @@
 
 #include "base/feature_list.h"
 #include "base/metrics/field_trial_params.h"
-#include "services/network/public/mojom/ip_address_space.mojom-blink.h"
+#include "base/optional.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/security_context/insecure_request_policy.h"
+#include "third_party/blink/public/mojom/devtools/inspector_issue.mojom-blink.h"
 #include "third_party/blink/public/mojom/loader/request_context_frame_type.mojom-blink.h"
 #include "third_party/blink/public/mojom/security_context/insecure_request_policy.mojom-blink.h"
 #include "third_party/blink/public/platform/web_content_settings_client.h"
-#include "third_party/blink/public/platform/web_mixed_content.h"
 #include "third_party/blink/public/platform/web_security_origin.h"
 #include "third_party/blink/public/platform/web_worker_fetch_context.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/frame.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
+#include "third_party/blink/renderer/core/loader/address_space_feature.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/loader/frame_fetch_context.h"
 #include "third_party/blink/renderer/core/loader/worker_fetch_context.h"
+#include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/core/workers/worker_or_worklet_global_scope.h"
 #include "third_party/blink/renderer/core/workers/worker_settings.h"
@@ -183,7 +186,7 @@ bool IsWebSocketAllowedInFrame(const BaseFetchContext& fetch_context,
   return settings && settings->GetAllowRunningOfInsecureContent();
 }
 
-bool IsWebSocketAllowedInWorker(const BaseFetchContext& fetch_context,
+bool IsWebSocketAllowedInWorker(const WorkerFetchContext& fetch_context,
                                 WorkerSettings* settings,
                                 const KURL& url) {
   fetch_context.CountUsage(WebFeature::kMixedContentPresent);
@@ -207,6 +210,38 @@ bool IsWebSocketAllowedInWorker(const BaseFetchContext& fetch_context,
   if (strict_mode)
     return false;
   return settings && settings->GetAllowRunningOfInsecureContent();
+}
+
+void CreateMixedContentIssue(
+    const KURL& main_resource_url,
+    const KURL& insecure_url,
+    const mojom::blink::RequestContextType request_context,
+    LocalFrame* frame,
+    const mojom::blink::MixedContentResolutionStatus resolution_status,
+    const base::Optional<String>& devtools_id) {
+  auto mixedContent = mojom::blink::MixedContentIssueDetails::New();
+  mixedContent->request_context = request_context,
+  mixedContent->resolution_status = resolution_status;
+  mixedContent->insecure_url = insecure_url.GetString();
+  mixedContent->main_resource_url = main_resource_url.GetString();
+
+  if (devtools_id) {
+    auto affected_request = mojom::blink::AffectedRequest::New();
+    affected_request->request_id = *devtools_id;
+    affected_request->url = insecure_url.GetString();
+    mixedContent->request = std::move(affected_request);
+  }
+
+  auto affected_frame = mojom::blink::AffectedFrame::New();
+  affected_frame->frame_id = frame->GetDevToolsFrameToken().ToString().c_str();
+  mixedContent->frame = std::move(affected_frame);
+
+  auto details = mojom::blink::InspectorIssueDetails::New();
+  details->mixed_content_issue_details = std::move(mixedContent);
+
+  frame->AddInspectorIssue(mojom::blink::InspectorIssueInfo::New(
+      mojom::blink::InspectorIssueCode::kMixedContentIssue,
+      std::move(details)));
 }
 
 }  // namespace
@@ -254,8 +289,14 @@ static bool IsInsecureUrl(const KURL& url) {
 // static
 bool MixedContentChecker::IsMixedContent(const SecurityOrigin* security_origin,
                                          const KURL& url) {
+  return IsMixedContent(security_origin->Protocol(), url);
+}
+
+// static
+bool MixedContentChecker::IsMixedContent(const String& origin_protocol,
+                                         const KURL& url) {
   if (!SchemeRegistry::ShouldTreatURLSchemeAsRestrictingMixedContent(
-          security_origin->Protocol()))
+          origin_protocol))
     return false;
 
   return IsInsecureUrl(url);
@@ -333,8 +374,7 @@ void MixedContentChecker::Count(Frame* frame,
   // blockable category:
   WebMixedContentContextType context_type =
       WebMixedContent::ContextTypeFromRequestContext(
-          request_context,
-          frame->GetSettings()->GetStrictMixedContentCheckingForPlugin());
+          request_context, DecideCheckModeForPlugin(frame->GetSettings()));
   if (context_type == WebMixedContentContextType::kBlockable) {
     UseCounter::Count(source->GetDocument(),
                       WebFeature::kMixedContentBlockable);
@@ -382,7 +422,9 @@ bool MixedContentChecker::ShouldBlockFetch(
     const KURL& url_before_redirects,
     ResourceRequest::RedirectStatus redirect_status,
     const KURL& url,
-    ReportingDisposition reporting_disposition) {
+    const base::Optional<String>& devtools_id,
+    ReportingDisposition reporting_disposition,
+    mojom::blink::ContentSecurityNotifier& notifier) {
   Frame* mixed_frame = InWhichFrameIsContentMixed(frame, url);
   if (!mixed_frame)
     return false;
@@ -412,9 +454,6 @@ bool MixedContentChecker::ShouldBlockFetch(
     policy->ReportMixedContent(url_before_redirects, redirect_status);
 
   Settings* settings = mixed_frame->GetSettings();
-  // Use the current local frame's client; the embedder doesn't distinguish
-  // mixed content signals from different frames on the same page.
-  LocalFrameClient* client = frame->Client();
   auto& local_frame_host = frame->GetLocalFrameHostRemote();
   WebContentSettingsClient* content_settings_client =
       frame->GetContentSettingsClient();
@@ -433,7 +472,7 @@ bool MixedContentChecker::ShouldBlockFetch(
 
   WebMixedContentContextType context_type =
       WebMixedContent::ContextTypeFromRequestContext(
-          request_context, settings->GetStrictMixedContentCheckingForPlugin());
+          request_context, DecideCheckModeForPlugin(settings));
 
   switch (context_type) {
     case WebMixedContentContextType::kOptionallyBlockable:
@@ -475,7 +514,8 @@ bool MixedContentChecker::ShouldBlockFetch(
         }
       }
       if (allowed) {
-        client->DidRunInsecureContent(security_origin, url);
+        notifier.NotifyInsecureContentRan(KURL(security_origin->ToString()),
+                                          url);
         UseCounter::Count(frame->GetDocument(),
                           WebFeature::kMixedContentBlockableAllowed);
       }
@@ -497,12 +537,21 @@ bool MixedContentChecker::ShouldBlockFetch(
         CreateConsoleMessageAboutFetch(MainResourceUrlForFrame(mixed_frame),
                                        url, request_context, allowed, nullptr));
   }
+  // Issue is created even when reporting disposition is false i.e. for
+  // speculative prefetches. Otherwise the DevTools frontend would not
+  // receive an issue with a devtools_id which it can match to a request.
+  CreateMixedContentIssue(
+      MainResourceUrlForFrame(mixed_frame), url, request_context, frame,
+      allowed
+          ? mojom::blink::MixedContentResolutionStatus::kMixedContentWarning
+          : mojom::blink::MixedContentResolutionStatus::kMixedContentBlocked,
+      devtools_id);
   return !allowed;
 }
 
 // static
 bool MixedContentChecker::ShouldBlockFetchOnWorker(
-    const WorkerFetchContext& worker_fetch_context,
+    WorkerFetchContext& worker_fetch_context,
     mojom::RequestContextType request_context,
     const KURL& url_before_redirects,
     ResourceRequest::RedirectStatus redirect_status,
@@ -549,9 +598,11 @@ bool MixedContentChecker::ShouldBlockFetchOnWorker(
               worker_fetch_context.AllowRunningInsecureContent(
                   settings->GetAllowRunningOfInsecureContent(), url);
     if (allowed) {
-      worker_fetch_context.GetWebWorkerFetchContext()->DidRunInsecureContent(
-          WebSecurityOrigin(fetch_client_settings_object.GetSecurityOrigin()),
-          url);
+      worker_fetch_context.GetContentSecurityNotifier()
+          .NotifyInsecureContentRan(
+              KURL(
+                  fetch_client_settings_object.GetSecurityOrigin()->ToString()),
+              url);
       worker_fetch_context.CountUsage(
           WebFeature::kMixedContentBlockableAllowed);
     }
@@ -609,18 +660,26 @@ bool MixedContentChecker::IsWebSocketAllowed(
         content_settings_client->AllowRunningInsecureContent(allowed, url);
   }
 
-  if (allowed)
-    frame->Client()->DidRunInsecureContent(security_origin, url);
+  if (allowed) {
+    frame_fetch_context.GetContentSecurityNotifier().NotifyInsecureContentRan(
+        KURL(security_origin->ToString()), url);
+  }
 
   frame->GetDocument()->AddConsoleMessage(CreateConsoleMessageAboutWebSocket(
       MainResourceUrlForFrame(mixed_frame), url, allowed));
-
+  CreateMixedContentIssue(
+      MainResourceUrlForFrame(mixed_frame), url,
+      mojom::blink::RequestContextType::FETCH, frame,
+      allowed
+          ? mojom::blink::MixedContentResolutionStatus::kMixedContentWarning
+          : mojom::blink::MixedContentResolutionStatus::kMixedContentBlocked,
+      base::Optional<String>());
   return allowed;
 }
 
 // static
 bool MixedContentChecker::IsWebSocketAllowed(
-    const WorkerFetchContext& worker_fetch_context,
+    WorkerFetchContext& worker_fetch_context,
     const KURL& url) {
   const FetchClientSettingsObject& fetch_client_settings_object =
       worker_fetch_context.GetResourceFetcherProperties()
@@ -638,8 +697,8 @@ bool MixedContentChecker::IsWebSocketAllowed(
   allowed = worker_fetch_context.AllowRunningInsecureContent(allowed, url);
 
   if (allowed) {
-    worker_fetch_context.GetWebWorkerFetchContext()->DidRunInsecureContent(
-        WebSecurityOrigin(security_origin), url);
+    worker_fetch_context.GetContentSecurityNotifier().NotifyInsecureContentRan(
+        KURL(security_origin->ToString()), url);
   }
 
   worker_fetch_context.AddConsoleMessage(CreateConsoleMessageAboutWebSocket(
@@ -681,6 +740,14 @@ bool MixedContentChecker::IsMixedFormAction(
             mojom::ConsoleMessageSource::kSecurity,
             mojom::ConsoleMessageLevel::kWarning, message));
   }
+  // Issue is created even when reporting disposition is false i.e. for
+  // speculative prefetches. Otherwise the DevTools frontend would not
+  // receive an issue with a devtools_id which it can match to a request.
+  CreateMixedContentIssue(
+      MainResourceUrlForFrame(mixed_frame), url,
+      mojom::blink::RequestContextType::FORM, frame,
+      mojom::blink::MixedContentResolutionStatus::kMixedContentWarning,
+      base::Optional<String>());
 
   return true;
 }
@@ -691,11 +758,12 @@ bool MixedContentChecker::ShouldAutoupgrade(
     WebContentSettingsClient* settings_client,
     const KURL& url) {
   // We are currently not autoupgrading plugin loaded content, which is why
-  // strict_mixed_content_for_plugin is hardcoded to true.
+  // check_mode_for_plugin is hardcoded to kStrict.
   if (!base::FeatureList::IsEnabled(
           blink::features::kMixedContentAutoupgrade) ||
       context_https_state == HttpsState::kNone ||
-      WebMixedContent::ContextTypeFromRequestContext(type, true) !=
+      WebMixedContent::ContextTypeFromRequestContext(
+          type, WebMixedContent::CheckModeForPlugin::kStrict) !=
           WebMixedContentContextType::kOptionallyBlockable) {
     return false;
   }
@@ -718,49 +786,39 @@ bool MixedContentChecker::ShouldAutoupgrade(
 
 void MixedContentChecker::CheckMixedPrivatePublic(
     LocalFrame* frame,
-    const AtomicString& resource_ip_address) {
-  if (!frame || !frame->GetDocument() || !frame->GetDocument()->Loader())
+    const ResourceResponse& response) {
+  if (!frame)
     return;
 
-  // Just count these for the moment, don't block them.
-  if (network_utils::IsReservedIPAddress(resource_ip_address) &&
-      frame->GetDocument()->GetSecurityContext().AddressSpace() ==
-          network::mojom::IPAddressSpace::kPublic) {
-    UseCounter::Count(frame->GetDocument(),
-                      WebFeature::kMixedContentPrivateHostnameInPublicHostname);
-    // We can simplify the IP checks here, as we've already verified that
-    // |resourceIPAddress| is a reserved IP address, which means it's also a
-    // valid IP address in a normalized form.
-    if (resource_ip_address.StartsWith("127.0.0.") ||
-        resource_ip_address == "[::1]") {
-      UseCounter::Count(frame->GetDocument(),
-                        frame->GetDocument()->IsSecureContext()
-                            ? WebFeature::kLoopbackEmbeddedInSecureContext
-                            : WebFeature::kLoopbackEmbeddedInNonSecureContext);
-    }
+  LocalDOMWindow* window = frame->DomWindow();
+  base::Optional<WebFeature> feature =
+      AddressSpaceFeature(window->AddressSpace(), window->IsSecureContext(),
+                          response.AddressSpace());
+  if (!feature.has_value()) {
+    return;
   }
+
+  // This WebFeature encompasses all private network requests.
+  UseCounter::Count(window,
+                    WebFeature::kMixedContentPrivateHostnameInPublicHostname);
+  UseCounter::Count(window, *feature);
 }
 
 void MixedContentChecker::HandleCertificateError(
-    LocalFrame* frame,
     const ResourceResponse& response,
-    mojom::RequestContextType request_context) {
-  // Use the current local frame's client; the embedder doesn't distinguish
-  // mixed content signals from different frames on the same page.
-  LocalFrameClient* client = frame->Client();
-  bool strict_mixed_content_checking_for_plugin =
-      frame->GetSettings() &&
-      frame->GetSettings()->GetStrictMixedContentCheckingForPlugin();
+    mojom::RequestContextType request_context,
+    WebMixedContent::CheckModeForPlugin check_mode_for_plugin,
+    mojom::blink::ContentSecurityNotifier& notifier) {
   WebMixedContentContextType context_type =
-      WebMixedContent::ContextTypeFromRequestContext(
-          request_context, strict_mixed_content_checking_for_plugin);
+      WebMixedContent::ContextTypeFromRequestContext(request_context,
+                                                     check_mode_for_plugin);
   if (context_type == WebMixedContentContextType::kBlockable) {
-    client->DidRunContentWithCertificateErrors();
+    notifier.NotifyContentWithCertificateErrorsRan();
   } else {
     // contextTypeFromRequestContext() never returns NotMixedContent (it
     // computes the type of mixed content, given that the content is mixed).
     DCHECK_NE(context_type, WebMixedContentContextType::kNotMixedContent);
-    client->DidDisplayContentWithCertificateErrors();
+    notifier.NotifyContentWithCertificateErrorsDisplayed();
   }
 }
 
@@ -778,6 +836,13 @@ void MixedContentChecker::MixedContentFound(
   frame->GetDocument()->AddConsoleMessage(CreateConsoleMessageAboutFetch(
       main_resource_url, mixed_content_url, request_context, was_allowed,
       std::move(source_location)));
+
+  CreateMixedContentIssue(
+      main_resource_url, mixed_content_url, request_context, frame,
+      was_allowed
+          ? mojom::blink::MixedContentResolutionStatus::kMixedContentWarning
+          : mojom::blink::MixedContentResolutionStatus::kMixedContentBlocked,
+      base::Optional<String>());
   // Reports to the CSP policy.
   ContentSecurityPolicy* policy =
       frame->GetSecurityContext()->GetContentSecurityPolicy();
@@ -812,12 +877,9 @@ WebMixedContentContextType MixedContentChecker::ContextTypeForInspector(
   Frame* mixed_frame = InWhichFrameIsContentMixed(frame, request.Url());
   if (!mixed_frame)
     return WebMixedContentContextType::kNotMixedContent;
-
-  bool strict_mixed_content_checking_for_plugin =
-      mixed_frame->GetSettings() &&
-      mixed_frame->GetSettings()->GetStrictMixedContentCheckingForPlugin();
   return WebMixedContent::ContextTypeFromRequestContext(
-      request.GetRequestContext(), strict_mixed_content_checking_for_plugin);
+      request.GetRequestContext(),
+      DecideCheckModeForPlugin(mixed_frame->GetSettings()));
 }
 
 // static
@@ -857,13 +919,19 @@ void MixedContentChecker::UpgradeInsecureRequest(
     // due to scheme not being http, so any redirects get upgraded.
     resource_request.SetUpgradeIfInsecure(true);
     if (resource_request.Url().ProtocolIs("http")) {
-      if (execution_context_for_logging->IsDocument()) {
-        Document* document = Document::From(execution_context_for_logging);
-        document->AddConsoleMessage(
+      if (auto* window =
+              DynamicTo<LocalDOMWindow>(execution_context_for_logging)) {
+        window->AddConsoleMessage(
             MixedContentChecker::CreateConsoleMessageAboutFetchAutoupgrade(
                 fetch_client_settings_object->GlobalObjectUrl(),
                 resource_request.Url()));
-        resource_request.SetUkmSourceId(document->UkmSourceID());
+        resource_request.SetUkmSourceId(window->document()->UkmSourceID());
+        CreateMixedContentIssue(fetch_client_settings_object->GlobalObjectUrl(),
+                                resource_request.Url(), context,
+                                window->document()->GetFrame(),
+                                mojom::blink::MixedContentResolutionStatus::
+                                    kMixedContentAutomaticallyUpgraded,
+                                resource_request.GetDevToolsId());
       }
       resource_request.SetIsAutomaticUpgrade(true);
     } else {
@@ -902,7 +970,8 @@ void MixedContentChecker::UpgradeInsecureRequest(
             WebFeature::kUpgradeInsecureRequestsUpgradedRequestUnknown);
       } else {
         WebMixedContentContextType content_type =
-            WebMixedContent::ContextTypeFromRequestContext(context, false);
+            WebMixedContent::ContextTypeFromRequestContext(
+                context, WebMixedContent::CheckModeForPlugin::kLax);
         switch (content_type) {
           case WebMixedContentContextType::kOptionallyBlockable:
             UseCounter::Count(
@@ -926,6 +995,14 @@ void MixedContentChecker::UpgradeInsecureRequest(
       url.SetPort(443);
     resource_request.SetUrl(url);
   }
+}
+
+// static
+WebMixedContent::CheckModeForPlugin
+MixedContentChecker::DecideCheckModeForPlugin(Settings* settings) {
+  if (settings && settings->GetStrictMixedContentCheckingForPlugin())
+    return WebMixedContent::CheckModeForPlugin::kStrict;
+  return WebMixedContent::CheckModeForPlugin::kLax;
 }
 
 }  // namespace blink

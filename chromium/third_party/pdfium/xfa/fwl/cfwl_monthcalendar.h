@@ -13,7 +13,6 @@
 #include "core/fxcrt/cfx_datetime.h"
 #include "xfa/fwl/cfwl_event.h"
 #include "xfa/fwl/cfwl_widget.h"
-#include "xfa/fwl/cfwl_widgetproperties.h"
 
 #define FWL_ITEMSTATE_MCD_Flag (1L << 0)
 #define FWL_ITEMSTATE_MCD_Selected (1L << 1)
@@ -22,9 +21,7 @@ class CFWL_MessageMouse;
 
 class CFWL_MonthCalendar final : public CFWL_Widget {
  public:
-  CFWL_MonthCalendar(const CFWL_App* app,
-                     std::unique_ptr<CFWL_WidgetProperties> properties,
-                     CFWL_Widget* pOuter);
+  CONSTRUCT_VIA_MAKE_GARBAGE_COLLECTED;
   ~CFWL_MonthCalendar() override;
 
   // FWL_WidgetImp
@@ -88,48 +85,39 @@ class CFWL_MonthCalendar final : public CFWL_Widget {
     WideString wsDay;
   };
 
+  CFWL_MonthCalendar(CFWL_App* app,
+                     const Properties& properties,
+                     CFWL_Widget* pOuter);
+
   void DrawBackground(CXFA_Graphics* pGraphics,
-                      IFWL_ThemeProvider* pTheme,
                       const CFX_Matrix* pMatrix);
   void DrawHeadBK(CXFA_Graphics* pGraphics,
-                  IFWL_ThemeProvider* pTheme,
                   const CFX_Matrix* pMatrix);
   void DrawLButton(CXFA_Graphics* pGraphics,
-                   IFWL_ThemeProvider* pTheme,
                    const CFX_Matrix* pMatrix);
   void DrawRButton(CXFA_Graphics* pGraphics,
-                   IFWL_ThemeProvider* pTheme,
                    const CFX_Matrix* pMatrix);
   void DrawCaption(CXFA_Graphics* pGraphics,
-                   IFWL_ThemeProvider* pTheme,
                    const CFX_Matrix* pMatrix);
   void DrawSeparator(CXFA_Graphics* pGraphics,
-                     IFWL_ThemeProvider* pTheme,
                      const CFX_Matrix* pMatrix);
   void DrawDatesInBK(CXFA_Graphics* pGraphics,
-                     IFWL_ThemeProvider* pTheme,
                      const CFX_Matrix* pMatrix);
   void DrawWeek(CXFA_Graphics* pGraphics,
-                IFWL_ThemeProvider* pTheme,
                 const CFX_Matrix* pMatrix);
   void DrawToday(CXFA_Graphics* pGraphics,
-                 IFWL_ThemeProvider* pTheme,
                  const CFX_Matrix* pMatrix);
   void DrawDatesIn(CXFA_Graphics* pGraphics,
-                   IFWL_ThemeProvider* pTheme,
                    const CFX_Matrix* pMatrix);
   void DrawDatesOut(CXFA_Graphics* pGraphics,
-                    IFWL_ThemeProvider* pTheme,
                     const CFX_Matrix* pMatrix);
   void DrawDatesInCircle(CXFA_Graphics* pGraphics,
-                         IFWL_ThemeProvider* pTheme,
                          const CFX_Matrix* pMatrix);
   CFX_SizeF CalcSize();
   void Layout();
   void CalcHeadSize();
   void CalcTodaySize();
   void CalDateItem();
-  void GetCapValue();
   void InitDate();
   void ClearDateItem();
   void ResetDateItem();
@@ -149,18 +137,18 @@ class CFWL_MonthCalendar final : public CFWL_Widget {
   void OnMouseLeave(CFWL_MessageMouse* pMsg);
 
   bool m_bInitialized = false;
-  CFX_RectF m_rtHead;
-  CFX_RectF m_rtWeek;
-  CFX_RectF m_rtLBtn;
-  CFX_RectF m_rtRBtn;
-  CFX_RectF m_rtDates;
-  CFX_RectF m_rtHSep;
-  CFX_RectF m_rtHeadText;
-  CFX_RectF m_rtToday;
-  CFX_RectF m_rtTodayFlag;
+  CFX_RectF m_HeadRect;
+  CFX_RectF m_WeekRect;
+  CFX_RectF m_LBtnRect;
+  CFX_RectF m_RBtnRect;
+  CFX_RectF m_DatesRect;
+  CFX_RectF m_HSepRect;
+  CFX_RectF m_HeadTextRect;
+  CFX_RectF m_TodayRect;
+  CFX_RectF m_TodayFlagRect;
   WideString m_wsHead;
   WideString m_wsToday;
-  std::vector<std::unique_ptr<DATEINFO>> m_arrDates;
+  std::vector<std::unique_ptr<DATEINFO>> m_DateArray;
   int32_t m_iCurYear = 2011;
   int32_t m_iCurMonth = 1;
   int32_t m_iYear = 2011;
@@ -171,11 +159,11 @@ class CFWL_MonthCalendar final : public CFWL_Widget {
   int32_t m_iRBtnPartStates = CFWL_PartState_Normal;
   DATE m_dtMin;
   DATE m_dtMax;
-  CFX_SizeF m_szHead;
-  CFX_SizeF m_szCell;
-  CFX_SizeF m_szToday;
-  std::vector<int32_t> m_arrSelDays;
-  CFX_RectF m_rtClient;
+  CFX_SizeF m_HeadSize;
+  CFX_SizeF m_CellSize;
+  CFX_SizeF m_TodaySize;
+  std::vector<int32_t> m_SelDayArray;
+  CFX_RectF m_ClientRect;
 };
 
 #endif  // XFA_FWL_CFWL_MONTHCALENDAR_H_

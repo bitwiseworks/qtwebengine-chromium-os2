@@ -54,7 +54,6 @@ class CORE_EXPORT ThreadedMessagingProxyBase
   void ParentObjectDestroyed();
 
   void CountFeature(WebFeature);
-  void CountDeprecation(WebFeature);
 
   void ReportConsoleMessage(mojom::ConsoleMessageSource,
                             mojom::ConsoleMessageLevel,
@@ -66,7 +65,7 @@ class CORE_EXPORT ThreadedMessagingProxyBase
   // Number of live messaging proxies, used by leak detection.
   static int ProxyCount();
 
-  virtual void Trace(Visitor*);
+  virtual void Trace(Visitor*) const;
 
  protected:
   explicit ThreadedMessagingProxyBase(ExecutionContext*);

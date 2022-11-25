@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/page/page_animator.h"
 
 #include "base/auto_reset.h"
+#include "cc/animation/animation_host.h"
 #include "third_party/blink/renderer/core/animation/document_animations.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
@@ -39,7 +40,7 @@ PageAnimator::PageAnimator(Page& page)
       servicing_animations_(false),
       updating_layout_and_style_for_painting_(false) {}
 
-void PageAnimator::Trace(Visitor* visitor) {
+void PageAnimator::Trace(Visitor* visitor) const {
   visitor->Trace(page_);
 }
 
@@ -57,10 +58,10 @@ void PageAnimator::ServiceScriptedAnimations(
   for (auto& document : documents) {
     ScopedFrameBlamer frame_blamer(document->GetFrame());
     TRACE_EVENT0("blink,rail", "PageAnimator::serviceScriptedAnimations");
-    document->GetDocumentAnimations().UpdateAnimationTimingForAnimationFrame();
     if (document->View()) {
       if (document->View()->ShouldThrottleRendering()) {
-        document->SetCurrentFrameIsThrottled(true);
+        document->GetDocumentAnimations()
+            .UpdateAnimationTimingForAnimationFrame();
         continue;
       }
       // Disallow throttling in case any script needs to do a synchronous
@@ -90,6 +91,7 @@ void PageAnimator::ServiceScriptedAnimations(
       document->GetFrame()->AnimateSnapFling(monotonic_animation_start_time);
       SVGDocumentExtensions::ServiceOnAnimationFrame(*document);
     }
+    document->GetDocumentAnimations().UpdateAnimationTimingForAnimationFrame();
     // TODO(skyostil): This function should not run for documents without views.
     DocumentLifecycle::DisallowThrottlingScope no_throttling_scope(
         document->Lifecycle());
@@ -107,11 +109,6 @@ void PageAnimator::PostAnimate() {
       documents.push_back(To<LocalFrame>(frame)->GetDocument());
   }
 
-  // Run the post-animation frame callbacks. See
-  // https://github.com/WICG/requestPostAnimationFrame
-  for (auto& document : documents)
-    document->RunPostAnimationFrameCallbacks();
-
   // If we don't have an imminently incoming frame, we need to let the
   // AnimationClock update its own time to properly service out-of-lifecycle
   // events such as setInterval (see https://crbug.com/995806). This isn't a
@@ -124,6 +121,19 @@ void PageAnimator::PostAnimate() {
     Clock().SetAllowedToDynamicallyUpdateTime(true);
 }
 
+void PageAnimator::SetHasCanvasInvalidation() {
+  has_canvas_invalidation_ = true;
+}
+
+void PageAnimator::ReportFrameAnimations(cc::AnimationHost* animation_host) {
+  if (animation_host) {
+    animation_host->SetHasCanvasInvalidation(has_canvas_invalidation_);
+    animation_host->SetHasInlineStyleMutation(has_inline_style_mutation_);
+  }
+  has_canvas_invalidation_ = false;
+  has_inline_style_mutation_ = false;
+}
+
 void PageAnimator::SetSuppressFrameRequestsWorkaroundFor704763Only(
     bool suppress_frame_requests) {
   // If we are enabling the suppression and it was already enabled then we must
@@ -131,6 +141,10 @@ void PageAnimator::SetSuppressFrameRequestsWorkaroundFor704763Only(
   DCHECK(!suppress_frame_requests_workaround_for704763_only_ ||
          !suppress_frame_requests);
   suppress_frame_requests_workaround_for704763_only_ = suppress_frame_requests;
+}
+
+void PageAnimator::SetHasInlineStyleMutation() {
+  has_inline_style_mutation_ = true;
 }
 
 DISABLE_CFI_PERF

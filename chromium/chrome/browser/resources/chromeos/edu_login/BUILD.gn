@@ -16,24 +16,25 @@ js_type_check("closure_compile") {
     ":app",
     ":browser_proxy",
     ":edu_login_button",
+    ":edu_login_coexistence_info",
+    ":edu_login_error",
     ":edu_login_parent_info",
     ":edu_login_parent_signin",
     ":edu_login_parents",
     ":edu_login_signin",
     ":edu_login_template",
     ":edu_login_util",
-    ":edu_login_welcome",
   ]
 }
 
 js_library("app") {
   deps = [
+    ":edu_login_coexistence_info",
     ":edu_login_parent_info",
     ":edu_login_parent_signin",
     ":edu_login_parents",
     ":edu_login_signin",
     ":edu_login_util",
-    ":edu_login_welcome",
     "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
     "//ui/webui/resources/cr_elements/cr_view_manager:cr_view_manager.m",
     "//ui/webui/resources/js:assert.m",
@@ -67,12 +68,11 @@ js_library("browser_proxy") {
 js_library("edu_login_util") {
 }
 
-js_library("edu_login_welcome") {
+js_library("edu_login_coexistence_info") {
   deps = [
     ":edu_login_button",
     ":edu_login_template",
     "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
-    "//ui/webui/resources/js:i18n_behavior.m",
   ]
 }
 
@@ -106,12 +106,23 @@ js_library("edu_login_parent_info") {
 
 js_library("edu_login_signin") {
   deps = [
+    ":browser_proxy",
     ":edu_login_button",
     ":edu_login_template",
     "//chrome/browser/resources/gaia_auth_host:authenticator.m",
     "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
     "//ui/webui/resources/js:assert.m",
     "//ui/webui/resources/js:web_ui_listener_behavior.m",
+  ]
+}
+
+js_library("edu_login_error") {
+  deps = [
+    ":browser_proxy",
+    ":edu_login_button",
+    ":edu_login_template",
+    "//chrome/browser/resources/chromeos/account_manager/components:error_screen",
+    "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
   ]
 }
 
@@ -145,12 +156,6 @@ polymer_modulizer("icons") {
   html_type = "v3-ready"
 }
 
-polymer_modulizer("edu_login_welcome") {
-  js_file = "edu_login_welcome.js"
-  html_file = "edu_login_welcome.html"
-  html_type = "v3-ready"
-}
-
 polymer_modulizer("edu_login_parents") {
   js_file = "edu_login_parents.js"
   html_file = "edu_login_parents.html"
@@ -169,9 +174,21 @@ polymer_modulizer("edu_login_parent_info") {
   html_type = "v3-ready"
 }
 
+polymer_modulizer("edu_login_coexistence_info") {
+  js_file = "edu_login_coexistence_info.js"
+  html_file = "edu_login_coexistence_info.html"
+  html_type = "v3-ready"
+}
+
 polymer_modulizer("edu_login_signin") {
   js_file = "edu_login_signin.js"
   html_file = "edu_login_signin.html"
+  html_type = "v3-ready"
+}
+
+polymer_modulizer("edu_login_error") {
+  js_file = "edu_login_error.js"
+  html_file = "edu_login_error.html"
   html_type = "v3-ready"
 }
 
@@ -179,13 +196,14 @@ group("polymer3_elements") {
   public_deps = [
     ":app_module",
     ":edu_login_button_module",
+    ":edu_login_coexistence_info_module",
     ":edu_login_css_module",
+    ":edu_login_error_module",
     ":edu_login_parent_info_module",
     ":edu_login_parent_signin_module",
     ":edu_login_parents_module",
     ":edu_login_signin_module",
     ":edu_login_template_module",
-    ":edu_login_welcome_module",
     ":icons_module",
   ]
 }

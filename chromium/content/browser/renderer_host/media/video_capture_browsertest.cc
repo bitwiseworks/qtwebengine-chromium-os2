@@ -6,7 +6,6 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/run_loop.h"
-#include "base/task/post_task.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "content/browser/browser_main_loop.h"
@@ -17,13 +16,14 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/content_browser_test.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/media_switches.h"
 #include "media/capture/video_capture_types.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
 #include "base/mac/mac_util.h"
 #endif
 
@@ -204,7 +204,8 @@ class VideoCaptureBrowserTest : public ContentBrowserTest,
     const auto& descriptor = descriptors[params_.device_index_to_use];
     blink::MediaStreamDevice media_stream_device(
         blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE,
-        descriptor.device_id, descriptor.display_name(), descriptor.facing);
+        descriptor.device_id, descriptor.display_name(),
+        media::VideoCaptureControlSupport(), descriptor.facing);
     session_id_ = video_capture_manager_->Open(media_stream_device);
     media::VideoCaptureParams capture_params;
     capture_params.requested_format = media::VideoCaptureFormat(
@@ -253,8 +254,8 @@ IN_PROC_BROWSER_TEST_P(VideoCaptureBrowserTest, StartAndImmediatelyStop) {
       base::BindOnce(&VideoCaptureBrowserTest::TearDownCaptureDeviceOnIOThread,
                      base::Unretained(this),
                      std::move(quit_run_loop_on_current_thread_cb), true);
-  base::PostTask(
-      FROM_HERE, {content::BrowserThread::IO},
+  content::GetIOThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce(
           &VideoCaptureBrowserTest::SetUpAndStartCaptureDeviceOnIOThread,
           base::Unretained(this), std::move(after_start_continuation)));
@@ -271,7 +272,7 @@ IN_PROC_BROWSER_TEST_P(VideoCaptureBrowserTest, StartAndImmediatelyStop) {
 #endif
 IN_PROC_BROWSER_TEST_P(VideoCaptureBrowserTest,
                        MAYBE_ReceiveFramesFromFakeCaptureDevice) {
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   if (base::mac::IsOS10_12()) {
     // Flaky on MacOS 10.12. https://crbug.com/938074
     return;
@@ -326,9 +327,11 @@ IN_PROC_BROWSER_TEST_P(VideoCaptureBrowserTest,
             received_frame_info.timestamp = frame_info->timestamp;
             received_frame_infos.emplace_back(received_frame_info);
 
-            const double kArbitraryUtilization = 0.5;
+            const media::VideoFrameFeedback kArbitraryFeedback =
+                media::VideoFrameFeedback(0.5, 60.0,
+                                          std::numeric_limits<int>::max());
             controller_->ReturnBuffer(id, &mock_controller_event_handler_,
-                                      buffer_id, kArbitraryUtilization);
+                                      buffer_id, kArbitraryFeedback);
 
             if ((received_frame_infos.size() >= kMinFramesToReceive &&
                  !must_wait_for_gpu_decode_to_start) ||
@@ -337,8 +340,8 @@ IN_PROC_BROWSER_TEST_P(VideoCaptureBrowserTest,
             }
           }));
 
-  base::PostTask(
-      FROM_HERE, {content::BrowserThread::IO},
+  content::GetIOThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce(
           &VideoCaptureBrowserTest::SetUpAndStartCaptureDeviceOnIOThread,
           base::Unretained(this), base::DoNothing::Once()));

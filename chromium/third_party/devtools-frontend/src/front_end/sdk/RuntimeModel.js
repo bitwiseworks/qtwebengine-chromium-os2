@@ -28,6 +28,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Host from '../host/host.js';
 import * as ProtocolClient from '../protocol_client/protocol_client.js';
@@ -39,9 +42,7 @@ import {RemoteFunction, RemoteObject,
         RemoteObjectProperty, ScopeRef, ScopeRemoteObject,} from './RemoteObject.js';  // eslint-disable-line no-unused-vars
 import {Capability, SDKModel, Target, Type} from './SDKModel.js';  // eslint-disable-line no-unused-vars
 
-/**
- * @unrestricted
- */
+
 export class RuntimeModel extends SDKModel {
   /**
    * @param {!Target} target
@@ -54,6 +55,7 @@ export class RuntimeModel extends SDKModel {
     this._agent.enable();
     /** @type {!Map<number, !ExecutionContext>} */
     this._executionContextById = new Map();
+    /** @type {function(!ExecutionContext,!ExecutionContext):number} */
     this._executionContextComparator = ExecutionContext.comparator;
     /** @type {?boolean} */
     this._hasSideEffectSupport = null;
@@ -100,14 +102,14 @@ export class RuntimeModel extends SDKModel {
   }
 
   /**
-   * @param {function(!ExecutionContext,!ExecutionContext)} comparator
+   * @param {function(!ExecutionContext,!ExecutionContext):number} comparator
    */
   setExecutionContextComparator(comparator) {
     this._executionContextComparator = comparator;
   }
 
   /**
-   * @return {function(!ExecutionContext,!ExecutionContext)} comparator
+   * @return {function(!ExecutionContext,!ExecutionContext):number} comparator
    */
   executionContextComparator() {
     return this._executionContextComparator;
@@ -531,7 +533,7 @@ export class RuntimeModel extends SDKModel {
   }
 
   /**
-   * @return {!Promise}
+   * @return {!Promise<*>}
    */
   terminateExecution() {
     return this._agent.invoke_terminateExecution({});
@@ -818,6 +820,7 @@ export class ExecutionContext {
       timeout: options.timeout,
       disableBreaks: options.disableBreaks,
       replMode: options.replMode,
+      allowUnsafeEvalBlockedByCSP: options.allowUnsafeEvalBlockedByCSP,
     });
 
     const error = response[ProtocolClient.InspectorBackend.ProtocolError];
@@ -871,8 +874,8 @@ export class ExecutionContext {
 SDKModel.register(RuntimeModel, Capability.JS, true);
 
 /** @typedef {{
- *    object: (!RemoteObject|undefined),
- *    exceptionDetails: (!Protocol.Runtime.ExceptionDetails|undefined),
+ *    object: !RemoteObject,
+ *    exceptionDetails: (!Protocol.Runtime.ExceptionDetails|undefined)}|{
  *    error: (!ProtocolClient.InspectorBackend.ProtocolError|undefined)}
  *  }}
  */
@@ -895,7 +898,8 @@ export let CompileScriptResult;
  *    throwOnSideEffect: (boolean|undefined),
  *    timeout: (number|undefined),
  *    disableBreaks: (boolean|undefined),
- *    replMode: (boolean|undefined)
+ *    replMode: (boolean|undefined),
+ *    allowUnsafeEvalBlockedByCSP: (boolean|undefined)
  *  }}
  */
 export let EvaluationOptions;

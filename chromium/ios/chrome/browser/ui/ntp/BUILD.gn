@@ -48,8 +48,6 @@ source_set("util") {
 source_set("ntp_internal") {
   configs += [ "//build/config/compiler:enable_arc" ]
   sources = [
-    "incognito_cookies_view.h",
-    "incognito_cookies_view.mm",
     "incognito_view.h",
     "incognito_view.mm",
     "incognito_view_controller.h",
@@ -92,6 +90,7 @@ source_set("ntp_internal") {
     "//ios/chrome/app/strings",
     "//ios/chrome/browser",
     "//ios/chrome/browser/browser_state",
+    "//ios/chrome/browser/drag_and_drop",
     "//ios/chrome/browser/favicon",
     "//ios/chrome/browser/history",
     "//ios/chrome/browser/metrics:metrics_internal",
@@ -100,11 +99,11 @@ source_set("ntp_internal") {
     "//ios/chrome/browser/search_engines",
     "//ios/chrome/browser/suggestions",
     "//ios/chrome/browser/tabs",
+    "//ios/chrome/browser/ui:feature_flags",
     "//ios/chrome/browser/ui/bookmarks",
     "//ios/chrome/browser/ui/commands",
     "//ios/chrome/browser/ui/content_suggestions:content_suggestions_constant",
     "//ios/chrome/browser/ui/content_suggestions/cells",
-    "//ios/chrome/browser/ui/context_menu",
     "//ios/chrome/browser/ui/favicon",
     "//ios/chrome/browser/ui/overscroll_actions",
     "//ios/chrome/browser/ui/page_info:features",
@@ -133,7 +132,7 @@ source_set("ntp_internal") {
     "//ui/gfx",
     "//url",
   ]
-  libs = [
+  frameworks = [
     "CoreGraphics.framework",
     "QuartzCore.framework",
     "UIKit.framework",
@@ -192,28 +191,6 @@ source_set("unit_tests") {
   ]
 }
 
-source_set("eg_tests") {
-  configs += [ "//build/config/compiler:enable_arc" ]
-  defines = [ "CHROME_EARL_GREY_1" ]
-  testonly = true
-  sources = [ "new_tab_page_egtest.mm" ]
-  deps = [
-    "//base/test:test_support",
-    "//components/strings",
-    "//ios/chrome/app/strings",
-    "//ios/chrome/browser",
-    "//ios/chrome/browser/ui/commands",
-    "//ios/chrome/browser/ui/content_suggestions:content_suggestions_constant",
-    "//ios/chrome/browser/ui/util",
-    "//ios/chrome/test/app:test_support",
-    "//ios/chrome/test/earl_grey:test_support",
-    "//ios/testing/earl_grey:earl_grey_support",
-    "//ios/third_party/earl_grey:earl_grey+link",
-    "//ui/base",
-  ]
-  libs = [ "XCTest.framework" ]
-}
-
 source_set("eg2_tests") {
   defines = [ "CHROME_EARL_GREY_2" ]
   configs += [
@@ -232,7 +209,7 @@ source_set("eg2_tests") {
     "//ios/third_party/earl_grey2:test_lib",
     "//ui/base",
   ]
-  libs = [ "UIKit.framework" ]
+  frameworks = [ "UIKit.framework" ]
 }
 
 source_set("perf_tests") {
@@ -241,8 +218,8 @@ source_set("perf_tests") {
   sources = [ "new_tab_page_perftest.mm" ]
   deps = [
     "//base/test:test_support",
+    "//ios/chrome/browser/main",
     "//ios/chrome/browser/sessions",
-    "//ios/chrome/browser/tabs",
     "//ios/chrome/browser/test:perf_test_support",
     "//ios/chrome/browser/ui/browser_view",
     "//ios/chrome/browser/ui/commands",

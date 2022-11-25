@@ -5,6 +5,7 @@
 #include "media/base/media_url_demuxer.h"
 
 #include "base/bind.h"
+#include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 
 namespace media {
@@ -80,6 +81,11 @@ base::Time MediaUrlDemuxer::GetTimelineOffset() const {
 
 int64_t MediaUrlDemuxer::GetMemoryUsage() const {
   return 0;
+}
+
+base::Optional<container_names::MediaContainerName>
+MediaUrlDemuxer::GetContainerForMetrics() const {
+  return base::nullopt;
 }
 
 void MediaUrlDemuxer::OnEnabledAudioTracksChanged(

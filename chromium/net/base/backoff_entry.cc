@@ -8,7 +8,8 @@
 #include <cmath>
 #include <limits>
 
-#include "base/logging.h"
+#include "base/check_op.h"
+#include "base/numerics/clamped_math.h"
 #include "base/numerics/safe_math.h"
 #include "base/rand_util.h"
 #include "base/time/tick_clock.h"
@@ -119,8 +120,8 @@ base::TimeTicks BackoffEntry::GetTimeTicksNow() const {
 }
 
 base::TimeTicks BackoffEntry::CalculateReleaseTime() const {
-  int effective_failure_count =
-      std::max(0, failure_count_ - policy_->num_errors_to_ignore);
+  base::ClampedNumeric<int> effective_failure_count =
+      base::ClampSub(failure_count_, policy_->num_errors_to_ignore).Max(0);
 
   // If always_use_initial_delay is true, it's equivalent to
   // the effective_failure_count always being one greater than when it's false.
@@ -141,7 +142,7 @@ base::TimeTicks BackoffEntry::CalculateReleaseTime() const {
   // accounted for. Both cases are handled by using CheckedNumeric<int64_t> to
   // perform the conversion to integers.
   double delay_ms = policy_->initial_delay_ms;
-  delay_ms *= pow(policy_->multiply_factor, effective_failure_count - 1);
+  delay_ms *= pow(policy_->multiply_factor, double(effective_failure_count) - 1);
   delay_ms -= base::RandDouble() * policy_->jitter_factor * delay_ms;
 
   // Do overflow checking in microseconds, the internal unit of TimeTicks.

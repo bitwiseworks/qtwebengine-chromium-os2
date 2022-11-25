@@ -94,6 +94,10 @@ class PasswordAutofillManager : public autofill::AutofillPopupDelegate {
   // Called when main frame navigates. Not called for in-page navigations.
   void DidNavigateMainFrame();
 
+  // Called if no suggestions were found. Assumed to be mutually exclusive with
+  // |OnAddPasswordFillData|.
+  void OnNoCredentialsFound();
+
   // A public version of FillSuggestion(), only for use in tests.
   bool FillSuggestionForTest(const base::string16& username);
 
@@ -165,15 +169,16 @@ class PasswordAutofillManager : public autofill::AutofillPopupDelegate {
   void OnFaviconReady(const favicon_base::FaviconImageResult& result);
 
   // Replaces |unlock_item| with a loading symbol and triggers a reauth flow to
-  // opt in for passwords account storage, with OnUnlockReauthCompleted as
-  // callback.
+  // opt in for the account-scoped password storage, with
+  // OnUnlockReauthCompleted as callback.
   void OnUnlockItemAccepted(autofill::PopupItemId unlock_item);
 
   // If reauth failed, resets the suggestions to show the |unlock_item| again.
-  // Otherwise, unlocks the account store and either triggers generation or
-  // filling based on the |unlock_item| that was clicked.
+  // Otherwise, triggers either generation or filling based on the |unlock_item|
+  // that was clicked.
   void OnUnlockReauthCompleted(
       autofill::PopupItemId unlock_item,
+      autofill::AutofillClient::PopupOpenArgs reopen_args,
       PasswordManagerClient::ReauthSucceeded reauth_succeeded);
 
   std::unique_ptr<autofill::PasswordFormFillData> fill_data_;

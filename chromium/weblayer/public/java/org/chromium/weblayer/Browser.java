@@ -5,16 +5,17 @@
 package org.chromium.weblayer;
 
 import android.os.RemoteException;
-import android.support.v4.app.Fragment;
 import android.view.View;
 import android.webkit.ValueCallback;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.fragment.app.Fragment;
 
 import org.chromium.weblayer_private.interfaces.APICallException;
 import org.chromium.weblayer_private.interfaces.IBrowser;
 import org.chromium.weblayer_private.interfaces.IBrowserClient;
+import org.chromium.weblayer_private.interfaces.IRemoteFragment;
 import org.chromium.weblayer_private.interfaces.ITab;
 import org.chromium.weblayer_private.interfaces.ObjectWrapper;
 import org.chromium.weblayer_private.interfaces.StrictModeWorkaround;
@@ -28,46 +29,39 @@ import java.util.Set;
  * By default Browser has a single active Tab.
  */
 public class Browser {
-    private final IBrowser mImpl;
+    // Set to null once destroyed (or for tests).
+    private IBrowser mImpl;
+    private BrowserFragment mFragment;
     private final ObserverList<TabListCallback> mTabListCallbacks;
     private final UrlBarController mUrlBarController;
+
+    private final ObserverList<BrowserRestoreCallback> mBrowserRestoreCallbacks;
 
     // Constructor for test mocking.
     protected Browser() {
         mImpl = null;
         mTabListCallbacks = null;
         mUrlBarController = null;
+        mBrowserRestoreCallbacks = null;
     }
 
-    Browser(IBrowser impl) {
+    Browser(IBrowser impl, BrowserFragment fragment) {
         mImpl = impl;
+        mFragment = fragment;
         mTabListCallbacks = new ObserverList<TabListCallback>();
+        mBrowserRestoreCallbacks = new ObserverList<BrowserRestoreCallback>();
 
         try {
             mImpl.setClient(new BrowserClientImpl());
-            if (WebLayer.getSupportedMajorVersionInternal() >= 82) {
-                mUrlBarController = new UrlBarController(mImpl.getUrlBarController());
-            } else {
-                mUrlBarController = null;
-            }
+            mUrlBarController = new UrlBarController(mImpl.getUrlBarController());
         } catch (RemoteException e) {
             throw new APICallException(e);
         }
-        if (WebLayer.getSupportedMajorVersionInternal() < 82) {
-            // On WebLayer versions < 82 the tabs are internally created before the client is set,
-            // so it doesn't receive the onTabAdded() callbacks; hence the client-side Tab
-            // objects need to be manually created to mirror the implementation-side objects.
-            try {
-                for (Object tab : impl.getTabs()) {
-                    // getTabs() returns List<TabImpl>, which isn't accessible from the client
-                    // library.
-                    ITab iTab = ITab.Stub.asInterface((android.os.IBinder) tab);
-                    // Tab's constructor calls registerTab().
-                    new Tab(iTab, this);
-                }
-            } catch (RemoteException e) {
-                throw new APICallException(e);
-            }
+    }
+
+    private void throwIfDestroyed() {
+        if (mImpl == null) {
+            throw new IllegalStateException("Browser can not be used once destroyed");
         }
     }
 
@@ -85,9 +79,22 @@ public class Browser {
 
     // Called prior to notifying IBrowser of destroy().
     void prepareForDestroy() {
+        mFragment = null;
+        for (TabListCallback callback : mTabListCallbacks) {
+            callback.onWillDestroyBrowserAndAllTabs();
+        }
+
+        // See comment in Tab$TabClientImpl.onTabDestroyed for details on this.
+        if (WebLayer.getSupportedMajorVersionInternal() >= 87) return;
+
         for (Tab tab : getTabs()) {
             Tab.unregisterTab(tab);
         }
+    }
+
+    // Called after the browser was destroyed.
+    void onDestroyed() {
+        mImpl = null;
     }
 
     /**
@@ -102,6 +109,7 @@ public class Browser {
      */
     public void setActiveTab(@NonNull Tab tab) {
         ThreadCheck.ensureOnUiThread();
+        throwIfDestroyed();
         try {
             if (getActiveTab() != tab && !mImpl.setActiveTab(tab.getITab())) {
                 throw new IllegalStateException("attachTab() must be called before "
@@ -121,6 +129,7 @@ public class Browser {
      */
     public void addTab(@NonNull Tab tab) {
         ThreadCheck.ensureOnUiThread();
+        throwIfDestroyed();
         if (tab.getBrowser() == this) return;
         try {
             mImpl.addTab(tab.getITab());
@@ -138,6 +147,7 @@ public class Browser {
     @Nullable
     public Tab getActiveTab() {
         ThreadCheck.ensureOnUiThread();
+        throwIfDestroyed();
         try {
             Tab tab = Tab.getTabById(mImpl.getActiveTabId());
             assert tab == null || tab.getBrowser() == this;
@@ -171,6 +181,7 @@ public class Browser {
      */
     public void destroyTab(@NonNull Tab tab) {
         ThreadCheck.ensureOnUiThread();
+        throwIfDestroyed();
         if (tab.getBrowser() != this) {
             throw new IllegalStateException("destroyTab() must be called on a Tab in the Browser");
         }
@@ -202,6 +213,58 @@ public class Browser {
     }
 
     /**
+     * Returns true if this Browser is in the process of restoring the previous state.
+     *
+     * @param True if restoring previous state.
+     *
+     * @since 87
+     */
+    public boolean isRestoringPreviousState() {
+        ThreadCheck.ensureOnUiThread();
+        if (WebLayer.getSupportedMajorVersionInternal() < 87) {
+            throw new UnsupportedOperationException();
+        }
+        throwIfDestroyed();
+        try {
+            return mImpl.isRestoringPreviousState();
+        } catch (RemoteException e) {
+            throw new APICallException(e);
+        }
+    }
+
+    /**
+     * Adds a BrowserRestoreCallback.
+     *
+     * @param callback The BrowserRestoreCallback.
+     *
+     * @since 87
+     */
+    public void registerBrowserRestoreCallback(@NonNull BrowserRestoreCallback callback) {
+        ThreadCheck.ensureOnUiThread();
+        if (WebLayer.getSupportedMajorVersionInternal() < 87) {
+            throw new UnsupportedOperationException();
+        }
+        throwIfDestroyed();
+        mBrowserRestoreCallbacks.addObserver(callback);
+    }
+
+    /**
+     * Removes a BrowserRestoreCallback.
+     *
+     * @param callback The BrowserRestoreCallback.
+     *
+     * @since 87
+     */
+    public void unregisterBrowserRestoreCallback(@NonNull BrowserRestoreCallback callback) {
+        ThreadCheck.ensureOnUiThread();
+        if (WebLayer.getSupportedMajorVersionInternal() < 87) {
+            throw new UnsupportedOperationException();
+        }
+        throwIfDestroyed();
+        mBrowserRestoreCallbacks.removeObserver(callback);
+    }
+
+    /**
      * Sets the View shown at the top of the browser. A value of null removes the view. The
      * top-view is typically used to show the uri. The top-view scrolls with the page.
      *
@@ -209,8 +272,81 @@ public class Browser {
      */
     public void setTopView(@Nullable View view) {
         ThreadCheck.ensureOnUiThread();
+        throwIfDestroyed();
         try {
             mImpl.setTopView(ObjectWrapper.wrap(view));
+        } catch (RemoteException e) {
+            throw new APICallException(e);
+        }
+    }
+
+    /**
+     * Sets the View shown at the top of the browser. The top-view is typically used to show the
+     * uri. This method also allows you to control the scrolling behavior of the top-view by setting
+     * a minimum height it will scroll to, and pinning the top-view to the top of the web contents.
+     *
+     * @param view The new top-view, or null to remove the view.
+     * @param minHeight The minimum height in pixels that the top controls can scoll up to. A value
+     *        of 0 means the top-view should scroll entirely off screen.
+     * @param onlyExpandControlsAtPageTop Whether the top-view should only be expanded when the web
+     *        content is scrolled to the top. A true value makes the top-view behave as though it
+     *        were inserted into the top of the page content. If true, the top-view should NOT be
+     *        used to display the URL, as this will prevent it from expanding in security-sensitive
+     *        contexts where the URL should be visible to the user.
+     * @param animate Whether or not any height/visibility changes that result from this call
+     *        should be animated.
+     *
+     * @since 86
+     */
+    public void setTopView(@Nullable View view, int minHeight, boolean onlyExpandControlsAtPageTop,
+            boolean animate) {
+        ThreadCheck.ensureOnUiThread();
+        throwIfDestroyed();
+        if (WebLayer.getSupportedMajorVersionInternal() < 86) {
+            throw new UnsupportedOperationException();
+        }
+        try {
+            mImpl.setTopViewAndScrollingBehavior(
+                    ObjectWrapper.wrap(view), minHeight, onlyExpandControlsAtPageTop, animate);
+        } catch (RemoteException e) {
+            throw new APICallException(e);
+        }
+    }
+
+    /**
+     * Sets the View shown at the bottom of the browser. A value of null removes the view.
+     *
+     * @param view The new bottom-view.
+     *
+     * @since 84
+     */
+    public void setBottomView(@Nullable View view) {
+        ThreadCheck.ensureOnUiThread();
+        throwIfDestroyed();
+        try {
+            mImpl.setBottomView(ObjectWrapper.wrap(view));
+        } catch (RemoteException e) {
+            throw new APICallException(e);
+        }
+    }
+
+    /**
+     * Creates a new tab attached to this browser. This will call {@link TabListCallback#onTabAdded}
+     * with the new tab.
+     *
+     * @since 85
+     */
+    public @NonNull Tab createTab() {
+        ThreadCheck.ensureOnUiThread();
+        throwIfDestroyed();
+        if (WebLayer.getSupportedMajorVersionInternal() < 85) {
+            throw new UnsupportedOperationException();
+        }
+        try {
+            ITab iTab = mImpl.createTab();
+            Tab tab = Tab.getTabById(iTab.getId());
+            assert tab != null;
+            return tab;
         } catch (RemoteException e) {
             throw new APICallException(e);
         }
@@ -230,6 +366,7 @@ public class Browser {
      */
     public void setSupportsEmbedding(boolean enable, @NonNull Callback<Boolean> callback) {
         ThreadCheck.ensureOnUiThread();
+        throwIfDestroyed();
         try {
             mImpl.setSupportsEmbedding(
                     enable, ObjectWrapper.wrap((ValueCallback<Boolean>) callback::onResult));
@@ -245,6 +382,7 @@ public class Browser {
     @NonNull
     public Profile getProfile() {
         ThreadCheck.ensureOnUiThread();
+        throwIfDestroyed();
         try {
             return Profile.of(mImpl.getProfile());
         } catch (RemoteException e) {
@@ -259,9 +397,7 @@ public class Browser {
     @NonNull
     public UrlBarController getUrlBarController() {
         ThreadCheck.ensureOnUiThread();
-        if (WebLayer.getSupportedMajorVersionInternal() < 82) {
-            throw new UnsupportedOperationException();
-        }
+        throwIfDestroyed();
         return mUrlBarController;
     }
 
@@ -307,6 +443,20 @@ public class Browser {
             tab.setBrowser(null);
             for (TabListCallback callback : mTabListCallbacks) {
                 callback.onTabRemoved(tab);
+            }
+            tab.onRemovedFromBrowser();
+        }
+
+        @Override
+        public IRemoteFragment createMediaRouteDialogFragment() {
+            StrictModeWorkaround.apply();
+            return MediaRouteDialogFragment.create(mFragment);
+        }
+
+        @Override
+        public void onRestoreCompleted() {
+            for (BrowserRestoreCallback callback : mBrowserRestoreCallbacks) {
+                callback.onRestoreCompleted();
             }
         }
     }

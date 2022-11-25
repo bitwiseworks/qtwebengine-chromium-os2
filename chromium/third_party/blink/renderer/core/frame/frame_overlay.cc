@@ -39,6 +39,7 @@
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/page/scrolling/scrolling_coordinator.h"
+#include "third_party/blink/renderer/core/paint/compositing/paint_layer_compositor.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_layer.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_layer_client.h"
@@ -53,6 +54,9 @@ FrameOverlay::FrameOverlay(LocalFrame* local_frame,
 }
 
 void FrameOverlay::UpdatePrePaint() {
+  // Invalidate DisplayItemClient.
+  Invalidate();
+
   if (RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
     delegate_->Invalidate();
     return;
@@ -75,7 +79,9 @@ void FrameOverlay::UpdatePrePaint() {
   }
 
   DCHECK(parent_layer);
-  if (layer_->Parent() != parent_layer)
+  if (layer_->Parent() != parent_layer ||
+      // Keep the layer the last child of parent to make it topmost.
+      parent_layer->Children().back() != layer_.get())
     parent_layer->AddChild(layer_.get());
   layer_->SetLayerState(DefaultPropertyTreeState(), IntPoint());
   layer_->SetSize(gfx::Size(Size()));
@@ -87,10 +93,6 @@ IntSize FrameOverlay::Size() const {
     return frame_->GetPage()->GetVisualViewport().Size();
   return frame_->GetPage()->GetVisualViewport().Size().ExpandedTo(
       frame_->View()->Size());
-}
-
-IntRect FrameOverlay::VisualRect() const {
-  return IntRect(IntPoint(), Size());
 }
 
 IntRect FrameOverlay::ComputeInterestRect(const GraphicsLayer* graphics_layer,

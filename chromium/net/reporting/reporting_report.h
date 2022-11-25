@@ -11,6 +11,8 @@
 #include "base/optional.h"
 #include "base/time/time.h"
 #include "net/base/net_export.h"
+#include "net/base/network_isolation_key.h"
+#include "net/reporting/reporting_endpoint.h"
 #include "url/gurl.h"
 
 namespace base {
@@ -51,7 +53,8 @@ struct NET_EXPORT ReportingReport {
   };
 
   // TODO(chlily): Remove |attempts| argument as it is (almost?) always 0.
-  ReportingReport(const GURL& url,
+  ReportingReport(const NetworkIsolationKey& network_isolation_key,
+                  const GURL& url,
                   const std::string& user_agent,
                   const std::string& group,
                   const std::string& type,
@@ -63,11 +66,22 @@ struct NET_EXPORT ReportingReport {
   // Records metrics about report outcome.
   ~ReportingReport();
 
+  // Bundles together the NIK, origin of the report URL, and group name.
+  // This is not exactly the same as the group key of the endpoint that the
+  // report will be delivered to. The origin may differ if the endpoint is
+  // configured for a superdomain of the report's origin. The NIK and group name
+  // will be the same.
+  ReportingEndpointGroupKey GetGroupKey() const;
+
   static void RecordReportDiscardedForNoURLRequestContext();
   static void RecordReportDiscardedForNoReportingService();
 
   // Whether the report is part of an ongoing delivery attempt.
   bool IsUploadPending() const;
+
+  // The NIK of the request that triggered this report. (Not included in the
+  // delivered report.)
+  NetworkIsolationKey network_isolation_key;
 
   // The URL of the document that triggered the report. (Included in the
   // delivered report.)
@@ -94,10 +108,6 @@ struct NET_EXPORT ReportingReport {
   // When the report was queued. (Included in the delivered report as an age
   // relative to the time of the delivery attempt.)
   base::TimeTicks queued;
-
-  // Time when report was delivered, if it was delivered successfully.
-  // The destructor assumes that this has a value if the outcome is DELIVERED.
-  base::Optional<base::TimeTicks> delivered = base::nullopt;
 
   // The number of delivery attempts made so far, not including an active
   // attempt. (Not included in the delivered report.)

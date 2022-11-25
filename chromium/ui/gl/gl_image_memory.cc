@@ -12,7 +12,7 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/system/sys_info.h"
-#include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "ui/gfx/buffer_format_util.h"
@@ -21,8 +21,10 @@
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_enums.h"
+#include "ui/gl/gl_surface.h"
 #include "ui/gl/gl_version_info.h"
 #include "ui/gl/scoped_binders.h"
+#include "ui/gl/scoped_make_current.h"
 
 using gfx::BufferFormat;
 
@@ -227,8 +229,11 @@ GLImageMemory::GLImageMemory(const gfx::Size& size)
       stride_(0) {}
 
 GLImageMemory::~GLImageMemory() {
-  if (buffer_)
+  if (buffer_ && original_context_ && original_surface_) {
+    ui::ScopedMakeCurrent make_current(original_context_.get(),
+                                       original_surface_.get());
     glDeleteBuffersARB(1, &buffer_);
+  }
 }
 
 // static
@@ -262,6 +267,7 @@ bool GLImageMemory::Initialize(const unsigned char* memory,
   tex_image_from_pbo_is_slow = true;
 #endif  // OS_WIN
   GLContext* context = GLContext::GetCurrent();
+  DCHECK(context);
   if (!tex_image_from_pbo_is_slow && SupportsPBO(context) &&
       (SupportsMapBuffer(context) || SupportsMapBufferRange(context))) {
     constexpr size_t kTaskBytes = 1024 * 1024;
@@ -273,6 +279,10 @@ bool GLImageMemory::Initialize(const unsigned char* memory,
       ScopedBufferBinder binder(GL_PIXEL_UNPACK_BUFFER, buffer_);
       glBufferData(GL_PIXEL_UNPACK_BUFFER, buffer_bytes_, nullptr,
                    GL_DYNAMIC_DRAW);
+      original_context_ = context->AsWeakPtr();
+      GLSurface* surface = GLSurface::GetCurrent();
+      DCHECK(surface);
+      original_surface_ = surface->AsWeakPtr();
     }
   }
 
@@ -332,7 +342,9 @@ bool GLImageMemory::CopyTexImage(unsigned target) {
   GLint data_row_length = DataRowLength(stride_, format_);
   base::Optional<std::vector<uint8_t>> gles2_data;
 
-  if (GLContext::GetCurrent()->GetVersionInfo()->is_es) {
+  GLContext* context = GLContext::GetCurrent();
+  DCHECK(context);
+  if (context->GetVersionInfo()->is_es) {
     gles2_data = GLES2Data(size_, format_, stride_, memory_, &data_format,
                            &data_type, &data_row_length);
   }
@@ -350,17 +362,18 @@ bool GLImageMemory::CopyTexImage(unsigned target) {
     size = buffer_bytes_;
   }
 
-  if (buffer_) {
+  bool uploaded = false;
+  if (buffer_ && original_context_.get() == context) {
     glTexImage2D(target, 0, GetInternalFormat(), size_.width(), size_.height(),
                  0, data_format, data_type, nullptr);
 
     ScopedBufferBinder binder(GL_PIXEL_UNPACK_BUFFER, buffer_);
 
     void* dst = nullptr;
-    if (SupportsMapBuffer(GLContext::GetCurrent())) {
+    if (SupportsMapBuffer(context)) {
       dst = glMapBuffer(GL_PIXEL_UNPACK_BUFFER, GL_WRITE_ONLY);
     } else {
-      DCHECK(SupportsMapBufferRange(GLContext::GetCurrent()));
+      DCHECK(SupportsMapBufferRange(context));
       dst = glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, size, GL_MAP_WRITE_BIT);
     }
 
@@ -370,8 +383,9 @@ bool GLImageMemory::CopyTexImage(unsigned target) {
           memcpy_tasks_, base::BindOnce(&base::WaitableEvent::Signal,
                                         base::Unretained(&event)));
       for (int i = 1; i < memcpy_tasks_; ++i) {
-        base::PostTask(FROM_HERE, base::BindOnce(&MemcpyTask, src, dst, size, i,
-                                                 memcpy_tasks_, &barrier));
+        base::ThreadPool::PostTask(
+            FROM_HERE, base::BindOnce(&MemcpyTask, src, dst, size, i,
+                                      memcpy_tasks_, &barrier));
       }
       MemcpyTask(src, dst, size, 0, memcpy_tasks_, &barrier);
       event.Wait();
@@ -380,13 +394,14 @@ bool GLImageMemory::CopyTexImage(unsigned target) {
 
       glTexSubImage2D(target, 0, 0, 0, size_.width(), size_.height(),
                       data_format, data_type, 0);
+      uploaded = true;
     } else {
       glDeleteBuffersARB(1, &buffer_);
       buffer_ = 0;
     }
   }
 
-  if (!buffer_) {
+  if (!uploaded) {
     glTexImage2D(target, 0, GetInternalFormat(), size_.width(), size_.height(),
                  0, data_format, data_type, src);
   }

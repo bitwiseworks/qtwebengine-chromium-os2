@@ -78,7 +78,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobRegistryImpl
       mojo::SelfOwnedAssociatedReceiverRef<blink::mojom::BlobURLStore>)>;
   static void SetURLStoreCreationHookForTesting(URLStoreCreationHook* hook);
 
- BlobStorageContext* context() { return context_.get(); }
+  BlobStorageContext* context() { return context_.get(); }
 
  private:
   class BlobUnderConstruction;

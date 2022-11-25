@@ -34,11 +34,13 @@
 #include "third_party/blink/renderer/core/css/css_selector_list.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_context.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/dom/pseudo_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
+#include "third_party/blink/renderer/platform/wtf/size_assertions.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
@@ -48,13 +50,31 @@
 
 namespace blink {
 
+namespace {
+
+unsigned MaximumSpecificity(const CSSSelectorList* list) {
+  if (!list)
+    return 0;
+
+  unsigned result = 0;
+  const CSSSelector* selector;
+  for (selector = list->First(); selector;
+       selector = CSSSelectorList::Next(*selector)) {
+    unsigned specificity = selector->Specificity();
+    if (result < specificity)
+      result = specificity;
+  }
+  return result;
+}
+
+}  // namespace
+
 struct SameSizeAsCSSSelector {
   unsigned bitfields;
   void* pointers[1];
 };
 
-static_assert(sizeof(CSSSelector) == sizeof(SameSizeAsCSSSelector),
-              "CSSSelector should stay small");
+ASSERT_SIZE(CSSSelector, SameSizeAsCSSSelector);
 
 void CSSSelector::CreateRareData() {
   DCHECK_NE(Match(), kTag);
@@ -102,13 +122,13 @@ inline unsigned CSSSelector::SpecificityForOneSelector() const {
   // FIXME: Pseudo-elements and pseudo-classes do not have the same specificity.
   // This function isn't quite correct.
   // http://www.w3.org/TR/selectors/#specificity
-  if (ignore_specificity_)
-    return 0;
   switch (match_) {
     case kId:
       return kIdSpecificity;
     case kPseudoClass:
       switch (GetPseudoType()) {
+        case kPseudoWhere:
+          return 0;
         case kPseudoHost:
         case kPseudoHostContext:
           // We dynamically compute the specificity of :host and :host-context
@@ -117,10 +137,11 @@ inline unsigned CSSSelector::SpecificityForOneSelector() const {
         case kPseudoNot:
           DCHECK(SelectorList());
           return SelectorList()->First()->Specificity();
+        case kPseudoIs:
+          return MaximumSpecificity(SelectorList());
         // FIXME: PseudoAny should base the specificity on the sub-selectors.
         // See http://lists.w3.org/Archives/Public/www-style/2010Sep/0530.html
         case kPseudoAny:
-        case kPseudoIs:
         default:
           break;
       }
@@ -189,9 +210,7 @@ PseudoId CSSSelector::GetPseudoId(PseudoType type) {
     case kPseudoAfter:
       return kPseudoIdAfter;
     case kPseudoMarker:
-      return RuntimeEnabledFeatures::CSSMarkerPseudoElementEnabled()
-                 ? kPseudoIdMarker
-                 : kPseudoIdNone;
+      return kPseudoIdMarker;
     case kPseudoBackdrop:
       return kPseudoIdBackdrop;
     case kPseudoScrollbar:
@@ -290,6 +309,7 @@ PseudoId CSSSelector::GetPseudoId(PseudoType type) {
     case kPseudoPictureInPicture:
     case kPseudoSpatialNavigationFocus:
     case kPseudoSpatialNavigationInterest:
+    case kPseudoHasDatalist:
     case kPseudoIsHtml:
     case kPseudoListBox:
     case kPseudoMultiSelectFocus:
@@ -317,6 +337,7 @@ struct NameToPseudoStruct {
 const static NameToPseudoStruct kPseudoTypeWithoutArgumentsMap[] = {
     {"-internal-autofill-previewed", CSSSelector::kPseudoAutofillPreviewed},
     {"-internal-autofill-selected", CSSSelector::kPseudoAutofillSelected},
+    {"-internal-has-datalist", CSSSelector::kPseudoHasDatalist},
     {"-internal-is-html", CSSSelector::kPseudoIsHtml},
     {"-internal-list-box", CSSSelector::kPseudoListBox},
     {"-internal-media-controls-overlay-cast-button",
@@ -523,11 +544,14 @@ CSSSelector::PseudoType CSSSelector::ParsePseudoType(const AtomicString& name,
   return kPseudoUnknown;
 }
 
-PseudoId CSSSelector::ParsePseudoId(const String& name) {
+PseudoId CSSSelector::ParsePseudoId(const String& name, const Node* parent) {
   unsigned name_without_colons_start =
       name[0] == ':' ? (name[1] == ':' ? 2 : 1) : 0;
-  return GetPseudoId(ParsePseudoType(
+  PseudoId pseudo_id = GetPseudoId(ParsePseudoType(
       AtomicString(name.Substring(name_without_colons_start)), false));
+  if (!PseudoElement::IsWebExposed(pseudo_id, parent))
+    return kPseudoIdNone;
+  return pseudo_id;
 }
 
 void CSSSelector::UpdatePseudoPage(const AtomicString& value) {
@@ -588,6 +612,7 @@ void CSSSelector::UpdatePseudoType(const AtomicString& value,
       if (match_ != kPseudoElement || mode != kUASheetMode)
         pseudo_type_ = kPseudoUnknown;
       break;
+    case kPseudoHasDatalist:
     case kPseudoHostHasAppearance:
     case kPseudoIsHtml:
     case kPseudoListBox:
@@ -866,7 +891,7 @@ const CSSSelector* CSSSelector::SerializeCompound(
       for (const CSSSelector* sub_selector = first_sub_selector; sub_selector;
            sub_selector = CSSSelectorList::Next(*sub_selector)) {
         if (sub_selector != first_sub_selector)
-          builder.Append(',');
+          builder.Append(", ");
         builder.Append(sub_selector->SelectorText());
       }
       builder.Append(')');
@@ -981,6 +1006,7 @@ static bool ValidateSubSelector(const CSSSelector* selector) {
     case CSSSelector::kPseudoNot:
     case CSSSelector::kPseudoSpatialNavigationFocus:
     case CSSSelector::kPseudoSpatialNavigationInterest:
+    case CSSSelector::kPseudoHasDatalist:
     case CSSSelector::kPseudoIsHtml:
     case CSSSelector::kPseudoListBox:
     case CSSSelector::kPseudoHostHasAppearance:
@@ -1092,7 +1118,7 @@ bool CSSSelector::IsAllowedAfterPart() const {
   if (Match() != CSSSelector::kPseudoElement) {
     return false;
   }
-  // Everything that makes sense should work following ::part. This whitelist
+  // Everything that makes sense should work following ::part. This list
   // restricts it to what has been tested.
   switch (GetPseudoType()) {
     case kPseudoBefore:
@@ -1167,20 +1193,19 @@ bool CSSSelector::NeedsUpdatedDistribution() const {
       *this);
 }
 
-bool CSSSelector::HasPseudoIs() const {
-  for (const CSSSelector* s = this; s; s = s->TagHistory()) {
-    if (s->GetPseudoType() == CSSSelector::kPseudoIs)
-      return true;
+String CSSSelector::FormatPseudoTypeForDebugging(PseudoType type) {
+  for (const auto& s : kPseudoTypeWithoutArgumentsMap) {
+    if (s.type == type)
+      return s.string;
   }
-  return false;
-}
-
-bool CSSSelector::HasPseudoWhere() const {
-  for (const CSSSelector* s = this; s; s = s->TagHistory()) {
-    if (s->GetPseudoType() == CSSSelector::kPseudoWhere)
-      return true;
+  for (const auto& s : kPseudoTypeWithArgumentsMap) {
+    if (s.type == type)
+      return s.string;
   }
-  return false;
+  StringBuilder builder;
+  builder.Append("pseudo-");
+  builder.AppendNumber(static_cast<int>(type));
+  return builder.ToString();
 }
 
 CSSSelector::RareData::RareData(const AtomicString& value)

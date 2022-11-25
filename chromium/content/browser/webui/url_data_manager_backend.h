@@ -18,7 +18,6 @@
 #include "content/browser/webui/url_data_manager.h"
 #include "content/public/browser/url_data_source.h"
 #include "net/http/http_response_headers.h"
-#include "net/url_request/url_request_job_factory.h"
 
 class GURL;
 
@@ -28,19 +27,21 @@ class RefCountedMemory;
 
 namespace content {
 
-class ResourceContext;
+class BrowserContext;
 class URLDataManagerBackend;
 class URLDataSourceImpl;
 
-// URLDataManagerBackend is used internally by ChromeURLDataManager on the IO
+// URLDataManagerBackend is used internally by ChromeURLDataManager on the UI
 // thread. In most cases you can use the API in ChromeURLDataManager and ignore
-// this class. URLDataManagerBackend is owned by ResourceContext.
+// this class. URLDataManagerBackend is owned by BrowserContext.
 class URLDataManagerBackend : public base::SupportsUserData::Data {
  public:
   typedef int RequestID;
 
   URLDataManagerBackend();
   ~URLDataManagerBackend() override;
+
+  static URLDataManagerBackend* GetForBrowserContext(BrowserContext* context);
 
   // Adds a DataSource to the collection of data sources.
   void AddDataSource(URLDataSourceImpl* source);
@@ -73,8 +74,7 @@ class URLDataManagerBackend : public base::SupportsUserData::Data {
   static std::vector<std::string> GetWebUISchemes();
 
  private:
-  typedef std::map<std::string,
-      scoped_refptr<URLDataSourceImpl> > DataSourceMap;
+  typedef std::map<std::string, scoped_refptr<URLDataSourceImpl>> DataSourceMap;
 
   // Custom sources of data, keyed by source path (e.g. "favicon").
   DataSourceMap data_sources_;

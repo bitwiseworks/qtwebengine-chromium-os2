@@ -11,13 +11,14 @@
 #include "base/strings/string_piece.h"
 #include "chrome/common/buildflags.h"
 
+struct GritResourceMap;
+
 namespace content {
 class WebUIDataSource;
 }
 
-struct GritResourceMap;
-
 namespace webui {
+
 struct LocalizedString;
 
 struct ResourcePath {
@@ -52,6 +53,16 @@ void AddLocalizedStringsBulk(content::WebUIDataSource* html_source,
 // Reduces code size vs. reimplementing the same for-loop.
 void AddResourcePathsBulk(content::WebUIDataSource* source,
                           base::span<const ResourcePath> paths);
+
+// AddResourcePathsBulk() variant that works with GritResourceMap.
+// Use base::make_span(kResourceMap, kResourceMapSize).
+void AddResourcePathsBulk(content::WebUIDataSource* source,
+                          base::span<const GritResourceMap> resources);
+
+// Returns whether the device is enterprise managed. Note that on Linux, there's
+// no good way of detecting whether the device is managed, so always return
+// false.
+bool IsEnterpriseManaged();
 
 }  // namespace webui
 

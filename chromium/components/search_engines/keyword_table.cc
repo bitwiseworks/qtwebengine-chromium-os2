@@ -19,6 +19,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "components/database_utils/url_converter.h"
 #include "components/history/core/browser/url_database.h"
 #include "components/search_engines/search_terms_data.h"
 #include "components/search_engines/template_url.h"
@@ -128,14 +129,16 @@ void BindURLToStatement(const TemplateURLData& data,
   s->BindInt64(id_column, data.id);
   s->BindString16(starting_column, data.short_name());
   s->BindString16(starting_column + 1, data.keyword());
-  s->BindString(starting_column + 2, data.favicon_url.is_valid() ?
-      history::URLDatabase::GURLToDatabaseURL(data.favicon_url) :
-      std::string());
+  s->BindString(starting_column + 2,
+                data.favicon_url.is_valid()
+                    ? database_utils::GurlToDatabaseUrl(data.favicon_url)
+                    : std::string());
   s->BindString(starting_column + 3, data.url());
   s->BindBool(starting_column + 4, data.safe_for_autoreplace);
-  s->BindString(starting_column + 5, data.originating_url.is_valid() ?
-      history::URLDatabase::GURLToDatabaseURL(data.originating_url) :
-      std::string());
+  s->BindString(starting_column + 5,
+                data.originating_url.is_valid()
+                    ? database_utils::GurlToDatabaseUrl(data.originating_url)
+                    : std::string());
   s->BindInt64(starting_column + 6,
                data.date_created.since_origin().InMicroseconds());
   s->BindInt(starting_column + 7, data.usage_count);
@@ -487,11 +490,9 @@ bool KeywordTable::GetKeywordDataFromStatement(const sql::Statement& s,
   data->sync_guid = s.ColumnString(14);
 
   data->alternate_urls.clear();
-  base::JSONReader json_reader;
-  std::unique_ptr<base::Value> value(
-      json_reader.ReadToValueDeprecated(s.ColumnString(15)));
+  base::Optional<base::Value> value(base::JSONReader::Read(s.ColumnString(15)));
   base::ListValue* alternate_urls_value;
-  if (value.get() && value->GetAsList(&alternate_urls_value)) {
+  if (value && value->GetAsList(&alternate_urls_value)) {
     std::string alternate_url;
     for (size_t i = 0; i < alternate_urls_value->GetSize(); ++i) {
       if (alternate_urls_value->GetString(i, &alternate_url))

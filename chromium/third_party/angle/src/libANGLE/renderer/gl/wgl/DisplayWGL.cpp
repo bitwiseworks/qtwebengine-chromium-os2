@@ -24,8 +24,7 @@
 #include "libANGLE/renderer/gl/wgl/RendererWGL.h"
 #include "libANGLE/renderer/gl/wgl/WindowSurfaceWGL.h"
 #include "libANGLE/renderer/gl/wgl/wgl_utils.h"
-
-#include "platform/Platform.h"
+#include "platform/PlatformMethods.h"
 
 #include <EGL/eglext.h>
 #include <sstream>
@@ -557,11 +556,6 @@ egl::ConfigSet DisplayWGL::generateConfigs()
 
 bool DisplayWGL::testDeviceLost()
 {
-    if (mHasRobustness)
-    {
-        return mRenderer->getResetStatus() != gl::GraphicsResetStatus::NoError;
-    }
-
     return false;
 }
 
@@ -651,8 +645,9 @@ void DisplayWGL::generateExtensions(egl::DisplayExtensions *outExtensions) const
     outExtensions->querySurfacePointer            = true;
     outExtensions->keyedMutex                     = true;
 
-    // Contexts are virtualized so textures can be shared globally
-    outExtensions->displayTextureShareGroup = true;
+    // Contexts are virtualized so textures and semaphores can be shared globally
+    outExtensions->displayTextureShareGroup   = true;
+    outExtensions->displaySemaphoreShareGroup = true;
 
     outExtensions->surfacelessContext = true;
 

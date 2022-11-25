@@ -1,4 +1,10 @@
 /*
+ * This file defines SkpDebugPlayer, a class which loads a SKP or MSKP file and draws it
+ * to an SkSurface with annotation, and detailed playback controls. It holds as many DebugCanvases
+ * as there are frames in the file.
+ *
+ * It also defines emscripten bindings for SkpDebugPlayer and other classes necessary to us it.
+ *
  * Copyright 2019 Google LLC
  *
  * Use of this source code is governed by a BSD-style license that can be
@@ -6,8 +12,10 @@
  */
 
 #include "include/core/SkPicture.h"
+#include "include/core/SkString.h"
 #include "include/core/SkSurface.h"
 #include "include/utils/SkBase64.h"
+#include "src/core/SkPicturePriv.h"
 #include "src/utils/SkJSONWriter.h"
 #include "src/utils/SkMultiPictureDocument.h"
 #include "tools/SkSharingProc.h"
@@ -19,6 +27,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <map>
 #include <emscripten.h>
 #include <emscripten/bind.h>
 
@@ -68,8 +77,10 @@ class SkpDebugPlayer {
      * uintptr_t is used here because emscripten will not allow binding of functions with pointers
      * to primitive types. We can instead pass a number and cast it to whatever kind of
      * pointer we're expecting.
+     *
+     * Returns an error string which is populated in the case that the file cannot be read.
      */
-    void loadSkp(uintptr_t cptr, int length) {
+    std::string loadSkp(uintptr_t cptr, int length) {
       const uint8_t* data = reinterpret_cast<const uint8_t*>(cptr);
       char magic[8];
       // Both traditional and multi-frame skp files have a magic word
@@ -77,14 +88,27 @@ class SkpDebugPlayer {
       SkDebugf("make stream at %p, with %d bytes\n",data, length);
       // Why -1? I think it's got to do with using a constexpr, just a guess.
       const size_t magicsize = sizeof(kMultiMagic) - 1;
-      if (memcmp(data, kMultiMagic, magicsize) == 0) {
+      const bool isMulti = memcmp(data, kMultiMagic, magicsize) == 0;
+      if (isMulti) {
         SkDebugf("Try reading as a multi-frame skp\n");
-        loadMultiFrame(&stream);
+        const auto& error = loadMultiFrame(&stream);
+        if (!error.empty()) { return error; }
       } else {
         SkDebugf("Try reading as single-frame skp\n");
+        // The unint32 after the magic string is the SKP version
+        memcpy(&fFileVersion, data + 8, 4);
+        // TODO(nifong): Rely on SkPicture's return errors once it provides some.
+        if (fFileVersion < SkPicturePriv::kMin_Version ||
+          fFileVersion > SkPicturePriv::kCurrent_Version) {
+          return std::string(SkStringPrintf("Skp version (%d) cannot be read by this build. Version range supported = (%d, %d)",
+              fFileVersion, SkPicturePriv::kMin_Version, SkPicturePriv::kCurrent_Version).c_str());
+        }
         frames.push_back(loadSingleFrame(&stream));
       }
+      return "";
     }
+
+    uint32_t fileVersion() { return fFileVersion; }
 
     /* drawTo asks the debug canvas to draw from the beginning of the picture
      * to the given command and flush the canvas.
@@ -162,6 +186,11 @@ class SkpDebugPlayer {
         frames[i]->setAndroidClipViz(on);
       }
       // doesn't matter in layers
+    }
+    void setOriginVisible(bool on) {
+      for (int i=0; i < frames.size(); i++) {
+        frames[i]->setOriginVisible(on);
+      }
     }
     // The two operations below only apply to the current frame, because they concern the command
     // list, which is unique to each frame.
@@ -247,6 +276,29 @@ class SkpDebugPlayer {
       return toSimpleImageInfo(fImages[index]->imageInfo());
     }
 
+    // returns a JSON string representing commands where each image is referenced.
+    std::string imageUseInfoForFrame(int framenumber) {
+      std::map<int, std::vector<int>> m = frames[framenumber]->getImageIdToCommandMap(udm);
+
+      SkDynamicMemoryWStream stream;
+      SkJSONWriter writer(&stream, SkJSONWriter::Mode::kFast);
+      writer.beginObject(); // root
+
+      for (auto it = m.begin(); it != m.end(); ++it) {
+        writer.beginArray(std::to_string(it->first).c_str());
+        for (const int commandId : it->second) {
+          writer.appendU64((uint64_t)commandId);
+        }
+        writer.endArray();
+      }
+
+      writer.endObject(); // root
+      writer.flush();
+      auto skdata = stream.detachAsData();
+      std::string_view data_view(reinterpret_cast<const char*>(skdata->data()), skdata->size());
+      return std::string(data_view);
+    }
+
     // return a list of layer draw events that happened at the beginning of this frame.
     std::vector<DebugLayerManager::LayerSummary> getLayerSummaries() {
       return fLayerManager->summarizeLayers(fp);
@@ -281,7 +333,7 @@ class SkpDebugPlayer {
         return debugCanvas;
       }
 
-      void loadMultiFrame(SkMemoryStream* stream) {
+      std::string loadMultiFrame(SkMemoryStream* stream) {
         // Attempt to deserialize with an image sharing serial proc.
         auto deserialContext = std::make_unique<SkSharingDeserialContext>();
         SkDeserialProcs procs;
@@ -290,15 +342,14 @@ class SkpDebugPlayer {
 
         int page_count = SkMultiPictureDocumentReadPageCount(stream);
         if (!page_count) {
-          SkDebugf("Not a MultiPictureDocument");
-          return;
+          // MSKP's have a version separate from the SKP subpictures they contain.
+          return "Not a MultiPictureDocument, MultiPictureDocument file version too old, or MultiPictureDocument contained 0 frames.";
         }
         SkDebugf("Expecting %d frames\n", page_count);
 
         std::vector<SkDocumentPage> pages(page_count);
         if (!SkMultiPictureDocumentRead(stream, pages.data(), page_count, &procs)) {
-          SkDebugf("Reading frames from MultiPictureDocument failed");
-          return;
+          return "Reading frames from MultiPictureDocument failed";
         }
 
         fLayerManager = std::make_unique<DebugLayerManager>();
@@ -328,6 +379,7 @@ class SkpDebugPlayer {
         fImages = deserialContext->fImages;
 
         udm.indexImages(fImages);
+        return "";
       }
 
       // constrains the draw command index to the frame's command list length.
@@ -379,6 +431,10 @@ sk_sp<GrContext> MakeGrContext(EMSCRIPTEN_WEBGL_CONTEXT_HANDLE context)
     }
     // setup GrContext
     auto interface = GrGLMakeNativeInterface();
+    if (!interface) {
+        SkDebugf("failed to make GrGLMakeNativeInterface\n");
+        return nullptr;
+    }
     // setup contexts
     sk_sp<GrContext> grContext(GrContext::MakeGL(interface));
     return grContext;
@@ -440,6 +496,7 @@ EMSCRIPTEN_BINDINGS(my_module) {
     .function("deleteCommand",        &SkpDebugPlayer::deleteCommand)
     .function("draw",                 &SkpDebugPlayer::draw, allow_raw_pointers())
     .function("drawTo",               &SkpDebugPlayer::drawTo, allow_raw_pointers())
+    .function("fileVersion",          &SkpDebugPlayer::fileVersion)
     .function("getBounds",            &SkpDebugPlayer::getBounds)
     .function("getFrameCount",        &SkpDebugPlayer::getFrameCount)
     .function("getImageResource",     &SkpDebugPlayer::getImageResource)
@@ -447,6 +504,7 @@ EMSCRIPTEN_BINDINGS(my_module) {
     .function("getImageInfo",         &SkpDebugPlayer::getImageInfo)
     .function("getLayerSummaries",    &SkpDebugPlayer::getLayerSummaries)
     .function("getSize",              &SkpDebugPlayer::getSize)
+    .function("imageUseInfoForFrame", &SkpDebugPlayer::imageUseInfoForFrame)
     .function("jsonCommandList",      &SkpDebugPlayer::jsonCommandList, allow_raw_pointers())
     .function("lastCommandInfo",      &SkpDebugPlayer::lastCommandInfo)
     .function("loadSkp",              &SkpDebugPlayer::loadSkp, allow_raw_pointers())
@@ -454,6 +512,7 @@ EMSCRIPTEN_BINDINGS(my_module) {
     .function("setCommandVisibility", &SkpDebugPlayer::setCommandVisibility)
     .function("setGpuOpBounds",       &SkpDebugPlayer::setGpuOpBounds)
     .function("setInspectedLayer",    &SkpDebugPlayer::setInspectedLayer)
+    .function("setOriginVisible",     &SkpDebugPlayer::setOriginVisible)
     .function("setOverdrawVis",       &SkpDebugPlayer::setOverdrawVis)
     .function("setAndroidClipViz",    &SkpDebugPlayer::setAndroidClipViz);
 
@@ -498,7 +557,7 @@ EMSCRIPTEN_BINDINGS(my_module) {
     .smart_ptr<sk_sp<SkSurface>>("sk_sp<SkSurface>")
     .function("width", &SkSurface::width)
     .function("height", &SkSurface::height)
-    .function("_flush", select_overload<void()>(&SkSurface::flush))
+    .function("_flush", select_overload<void()>(&SkSurface::flushAndSubmit))
     .function("getCanvas", &SkSurface::getCanvas, allow_raw_pointers());
   class_<SkCanvas>("SkCanvas")
     .function("clear", optional_override([](SkCanvas& self, JSColor color)->void {

@@ -43,8 +43,7 @@ class CONTENT_EXPORT BrowserAccessibilityManagerAndroid
   BrowserAccessibilityManagerAndroid(
       const ui::AXTreeUpdate& initial_tree,
       base::WeakPtr<WebContentsAccessibilityAndroid> web_contents_accessibility,
-      BrowserAccessibilityDelegate* delegate,
-      BrowserAccessibilityFactory* factory = new BrowserAccessibilityFactory());
+      BrowserAccessibilityDelegate* delegate);
 
   ~BrowserAccessibilityManagerAndroid() override;
 
@@ -77,6 +76,9 @@ class CONTENT_EXPORT BrowserAccessibilityManagerAndroid
   BrowserAccessibility* GetFocus() const override;
   void SendLocationChangeEvents(
       const std::vector<mojom::LocationChangesPtr>& changes) override;
+  BrowserAccessibility* RetargetForEvents(
+      BrowserAccessibility* node,
+      RetargetEventType type) const override;
   void FireFocusEvent(BrowserAccessibility* node) override;
   void FireBlinkEvent(ax::mojom::Event event_type,
                       BrowserAccessibility* node) override;

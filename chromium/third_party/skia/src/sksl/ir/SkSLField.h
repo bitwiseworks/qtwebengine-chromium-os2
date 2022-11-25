@@ -22,21 +22,21 @@ namespace SkSL {
  * result of declaring anonymous interface blocks.
  */
 struct Field : public Symbol {
+    static constexpr Kind kSymbolKind = Kind::kField;
+
     Field(int offset, const Variable& owner, int fieldIndex)
-    : INHERITED(offset, kField_Kind, owner.fType.fields()[fieldIndex].fName)
+    : INHERITED(offset, kSymbolKind, owner.type().fields()[fieldIndex].fName)
     , fOwner(owner)
     , fFieldIndex(fieldIndex) {}
 
-#ifdef SK_DEBUG
-    virtual String description() const override {
-        return fOwner.description() + "." + fOwner.fType.fields()[fFieldIndex].fName;
+    String description() const override {
+        return fOwner.description() + "." + fOwner.type().fields()[fFieldIndex].fName;
     }
-#endif
 
     const Variable& fOwner;
     const int fFieldIndex;
 
-    typedef Symbol INHERITED;
+    using INHERITED = Symbol;
 };
 
 } // namespace SkSL

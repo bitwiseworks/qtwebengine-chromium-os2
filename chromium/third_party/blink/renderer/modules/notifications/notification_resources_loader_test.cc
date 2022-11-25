@@ -9,6 +9,7 @@
 #include "third_party/blink/public/common/notifications/notification_constants.h"
 #include "third_party/blink/public/mojom/notifications/notification.mojom-blink.h"
 #include "third_party/blink/public/platform/web_url_loader_mock_factory.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/loader/fetch/memory_cache.h"
@@ -41,7 +42,7 @@ class NotificationResourcesLoaderTest : public PageTestBase {
 
   ~NotificationResourcesLoaderTest() override {
     loader_->Stop();
-    platform_->GetURLLoaderMockFactory()
+    WebURLLoaderMockFactory::GetSingletonInstance()
         ->UnregisterAllURLsAndClearMemoryCache();
   }
 
@@ -49,7 +50,7 @@ class NotificationResourcesLoaderTest : public PageTestBase {
 
  protected:
   ExecutionContext* GetExecutionContext() const {
-    return GetDocument().ToExecutionContext();
+    return GetFrame().DomWindow();
   }
 
   NotificationResourcesLoader* Loader() const { return loader_.Get(); }
@@ -68,7 +69,8 @@ class NotificationResourcesLoaderTest : public PageTestBase {
     base::RunLoop run_loop;
     resources_loaded_closure_ = run_loop.QuitClosure();
     Loader()->Start(GetExecutionContext(), notification_data);
-    platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
+    WebURLLoaderMockFactory::GetSingletonInstance()
+        ->ServeAsynchronousRequests();
     run_loop.Run();
   }
 
@@ -277,7 +279,7 @@ TEST_F(NotificationResourcesLoaderTest, StopYieldsNoResources) {
   // The loader would stop e.g. when the execution context is destroyed or
   // when the loader is about to be destroyed, as a pre-finalizer.
   Loader()->Stop();
-  platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
+  WebURLLoaderMockFactory::GetSingletonInstance()->ServeAsynchronousRequests();
 
   // Loading should have been cancelled when |stop| was called so no resources
   // should have been received by the test even though

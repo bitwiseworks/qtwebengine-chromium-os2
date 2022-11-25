@@ -81,8 +81,9 @@ class AnimationAndPaintWorkletThreadTest : public PageTestBase {
     ScriptValue exception =
         ModuleRecord::Instantiate(script_state, module, js_url);
     EXPECT_TRUE(exception.IsEmpty());
-    ScriptValue value = ModuleRecord::Evaluate(script_state, module, js_url);
-    EXPECT_TRUE(value.IsEmpty());
+    EXPECT_EQ(
+        ModuleRecord::Evaluate(script_state, module, js_url).GetResultType(),
+        ScriptEvaluationResult::ResultType::kSuccess);
     wait_event->Signal();
   }
 };

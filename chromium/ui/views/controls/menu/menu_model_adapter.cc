@@ -6,7 +6,8 @@
 
 #include <utility>
 
-#include "base/logging.h"
+#include "base/check.h"
+#include "base/notreached.h"
 #include "ui/base/models/menu_model.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/paint_vector_icon.h"
@@ -98,22 +99,31 @@ MenuItemView* MenuModelAdapter::AddMenuItemFromModelAt(ui::MenuModel* model,
   }
 
   if (*type == MenuItemView::Type::kSeparator) {
-    return menu->AddMenuItemAt(menu_index, item_id, base::string16(),
-                               base::string16(), ui::ThemedVectorIcon(),
-                               gfx::ImageSkia(), ui::ThemedVectorIcon(), *type,
-                               model->GetSeparatorTypeAt(model_index));
+    return menu->AddMenuItemAt(
+        menu_index, item_id, base::string16(), base::string16(),
+        base::string16(), ui::ThemedVectorIcon(), gfx::ImageSkia(),
+        ui::ThemedVectorIcon(), *type, model->GetSeparatorTypeAt(model_index));
   }
 
-  gfx::Image icon;
-  model->GetIconAt(model_index, &icon);
-  return menu->AddMenuItemAt(
+  ui::ImageModel icon = model->GetIconAt(model_index);
+  ui::ImageModel minor_icon = model->GetMinorIconAt(model_index);
+  auto* menu_item_view = menu->AddMenuItemAt(
       menu_index, item_id, model->GetLabelAt(model_index),
+      model->GetSecondaryLabelAt(model_index),
       model->GetMinorTextAt(model_index),
-      ui::ThemedVectorIcon(model->GetMinorIconAt(model_index)),
-      icon.IsEmpty() ? gfx::ImageSkia() : *icon.ToImageSkia(),
-      icon.IsEmpty() ? ui::ThemedVectorIcon(model->GetVectorIconAt(model_index))
-                     : ui::ThemedVectorIcon(),
+      minor_icon.IsVectorIcon()
+          ? ui::ThemedVectorIcon(minor_icon.GetVectorIcon())
+          : ui::ThemedVectorIcon(),
+      icon.IsImage() ? *icon.GetImage().ToImageSkia() : gfx::ImageSkia(),
+      icon.IsVectorIcon() ? ui::ThemedVectorIcon(icon.GetVectorIcon())
+                          : ui::ThemedVectorIcon(),
       *type, ui::NORMAL_SEPARATOR);
+
+  if (model->IsAlertedAt(model_index))
+    menu_item_view->SetAlerted();
+  menu_item_view->set_is_new(model->IsNewFeatureAt(model_index));
+
+  return menu_item_view;
 }
 
 // Static.

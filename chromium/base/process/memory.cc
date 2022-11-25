@@ -6,8 +6,13 @@
 
 #if defined(OS_WIN)
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif  // defined(OS_WIN)
 
+#include <string.h>
+
+#include "base/allocator/buildflags.h"
 #include "base/debug/alias.h"
 #include "base/logging.h"
 #include "base/partition_alloc_buildflags.h"
@@ -59,7 +64,15 @@ NOINLINE void OnNoMemoryInternal(size_t size) {
                << ", max shared " << buf[1];
   IMMEDIATE_CRASH();
 #else
-  LOG(FATAL) << "Out of memory. size=" << tmp_size;
+
+  // Note: Don't add anything that may allocate here. Depending on the
+  // allocator, this may be called from within the allocator (e.g. with
+  // PartitionAlloc), and would deadlock as our locks are not recursive.
+  //
+  // Additionally, this is unlikely to work, since allocating from an OOM
+  // handler is likely to fail.
+  abort();  // SIGABRT cannot really be caught, this will always _exit().
+
 #endif
 #endif  // defined(OS_WIN)
 }
@@ -86,7 +99,7 @@ void TerminateBecauseOutOfMemory(size_t size) {
 #endif  // !defined(OS_WIN)
 
 // Defined in memory_mac.mm for Mac.
-#if !defined(OS_MACOSX)
+#if !defined(OS_APPLE)
 
 bool UncheckedCalloc(size_t num_items, size_t size, void** result) {
   const size_t alloc_size = num_items * size;
@@ -104,7 +117,7 @@ bool UncheckedCalloc(size_t num_items, size_t size, void** result) {
   return true;
 }
 
-#endif  // defined(OS_MACOSX)
+#endif  // defined(OS_APPLE)
 
 namespace internal {
 bool ReleaseAddressSpaceReservation() {

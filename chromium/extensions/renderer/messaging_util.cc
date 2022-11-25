@@ -6,8 +6,9 @@
 
 #include <string>
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notreached.h"
 #include "base/strings/stringprintf.h"
 #include "components/crx_file/id_util.h"
 #include "extensions/common/api/messaging/message.h"
@@ -80,14 +81,18 @@ std::unique_ptr<Message> MessageFromV8(v8::Local<v8::Context> context,
   ScriptContext* script_context = GetScriptContextFromV8Context(context);
   blink::WebLocalFrame* web_frame =
       script_context ? script_context->web_frame() : nullptr;
-  return MessageFromJSONString(isolate, stringified, error_out, web_frame);
+  bool privileged_context =
+      script_context && script_context->context_type() ==
+                            extensions::Feature::BLESSED_EXTENSION_CONTEXT;
+  return MessageFromJSONString(isolate, stringified, error_out, web_frame,
+                               privileged_context);
 }
 
-std::unique_ptr<Message> MessageFromJSONString(
-    v8::Isolate* isolate,
-    v8::Local<v8::String> json,
-    std::string* error_out,
-    blink::WebLocalFrame* web_frame) {
+std::unique_ptr<Message> MessageFromJSONString(v8::Isolate* isolate,
+                                               v8::Local<v8::String> json,
+                                               std::string* error_out,
+                                               blink::WebLocalFrame* web_frame,
+                                               bool privileged_context) {
   std::string message;
   message = gin::V8ToString(isolate, json);
   // JSON.stringify can fail to produce a string value in one of two ways: it
@@ -121,7 +126,8 @@ std::unique_ptr<Message> MessageFromJSONString(
 
   bool has_transient_user_activation =
       web_frame ? web_frame->HasTransientUserActivation() : false;
-  return std::make_unique<Message>(message, has_transient_user_activation);
+  return std::make_unique<Message>(message, has_transient_user_activation,
+                                   privileged_context);
 }
 
 v8::Local<v8::Value> MessageToV8(v8::Local<v8::Context> context,

@@ -26,8 +26,6 @@ class RemoteFrame;
 
 class RemoteFrameView final : public GarbageCollected<RemoteFrameView>,
                               public FrameView {
-  USING_GARBAGE_COLLECTED_MIXIN(RemoteFrameView);
-
  public:
   explicit RemoteFrameView(RemoteFrame*);
   ~RemoteFrameView() override;
@@ -78,7 +76,7 @@ class RemoteFrameView final : public GarbageCollected<RemoteFrameView>,
   uint32_t Print(const IntRect&, cc::PaintCanvas*) const;
   uint32_t CapturePaintPreview(const IntRect&, cc::PaintCanvas*) const;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  protected:
   bool NeedsViewportOffset() const override { return true; }

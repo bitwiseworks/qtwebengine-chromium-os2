@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
@@ -163,8 +164,9 @@ class MockDeviceEventDispatcherEvdev : public DeviceEventDispatcherEvdev {
       const std::vector<InputDevice>& devices) override {}
   void DispatchTouchscreenDevicesUpdated(
       const std::vector<TouchscreenDevice>& devices) override {}
-  void DispatchMouseDevicesUpdated(
-      const std::vector<InputDevice>& devices) override {}
+  void DispatchMouseDevicesUpdated(const std::vector<InputDevice>& devices,
+                                   bool has_mouse,
+                                   bool has_pointing_stick) override {}
   void DispatchTouchpadDevicesUpdated(
       const std::vector<InputDevice>& devices) override {}
   void DispatchUncategorizedDevicesUpdated(
@@ -391,8 +393,7 @@ TEST_F(TouchEventConverterEvdevTest, TouchMove) {
   EXPECT_EQ(295, event.location.x());
   EXPECT_EQ(421, event.location.y());
   EXPECT_EQ(0, event.slot);
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_TOUCH,
-            event.pointer_details.pointer_type);
+  EXPECT_EQ(EventPointerType::kTouch, event.pointer_details.pointer_type);
   EXPECT_FLOAT_EQ(58.f, event.pointer_details.radius_x);
   EXPECT_FLOAT_EQ(0.13333334f, event.pointer_details.force);
 
@@ -407,8 +408,7 @@ TEST_F(TouchEventConverterEvdevTest, TouchMove) {
   EXPECT_EQ(312, event.location.x());
   EXPECT_EQ(432, event.location.y());
   EXPECT_EQ(0, event.slot);
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_TOUCH,
-            event.pointer_details.pointer_type);
+  EXPECT_EQ(EventPointerType::kTouch, event.pointer_details.pointer_type);
   EXPECT_FLOAT_EQ(50.f, event.pointer_details.radius_x);
   EXPECT_FLOAT_EQ(0.16862745f, event.pointer_details.force);
 
@@ -423,8 +423,7 @@ TEST_F(TouchEventConverterEvdevTest, TouchMove) {
   EXPECT_EQ(312, event.location.x());
   EXPECT_EQ(432, event.location.y());
   EXPECT_EQ(0, event.slot);
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_TOUCH,
-            event.pointer_details.pointer_type);
+  EXPECT_EQ(EventPointerType::kTouch, event.pointer_details.pointer_type);
   EXPECT_FLOAT_EQ(50.f, event.pointer_details.radius_x);
   EXPECT_FLOAT_EQ(0.16862745f, event.pointer_details.force);
 }
@@ -1725,16 +1724,14 @@ TEST_F(TouchEventConverterEvdevTest, ActiveStylusTouchAndRelease) {
   EXPECT_EQ(ET_TOUCH_PRESSED, down_event.type);
   EXPECT_EQ(9170, down_event.location.x());
   EXPECT_EQ(3658, down_event.location.y());
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_PEN,
-            down_event.pointer_details.pointer_type);
+  EXPECT_EQ(EventPointerType::kPen, down_event.pointer_details.pointer_type);
   EXPECT_EQ(60.f / 1024, down_event.pointer_details.force);
 
   auto up_event = dispatched_touch_event(1);
   EXPECT_EQ(ET_TOUCH_RELEASED, up_event.type);
   EXPECT_EQ(9173, up_event.location.x());
   EXPECT_EQ(3906, up_event.location.y());
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_PEN,
-            up_event.pointer_details.pointer_type);
+  EXPECT_EQ(EventPointerType::kPen, up_event.pointer_details.pointer_type);
   EXPECT_EQ(0.f, up_event.pointer_details.force);
 }
 
@@ -1775,32 +1772,28 @@ TEST_F(TouchEventConverterEvdevTest, ActiveStylusMotion) {
   EXPECT_EQ(ET_TOUCH_PRESSED, event.type);
   EXPECT_EQ(8921, event.location.x());
   EXPECT_EQ(1072, event.location.y());
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_PEN,
-            event.pointer_details.pointer_type);
+  EXPECT_EQ(EventPointerType::kPen, event.pointer_details.pointer_type);
   EXPECT_EQ(35.f / 1024, event.pointer_details.force);
 
   event = dispatched_touch_event(1);
   EXPECT_EQ(ET_TOUCH_MOVED, event.type);
   EXPECT_EQ(8934, event.location.x());
   EXPECT_EQ(981, event.location.y());
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_PEN,
-            event.pointer_details.pointer_type);
+  EXPECT_EQ(EventPointerType::kPen, event.pointer_details.pointer_type);
   EXPECT_EQ(184.f / 1024, event.pointer_details.force);
 
   event = dispatched_touch_event(2);
   EXPECT_EQ(ET_TOUCH_MOVED, event.type);
   EXPECT_EQ(8930, event.location.x());
   EXPECT_EQ(980, event.location.y());
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_PEN,
-            event.pointer_details.pointer_type);
+  EXPECT_EQ(EventPointerType::kPen, event.pointer_details.pointer_type);
   EXPECT_EQ(348.f / 1024, event.pointer_details.force);
 
   event = dispatched_touch_event(3);
   EXPECT_EQ(ET_TOUCH_RELEASED, event.type);
   EXPECT_EQ(8930, event.location.x());
   EXPECT_EQ(980, event.location.y());
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_PEN,
-            event.pointer_details.pointer_type);
+  EXPECT_EQ(EventPointerType::kPen, event.pointer_details.pointer_type);
   EXPECT_EQ(0.f / 1024, event.pointer_details.force);
 }
 
@@ -1834,23 +1827,19 @@ TEST_F(TouchEventConverterEvdevTest, ActiveStylusDrallionRubberSequence) {
 
   ui::TouchEventParams event = dispatched_touch_event(0);
   EXPECT_EQ(ET_TOUCH_PRESSED, event.type);
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_ERASER,
-            event.pointer_details.pointer_type);
+  EXPECT_EQ(EventPointerType::kEraser, event.pointer_details.pointer_type);
 
   event = dispatched_touch_event(1);
   EXPECT_EQ(ET_TOUCH_MOVED, event.type);
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_ERASER,
-            event.pointer_details.pointer_type);
+  EXPECT_EQ(EventPointerType::kEraser, event.pointer_details.pointer_type);
 
   event = dispatched_touch_event(2);
   EXPECT_EQ(ET_TOUCH_MOVED, event.type);
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_ERASER,
-            event.pointer_details.pointer_type);
+  EXPECT_EQ(EventPointerType::kEraser, event.pointer_details.pointer_type);
 
   event = dispatched_touch_event(3);
   EXPECT_EQ(ET_TOUCH_RELEASED, event.type);
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_ERASER,
-            event.pointer_details.pointer_type);
+  EXPECT_EQ(EventPointerType::kEraser, event.pointer_details.pointer_type);
 }
 
 TEST_F(TouchEventConverterEvdevTest, ActiveStylusBarrelButtonWhileHovering) {
@@ -1892,14 +1881,12 @@ TEST_F(TouchEventConverterEvdevTest, ActiveStylusBarrelButtonWhileHovering) {
   auto down_event = dispatched_touch_event(0);
   EXPECT_EQ(ET_TOUCH_PRESSED, down_event.type);
   EXPECT_TRUE(down_event.flags & ui::EventFlags::EF_LEFT_MOUSE_BUTTON);
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_PEN,
-            down_event.pointer_details.pointer_type);
+  EXPECT_EQ(EventPointerType::kPen, down_event.pointer_details.pointer_type);
 
   auto up_event = dispatched_touch_event(1);
   EXPECT_EQ(ET_TOUCH_RELEASED, up_event.type);
   EXPECT_TRUE(down_event.flags & ui::EventFlags::EF_LEFT_MOUSE_BUTTON);
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_PEN,
-            up_event.pointer_details.pointer_type);
+  EXPECT_EQ(EventPointerType::kPen, up_event.pointer_details.pointer_type);
 }
 
 TEST_F(TouchEventConverterEvdevTest, ActiveStylusBarrelButton) {
@@ -1941,26 +1928,24 @@ TEST_F(TouchEventConverterEvdevTest, ActiveStylusBarrelButton) {
   auto down_event = dispatched_touch_event(0);
   EXPECT_EQ(ET_TOUCH_PRESSED, down_event.type);
   EXPECT_FALSE(down_event.flags & ui::EventFlags::EF_LEFT_MOUSE_BUTTON);
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_PEN,
-            down_event.pointer_details.pointer_type);
+  EXPECT_EQ(EventPointerType::kPen, down_event.pointer_details.pointer_type);
 
   auto button_down_event = dispatched_touch_event(1);
   EXPECT_EQ(ET_TOUCH_MOVED, button_down_event.type);
   EXPECT_TRUE(button_down_event.flags & ui::EventFlags::EF_LEFT_MOUSE_BUTTON);
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_PEN,
+  EXPECT_EQ(EventPointerType::kPen,
             button_down_event.pointer_details.pointer_type);
 
   auto button_up_event = dispatched_touch_event(2);
   EXPECT_EQ(ET_TOUCH_MOVED, button_up_event.type);
   EXPECT_FALSE(button_up_event.flags & ui::EventFlags::EF_LEFT_MOUSE_BUTTON);
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_PEN,
+  EXPECT_EQ(EventPointerType::kPen,
             button_up_event.pointer_details.pointer_type);
 
   auto up_event = dispatched_touch_event(3);
   EXPECT_EQ(ET_TOUCH_RELEASED, up_event.type);
   EXPECT_FALSE(down_event.flags & ui::EventFlags::EF_LEFT_MOUSE_BUTTON);
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_PEN,
-            up_event.pointer_details.pointer_type);
+  EXPECT_EQ(EventPointerType::kPen, up_event.pointer_details.pointer_type);
 }
 
 TEST_F(TouchEventConverterEvdevTest, HeldEventNotSent) {
@@ -2300,12 +2285,25 @@ TEST_F(TouchEventConverterEvdevTest, FingerSizeWithResolution) {
   EXPECT_EQ(0, event.slot);
   EXPECT_FLOAT_EQ(217.0 / devinfo.GetAbsMaximum(ABS_MT_PRESSURE),
                   event.pointer_details.force);
-  EXPECT_EQ(EventPointerType::POINTER_TYPE_TOUCH,
-            event.pointer_details.pointer_type);
+  EXPECT_EQ(EventPointerType::kTouch, event.pointer_details.pointer_type);
   EXPECT_FLOAT_EQ(280.f, event.pointer_details.radius_x);
   EXPECT_FLOAT_EQ(220.f, event.pointer_details.radius_y);
   const ui::InProgressTouchEvdev& in_progress_event = dev->event(0);
   EXPECT_FLOAT_EQ(14.f, in_progress_event.major);
   EXPECT_FLOAT_EQ(11.f, in_progress_event.minor);
+}
+
+// b/162596241
+TEST_F(TouchEventConverterEvdevTest, InvalidDimensions) {
+  EventDeviceInfo devinfo;
+  input_absinfo absinfo = {};
+  absinfo.maximum = 1 << 16;
+  devinfo.SetAbsInfo(ABS_X, absinfo);
+  devinfo.SetAbsInfo(ABS_MT_POSITION_X, absinfo);
+  devinfo.SetAbsInfo(ABS_Y, absinfo);
+  devinfo.SetAbsInfo(ABS_MT_POSITION_Y, absinfo);
+  EXPECT_FALSE(
+      TouchEventConverterEvdev::Create({}, base::FilePath(kTestDevicePath), 0,
+                                       devinfo, shared_palm_state(), nullptr));
 }
 }  // namespace ui

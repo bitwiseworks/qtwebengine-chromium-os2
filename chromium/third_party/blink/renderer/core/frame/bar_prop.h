@@ -37,9 +37,8 @@ namespace blink {
 
 class LocalFrame;
 
-class BarProp final : public ScriptWrappable, public DOMWindowClient {
+class BarProp final : public ScriptWrappable, public ExecutionContextClient {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(BarProp);
 
  public:
   enum Type {
@@ -55,7 +54,7 @@ class BarProp final : public ScriptWrappable, public DOMWindowClient {
 
   bool visible() const;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   Type type_;

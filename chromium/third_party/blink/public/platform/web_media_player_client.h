@@ -36,6 +36,8 @@
 #include "third_party/blink/public/platform/web_media_player.h"
 #include "ui/gfx/color_space.h"
 
+#include "third_party/blink/public/platform/web_texttrack_metadata.h"
+
 namespace cc {
 class Layer;
 }
@@ -136,6 +138,9 @@ class BLINK_PLATFORM_EXPORT WebMediaPlayerClient {
   // any.
   virtual WebRemotePlaybackClient* RemotePlaybackClient() { return nullptr; }
 
+  // Returns metadata for out-of-band text tracks declared as <track> elements.
+  virtual std::vector<TextTrackMetadata> GetTextTrackMetadata() = 0;
+
   // Returns the color space to render media into if.
   // Rendering media into this color space may avoid some conversions.
   virtual gfx::ColorSpace TargetColorSpace() { return gfx::ColorSpace(); }
@@ -181,7 +186,7 @@ class BLINK_PLATFORM_EXPORT WebMediaPlayerClient {
 
   // Called when a video frame has been presented to the compositor, after a
   // request was initiated via WebMediaPlayer::RequestVideoFrameCallback().
-  // See https://wicg.github.io/video-raf/.
+  // See https://wicg.github.io/video-rvfc/.
   virtual void OnRequestVideoFrameCallback() {}
 
   struct Features {

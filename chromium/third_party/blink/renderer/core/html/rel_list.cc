@@ -4,8 +4,8 @@
 
 #include "third_party/blink/renderer/core/html/rel_list.h"
 
-#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
@@ -47,6 +47,21 @@ bool RelList::ValidateTokenValue(const AtomicString& token_value,
   if (GetElement().HasTagName(html_names::kLinkTag)) {
     if (SupportedTokensLink().Contains(token_value) ||
         token_value == "modulepreload") {
+      return true;
+    }
+    if (RuntimeEnabledFeatures::SignedExchangeSubresourcePrefetchEnabled(
+            GetElement().GetExecutionContext()) &&
+        token_value == "allowed-alt-sxg") {
+      return true;
+    }
+    if (RuntimeEnabledFeatures::SubresourceWebBundlesEnabled(
+            GetElement().GetExecutionContext()) &&
+        token_value == "webbundle") {
+      return true;
+    }
+    if (RuntimeEnabledFeatures::MediaFeedsEnabled(
+            GetElement().GetExecutionContext()) &&
+        token_value == "media-feed") {
       return true;
     }
   } else if ((GetElement().HasTagName(html_names::kATag) ||

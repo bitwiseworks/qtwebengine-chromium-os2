@@ -49,19 +49,18 @@ class CONTENT_EXPORT PluginPowerSaverHelper : public RenderFrameObserver {
       const url::Origin& content_origin,
       const gfx::Size& unobscured_size,
       RenderFrame::RecordPeripheralDecision record_decision) const;
-  void WhitelistContentOrigin(const url::Origin& content_origin);
+  void AllowlistContentOrigin(const url::Origin& content_origin);
 
   // RenderFrameObserver implementation.
-  void DidCommitProvisionalLoad(bool is_same_document_navigation,
-                                ui::PageTransition transition) override;
+  void DidCommitProvisionalLoad(ui::PageTransition transition) override;
   bool OnMessageReceived(const IPC::Message& message) override;
   void OnDestruct() override;
 
-  void OnUpdatePluginContentOriginWhitelist(
-      const std::set<url::Origin>& origin_whitelist);
+  void OnUpdatePluginContentOriginAllowlist(
+      const std::set<url::Origin>& origin_allowlist);
 
-  // Local copy of the whitelist for the entire tab.
-  std::set<url::Origin> origin_whitelist_;
+  // Local copy of the allowlist for the entire tab.
+  std::set<url::Origin> origin_allowlist_;
 
   // Set of peripheral plugins eligible to be unthrottled ex post facto.
   std::vector<PeripheralPlugin> peripheral_plugins_;

@@ -39,6 +39,7 @@
 #include "base/compiler_specific.h"
 #include "build/build_config.h"
 #include "third_party/blink/renderer/platform/heap/blink_gc.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/gc_info.h"
 #include "third_party/blink/renderer/platform/heap/heap_buildflags.h"
 #include "third_party/blink/renderer/platform/heap/thread_state.h"
@@ -75,9 +76,15 @@ constexpr size_t kBlinkPagesPerRegion = 10;
 // size is kBlinkPageSize = 2^17 = 128 KiB). So we don't use guard pages in
 // NaCl.
 // The same issue holds for ppc64 systems, which use a 64k page size.
-constexpr size_t kBlinkGuardPageSize = 0;
+PAGE_ALLOCATOR_CONSTANTS_DECLARE_CONSTEXPR ALWAYS_INLINE size_t
+BlinkGuardPageSize() {
+  return 0;
+}
 #else
-constexpr size_t kBlinkGuardPageSize = base::kSystemPageSize;
+PAGE_ALLOCATOR_CONSTANTS_DECLARE_CONSTEXPR ALWAYS_INLINE size_t
+BlinkGuardPageSize() {
+  return base::SystemPageSize();
+}
 #endif
 
 // Double precision floats are more efficient when 8-byte aligned, so we 8-byte
@@ -135,6 +142,7 @@ constexpr uint8_t kReuseForbiddenZapValue = 0x2c;
 class NormalPageArena;
 class PageMemory;
 class BaseArena;
+class ThreadHeap;
 
 // HeapObjectHeader is a 32-bit object that has the following layout:
 //
@@ -369,8 +377,9 @@ class FreeList {
 };
 
 // Blink heap pages are set up with a guard page before and after the payload.
-constexpr size_t BlinkPagePayloadSize() {
-  return kBlinkPageSize - 2 * kBlinkGuardPageSize;
+PAGE_ALLOCATOR_CONSTANTS_DECLARE_CONSTEXPR ALWAYS_INLINE size_t
+BlinkPagePayloadSize() {
+  return kBlinkPageSize - 2 * BlinkGuardPageSize();
 }
 
 // Blink heap pages are aligned to the Blink heap page size. Therefore, the
@@ -403,7 +412,7 @@ inline bool VTableInitialized(const void* object_pointer) {
 // be 1 OS page size away from being Blink page size-aligned.
 inline bool IsPageHeaderAddress(Address address) {
   return !((reinterpret_cast<uintptr_t>(address) & kBlinkPageOffsetMask) -
-           kBlinkGuardPageSize);
+           BlinkGuardPageSize());
 }
 
 #endif
@@ -499,6 +508,18 @@ class BasePage {
   virtual void VerifyMarking() = 0;
 
  private:
+  void SynchronizedLoad() {
+#if defined(THREAD_SANITIZER)
+    WTF::AsAtomicPtr(&page_type_)->load(std::memory_order_acquire);
+#endif
+  }
+  void SynchronizedStore() {
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+#if defined(THREAD_SANITIZER)
+    WTF::AsAtomicPtr(&page_type_)->store(page_type_, std::memory_order_release);
+#endif
+  }
+
   PageMemory* const storage_;
   BaseArena* const arena_;
   ThreadState* const thread_state_;
@@ -511,6 +532,7 @@ class BasePage {
   PageType page_type_;
 
   friend class BaseArena;
+  friend class ThreadHeap;
 };
 
 class PageStack : Vector<BasePage*> {
@@ -592,11 +614,19 @@ class PLATFORM_EXPORT ObjectStartBitmap {
   // Finds an object header based on a
   // address_maybe_pointing_to_the_middle_of_object. Will search for an object
   // start in decreasing address order.
+  template <
+      HeapObjectHeader::AccessMode = HeapObjectHeader::AccessMode::kNonAtomic>
   Address FindHeader(
       ConstAddress address_maybe_pointing_to_the_middle_of_object) const;
 
+  template <
+      HeapObjectHeader::AccessMode = HeapObjectHeader::AccessMode::kNonAtomic>
   inline void SetBit(Address);
+  template <
+      HeapObjectHeader::AccessMode = HeapObjectHeader::AccessMode::kNonAtomic>
   inline void ClearBit(Address);
+  template <
+      HeapObjectHeader::AccessMode = HeapObjectHeader::AccessMode::kNonAtomic>
   inline bool CheckBit(Address) const;
 
   // Iterates all object starts recorded in the bitmap.
@@ -611,6 +641,13 @@ class PLATFORM_EXPORT ObjectStartBitmap {
   void Clear();
 
  private:
+  template <
+      HeapObjectHeader::AccessMode = HeapObjectHeader::AccessMode::kNonAtomic>
+  void store(size_t cell_index, uint8_t value);
+  template <
+      HeapObjectHeader::AccessMode = HeapObjectHeader::AccessMode::kNonAtomic>
+  uint8_t load(size_t cell_index) const;
+
   static const size_t kCellSize = sizeof(uint8_t) * 8;
   static const size_t kCellMask = sizeof(uint8_t) * 8 - 1;
   static const size_t kBitmapSize =
@@ -627,13 +664,35 @@ class PLATFORM_EXPORT ObjectStartBitmap {
   uint8_t object_start_bit_map_[kReservedForBitmap];
 };
 
+// A platform aware version of ObjectStartBitmap to provide platform specific
+// optimizations (e.g. Use non-atomic stores on ARMv7 when not marking).
+class PLATFORM_EXPORT PlatformAwareObjectStartBitmap
+    : public ObjectStartBitmap {
+  USING_FAST_MALLOC(PlatformAwareObjectStartBitmap);
+
+ public:
+  explicit PlatformAwareObjectStartBitmap(Address offset);
+
+  template <
+      HeapObjectHeader::AccessMode = HeapObjectHeader::AccessMode::kNonAtomic>
+  inline void SetBit(Address);
+  template <
+      HeapObjectHeader::AccessMode = HeapObjectHeader::AccessMode::kNonAtomic>
+  inline void ClearBit(Address);
+
+ private:
+  template <HeapObjectHeader::AccessMode>
+  static bool ShouldForceNonAtomic();
+};
+
 class PLATFORM_EXPORT NormalPage final : public BasePage {
  public:
   NormalPage(PageMemory*, BaseArena*);
   ~NormalPage() override;
 
   Address Payload() const { return GetAddress() + PageHeaderSize(); }
-  static constexpr size_t PayloadSize() {
+  static PAGE_ALLOCATOR_CONSTANTS_DECLARE_CONSTEXPR ALWAYS_INLINE size_t
+  PayloadSize() {
     return (BlinkPagePayloadSize() - PageHeaderSize()) & ~kAllocationMask;
   }
   Address PayloadEnd() const { return Payload() + PayloadSize(); }
@@ -694,8 +753,10 @@ class PLATFORM_EXPORT NormalPage final : public BasePage {
   void SweepAndCompact(CompactionContext&);
 
   // Object start bitmap of this page.
-  ObjectStartBitmap* object_start_bit_map() { return &object_start_bit_map_; }
-  const ObjectStartBitmap* object_start_bit_map() const {
+  PlatformAwareObjectStartBitmap* object_start_bit_map() {
+    return &object_start_bit_map_;
+  }
+  const PlatformAwareObjectStartBitmap* object_start_bit_map() const {
     return &object_start_bit_map_;
   }
 
@@ -706,6 +767,8 @@ class PLATFORM_EXPORT NormalPage final : public BasePage {
   // Uses the object_start_bit_map_ to find an object for a given address. The
   // returned header is either nullptr, indicating that no object could be
   // found, or it is pointing to valid object or free list entry.
+  // This method is called only during stack scanning when there are no
+  // concurrent markers, thus no atomics required.
   HeapObjectHeader* ConservativelyFindHeaderFromAddress(ConstAddress) const;
 
   // Uses the object_start_bit_map_ to find an object for a given address. It is
@@ -777,11 +840,13 @@ class PLATFORM_EXPORT NormalPage final : public BasePage {
     void Clear() { std::fill(table_.begin(), table_.end(), 0); }
 
    private:
-    static constexpr size_t FirstPayloadCard() {
-      return (kBlinkGuardPageSize + NormalPage::PageHeaderSize()) / kCardSize;
+    static PAGE_ALLOCATOR_CONSTANTS_DECLARE_CONSTEXPR ALWAYS_INLINE size_t
+    FirstPayloadCard() {
+      return (BlinkGuardPageSize() + NormalPage::PageHeaderSize()) / kCardSize;
     }
-    static constexpr size_t LastPayloadCard() {
-      return (kBlinkGuardPageSize + BlinkPagePayloadSize()) / kCardSize;
+    static PAGE_ALLOCATOR_CONSTANTS_DECLARE_CONSTEXPR ALWAYS_INLINE size_t
+    LastPayloadCard() {
+      return (BlinkGuardPageSize() + BlinkPagePayloadSize()) / kCardSize;
     }
 
     std::array<uint8_t, kBlinkPageSize / kCardSize> table_{};
@@ -806,9 +871,9 @@ class PLATFORM_EXPORT NormalPage final : public BasePage {
                      bool found_finalizer);
 
   CardTable card_table_;
-  ObjectStartBitmap object_start_bit_map_;
+  PlatformAwareObjectStartBitmap object_start_bit_map_;
 #if BUILDFLAG(BLINK_HEAP_YOUNG_GENERATION)
-  std::unique_ptr<ObjectStartBitmap> cached_object_start_bit_map_;
+  std::unique_ptr<PlatformAwareObjectStartBitmap> cached_object_start_bit_map_;
 #endif
   Vector<ToBeFinalizedObject> to_be_finalized_objects_;
   FreeList cached_freelist_;
@@ -992,6 +1057,9 @@ class PLATFORM_EXPORT BaseArena {
   // Pages that have been swept and need to be removed from the heap.
   PageStackThreadSafe swept_unfinalized_empty_pages_;
 
+ protected:
+  void SynchronizedStore(BasePage* page) { page->SynchronizedStore(); }
+
  private:
   virtual Address LazySweepPages(size_t, size_t gc_info_index) = 0;
 
@@ -1113,7 +1181,7 @@ class LargeObjectArena final : public BaseArena {
 PLATFORM_EXPORT ALWAYS_INLINE BasePage* PageFromObject(const void* object) {
   Address address = reinterpret_cast<Address>(const_cast<void*>(object));
   BasePage* page = reinterpret_cast<BasePage*>(BlinkPageAddress(address) +
-                                               kBlinkGuardPageSize);
+                                               BlinkGuardPageSize());
 #if DCHECK_IS_ON()
   DCHECK(page->Contains(address));
 #endif
@@ -1254,7 +1322,7 @@ inline Address NormalPageArena::AllocateObject(size_t allocation_size,
     DCHECK(!PageFromObject(header_address)->IsLargeObjectPage());
     static_cast<NormalPage*>(PageFromObject(header_address))
         ->object_start_bit_map()
-        ->SetBit(header_address);
+        ->SetBit<HeapObjectHeader::AccessMode::kAtomic>(header_address);
     Address result = header_address + sizeof(HeapObjectHeader);
     DCHECK(!(reinterpret_cast<uintptr_t>(result) & kAllocationMask));
 
@@ -1294,22 +1362,81 @@ inline void LargeObjectArena::IterateAndClearRememberedPages(
   }
 }
 
+// static
+template <HeapObjectHeader::AccessMode mode>
+bool PlatformAwareObjectStartBitmap::ShouldForceNonAtomic() {
+#if defined(ARCH_CPU_ARMEL)
+  // Use non-atomic accesses on ARMv7 when marking is not active.
+  if (mode == HeapObjectHeader::AccessMode::kAtomic) {
+    if (LIKELY(!ThreadState::Current()->IsAnyIncrementalMarking()))
+      return true;
+  }
+#endif  // defined(ARCH_CPU_ARMEL)
+  return false;
+}
+
+template <HeapObjectHeader::AccessMode mode>
+inline void PlatformAwareObjectStartBitmap::SetBit(Address header_address) {
+  if (ShouldForceNonAtomic<mode>()) {
+    ObjectStartBitmap::SetBit<HeapObjectHeader::AccessMode::kNonAtomic>(
+        header_address);
+    return;
+  }
+  ObjectStartBitmap::SetBit<mode>(header_address);
+}
+
+template <HeapObjectHeader::AccessMode mode>
+inline void PlatformAwareObjectStartBitmap::ClearBit(Address header_address) {
+  if (ShouldForceNonAtomic<mode>()) {
+    ObjectStartBitmap::ClearBit<HeapObjectHeader::AccessMode::kNonAtomic>(
+        header_address);
+    return;
+  }
+  ObjectStartBitmap::ClearBit<mode>(header_address);
+}
+
+template <HeapObjectHeader::AccessMode mode>
+inline void ObjectStartBitmap::store(size_t cell_index, uint8_t value) {
+  if (mode == HeapObjectHeader::AccessMode::kNonAtomic) {
+    object_start_bit_map_[cell_index] = value;
+    return;
+  }
+  WTF::AsAtomicPtr(&object_start_bit_map_[cell_index])
+      ->store(value, std::memory_order_release);
+}
+
+template <HeapObjectHeader::AccessMode mode>
+inline uint8_t ObjectStartBitmap::load(size_t cell_index) const {
+  if (mode == HeapObjectHeader::AccessMode::kNonAtomic) {
+    return object_start_bit_map_[cell_index];
+  }
+  return WTF::AsAtomicPtr(&object_start_bit_map_[cell_index])
+      ->load(std::memory_order_acquire);
+}
+
+template <HeapObjectHeader::AccessMode mode>
 inline void ObjectStartBitmap::SetBit(Address header_address) {
   size_t cell_index, object_bit;
   ObjectStartIndexAndBit(header_address, &cell_index, &object_bit);
-  object_start_bit_map_[cell_index] |= (1 << object_bit);
+  // Only the mutator thread writes to the bitmap during concurrent marking,
+  // so no need for CAS here.
+  store<mode>(cell_index,
+              static_cast<uint8_t>(load(cell_index) | (1 << object_bit)));
 }
 
+template <HeapObjectHeader::AccessMode mode>
 inline void ObjectStartBitmap::ClearBit(Address header_address) {
   size_t cell_index, object_bit;
   ObjectStartIndexAndBit(header_address, &cell_index, &object_bit);
-  object_start_bit_map_[cell_index] &= ~(1 << object_bit);
+  store<mode>(cell_index,
+              static_cast<uint8_t>(load(cell_index) & ~(1 << object_bit)));
 }
 
+template <HeapObjectHeader::AccessMode mode>
 inline bool ObjectStartBitmap::CheckBit(Address header_address) const {
   size_t cell_index, object_bit;
   ObjectStartIndexAndBit(header_address, &cell_index, &object_bit);
-  return object_start_bit_map_[cell_index] & (1 << object_bit);
+  return load<mode>(cell_index) & (1 << object_bit);
 }
 
 inline void ObjectStartBitmap::ObjectStartIndexAndBit(Address header_address,
@@ -1329,10 +1456,7 @@ inline void ObjectStartBitmap::ObjectStartIndexAndBit(Address header_address,
 template <typename Callback>
 inline void ObjectStartBitmap::Iterate(Callback callback) const {
   for (size_t cell_index = 0; cell_index < kReservedForBitmap; cell_index++) {
-    if (!object_start_bit_map_[cell_index])
-      continue;
-
-    uint8_t value = object_start_bit_map_[cell_index];
+    uint8_t value = load(cell_index);
     while (value) {
       const int trailing_zeroes = base::bits::CountTrailingZeroBits(value);
       const size_t object_start_number =
@@ -1344,6 +1468,30 @@ inline void ObjectStartBitmap::Iterate(Callback callback) const {
       value &= ~(1 << (object_start_number & kCellMask));
     }
   }
+}
+
+template <HeapObjectHeader::AccessMode mode>
+Address ObjectStartBitmap::FindHeader(
+    ConstAddress address_maybe_pointing_to_the_middle_of_object) const {
+  size_t object_offset =
+      address_maybe_pointing_to_the_middle_of_object - offset_;
+  size_t object_start_number = object_offset / kAllocationGranularity;
+  size_t cell_index = object_start_number / kCellSize;
+#if DCHECK_IS_ON()
+  const size_t bitmap_size = kReservedForBitmap;
+  DCHECK_LT(cell_index, bitmap_size);
+#endif
+  size_t bit = object_start_number & kCellMask;
+  uint8_t byte = load<mode>(cell_index) & ((1 << (bit + 1)) - 1);
+  while (!byte) {
+    DCHECK_LT(0u, cell_index);
+    byte = load<mode>(--cell_index);
+  }
+  int leading_zeroes = base::bits::CountLeadingZeroBits(byte);
+  object_start_number =
+      (cell_index * kCellSize) + (kCellSize - 1) - leading_zeroes;
+  object_offset = object_start_number * kAllocationGranularity;
+  return object_offset + offset_;
 }
 
 NO_SANITIZE_ADDRESS inline HeapObjectHeader::HeapObjectHeader(
@@ -1360,8 +1508,13 @@ NO_SANITIZE_ADDRESS inline HeapObjectHeader::HeapObjectHeader(
   DCHECK_LT(gc_info_index, GCInfoTable::kMaxIndex);
   DCHECK_LT(size, kNonLargeObjectPageSizeMax);
   DCHECK_EQ(0u, size & kAllocationMask);
-  encoded_high_ =
-      static_cast<uint16_t>(gc_info_index << kHeaderGCInfoIndexShift);
+  // Relaxed memory order is enough as in construction is created/synchronized
+  // as follows:
+  // - Page allocator gets zeroed page and uses page initialization fence.
+  // - Sweeper zeroes memory and synchronizes via global lock.
+  internal::AsUnsanitizedAtomic(&encoded_high_)
+      ->store(static_cast<uint16_t>(gc_info_index << kHeaderGCInfoIndexShift),
+              std::memory_order_relaxed);
   encoded_low_ = internal::EncodeSize(size);
   DCHECK(IsInConstruction());
 }
@@ -1402,11 +1555,11 @@ template <HeapObjectHeader::AccessMode mode>
 HeapObjectHeader* NormalPage::FindHeaderFromAddress(
     ConstAddress address) const {
   DCHECK(ContainedInObjectPayload(address));
-  DCHECK(!ArenaForNormalPage()->IsInCurrentAllocationPointRegion(address));
   HeapObjectHeader* header = reinterpret_cast<HeapObjectHeader*>(
-      object_start_bit_map()->FindHeader(address));
-  DCHECK_LT(0u, header->GcInfoIndex());
-  DCHECK_GT(header->PayloadEnd<mode>(), address);
+      object_start_bit_map()->FindHeader<mode>(address));
+  DCHECK_LT(0u, header->GcInfoIndex<mode>());
+  DCHECK_GT(header->PayloadEnd<HeapObjectHeader::AccessMode::kAtomic>(),
+            address);
   return header;
 }
 
@@ -1416,7 +1569,7 @@ void NormalPage::IterateCardTable(Function function) const {
   // the loop (this may in turn pessimize barrier implementation).
   for (auto card : card_table_) {
     if (UNLIKELY(card.bit)) {
-      IterateOnCard(std::move(function), card.index);
+      IterateOnCard(function, card.index);
     }
   }
 }

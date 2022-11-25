@@ -42,14 +42,14 @@ class BLINK_PLATFORM_EXPORT WebVideoFrameSubmitter
  public:
   static std::unique_ptr<WebVideoFrameSubmitter> Create(
       WebContextProviderCallback,
-      cc::PlaybackRoughnessReportingCallback,
+      cc::VideoPlaybackRoughnessReporter::ReportingCallback,
       const cc::LayerTreeSettings&,
       bool use_sync_primitives);
   ~WebVideoFrameSubmitter() override = default;
 
   // Intialize must be called before submissions occur, pulled out of
   // StartSubmitting() to enable tests without the full mojo statck running.
-  virtual void Initialize(cc::VideoFrameProvider*) = 0;
+  virtual void Initialize(cc::VideoFrameProvider*, bool is_media_stream) = 0;
 
   // Set the rotation state of the video to be used while appending frames.
   //
@@ -58,8 +58,8 @@ class BLINK_PLATFORM_EXPORT WebVideoFrameSubmitter
   virtual void SetRotation(media::VideoRotation) = 0;
 
   // Prepares the compositor frame sink to accept frames by providing
-  // a SurfaceId, with its associated allocation time.
-  virtual void EnableSubmission(viz::SurfaceId, base::TimeTicks) = 0;
+  // a SurfaceId.
+  virtual void EnableSubmission(viz::SurfaceId) = 0;
 
   // Set whether the surface is visible within the current view port. Stops
   // submission if not unless SetForceSubmit(true) has been called.
@@ -68,6 +68,10 @@ class BLINK_PLATFORM_EXPORT WebVideoFrameSubmitter
   // Set whether the page containing the video element is visible. Stops
   // submission if not unless SetForceSubmit(true) has been called.
   virtual void SetIsPageVisible(bool) = 0;
+
+  // Set whether BeginFrames should be generated regardless of visibility. Does
+  // not submit unless submission is expected.
+  virtual void SetForceBeginFrames(bool) = 0;
 
   // Set whether frames should always be submitted regardless of visibility.
   virtual void SetForceSubmit(bool) = 0;

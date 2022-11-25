@@ -35,10 +35,21 @@ struct COMPONENT_EXPORT(DEVICE_FIDO) CtapMakeCredentialRequest {
  public:
   using ClientDataHash = std::array<uint8_t, kClientDataHashLength>;
 
+  // ParseOpts are optional parameters passed to Parse().
+  struct ParseOpts {
+    // reject_all_extensions makes parsing fail if any extensions are present.
+    bool reject_all_extensions = false;
+  };
+
   // Decodes a CTAP2 authenticatorMakeCredential request message. The request's
   // |client_data_json| will be empty and |client_data_hash| will be set.
   static base::Optional<CtapMakeCredentialRequest> Parse(
-      const cbor::Value::MapValue& request_map);
+      const cbor::Value::MapValue& request_map) {
+    return Parse(request_map, ParseOpts());
+  }
+  static base::Optional<CtapMakeCredentialRequest> Parse(
+      const cbor::Value::MapValue& request_map,
+      const ParseOpts& opts);
 
   CtapMakeCredentialRequest(
       std::string client_data_json,
@@ -61,9 +72,12 @@ struct COMPONENT_EXPORT(DEVICE_FIDO) CtapMakeCredentialRequest {
   AuthenticatorAttachment authenticator_attachment =
       AuthenticatorAttachment::kAny;
   bool resident_key_required = false;
-  // hmac_secret_ indicates whether the "hmac-secret" extension should be
+  // hmac_secret indicates whether the "hmac-secret" extension should be
   // asserted to CTAP2 authenticators.
   bool hmac_secret = false;
+  // large_blob_key indicates whether a large blob key should be associated to
+  // the new credential through the "largeBlobKey" extension.
+  bool large_blob_key = false;
 
   // If true, instruct the request handler only to dispatch this request via
   // U2F.
@@ -80,10 +94,13 @@ struct COMPONENT_EXPORT(DEVICE_FIDO) CtapMakeCredentialRequest {
 
   // cred_protect indicates the level of protection afforded to a credential.
   // This depends on a CTAP2 extension that not all authenticators will support.
-  // The second element is true if the indicated protection level must be
-  // provided by the target authenticator for the MakeCredential request to be
-  // sent.
-  base::Optional<std::pair<CredProtect, bool>> cred_protect;
+  // This is filled out by |MakeCredentialRequestHandler|.
+  base::Optional<CredProtect> cred_protect;
+  // If |cred_protect| is not |nullopt|, this is true if the credProtect level
+  // must be provided by the target authenticator for the MakeCredential request
+  // to be sent. This only makes sense when there is a collection of
+  // authenticators to consider, i.e. for the Windows API.
+  bool cred_protect_enforce = false;
 
   base::Optional<AndroidClientDataExtensionInput> android_client_data_ext;
 };

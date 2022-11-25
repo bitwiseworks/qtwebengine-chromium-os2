@@ -43,12 +43,12 @@ using MockDeleterCallback = StrictMock<
     base::MockCallback<base::OnceCallback<void(AudioStreamBroker*)>>>;
 
 class MockRendererAudioInputStreamFactoryClient
-    : public mojom::RendererAudioInputStreamFactoryClient {
+    : public blink::mojom::RendererAudioInputStreamFactoryClient {
  public:
   MockRendererAudioInputStreamFactoryClient() = default;
   ~MockRendererAudioInputStreamFactoryClient() override = default;
 
-  mojo::PendingRemote<mojom::RendererAudioInputStreamFactoryClient>
+  mojo::PendingRemote<blink::mojom::RendererAudioInputStreamFactoryClient>
   MakeRemote() {
     return receiver_.BindNewPipeAndPassRemote();
   }
@@ -71,7 +71,8 @@ class MockRendererAudioInputStreamFactoryClient
   void CloseReceiver() { receiver_.reset(); }
 
  private:
-  mojo::Receiver<mojom::RendererAudioInputStreamFactoryClient> receiver_{this};
+  mojo::Receiver<blink::mojom::RendererAudioInputStreamFactoryClient> receiver_{
+      this};
   mojo::Remote<media::mojom::AudioInputStream> input_stream_;
   mojo::PendingReceiver<media::mojom::AudioInputStreamClient> client_receiver_;
   DISALLOW_COPY_AND_ASSIGN(MockRendererAudioInputStreamFactoryClient);
@@ -118,7 +119,6 @@ class MockStreamFactory : public audio::FakeStreamFactory {
       uint32_t shared_memory_count,
       bool enable_agc,
       base::ReadOnlySharedMemoryRegion key_press_count_buffer,
-      audio::mojom::AudioProcessingConfigPtr processing_config,
       CreateInputStreamCallback created_callback) override {
     // No way to cleanly exit the test here in case of failure, so use CHECK.
     CHECK(stream_request_data_);
@@ -150,7 +150,6 @@ struct TestEnvironment {
             kShMemCount,
             nullptr /*user_input_monitor*/,
             kEnableAgc,
-            nullptr,
             deleter.Get(),
             renderer_factory_client.MakeRemote())) {}
 
@@ -174,7 +173,7 @@ TEST(AudioInputStreamBrokerTest, StoresProcessAndFrameId) {
 
   AudioInputStreamBroker broker(
       kRenderProcessId, kRenderFrameId, kDeviceId, TestParams(), kShMemCount,
-      nullptr /*user_input_monitor*/, kEnableAgc, nullptr, deleter.Get(),
+      nullptr /*user_input_monitor*/, kEnableAgc, deleter.Get(),
       renderer_factory_client.MakeRemote());
 
   EXPECT_EQ(kRenderProcessId, broker.render_process_id());

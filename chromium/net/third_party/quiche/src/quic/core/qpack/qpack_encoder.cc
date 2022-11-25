@@ -80,6 +80,11 @@ QpackEncoder::Instructions QpackEncoder::FirstPassEncode(
     const spdy::SpdyHeaderBlock& header_list,
     QpackBlockingManager::IndexSet* referred_indices,
     QuicByteCount* encoder_stream_sent_byte_count) {
+  // If previous instructions are buffered in |encoder_stream_sender_|,
+  // do not count them towards the current header block.
+  const QuicByteCount initial_encoder_stream_buffered_byte_count =
+      encoder_stream_sender_.BufferedByteCount();
+
   Instructions instructions;
   instructions.reserve(header_list.size());
 
@@ -266,10 +271,16 @@ QpackEncoder::Instructions QpackEncoder::FirstPassEncode(
     }
   }
 
-  const QuicByteCount sent_byte_count = encoder_stream_sender_.Flush();
+  const QuicByteCount encoder_stream_buffered_byte_count =
+      encoder_stream_sender_.BufferedByteCount();
+  DCHECK_GE(encoder_stream_buffered_byte_count,
+            initial_encoder_stream_buffered_byte_count);
   if (encoder_stream_sent_byte_count) {
-    *encoder_stream_sent_byte_count = sent_byte_count;
+    *encoder_stream_sent_byte_count =
+        encoder_stream_buffered_byte_count -
+        initial_encoder_stream_buffered_byte_count;
   }
+  encoder_stream_sender_.Flush();
 
   ++header_list_count_;
 
@@ -367,21 +378,27 @@ std::string QpackEncoder::EncodeHeaderList(
   return SecondPassEncode(std::move(instructions), required_insert_count);
 }
 
-void QpackEncoder::SetMaximumDynamicTableCapacity(
+bool QpackEncoder::SetMaximumDynamicTableCapacity(
     uint64_t maximum_dynamic_table_capacity) {
-  header_table_.SetMaximumDynamicTableCapacity(maximum_dynamic_table_capacity);
+  return header_table_.SetMaximumDynamicTableCapacity(
+      maximum_dynamic_table_capacity);
 }
 
 void QpackEncoder::SetDynamicTableCapacity(uint64_t dynamic_table_capacity) {
   encoder_stream_sender_.SendSetDynamicTableCapacity(dynamic_table_capacity);
-  encoder_stream_sender_.Flush();
+  // Do not flush encoder stream.  This write can safely be delayed until more
+  // instructions are written.
 
   bool success = header_table_.SetDynamicTableCapacity(dynamic_table_capacity);
   DCHECK(success);
 }
 
-void QpackEncoder::SetMaximumBlockedStreams(uint64_t maximum_blocked_streams) {
+bool QpackEncoder::SetMaximumBlockedStreams(uint64_t maximum_blocked_streams) {
+  if (maximum_blocked_streams < maximum_blocked_streams_) {
+    return false;
+  }
   maximum_blocked_streams_ = maximum_blocked_streams;
+  return true;
 }
 
 void QpackEncoder::OnInsertCountIncrement(uint64_t increment) {

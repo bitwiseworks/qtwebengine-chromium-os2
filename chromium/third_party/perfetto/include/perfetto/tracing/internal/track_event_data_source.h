@@ -25,6 +25,7 @@
 #include "perfetto/tracing/internal/track_event_internal.h"
 #include "perfetto/tracing/track.h"
 #include "perfetto/tracing/track_event_category_registry.h"
+#include "protos/perfetto/common/builtin_clock.pbzero.h"
 #include "protos/perfetto/config/track_event/track_event_config.gen.h"
 #include "protos/perfetto/trace/track_event/track_event.pbzero.h"
 
@@ -150,6 +151,7 @@ class TrackEventDataSource
   // - Two debug annotations
   // - Track
   // - Track + Lambda
+  // - Track + timestamp
   // - Track + Lambda + timestamp
   // - Track + one debug annotation
   // - Track + two debug annotations
@@ -236,6 +238,22 @@ class TrackEventDataSource
     TraceForCategoryImpl<CategoryIndex>(
         instances, dynamic_category, event_name, type, track,
         TrackEventInternal::GetTimeNs(), std::move(arg_function));
+  }
+
+  // Trace point with a track and overridden timestamp.
+  template <size_t CategoryIndex,
+            typename CategoryType,
+            typename TrackType,
+            typename TrackTypeCheck = typename std::enable_if<
+                std::is_convertible<TrackType, Track>::value>::type>
+  static void TraceForCategory(uint32_t instances,
+                               const CategoryType& dynamic_category,
+                               const char* event_name,
+                               perfetto::protos::pbzero::TrackEvent::Type type,
+                               const TrackType& track,
+                               uint64_t timestamp) PERFETTO_NO_INLINE {
+    TraceForCategoryImpl<CategoryIndex>(instances, dynamic_category, event_name,
+                                        type, track, timestamp);
   }
 
   // Trace point with a track, a lambda function and an overridden timestamp.
@@ -406,18 +424,31 @@ class TrackEventDataSource
   }
 
   // Record metadata about different types of timeline tracks. See Track.
+  static void SetTrackDescriptor(const Track& track,
+                                 const protos::gen::TrackDescriptor& desc) {
+    PERFETTO_DCHECK(track.uuid == desc.uuid());
+    TrackRegistry::Get()->UpdateTrack(track, desc.SerializeAsString());
+    Base::template Trace([&](typename Base::TraceContext ctx) {
+      TrackEventInternal::WriteTrackDescriptor(
+          track, ctx.tls_inst_->trace_writer.get());
+    });
+  }
+
+  // DEPRECATED. Only kept for backwards compatibility.
   static void SetTrackDescriptor(
       const Track& track,
       std::function<void(protos::pbzero::TrackDescriptor*)> callback) {
     SetTrackDescriptorImpl(track, std::move(callback));
   }
 
+  // DEPRECATED. Only kept for backwards compatibility.
   static void SetProcessDescriptor(
       std::function<void(protos::pbzero::TrackDescriptor*)> callback,
       const ProcessTrack& track = ProcessTrack::Current()) {
     SetTrackDescriptorImpl(std::move(track), std::move(callback));
   }
 
+  // DEPRECATED. Only kept for backwards compatibility.
   static void SetThreadDescriptor(
       std::function<void(protos::pbzero::TrackDescriptor*)> callback,
       const ThreadTrack& track = ThreadTrack::Current()) {
@@ -434,8 +465,7 @@ class TrackEventDataSource
   static uint64_t GetTraceTimeNs() { return TrackEventInternal::GetTimeNs(); }
 
   // Returns the type of clock used by GetTraceTimeNs().
-  static constexpr protos::pbzero::ClockSnapshot::Clock::BuiltinClocks
-  GetTraceClockId() {
+  static constexpr protos::pbzero::BuiltinClock GetTraceClockId() {
     return TrackEventInternal::GetClockId();
   }
 
@@ -529,8 +559,7 @@ class TrackEventDataSource
   static void SetTrackDescriptorImpl(
       const TrackType& track,
       std::function<void(protos::pbzero::TrackDescriptor*)> callback) {
-    TrackRegistry::Get()->UpdateTrack(
-        track, [&](protos::pbzero::TrackDescriptor* desc) { callback(desc); });
+    TrackRegistry::Get()->UpdateTrack(track, std::move(callback));
     Base::template Trace([&](typename Base::TraceContext ctx) {
       TrackEventInternal::WriteTrackDescriptor(
           track, ctx.tls_inst_->trace_writer.get());

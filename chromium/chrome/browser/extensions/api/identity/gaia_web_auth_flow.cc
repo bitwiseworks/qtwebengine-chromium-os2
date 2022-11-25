@@ -31,10 +31,11 @@ GaiaWebAuthFlow::GaiaWebAuthFlow(Delegate* delegate,
                                  const std::string& locale)
     : delegate_(delegate),
       profile_(profile),
-      account_id_(token_key->account_id) {
+      account_id_(token_key->account_info.account_id) {
   TRACE_EVENT_NESTABLE_ASYNC_BEGIN2(
       "identity", "GaiaWebAuthFlow", this, "extension_id",
-      token_key->extension_id, "account_id", token_key->account_id.ToString());
+      token_key->extension_id, "account_id",
+      token_key->account_info.account_id.ToString());
 
   const char kOAuth2RedirectPathFormat[] = "/%s";
   const char kOAuth2AuthorizeFormat[] =
@@ -223,7 +224,8 @@ void GaiaWebAuthFlow::OnAuthFlowTitleChange(const std::string& title) {
 
 std::unique_ptr<WebAuthFlow> GaiaWebAuthFlow::CreateWebAuthFlow(GURL url) {
   return std::unique_ptr<WebAuthFlow>(
-      new WebAuthFlow(this, profile_, url, WebAuthFlow::INTERACTIVE));
+      new WebAuthFlow(this, profile_, url, WebAuthFlow::INTERACTIVE,
+                      WebAuthFlow::GET_AUTH_TOKEN));
 }
 
 }  // namespace extensions

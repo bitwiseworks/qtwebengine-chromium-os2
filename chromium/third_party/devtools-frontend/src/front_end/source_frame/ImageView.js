@@ -26,8 +26,12 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Host from '../host/host.js';
+import * as Platform from '../platform/platform.js';
 import * as TextUtils from '../text_utils/text_utils.js';
 import * as UI from '../ui/ui.js';
 import * as Workspace from '../workspace/workspace.js';
@@ -43,7 +47,7 @@ export class ImageView extends UI.View.SimpleView {
   constructor(mimeType, contentProvider) {
     super(Common.UIString.UIString('Image'));
     this.registerRequiredCSS('source_frame/imageView.css');
-    this.element.tabIndex = 0;
+    this.element.tabIndex = -1;
     this.element.classList.add('image-view');
     this._url = contentProvider.contentURL();
     this._parsedURL = new Common.ParsedURL.ParsedURL(this._url);
@@ -65,7 +69,6 @@ export class ImageView extends UI.View.SimpleView {
     this._container = this.element.createChild('div', 'image');
     this._imagePreviewElement = this._container.createChild('img', 'resource-image-view');
     this._imagePreviewElement.addEventListener('contextmenu', this._contextMenu.bind(this), true);
-    this._imagePreviewElement.alt = ls`Image from ${this._url}`;
   }
 
   /**
@@ -112,10 +115,13 @@ export class ImageView extends UI.View.SimpleView {
     if (content === null) {
       imageSrc = this._url;
     }
-    const loadPromise = new Promise(x => this._imagePreviewElement.onload = x);
+    const loadPromise = new Promise(x => {
+      this._imagePreviewElement.onload = x;
+    });
     this._imagePreviewElement.src = imageSrc;
+    this._imagePreviewElement.alt = ls`Image from ${this._url}`;
     const size = content && !contentEncoded ? content.length : base64ToSize(content);
-    this._sizeLabel.setText(Number.bytesToString(size));
+    this._sizeLabel.setText(Platform.NumberUtilities.bytesToString(size));
     await loadPromise;
     this._dimensionsLabel.setText(Common.UIString.UIString(
         '%d × %d', this._imagePreviewElement.naturalWidth, this._imagePreviewElement.naturalHeight));

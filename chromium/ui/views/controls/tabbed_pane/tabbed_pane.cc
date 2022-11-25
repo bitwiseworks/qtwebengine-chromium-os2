@@ -7,8 +7,8 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/check_op.h"
 #include "base/i18n/rtl.h"
-#include "base/logging.h"
 #include "base/macros.h"
 #include "build/build_config.h"
 #include "cc/paint/paint_flags.h"
@@ -76,7 +76,7 @@ void Tab::SetSelected(bool selected) {
   contents_->SetVisible(selected);
   contents_->parent()->InvalidateLayout();
   SetState(selected ? State::kActive : State::kInactive);
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
   SetFocusBehavior(selected ? FocusBehavior::ACCESSIBLE_ONLY
                             : FocusBehavior::NEVER);
 #else
@@ -270,9 +270,8 @@ void Tab::UpdatePreferredTitleWidth() {
   SetState(old_state);
 }
 
-BEGIN_METADATA(Tab)
-METADATA_PARENT_CLASS(View)
-END_METADATA()
+BEGIN_METADATA(Tab, View)
+END_METADATA
 
 // static
 constexpr size_t TabStrip::kNoSelectedTab;
@@ -471,10 +470,8 @@ void TabStrip::OnPaintBorder(gfx::Canvas* canvas) {
                    max_main_axis - min_main_axis, kSelectedBorderThickness);
   if (!is_horizontal)
     rect.Transpose();
-  canvas->FillRect(
-      rect, SkColorSetA(GetNativeTheme()->GetSystemColor(
-                            ui::NativeTheme::kColorId_FocusedBorderColor),
-                        SK_AlphaOPAQUE));
+  canvas->FillRect(rect, GetNativeTheme()->GetSystemColor(
+                             ui::NativeTheme::kColorId_TabSelectedBorderColor));
 }
 
 DEFINE_ENUM_CONVERTERS(TabbedPane::Orientation,
@@ -489,12 +486,11 @@ DEFINE_ENUM_CONVERTERS(TabbedPane::TabStripStyle,
                        {TabbedPane::TabStripStyle::kHighlight,
                         base::ASCIIToUTF16("HIGHLIGHT")})
 
-BEGIN_METADATA(TabStrip)
-METADATA_PARENT_CLASS(View)
-ADD_READONLY_PROPERTY_METADATA(TabStrip, int, SelectedTabIndex)
-ADD_READONLY_PROPERTY_METADATA(TabStrip, TabbedPane::Orientation, Orientation)
-ADD_READONLY_PROPERTY_METADATA(TabStrip, TabbedPane::TabStripStyle, Style)
-END_METADATA()
+BEGIN_METADATA(TabStrip, View)
+ADD_READONLY_PROPERTY_METADATA(int, SelectedTabIndex)
+ADD_READONLY_PROPERTY_METADATA(TabbedPane::Orientation, Orientation)
+ADD_READONLY_PROPERTY_METADATA(TabbedPane::TabStripStyle, Style)
+END_METADATA
 
 TabbedPane::TabbedPane(TabbedPane::Orientation orientation,
                        TabbedPane::TabStripStyle style) {
@@ -510,6 +506,11 @@ TabbedPane::TabbedPane(TabbedPane::Orientation orientation,
       views::FlexSpecification(views::MinimumFlexSizeRule::kScaleToZero,
                                views::MaximumFlexSizeRule::kUnbounded));
   contents_->SetLayoutManager(std::make_unique<views::FillLayout>());
+
+  // Support navigating tabs by Ctrl+Tab and Ctrl+Shift+Tab.
+  AddAccelerator(
+      ui::Accelerator(ui::VKEY_TAB, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN));
+  AddAccelerator(ui::Accelerator(ui::VKEY_TAB, ui::EF_CONTROL_DOWN));
 }
 
 TabbedPane::~TabbedPane() = default;
@@ -600,16 +601,6 @@ bool TabbedPane::MoveSelectionBy(int delta) {
   return true;
 }
 
-void TabbedPane::ViewHierarchyChanged(
-    const ViewHierarchyChangedDetails& details) {
-  if (details.is_add) {
-    // Support navigating tabs by Ctrl+Tab and Ctrl+Shift+Tab.
-    AddAccelerator(
-        ui::Accelerator(ui::VKEY_TAB, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN));
-    AddAccelerator(ui::Accelerator(ui::VKEY_TAB, ui::EF_CONTROL_DOWN));
-  }
-}
-
 bool TabbedPane::AcceleratorPressed(const ui::Accelerator& accelerator) {
   // Handle Ctrl+Tab and Ctrl+Shift+Tab navigation of pages.
   DCHECK(accelerator.key_code() == ui::VKEY_TAB && accelerator.IsCtrlDown());
@@ -623,8 +614,7 @@ void TabbedPane::GetAccessibleNodeData(ui::AXNodeData* node_data) {
     node_data->SetName(selected_tab->GetTitleText());
 }
 
-BEGIN_METADATA(TabbedPane)
-METADATA_PARENT_CLASS(View)
-END_METADATA()
+BEGIN_METADATA(TabbedPane, View)
+END_METADATA
 
 }  // namespace views

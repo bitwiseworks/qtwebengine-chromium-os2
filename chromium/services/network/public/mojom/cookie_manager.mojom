@@ -35,6 +35,11 @@ struct CookieManagerParams {
   array<content_settings.mojom.ContentSettingPatternSource>
       settings_for_legacy_cookie_access;
 
+  // Content settings for which storage access grants have been set using
+  // the Storage Access API.
+  array<content_settings.mojom.ContentSettingPatternSource>
+      settings_for_storage_access;
+
   // The type of CookieAccessDelegate to pass to the underlying CookieStore.
   // If these params are not present, CookieManager defaults to using
   // USE_CONTENT_SETTINGS.
@@ -74,6 +79,14 @@ enum CookieSameSite {
   // Reserved 3 (was EXTENDED_MODE), next number is 4.
 };
 
+enum CookieEffectiveSameSite {
+  kNoRestriction = 0,
+  kLaxMode = 1,
+  kStrictMode = 2,
+  kLaxModeAllowUnsafe = 3,
+  kUndefined = 4,
+};
+
 enum ContextType {
   CROSS_SITE,
   SAME_SITE_LAX_METHOD_UNSAFE,
@@ -81,16 +94,10 @@ enum ContextType {
   SAME_SITE_STRICT
 };
 
-enum CrossSchemeness {
-  NONE,
-  INSECURE_SECURE,
-  SECURE_INSECURE
-};
-
 // Keep defaults here in sync with net/cookies/cookie_options.h.
 struct CookieSameSiteContext {
   ContextType context = CROSS_SITE;
-  CrossSchemeness cross_schemeness = NONE;
+  ContextType schemeful_context = CROSS_SITE;
 };
 
 // What rules to apply when determining whether access to a particular cookie is
@@ -129,22 +136,28 @@ struct CanonicalCookie {
 
 struct CookieInclusionStatus {
   // Bitfield. Is defined in
-  // net::CanonicalCookie::CookieInclusionStatus::ExclusionReason.
+  // net::CookieInclusionStatus::ExclusionReason.
+  // net::CookieInclusionStatus::WarningReason.
   uint32 exclusion_reasons;
   // Bitfield. Is defined in
-  // net::CanonicalCookie::CookieInclusionStatus::WarningReason.
   uint32 warning_reasons;
 };
 
-struct CookieWithStatus {
-  CanonicalCookie cookie;
+struct CookieAndLineWithAccessResult {
+  CanonicalCookie? cookie;
+  string cookie_string;
+  CookieAccessResult access_result;
+};
+
+struct CookieAccessResult {
+  CookieEffectiveSameSite effective_same_site;
+  CookieAccessSemantics access_semantics;
   CookieInclusionStatus status;
 };
 
-struct CookieAndLineWithStatus {
-  CanonicalCookie? cookie;
-  string cookie_string;
-  CookieInclusionStatus status;
+struct CookieWithAccessResult {
+  CanonicalCookie cookie;
+  CookieAccessResult access_result;
 };
 
 // Keep values here in sync with net::CookieChangeCause.
@@ -169,8 +182,8 @@ enum CookieChangeCause {
 struct CookieChangeInfo {
   // The cookie that changed, in its post-change state.
   CanonicalCookie cookie;
-  // Access semantics of the cookie at the time of the change.
-  CookieAccessSemantics access_semantics;
+  // Access results at the time of the change.
+  CookieAccessResult access_result;
   CookieChangeCause cause;
 };
 
@@ -282,19 +295,19 @@ interface CookieManager {
   // blocked from being sent along with the reason each cookie was blocked. By
   // default, that option is not set and |excluded_cookies| is an empty list.
   GetCookieList(url.mojom.Url url, CookieOptions cookie_options)
-      => (array<CookieWithStatus> cookies,
-          array<CookieWithStatus> excluded_cookies);
+      => (array<CookieWithAccessResult> cookies,
+          array<CookieWithAccessResult> excluded_cookies);
 
-  // Set a cookie.  |source_scheme| is used to check whether existing secure
+  // Set a cookie.  |source_url| is used to check whether existing secure
   // cookies can be overwritten (secure cookies may be created from a
-  // non-secure source), and whether the scheme is permitted to use cookies in
-  // the first place.  |cookie_options| indicates whether http_only
+  // non-secure source), and whether the URL's scheme is permitted to use
+  // cookies in the first place.  |cookie_options| indicates whether http_only
   // or SameSite cookies may be overwritten. If a cookie is not permitted to be
   // set, |status| will indicate why it was blocked. If the cookie is permitted,
   // |status| will be set to INCLUDE.
-  SetCanonicalCookie(CanonicalCookie cookie, string source_scheme,
+  SetCanonicalCookie(CanonicalCookie cookie, url.mojom.Url source_url,
                      CookieOptions cookie_options)
-      => (CookieInclusionStatus status);
+      => (CookieAccessResult access_result);
 
   // Delete a cookie. Returns true if a cookie was deleted.
   DeleteCanonicalCookie(CanonicalCookie cookie) => (bool success);

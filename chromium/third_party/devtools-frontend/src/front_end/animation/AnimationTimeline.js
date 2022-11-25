@@ -1,6 +1,8 @@
 // Copyright (c) 2015 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
 
 import * as Common from '../common/common.js';
 import * as Host from '../host/host.js';
@@ -47,7 +49,7 @@ export class AnimationTimeline extends UI.Widget.VBox {
     SDK.SDKModel.TargetManager.instance().addModelListener(
         SDK.DOMModel.DOMModel, SDK.DOMModel.Events.NodeRemoved, this._nodeRemoved, this);
     SDK.SDKModel.TargetManager.instance().observeModels(AnimationModel, this);
-    self.UI.context.addFlavorChangeListener(SDK.DOMModel.DOMNode, this._nodeChanged, this);
+    UI.Context.Context.instance().addFlavorChangeListener(SDK.DOMModel.DOMNode, this._nodeChanged, this);
   }
 
   /**
@@ -114,7 +116,9 @@ export class AnimationTimeline extends UI.Widget.VBox {
    * @return {!Element} element
    */
   _createScrubber() {
-    this._timelineScrubber = createElementWithClass('div', 'animation-scrubber hidden');
+    this._timelineScrubber = document.createElement('div');
+    this._timelineScrubber.classList.add('animation-scrubber');
+    this._timelineScrubber.classList.add('hidden');
     this._timelineScrubberLine = this._timelineScrubber.createChild('div', 'animation-scrubber-line');
     this._timelineScrubberLine.createChild('div', 'animation-scrubber-head');
     this._timelineScrubber.createChild('div', 'animation-time-overlay');
@@ -236,13 +240,18 @@ export class AnimationTimeline extends UI.Widget.VBox {
           }
         }
         console.assert(animGroup);
+        if (!animGroup) {
+          return Promise.resolve(false);
+        }
         const screenshots = animGroup.screenshots();
         if (!screenshots.length) {
           return Promise.resolve(false);
         }
 
         let fulfill;
-        const promise = new Promise(x => fulfill = x);
+        const promise = new Promise(x => {
+          fulfill = x;
+        });
         if (!screenshots[0].complete) {
           screenshots[0].onload = onFirstScreenshotLoaded.bind(null, screenshots);
         } else {
@@ -816,7 +825,8 @@ export class NodeUI {
    * @param {!AnimationEffect} animationEffect
    */
   constructor(animationEffect) {
-    this.element = createElementWithClass('div', 'animation-node-row');
+    this.element = document.createElement('div');
+    this.element.classList.add('animation-node-row');
     this._description = this.element.createChild('div', 'animation-node-description');
     this._description.tabIndex = 0;
     this._timelineElement = this.element.createChild('div', 'animation-node-timeline');
@@ -861,7 +871,8 @@ export class NodeUI {
 
   _nodeChanged() {
     this.element.classList.toggle(
-        'animation-node-selected', this._node && this._node === self.UI.context.flavor(SDK.DOMModel.DOMNode));
+        'animation-node-selected',
+        this._node && this._node === UI.Context.Context.instance().flavor(SDK.DOMModel.DOMNode));
   }
 }
 

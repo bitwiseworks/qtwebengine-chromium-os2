@@ -17,17 +17,19 @@ class TestDelegate : public CFX_GlobalData::Delegate {
   ~TestDelegate() override {}
 
   bool StoreBuffer(pdfium::span<const uint8_t> buffer) override {
-    last_buffer_ = std::vector<uint8_t>(buffer.begin(), buffer.end());
+    last_buffer_ = std::vector<uint8_t, FxAllocAllocator<uint8_t>>(
+        buffer.begin(), buffer.end());
     return true;
   }
   Optional<pdfium::span<uint8_t>> LoadBuffer() override {
     return pdfium::span<uint8_t>(last_buffer_);
   }
   void BufferDone() override {
-    last_buffer_ = std::vector<uint8_t>();  // Catch misuse after done.
+    // Catch misuse after done.
+    last_buffer_ = std::vector<uint8_t, FxAllocAllocator<uint8_t>>();
   }
 
-  std::vector<uint8_t> last_buffer_;
+  std::vector<uint8_t, FxAllocAllocator<uint8_t>> last_buffer_;
 };
 
 }  // namespace
@@ -71,25 +73,25 @@ TEST(CFXGlobalData, StoreReload) {
   auto* element = pInstance->GetAt(0);
   ASSERT_TRUE(element);
   EXPECT_EQ("double", element->data.sKey);
-  EXPECT_EQ(CFX_Value::DataType::NUMBER, element->data.nType);
+  EXPECT_EQ(CFX_Value::DataType::kNumber, element->data.nType);
   EXPECT_EQ(2.0, element->data.dData);
 
   element = pInstance->GetAt(1);
   ASSERT_TRUE(element);
   EXPECT_EQ("string", element->data.sKey);
-  EXPECT_EQ(CFX_Value::DataType::STRING, element->data.nType);
+  EXPECT_EQ(CFX_Value::DataType::kString, element->data.nType);
   EXPECT_EQ("clams", element->data.sData);
 
   element = pInstance->GetAt(2);
   ASSERT_TRUE(element);
   EXPECT_EQ("boolean", element->data.sKey);
-  EXPECT_EQ(CFX_Value::DataType::BOOLEAN, element->data.nType);
+  EXPECT_EQ(CFX_Value::DataType::kBoolean, element->data.nType);
   EXPECT_EQ(true, element->data.bData);
 
   element = pInstance->GetAt(3);
   ASSERT_TRUE(element);
   EXPECT_EQ("null", element->data.sKey);
-  EXPECT_EQ(CFX_Value::DataType::NULLOBJ, element->data.nType);
+  EXPECT_EQ(CFX_Value::DataType::kNull, element->data.nType);
 
   // Arrays don't get persisted.
   element = pInstance->GetAt(4);
@@ -113,25 +115,25 @@ TEST(CFXGlobalData, ResetValues) {
   auto* element = pInstance->GetAt(0);
   ASSERT_TRUE(element);
   EXPECT_EQ("double", element->data.sKey);
-  EXPECT_EQ(CFX_Value::DataType::NUMBER, element->data.nType);
+  EXPECT_EQ(CFX_Value::DataType::kNumber, element->data.nType);
   EXPECT_EQ(2.0, element->data.dData);
 
   element = pInstance->GetAt(1);
   ASSERT_TRUE(element);
   EXPECT_EQ("string", element->data.sKey);
-  EXPECT_EQ(CFX_Value::DataType::STRING, element->data.nType);
+  EXPECT_EQ(CFX_Value::DataType::kString, element->data.nType);
   EXPECT_EQ("clams", element->data.sData);
 
   element = pInstance->GetAt(2);
   ASSERT_TRUE(element);
   EXPECT_EQ("boolean", element->data.sKey);
-  EXPECT_EQ(CFX_Value::DataType::BOOLEAN, element->data.nType);
+  EXPECT_EQ(CFX_Value::DataType::kBoolean, element->data.nType);
   EXPECT_EQ(true, element->data.bData);
 
   element = pInstance->GetAt(3);
   ASSERT_TRUE(element);
   EXPECT_EQ("null", element->data.sKey);
-  EXPECT_EQ(CFX_Value::DataType::NULLOBJ, element->data.nType);
+  EXPECT_EQ(CFX_Value::DataType::kNull, element->data.nType);
 
   ASSERT_TRUE(pInstance->Release());
 }

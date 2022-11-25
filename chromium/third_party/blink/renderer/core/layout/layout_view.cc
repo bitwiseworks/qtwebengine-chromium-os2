@@ -24,9 +24,10 @@
 #include <inttypes.h>
 
 #include "build/build_config.h"
+#include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/common/widget/screen_info.h"
 #include "third_party/blink/public/mojom/scroll/scrollbar_mode.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
-#include "third_party/blink/public/platform/web_screen_info.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
@@ -45,6 +46,7 @@
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_root.h"
 #include "third_party/blink/renderer/core/layout/view_fragmentation_context.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
+#include "third_party/blink/renderer/core/page/named_pages_mapper.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/page/scrolling/root_scroller_controller.h"
 #include "third_party/blink/renderer/core/page/scrolling/scrolling_coordinator_context.h"
@@ -127,6 +129,7 @@ LayoutView::~LayoutView() = default;
 
 bool LayoutView::HitTest(const HitTestLocation& location,
                          HitTestResult& result) {
+  NOT_DESTROYED();
   // We have to recursively update layout/style here because otherwise, when the
   // hit test recurses into a child document, it could trigger a layout on the
   // parent document, which can destroy PaintLayer that are higher up in the
@@ -135,9 +138,15 @@ bool LayoutView::HitTest(const HitTestLocation& location,
   // Note that if an iframe has its render pipeline throttled, it will not
   // update layout here, and it will also not propagate the hit test into the
   // iframe's inner document.
-  if (!GetFrameView()->UpdateAllLifecyclePhasesExceptPaint(
-          DocumentUpdateReason::kHitTest))
-    return false;
+  if (RuntimeEnabledFeatures::CompositingOptimizationsEnabled()) {
+    if (!GetFrameView()->UpdateLifecycleToPrePaintClean(
+            DocumentUpdateReason::kHitTest))
+      return false;
+  } else {
+    if (!GetFrameView()->UpdateAllLifecyclePhasesExceptPaint(
+            DocumentUpdateReason::kHitTest))
+      return false;
+  }
   HitTestLatencyRecorder hit_test_latency_recorder(
       result.GetHitTestRequest().AllowsChildFrameContent());
   return HitTestNoLifecycleUpdate(location, result);
@@ -145,6 +154,7 @@ bool LayoutView::HitTest(const HitTestLocation& location,
 
 bool LayoutView::HitTestNoLifecycleUpdate(const HitTestLocation& location,
                                           HitTestResult& result) {
+  NOT_DESTROYED();
   TRACE_EVENT_BEGIN0("blink,devtools.timeline", "HitTest");
   hit_test_count_++;
 
@@ -206,6 +216,7 @@ bool LayoutView::HitTestNoLifecycleUpdate(const HitTestLocation& location,
 }
 
 void LayoutView::ClearHitTestCache() {
+  NOT_DESTROYED();
   hit_test_cache_->Clear();
   auto* object = GetFrame()->OwnerLayoutObject();
   if (object)
@@ -216,19 +227,23 @@ void LayoutView::ComputeLogicalHeight(
     LayoutUnit logical_height,
     LayoutUnit,
     LogicalExtentComputedValues& computed_values) const {
+  NOT_DESTROYED();
   computed_values.extent_ = LayoutUnit(ViewLogicalHeightForBoxSizing());
 }
 
 void LayoutView::UpdateLogicalWidth() {
+  NOT_DESTROYED();
   SetLogicalWidth(LayoutUnit(ViewLogicalWidthForBoxSizing()));
 }
 
 bool LayoutView::IsChildAllowed(LayoutObject* child,
                                 const ComputedStyle&) const {
+  NOT_DESTROYED();
   return child->IsBox();
 }
 
 bool LayoutView::CanHaveChildren() const {
+  NOT_DESTROYED();
   FrameOwner* owner = GetFrame()->Owner();
   if (!owner)
     return true;
@@ -249,11 +264,13 @@ bool LayoutView::CanHaveChildren() const {
 
 #if DCHECK_IS_ON()
 void LayoutView::CheckLayoutState() {
+  NOT_DESTROYED();
   DCHECK(!layout_state_->Next());
 }
 #endif
 
 bool LayoutView::ShouldPlaceBlockDirectionScrollbarOnLogicalLeft() const {
+  NOT_DESTROYED();
   LocalFrame& frame = GetFrameView()->GetFrame();
   // See crbug.com/249860
   if (frame.IsMainFrame())
@@ -270,6 +287,7 @@ bool LayoutView::ShouldPlaceBlockDirectionScrollbarOnLogicalLeft() const {
 }
 
 void LayoutView::UpdateBlockLayout(bool relayout_children) {
+  NOT_DESTROYED();
   SubtreeLayoutScope layout_scope(*this);
 
   // Use calcWidth/Height to get the new width/height, since this will take the
@@ -306,10 +324,15 @@ void LayoutView::UpdateBlockLayout(bool relayout_children) {
 }
 
 void LayoutView::UpdateLayout() {
-  if (!GetDocument().Printing())
+  NOT_DESTROYED();
+  if (!GetDocument().Printing()) {
     SetPageLogicalHeight(LayoutUnit());
+    named_pages_mapper_ = nullptr;
+  }
 
   if (PageLogicalHeight() && ShouldUsePrintingLayout()) {
+    if (RuntimeEnabledFeatures::NamedPagesEnabled())
+      named_pages_mapper_ = std::make_unique<NamedPagesMapper>();
     intrinsic_logical_widths_ = LogicalWidth();
     if (!fragmentation_context_) {
       fragmentation_context_ =
@@ -340,6 +363,15 @@ void LayoutView::UpdateLayout() {
 
   LayoutBlockFlow::UpdateLayout();
 
+  if (named_pages_mapper_) {
+    // If a start page name got propagated all the way up to the root, that will
+    // be the name for the first page. Usually we insert names into the mapper
+    // as part of inserting forced breaks, but in this case there'll be no
+    // break, since we're at the first page.
+    if (const AtomicString first_page_name = StartPageName())
+      named_pages_mapper_->NameFirstPage(first_page_name);
+  }
+
 #if DCHECK_IS_ON()
   CheckLayoutState();
 #endif
@@ -347,6 +379,7 @@ void LayoutView::UpdateLayout() {
 }
 
 PhysicalRect LayoutView::LocalVisualRectIgnoringVisibility() const {
+  NOT_DESTROYED();
   PhysicalRect rect = PhysicalVisualOverflowRect();
   rect.Unite(PhysicalRect(rect.offset, ViewRect().size));
   return rect;
@@ -355,6 +388,7 @@ PhysicalRect LayoutView::LocalVisualRectIgnoringVisibility() const {
 void LayoutView::MapLocalToAncestor(const LayoutBoxModelObject* ancestor,
                                     TransformState& transform_state,
                                     MapCoordinatesFlags mode) const {
+  NOT_DESTROYED();
   if (!ancestor && !(mode & kIgnoreTransforms) &&
       ShouldUseTransformFromContainer(nullptr)) {
     TransformationMatrix t;
@@ -380,8 +414,8 @@ void LayoutView::MapLocalToAncestor(const LayoutBoxModelObject* ancestor,
                                                    mode);
     } else {
       DCHECK(!ancestor);
-      if (mode & kApplyRemoteRootFrameOffset)
-        GetFrameView()->MapLocalToRemoteRootFrame(transform_state);
+      if (mode & kApplyRemoteMainFrameTransform)
+        GetFrameView()->MapLocalToRemoteMainFrame(transform_state);
     }
   }
 }
@@ -389,6 +423,7 @@ void LayoutView::MapLocalToAncestor(const LayoutBoxModelObject* ancestor,
 const LayoutObject* LayoutView::PushMappingToContainer(
     const LayoutBoxModelObject* ancestor_to_stop_at,
     LayoutGeometryMap& geometry_map) const {
+  NOT_DESTROYED();
   PhysicalOffset offset;
   LayoutObject* container = nullptr;
 
@@ -419,6 +454,7 @@ const LayoutObject* LayoutView::PushMappingToContainer(
 void LayoutView::MapAncestorToLocal(const LayoutBoxModelObject* ancestor,
                                     TransformState& transform_state,
                                     MapCoordinatesFlags mode) const {
+  NOT_DESTROYED();
   if (this != ancestor && (mode & kTraverseDocumentBoundaries)) {
     if (auto* parent_doc_layout_object = GetFrame()->OwnerLayoutObject()) {
       // A LayoutView is a containing block for fixed-position elements, so
@@ -430,10 +466,10 @@ void LayoutView::MapAncestorToLocal(const LayoutBoxModelObject* ancestor,
           parent_doc_layout_object->PhysicalContentBoxOffset());
     } else {
       DCHECK(!ancestor);
-      // Note that MapLocalToAncestorRootFrame is correct here because
+      // Note that MapLocalToRemoteMainFrame is correct here because
       // transform_state will be set to kUnapplyInverseTransformDirection.
-      if (mode & kApplyRemoteRootFrameOffset)
-        GetFrameView()->MapLocalToRemoteRootFrame(transform_state);
+      if (mode & kApplyRemoteMainFrameTransform)
+        GetFrameView()->MapLocalToRemoteMainFrame(transform_state);
     }
   } else {
     DCHECK(this == ancestor || !ancestor);
@@ -444,11 +480,13 @@ void LayoutView::MapAncestorToLocal(const LayoutBoxModelObject* ancestor,
 }
 
 void LayoutView::Paint(const PaintInfo& paint_info) const {
+  NOT_DESTROYED();
   ViewPainter(*this).Paint(paint_info);
 }
 
 void LayoutView::PaintBoxDecorationBackground(const PaintInfo& paint_info,
                                               const PhysicalOffset&) const {
+  NOT_DESTROYED();
   ViewPainter(*this).PaintBoxDecorationBackground(paint_info);
 }
 
@@ -462,6 +500,7 @@ static void SetShouldDoFullPaintInvalidationForViewAndAllDescendantsInternal(
 }
 
 void LayoutView::SetShouldDoFullPaintInvalidationForViewAndAllDescendants() {
+  NOT_DESTROYED();
   if (RuntimeEnabledFeatures::CompositeAfterPaintEnabled())
     SetSubtreeShouldDoFullPaintInvalidation();
   else
@@ -469,6 +508,7 @@ void LayoutView::SetShouldDoFullPaintInvalidationForViewAndAllDescendants() {
 }
 
 void LayoutView::InvalidatePaintForViewAndCompositedLayers() {
+  NOT_DESTROYED();
   SetSubtreeShouldDoFullPaintInvalidation();
 
   if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
@@ -483,6 +523,7 @@ bool LayoutView::MapToVisualRectInAncestorSpace(
     PhysicalRect& rect,
     MapCoordinatesFlags mode,
     VisualRectFlags visual_rect_flags) const {
+  NOT_DESTROYED();
   bool intersects = true;
   if (MapToVisualRectInAncestorSpaceInternalFastPath(
           ancestor, rect, visual_rect_flags, intersects))
@@ -502,6 +543,7 @@ bool LayoutView::MapToVisualRectInAncestorSpaceInternal(
     const LayoutBoxModelObject* ancestor,
     TransformState& transform_state,
     VisualRectFlags visual_rect_flags) const {
+  NOT_DESTROYED();
   return MapToVisualRectInAncestorSpaceInternal(ancestor, transform_state, 0,
                                                 visual_rect_flags);
 }
@@ -511,6 +553,7 @@ bool LayoutView::MapToVisualRectInAncestorSpaceInternal(
     TransformState& transform_state,
     MapCoordinatesFlags mode,
     VisualRectFlags visual_rect_flags) const {
+  NOT_DESTROYED();
   if (mode & kIsFixed)
     transform_state.Move(OffsetForFixedPosition());
 
@@ -568,34 +611,40 @@ bool LayoutView::MapToVisualRectInAncestorSpaceInternal(
 }
 
 PhysicalOffset LayoutView::OffsetForFixedPosition() const {
-  return HasOverflowClip() ? PhysicalOffset(ScrolledContentOffset())
-                           : PhysicalOffset();
+  NOT_DESTROYED();
+  return IsScrollContainer() ? PhysicalOffset(ScrolledContentOffset())
+                             : PhysicalOffset();
 }
 
 PhysicalOffset LayoutView::PixelSnappedOffsetForFixedPosition() const {
+  NOT_DESTROYED();
   return PhysicalOffset(FlooredIntPoint(OffsetForFixedPosition()));
 }
 
 void LayoutView::AbsoluteQuads(Vector<FloatQuad>& quads,
                                MapCoordinatesFlags mode) const {
+  NOT_DESTROYED();
   quads.push_back(LocalRectToAbsoluteQuad(
       PhysicalRect(PhysicalOffset(), PhysicalSizeToBeNoop(Layer()->Size())),
       mode));
 }
 
 void LayoutView::CommitPendingSelection() {
+  NOT_DESTROYED();
   TRACE_EVENT0("blink", "LayoutView::commitPendingSelection");
   DCHECK(!NeedsLayout());
   frame_view_->GetFrame().Selection().CommitAppearanceIfNeeded();
 }
 
 bool LayoutView::ShouldUsePrintingLayout() const {
+  NOT_DESTROYED();
   if (!GetDocument().Printing() || !frame_view_)
     return false;
   return frame_view_->GetFrame().ShouldUsePrintingLayout();
 }
 
 PhysicalRect LayoutView::ViewRect() const {
+  NOT_DESTROYED();
   if (ShouldUsePrintingLayout())
     return PhysicalRect(PhysicalOffset(), Size());
   if (frame_view_)
@@ -606,6 +655,7 @@ PhysicalRect LayoutView::ViewRect() const {
 PhysicalRect LayoutView::OverflowClipRect(
     const PhysicalOffset& location,
     OverlayScrollbarClipBehavior overlay_scrollbar_clip_behavior) const {
+  NOT_DESTROYED();
   PhysicalRect rect = ViewRect();
   if (rect.IsEmpty()) {
     return LayoutBox::OverflowClipRect(location,
@@ -613,7 +663,7 @@ PhysicalRect LayoutView::OverflowClipRect(
   }
 
   rect.offset = location;
-  if (HasOverflowClip())
+  if (IsScrollContainer())
     ExcludeScrollbars(rect, overlay_scrollbar_clip_behavior);
 
   return rect;
@@ -621,6 +671,7 @@ PhysicalRect LayoutView::OverflowClipRect(
 
 void LayoutView::SetAutosizeScrollbarModes(mojom::blink::ScrollbarMode h_mode,
                                            mojom::blink::ScrollbarMode v_mode) {
+  NOT_DESTROYED();
   DCHECK_EQ(v_mode == mojom::blink::ScrollbarMode::kAuto,
             h_mode == mojom::blink::ScrollbarMode::kAuto);
   autosize_v_scrollbar_mode_ = v_mode;
@@ -630,6 +681,7 @@ void LayoutView::SetAutosizeScrollbarModes(mojom::blink::ScrollbarMode h_mode,
 void LayoutView::CalculateScrollbarModes(
     mojom::blink::ScrollbarMode& h_mode,
     mojom::blink::ScrollbarMode& v_mode) const {
+  NOT_DESTROYED();
 #define RETURN_SCROLLBAR_MODE(mode) \
   {                                 \
     h_mode = v_mode = mode;         \
@@ -676,11 +728,11 @@ void LayoutView::CalculateScrollbarModes(
       RETURN_SCROLLBAR_MODE(mojom::blink::ScrollbarMode::kAlwaysOff);
   }
 
-  Element* viewportDefiningElement = document.ViewportDefiningElement();
-  if (!viewportDefiningElement)
+  Element* viewport_defining_element = document.ViewportDefiningElement();
+  if (!viewport_defining_element)
     RETURN_SCROLLBAR_MODE(mojom::blink::ScrollbarMode::kAuto);
 
-  LayoutObject* viewport = viewportDefiningElement->GetLayoutObject();
+  LayoutObject* viewport = viewport_defining_element->GetLayoutObject();
   if (!viewport)
     RETURN_SCROLLBAR_MODE(mojom::blink::ScrollbarMode::kAuto);
 
@@ -705,16 +757,16 @@ void LayoutView::CalculateScrollbarModes(
   EOverflow overflow_x = style->OverflowX();
   EOverflow overflow_y = style->OverflowY();
 
-  bool shouldIgnoreOverflowHidden = false;
+  bool should_ignore_overflow_hidden = false;
   if (Settings* settings = document.GetSettings()) {
     if (settings->GetIgnoreMainFrameOverflowHiddenQuirk() &&
         frame->IsMainFrame())
-      shouldIgnoreOverflowHidden = true;
+      should_ignore_overflow_hidden = true;
   }
-  if (!shouldIgnoreOverflowHidden) {
-    if (overflow_x == EOverflow::kHidden)
+  if (!should_ignore_overflow_hidden) {
+    if (overflow_x == EOverflow::kHidden || overflow_x == EOverflow::kClip)
       h_mode = mojom::blink::ScrollbarMode::kAlwaysOff;
-    if (overflow_y == EOverflow::kHidden)
+    if (overflow_y == EOverflow::kHidden || overflow_y == EOverflow::kClip)
       v_mode = mojom::blink::ScrollbarMode::kAlwaysOff;
   }
 
@@ -727,46 +779,60 @@ void LayoutView::CalculateScrollbarModes(
 }
 
 PhysicalRect LayoutView::DocumentRect() const {
+  NOT_DESTROYED();
   return FlipForWritingMode(LayoutOverflowRect());
 }
 
 IntSize LayoutView::GetLayoutSize(
     IncludeScrollbarsInRect scrollbar_inclusion) const {
-  if (ShouldUsePrintingLayout())
-    return IntSize(Size().Width().ToInt(), PageLogicalHeight().ToInt());
+  NOT_DESTROYED();
+  if (ShouldUsePrintingLayout()) {
+    LayoutSize size = Size();
+    if (StyleRef().IsHorizontalWritingMode())
+      size.SetHeight(PageLogicalHeight());
+    else
+      size.SetWidth(PageLogicalHeight());
+    return FlooredIntSize(size);
+  }
 
   if (!frame_view_)
     return IntSize();
 
   IntSize result = frame_view_->GetLayoutSize();
-  if (scrollbar_inclusion == kExcludeScrollbars)
+  if (scrollbar_inclusion == kExcludeScrollbars &&
+      frame_view_->LayoutViewport())
     result = frame_view_->LayoutViewport()->ExcludeScrollbars(result);
   return result;
 }
 
 int LayoutView::ViewLogicalWidth(
     IncludeScrollbarsInRect scrollbar_inclusion) const {
+  NOT_DESTROYED();
   return StyleRef().IsHorizontalWritingMode() ? ViewWidth(scrollbar_inclusion)
                                               : ViewHeight(scrollbar_inclusion);
 }
 
 int LayoutView::ViewLogicalHeight(
     IncludeScrollbarsInRect scrollbar_inclusion) const {
+  NOT_DESTROYED();
   return StyleRef().IsHorizontalWritingMode() ? ViewHeight(scrollbar_inclusion)
                                               : ViewWidth(scrollbar_inclusion);
 }
 
 LayoutUnit LayoutView::ViewLogicalHeightForPercentages() const {
+  NOT_DESTROYED();
   if (ShouldUsePrintingLayout())
     return PageLogicalHeight();
   return LayoutUnit(ViewLogicalHeight());
 }
 
 float LayoutView::ZoomFactor() const {
+  NOT_DESTROYED();
   return frame_view_->GetFrame().PageZoomFactor();
 }
 
 const LayoutBox& LayoutView::RootBox() const {
+  NOT_DESTROYED();
   Element* document_element = GetDocument().documentElement();
   DCHECK(document_element);
   DCHECK(document_element->GetLayoutObject());
@@ -775,6 +841,7 @@ const LayoutBox& LayoutView::RootBox() const {
 }
 
 void LayoutView::UpdateAfterLayout() {
+  NOT_DESTROYED();
   // Unlike every other layer, the root PaintLayer takes its size from the
   // layout viewport size.  The call to AdjustViewSize() will update the
   // frame's contents size, which will also update the page's minimum scale
@@ -786,13 +853,14 @@ void LayoutView::UpdateAfterLayout() {
     GetFrameView()->AdjustViewSize();
   if (frame.IsMainFrame())
     frame.GetChromeClient().ResizeAfterLayout();
-  if (HasOverflowClip())
+  if (IsScrollContainer())
     GetScrollableArea()->ClampScrollOffsetAfterOverflowChange();
   LayoutBlockFlow::UpdateAfterLayout();
 }
 
 void LayoutView::UpdateHitTestResult(HitTestResult& result,
                                      const PhysicalOffset& point) const {
+  NOT_DESTROYED();
   if (result.InnerNode())
     return;
 
@@ -807,38 +875,43 @@ void LayoutView::UpdateHitTestResult(HitTestResult& result,
 }
 
 bool LayoutView::UsesCompositing() const {
+  NOT_DESTROYED();
   return compositor_ && compositor_->StaleInCompositingMode();
 }
 
 PaintLayerCompositor* LayoutView::Compositor() {
+  NOT_DESTROYED();
   return compositor_.get();
 }
 
 void LayoutView::CleanUpCompositor() {
+  NOT_DESTROYED();
   DCHECK(compositor_);
   compositor_->CleanUp();
 }
 
 IntervalArena* LayoutView::GetIntervalArena() {
+  NOT_DESTROYED();
   if (!interval_arena_)
     interval_arena_ = IntervalArena::Create();
   return interval_arena_.get();
 }
 
 bool LayoutView::BackgroundIsKnownToBeOpaqueInRect(const PhysicalRect&) const {
-  // FIXME: Remove this main frame check. Same concept applies to subframes too.
-  if (!GetFrame()->IsMainFrame())
-    return false;
-
-  return frame_view_->HasOpaqueBackground();
+  NOT_DESTROYED();
+  // The base background color applies to the main frame only.
+  return GetFrame()->IsMainFrame() &&
+         !frame_view_->BaseBackgroundColor().HasAlpha();
 }
 
 FloatSize LayoutView::ViewportSizeForViewportUnits() const {
+  NOT_DESTROYED();
   return GetFrameView() ? GetFrameView()->ViewportSizeForViewportUnits()
                         : FloatSize();
 }
 
 void LayoutView::WillBeDestroyed() {
+  NOT_DESTROYED();
   // TODO(wangxianzhu): This is a workaround of crbug.com/570706.
   // Should find and fix the root cause.
   if (PaintLayer* layer = Layer())
@@ -848,18 +921,21 @@ void LayoutView::WillBeDestroyed() {
 }
 
 void LayoutView::UpdateFromStyle() {
+  NOT_DESTROYED();
   LayoutBlockFlow::UpdateFromStyle();
 
   // LayoutView of the main frame is responsible for painting base background.
-  if (GetDocument().IsInMainFrame())
+  if (GetFrameView()->ShouldPaintBaseBackgroundColor())
     SetHasBoxDecorationBackground(true);
 }
 
-bool LayoutView::RecalcLayoutOverflow() {
+RecalcLayoutOverflowResult LayoutView::RecalcLayoutOverflow() {
+  NOT_DESTROYED();
   if (!NeedsLayoutOverflowRecalc())
-    return false;
-  bool result = LayoutBlockFlow::RecalcLayoutOverflow();
-  if (result) {
+    return RecalcLayoutOverflowResult();
+
+  auto result = LayoutBlockFlow::RecalcLayoutOverflow();
+  if (result.layout_overflow_changed) {
     // Changing overflow should notify scrolling coordinator to ensures that it
     // updates non-fast scroll rects even if there is no layout.
     if (ScrollingCoordinator* scrolling_coordinator =
@@ -878,18 +954,34 @@ bool LayoutView::RecalcLayoutOverflow() {
 }
 
 PhysicalRect LayoutView::DebugRect() const {
+  NOT_DESTROYED();
   return PhysicalRect(IntRect(0, 0, ViewWidth(kIncludeScrollbars),
                               ViewHeight(kIncludeScrollbars)));
 }
 
 bool LayoutView::UpdateLogicalWidthAndColumnWidth() {
+  NOT_DESTROYED();
   bool relayout_children = LayoutBlockFlow::UpdateLogicalWidthAndColumnWidth();
   // When we're printing, the size of LayoutView is changed outside of layout,
   // so we'll fail to detect any changes here. Just return true.
   return relayout_children || ShouldUsePrintingLayout();
 }
 
+CompositingReasons LayoutView::AdditionalCompositingReasons() const {
+  NOT_DESTROYED();
+  // TODO(lfg): Audit for portals
+  const LocalFrame& frame = frame_view_->GetFrame();
+  if (frame.OwnerLayoutObject() &&
+      base::FeatureList::IsEnabled(
+          blink::features::kCompositeCrossOriginIframes) &&
+      frame.IsCrossOriginToParentFrame()) {
+    return CompositingReason::kIFrame;
+  }
+  return CompositingReason::kNone;
+}
+
 void LayoutView::UpdateCounters() {
+  NOT_DESTROYED();
   if (!needs_counter_update_)
     return;
 
@@ -907,30 +999,13 @@ void LayoutView::UpdateCounters() {
 }
 
 bool LayoutView::HasTickmarks() const {
-  return !tickmarks_override_.IsEmpty() ||
-         GetDocument().Markers().PossiblyHasTextMatchMarkers();
+  NOT_DESTROYED();
+  return GetDocument().Markers().PossiblyHasTextMatchMarkers();
 }
 
 Vector<IntRect> LayoutView::GetTickmarks() const {
-  if (!tickmarks_override_.IsEmpty())
-    return tickmarks_override_;
-
+  NOT_DESTROYED();
   return GetDocument().Markers().LayoutRectsForTextMatchMarkers();
-}
-
-void LayoutView::OverrideTickmarks(const Vector<IntRect>& tickmarks) {
-  tickmarks_override_ = tickmarks;
-  InvalidatePaintForTickmarks();
-}
-
-void LayoutView::InvalidatePaintForTickmarks() {
-  ScrollableArea* scrollable_area = GetScrollableArea();
-  if (!scrollable_area)
-    return;
-  Scrollbar* scrollbar = scrollable_area->VerticalScrollbar();
-  if (!scrollbar)
-    return;
-  scrollbar->SetNeedsPaintInvalidation(static_cast<ScrollbarPart>(~kThumbPart));
 }
 
 }  // namespace blink

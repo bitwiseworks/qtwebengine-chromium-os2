@@ -8,12 +8,14 @@
 #include <memory>
 
 #include "base/optional.h"
+#include "device/vr/public/mojom/pose.h"
 #include "device/vr/public/mojom/vr_service.mojom-blink-forward.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/transforms/transformation_matrix.h"
 
 namespace blink {
 
+class ExceptionState;
 class XRSession;
 class XRSpace;
 
@@ -27,30 +29,26 @@ class XRAnchor : public ScriptWrappable {
 
   uint64_t id() const;
 
-  XRSpace* anchorSpace() const;
+  XRSpace* anchorSpace(ExceptionState& exception_state) const;
 
   base::Optional<TransformationMatrix> MojoFromObject() const;
 
-  void detach();
+  void Delete();
 
   void Update(const device::mojom::blink::XRAnchorData& anchor_data);
 
-  void Trace(Visitor* visitor) override;
+  void Trace(Visitor* visitor) const override;
 
  private:
-  void SetMojoFromAnchor(const TransformationMatrix& mojo_from_anchor);
-
   const uint64_t id_;
+
+  bool is_deleted_;
 
   Member<XRSession> session_;
 
-  // |mojo_from_anchor_| will be non-null in an XRAnchor after the anchor was
-  // updated for the first time - this *must* happen in the same frame in which
-  // the anchor was created for the anchor to be fully usable. It is currently
-  // ensured by XRSession - anchors that got created prior to receiving the
-  // result from mojo call to GetFrameData are not returned to the application
-  // until their poses are known.
-  std::unique_ptr<TransformationMatrix> mojo_from_anchor_;
+  // Anchor's pose in device (mojo) space. Nullopt if the pose of the anchor is
+  // unknown in the current frame.
+  base::Optional<device::Pose> mojo_from_anchor_;
 
   // Cached anchor space - it will be created by `anchorSpace()` if it's not
   // set.

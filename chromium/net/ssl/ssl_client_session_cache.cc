@@ -48,9 +48,9 @@ SSLClientSessionCache::SSLClientSessionCache(const Config& config)
       config_(config),
       cache_(config.max_entries),
       lookups_since_flush_(0) {
-  memory_pressure_listener_.reset(
-      new base::MemoryPressureListener(base::BindRepeating(
-          &SSLClientSessionCache::OnMemoryPressure, base::Unretained(this))));
+  memory_pressure_listener_ = std::make_unique<base::MemoryPressureListener>(
+      FROM_HERE, base::BindRepeating(&SSLClientSessionCache::OnMemoryPressure,
+                                     base::Unretained(this)));
 }
 
 SSLClientSessionCache::~SSLClientSessionCache() {
@@ -91,6 +91,17 @@ void SSLClientSessionCache::Insert(const Key& cache_key,
   if (iter == cache_.end())
     iter = cache_.Put(cache_key, Entry());
   iter->second.Push(std::move(session));
+}
+
+void SSLClientSessionCache::ClearEarlyData(const Key& cache_key) {
+  auto iter = cache_.Get(cache_key);
+  if (iter != cache_.end()) {
+    for (auto& session : iter->second.sessions) {
+      if (session) {
+        session.reset(SSL_SESSION_copy_without_early_data(session.get()));
+      }
+    }
+  }
 }
 
 void SSLClientSessionCache::FlushForServer(const HostPortPair& server) {

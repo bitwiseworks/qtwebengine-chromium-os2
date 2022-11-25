@@ -21,14 +21,16 @@ enum class PreviewsType {
   // Used to indicate that there is no preview type.
   NONE = 0,
 
-  // The user is shown an offline page as a preview.
-  OFFLINE = 1,
+  // The user is shown an offline page as a preview. Deprecated, and should not
+  // be used.
+  DEPRECATED_OFFLINE = 1,
 
   // Replace images with placeholders. Deprecated, and should not be used.
   DEPRECATED_LOFI = 2,
 
-  // The user is shown a server lite page.
-  LITE_PAGE = 3,
+  // The user is shown a server lite page. Deprecated, and should not
+  // be used.
+  DEPRECATED_LITE_PAGE = 3,
 
   // AMP version of the page is shown as a preview. Deprecated, and should not
   // be used.
@@ -45,7 +47,7 @@ enum class PreviewsType {
   RESOURCE_LOADING_HINTS = 7,
 
   // Allows the browser to redirect navigations to a Lite Page server.
-  LITE_PAGE_REDIRECT = 8,
+  DEPRECATED_LITE_PAGE_REDIRECT = 8,
 
   // Preview that defers script execution until after parsing completes.
   DEFER_ALL_SCRIPT = 9,
@@ -76,105 +78,33 @@ std::string GetStringNameForType(PreviewsType type);
 
 namespace params {
 
-// The maximum number of recent previews navigations the black list looks at to
-// determine if a host is blacklisted.
-size_t MaxStoredHistoryLengthForPerHostBlackList();
+// The maximum number of recent previews navigations the block list looks at to
+// determine if a host is blocklisted.
+size_t MaxStoredHistoryLengthForPerHostBlockList();
 
-// The maximum number of recent previews navigations the black list looks at to
+// The maximum number of recent previews navigations the block list looks at to
 // determine if all previews navigations are disallowed.
-size_t MaxStoredHistoryLengthForHostIndifferentBlackList();
+size_t MaxStoredHistoryLengthForHostIndifferentBlockList();
 
-// The maximum number of hosts allowed in the in memory black list.
-size_t MaxInMemoryHostsInBlackList();
+// The maximum number of hosts allowed in the in memory block list.
+size_t MaxInMemoryHostsInBlockList();
 
 // The number of recent navigations that were opted out of for a given host that
-// would trigger that host to be blacklisted.
-int PerHostBlackListOptOutThreshold();
+// would trigger that host to be blocklisted.
+int PerHostBlockListOptOutThreshold();
 
 // The number of recent navigations that were opted out of that would trigger
 // all previews navigations to be disallowed.
-int HostIndifferentBlackListOptOutThreshold();
+int HostIndifferentBlockListOptOutThreshold();
 
-// The amount of time a host remains blacklisted due to opt outs.
-base::TimeDelta PerHostBlackListDuration();
+// The amount of time a host remains blocklisted due to opt outs.
+base::TimeDelta PerHostBlockListDuration();
 
 // The amount of time all previews navigations are disallowed due to opt outs.
-base::TimeDelta HostIndifferentBlackListPerHostDuration();
+base::TimeDelta HostIndifferentBlockListPerHostDuration();
 
 // The amount of time after any opt out that no previews should be shown.
 base::TimeDelta SingleOptOutDuration();
-
-// The amount of time that an offline page is considered fresh enough to be
-// shown as a preview.
-base::TimeDelta OfflinePreviewFreshnessDuration();
-
-// The amount of time that a Server Lite Page Preview navigation can take before
-// it is killed and the original page is loaded.
-base::TimeDelta LitePagePreviewsNavigationTimeoutDuration();
-
-// The host for Lite Page server previews.
-GURL GetLitePagePreviewsDomainURL();
-
-// The duration of a single bypass for Lite Page Server Previews.
-base::TimeDelta LitePagePreviewsSingleBypassDuration();
-
-// Whether or not to trigger a preview for a navigation to localhost. Provided
-// as an experiment for automated and manual testing.
-bool LitePagePreviewsTriggerOnLocalhost();
-
-// Whether to request a Lite Page Server Preview even if there are optimization
-// page hints for the host.
-bool LitePagePreviewsOverridePageHints();
-
-// Whether we should preconnect to the lite page redirect server or the origin.
-bool LitePageRedirectPreviewShouldPreconnect();
-
-// Whether we should preresolve the lite page redirect server or the origin.
-bool LitePageRedirectPreviewShouldPresolve();
-
-// Whether the Optimization Guide logic should be ignored for lite page redirect
-// previews.
-bool LitePageRedirectPreviewIgnoresOptimizationGuideFilter();
-
-// Whether to only trigger a lite page preview if there has been a successful
-// probe to the server. This is returns true, lite page redirect previews should
-// only been attempted when a probe to the previews server has completed
-// successfully.
-bool LitePageRedirectOnlyTriggerOnSuccessfulProbe();
-
-// Whether the preview should trigger on API page transitions.
-bool LitePageRedirectTriggerOnAPITransition();
-
-// Whether the preview should trigger on forward/back page transitions.
-bool LitePageRedirectValidateForwardBackTransition();
-
-// The URL to probe on the lite pages server.
-GURL LitePageRedirectProbeURL();
-
-// The duration in between preresolving or preconnecting the lite page redirect
-// server or the origin.
-base::TimeDelta LitePageRedirectPreviewPreresolvePreconnectInterval();
-
-// The ect threshold at which, or below, we should preresolve or preconnect for
-// lite page redirect previews.
-net::EffectiveConnectionType
-LitePageRedirectPreviewPreresolvePreconnectECTThreshold();
-
-// The duration in between probes to the lite page redirect server.
-base::TimeDelta LitePageRedirectPreviewProbeInterval();
-
-// Whether the origin should be successfully probed before showing a preview.
-bool LitePageRedirectShouldProbeOrigin();
-
-// The timeout for the origin probe on lite page redirect previews.
-base::TimeDelta LitePageRedirectPreviewOriginProbeTimeout();
-
-// The maximum number of seconds to loadshed the Previews server for.
-int PreviewServerLoadshedMaxSeconds();
-
-// Returns true if we should only report metrics and not trigger when the Lite
-// Page Redirect preview is enabled.
-bool IsInLitePageRedirectControl();
 
 // The default EffectiveConnectionType threshold where preview |type| will be
 // triggered.
@@ -191,15 +121,11 @@ net::EffectiveConnectionType GetSessionMaxECTThreshold();
 bool ArePreviewsAllowed();
 
 // Whether the preview type is enabled.
-bool IsOfflinePreviewsEnabled();
 bool IsNoScriptPreviewsEnabled();
 bool IsResourceLoadingHintsEnabled();
-bool IsLitePageServerPreviewsEnabled();
 bool IsDeferAllScriptPreviewsEnabled();
 
-// The blacklist version for each preview type.
-int OfflinePreviewsVersion();
-int LitePageServerPreviewsVersion();
+// The blocklist version for each preview type.
 int NoScriptPreviewsVersion();
 int ResourceLoadingHintsVersion();
 int DeferAllScriptPreviewsVersion();

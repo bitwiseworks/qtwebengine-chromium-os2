@@ -24,16 +24,16 @@
 
 namespace blink {
 
-using protocol::Accessibility::AXPropertyName;
+using protocol::Maybe;
+using protocol::Response;
 using protocol::Accessibility::AXNode;
 using protocol::Accessibility::AXNodeId;
 using protocol::Accessibility::AXProperty;
-using protocol::Accessibility::AXValueSource;
-using protocol::Accessibility::AXValueType;
+using protocol::Accessibility::AXPropertyName;
 using protocol::Accessibility::AXRelatedNode;
 using protocol::Accessibility::AXValue;
-using protocol::Maybe;
-using protocol::Response;
+using protocol::Accessibility::AXValueSource;
+using protocol::Accessibility::AXValueType;
 namespace AXPropertyNameEnum = protocol::Accessibility::AXPropertyNameEnum;
 
 namespace {
@@ -116,8 +116,6 @@ void FillGlobalStates(AXObject& ax_object,
         CreateProperty(AXPropertyNameEnum::HiddenRoot,
                        CreateRelatedNodeListValue(*hidden_root)));
   }
-
-  AddHasPopupProperty(ax_object.HasPopup(), properties);
 
   ax::mojom::InvalidState invalid_state = ax_object.GetInvalidState();
   switch (invalid_state) {
@@ -278,7 +276,7 @@ void FillWidgetProperties(AXObject& ax_object,
     // TODO(aboxhall): sort
   }
 
-  if (ax_object.IsRange()) {
+  if (ax_object.IsRangeValueSupported()) {
     float min_value;
     if (ax_object.MinValueForRange(&min_value)) {
       properties.emplace_back(
@@ -388,7 +386,7 @@ class SparseAttributeAXPropertyAdapter
                                    protocol::Array<AXProperty>& properties)
       : ax_object_(&ax_object), properties_(properties) {}
 
-  void Trace(Visitor* visitor) { visitor->Trace(ax_object_); }
+  void Trace(Visitor* visitor) const { visitor->Trace(ax_object_); }
 
  private:
   Member<AXObject> ax_object_;
@@ -403,10 +401,6 @@ class SparseAttributeAXPropertyAdapter
         break;
     }
   }
-
-  void AddIntAttribute(AXIntAttribute attribute, int32_t value) override {}
-
-  void AddUIntAttribute(AXUIntAttribute attribute, uint32_t value) override {}
 
   void AddStringAttribute(AXStringAttribute attribute,
                           const String& value) override {
@@ -442,21 +436,21 @@ class SparseAttributeAXPropertyAdapter
 
   void AddObjectVectorAttribute(
       AXObjectVectorAttribute attribute,
-      HeapVector<Member<AXObject>>& objects) override {
+      HeapVector<Member<AXObject>>* objects) override {
     switch (attribute) {
       case AXObjectVectorAttribute::kAriaControls:
         properties_.emplace_back(CreateRelatedNodeListProperty(
-            AXPropertyNameEnum::Controls, objects,
+            AXPropertyNameEnum::Controls, *objects,
             html_names::kAriaControlsAttr, *ax_object_));
         break;
       case AXObjectVectorAttribute::kAriaDetails:
         properties_.emplace_back(CreateRelatedNodeListProperty(
-            AXPropertyNameEnum::Details, objects, html_names::kAriaDetailsAttr,
+            AXPropertyNameEnum::Details, *objects, html_names::kAriaDetailsAttr,
             *ax_object_));
         break;
       case AXObjectVectorAttribute::kAriaFlowTo:
         properties_.emplace_back(CreateRelatedNodeListProperty(
-            AXPropertyNameEnum::Flowto, objects, html_names::kAriaFlowtoAttr,
+            AXPropertyNameEnum::Flowto, *objects, html_names::kAriaFlowtoAttr,
             *ax_object_));
         break;
     }
@@ -499,7 +493,7 @@ std::unique_ptr<AXValue> CreateRoleNameValue(ax::mojom::Role role) {
 
 using EnabledAgentsMultimap =
     HeapHashMap<WeakMember<LocalFrame>,
-                HeapHashSet<Member<InspectorAccessibilityAgent>>>;
+                Member<HeapHashSet<Member<InspectorAccessibilityAgent>>>>;
 
 EnabledAgentsMultimap& EnabledAgents() {
   DEFINE_STATIC_LOCAL(Persistent<EnabledAgentsMultimap>, enabled_agents,
@@ -734,7 +728,8 @@ Response InspectorAccessibilityAgent::getFullAXTree(
         BuildProtocolAXObject(*ax_object, nullptr, false, *nodes, cache);
 
     auto child_ids = std::make_unique<protocol::Array<AXNodeId>>();
-    const AXObject::AXObjectVector& children = ax_object->Children();
+    const AXObject::AXObjectVector& children =
+        ax_object->ChildrenIncludingIgnored();
     for (unsigned i = 0; i < children.size(); i++) {
       AXObject& child_ax_object = *children[i].Get();
       child_ids->emplace_back(String::Number(child_ax_object.AXObjectID()));
@@ -766,7 +761,7 @@ void InspectorAccessibilityAgent::FillCoreProperties(
         CreateValue(description, AXValueTypeEnum::ComputedString));
   }
   // Value.
-  if (ax_object.SupportsRangeValue()) {
+  if (ax_object.IsRangeValueSupported()) {
     float value;
     if (ax_object.ValueForRange(&value))
       node_object.setValue(CreateValue(value));
@@ -817,7 +812,8 @@ void InspectorAccessibilityAgent::AddChildren(
     return;
   }
 
-  const AXObject::AXObjectVector& children = ax_object.Children();
+  const AXObject::AXObjectVector& children =
+      ax_object.ChildrenIncludingIgnored();
   for (unsigned i = 0; i < children.size(); i++) {
     AXObject& child_ax_object = *children[i].Get();
     child_ids->emplace_back(String::Number(child_ax_object.AXObjectID()));
@@ -839,14 +835,90 @@ void InspectorAccessibilityAgent::AddChildren(
   }
 }
 
+namespace {
+
+void setNameAndRole(const AXObject& ax_object, std::unique_ptr<AXNode>& node) {
+  ax::mojom::blink::Role role = ax_object.RoleValue();
+  node->setRole(CreateRoleNameValue(role));
+  AXObject::NameSources name_sources;
+  String computed_name = ax_object.GetName(&name_sources);
+  std::unique_ptr<AXValue> name =
+      CreateValue(computed_name, AXValueTypeEnum::ComputedString);
+  node->setName(std::move(name));
+}
+
+}  // namespace
+
+Response InspectorAccessibilityAgent::queryAXTree(
+    Maybe<int> dom_node_id,
+    Maybe<int> backend_node_id,
+    Maybe<String> object_id,
+    Maybe<String> accessible_name,
+    Maybe<String> role,
+    std::unique_ptr<protocol::Array<AXNode>>* nodes) {
+  Node* root_dom_node = nullptr;
+  Response response = dom_agent_->AssertNode(dom_node_id, backend_node_id,
+                                             object_id, root_dom_node);
+  if (!response.IsSuccess())
+    return response;
+  Document& document = root_dom_node->GetDocument();
+
+  document.UpdateStyleAndLayout(DocumentUpdateReason::kInspector);
+  DocumentLifecycle::DisallowTransitionScope disallow_transition(
+      document.Lifecycle());
+  AXContext ax_context(document);
+
+  *nodes = std::make_unique<protocol::Array<protocol::Accessibility::AXNode>>();
+  auto& cache = To<AXObjectCacheImpl>(ax_context.GetAXObjectCache());
+  AXObject* root_ax_node = cache.GetOrCreate(root_dom_node);
+
+  auto sought_role = ax::mojom::blink::Role::kUnknown;
+  if (role.isJust())
+    sought_role = AXObject::AriaRoleToWebCoreRole(role.fromJust());
+  const String sought_name = accessible_name.fromMaybe("");
+
+  HeapVector<Member<AXObject>> reachable;
+  reachable.push_back(root_ax_node);
+
+  while (!reachable.IsEmpty()) {
+    AXObject* ax_object = reachable.back();
+    reachable.pop_back();
+    const AXObject::AXObjectVector& children =
+        ax_object->ChildrenIncludingIgnored();
+    reachable.AppendRange(children.rbegin(), children.rend());
+
+    // if querying by name: skip if name of current object does not match.
+    if (accessible_name.isJust() && sought_name != ax_object->ComputedName())
+      continue;
+    // if querying by role: skip if role of current object does not match.
+    if (role.isJust() && sought_role != ax_object->RoleValue())
+      continue;
+    // both name and role are OK, so we can add current object to the result.
+
+    if (ax_object->AccessibilityIsIgnored()) {
+      Node* dom_node = ax_object->GetNode();
+      std::unique_ptr<AXNode> protocol_node =
+          BuildObjectForIgnoredNode(dom_node, ax_object, false, *nodes, cache);
+      setNameAndRole(*ax_object, protocol_node);
+      (*nodes)->push_back(std::move(protocol_node));
+    } else {
+      (*nodes)->push_back(
+          BuildProtocolAXObject(*ax_object, nullptr, false, *nodes, cache));
+    }
+  }
+
+  return Response::Success();
+}
+
 void InspectorAccessibilityAgent::EnableAndReset() {
   enabled_.Set(true);
   LocalFrame* frame = inspected_frames_->Root();
   if (!EnabledAgents().Contains(frame)) {
-    EnabledAgents().Set(frame,
-                        HeapHashSet<Member<InspectorAccessibilityAgent>>());
+    EnabledAgents().Set(
+        frame, MakeGarbageCollected<
+                   HeapHashSet<Member<InspectorAccessibilityAgent>>>());
   }
-  EnabledAgents().find(frame)->value.insert(this);
+  EnabledAgents().find(frame)->value->insert(this);
   CreateAXContext();
 }
 
@@ -864,8 +936,8 @@ protocol::Response InspectorAccessibilityAgent::disable() {
   LocalFrame* frame = inspected_frames_->Root();
   DCHECK(EnabledAgents().Contains(frame));
   auto it = EnabledAgents().find(frame);
-  it->value.erase(this);
-  if (it->value.IsEmpty())
+  it->value->erase(this);
+  if (it->value->IsEmpty())
     EnabledAgents().erase(frame);
   return Response::Success();
 }
@@ -878,7 +950,7 @@ void InspectorAccessibilityAgent::Restore() {
 void InspectorAccessibilityAgent::ProvideTo(LocalFrame* frame) {
   if (!EnabledAgents().Contains(frame))
     return;
-  for (InspectorAccessibilityAgent* agent : EnabledAgents().find(frame)->value)
+  for (InspectorAccessibilityAgent* agent : *EnabledAgents().find(frame)->value)
     agent->CreateAXContext();
 }
 
@@ -888,7 +960,7 @@ void InspectorAccessibilityAgent::CreateAXContext() {
     context_ = std::make_unique<AXContext>(*document);
 }
 
-void InspectorAccessibilityAgent::Trace(Visitor* visitor) {
+void InspectorAccessibilityAgent::Trace(Visitor* visitor) const {
   visitor->Trace(inspected_frames_);
   visitor->Trace(dom_agent_);
   InspectorBaseAgent::Trace(visitor);

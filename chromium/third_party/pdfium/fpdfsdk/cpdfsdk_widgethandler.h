@@ -37,6 +37,7 @@ class CPDFSDK_WidgetHandler final : public IPDFSDK_AnnotHandler {
   WideString GetText(CPDFSDK_Annot* pAnnot) override;
   WideString GetSelectedText(CPDFSDK_Annot* pAnnot) override;
   void ReplaceSelection(CPDFSDK_Annot* pAnnot, const WideString& text) override;
+  bool SelectAllText(CPDFSDK_Annot* pAnnot) override;
   bool CanUndo(CPDFSDK_Annot* pAnnot) override;
   bool CanRedo(CPDFSDK_Annot* pAnnot) override;
   bool Undo(CPDFSDK_Annot* pAnnot) override;
@@ -76,8 +77,8 @@ class CPDFSDK_WidgetHandler final : public IPDFSDK_AnnotHandler {
   bool OnMouseWheel(CPDFSDK_PageView* pPageView,
                     ObservedPtr<CPDFSDK_Annot>* pAnnot,
                     uint32_t nFlags,
-                    short zDelta,
-                    const CFX_PointF& point) override;
+                    const CFX_PointF& point,
+                    const CFX_Vector& delta) override;
   bool OnRButtonDown(CPDFSDK_PageView* pPageView,
                      ObservedPtr<CPDFSDK_Annot>* pAnnot,
                      uint32_t nFlags,
@@ -101,6 +102,8 @@ class CPDFSDK_WidgetHandler final : public IPDFSDK_AnnotHandler {
   bool IsIndexSelected(ObservedPtr<CPDFSDK_Annot>* pAnnot, int index) override;
 
  private:
+  bool IsFocusableAnnot(const CPDF_Annot::Subtype& annot_type) const;
+
   UnownedPtr<CPDFSDK_FormFillEnvironment> m_pFormFillEnv;
   UnownedPtr<CFFL_InteractiveFormFiller> m_pFormFiller;
 };

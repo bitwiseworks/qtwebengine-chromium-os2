@@ -13,10 +13,11 @@
 #include "base/synchronization/lock.h"
 #include "base/timer/timer.h"
 #include "media/base/limits.h"
-#include "third_party/blink/public/web/modules/mediastream/media_stream_video_track.h"
 #include "third_party/blink/public/web/modules/mediastream/web_media_stream_utils.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream_constraints_util.h"
+#include "third_party/blink/renderer/modules/mediastream/media_stream_video_track.h"
 #include "third_party/blink/renderer/modules/peerconnection/peer_connection_dependency_factory.h"
+#include "third_party/blink/renderer/platform/mediastream/media_stream_component.h"
 #include "third_party/blink/renderer/platform/peerconnection/webrtc_video_track_source.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
@@ -208,11 +209,11 @@ void MediaStreamVideoWebRtcSink::WebRtcVideoSourceAdapter::
 }
 
 MediaStreamVideoWebRtcSink::MediaStreamVideoWebRtcSink(
-    const WebMediaStreamTrack& track,
+    MediaStreamComponent* component,
     PeerConnectionDependencyFactory* factory,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
   MediaStreamVideoTrack* video_track =
-      MediaStreamVideoTrack::GetVideoTrack(track);
+      MediaStreamVideoTrack::GetVideoTrack(WebMediaStreamTrack(component));
   DCHECK(video_track);
 
   absl::optional<bool> needs_denoising =
@@ -261,16 +262,16 @@ MediaStreamVideoWebRtcSink::MediaStreamVideoWebRtcSink(
   // PeerConnectionFactory::CreateVideoTrack doesn't do reference counting.
   video_source_proxy_ =
       factory->CreateVideoTrackSourceProxy(video_source_.get());
-  video_track_ =
-      factory->CreateLocalVideoTrack(track.Id(), video_source_proxy_.get());
+  video_track_ = factory->CreateLocalVideoTrack(component->Id(),
+                                                video_source_proxy_.get());
 
   video_track_->set_content_hint(
-      ContentHintTypeToWebRtcContentHint(track.ContentHint()));
-  video_track_->set_enabled(track.IsEnabled());
+      ContentHintTypeToWebRtcContentHint(component->ContentHint()));
+  video_track_->set_enabled(component->Enabled());
 
 #if BUILDFLAG(ENABLE_WEBRTC)
   source_adapter_ = base::MakeRefCounted<WebRtcVideoSourceAdapter>(
-      factory->GetWebRtcWorkerTaskRunner(), video_source_.get(),
+      factory->GetWebRtcNetworkTaskRunner(), video_source_.get(),
       refresh_interval,
       ConvertToBaseRepeatingCallback(CrossThreadBindRepeating(
           &MediaStreamVideoWebRtcSink::RequestRefreshFrame,
@@ -278,7 +279,7 @@ MediaStreamVideoWebRtcSink::MediaStreamVideoWebRtcSink(
       std::move(task_runner));
 
   MediaStreamVideoSink::ConnectToTrack(
-      track,
+      WebMediaStreamTrack(component),
       ConvertToBaseRepeatingCallback(CrossThreadBindRepeating(
           &WebRtcVideoSourceAdapter::OnVideoFrameOnIO, source_adapter_)),
       false);

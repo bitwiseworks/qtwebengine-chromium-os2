@@ -17,24 +17,25 @@
 #include "chrome/browser/signin/signin_promo.h"
 #include "chrome/browser/ui/webui/metrics_handler.h"
 #include "chrome/browser/ui/webui/test_files_request_filter.h"
+#include "chrome/browser/ui/webui/webui_util.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/browser_resources.h"
 #include "chrome/grit/chromium_strings.h"
+#include "chrome/grit/gaia_auth_host_resources.h"
+#include "chrome/grit/gaia_auth_host_resources_map.h"
 #include "chrome/grit/generated_resources.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/common/content_switches.h"
+#include "services/network/public/mojom/content_security_policy.mojom.h"
+#include "ui/resources/grit/webui_resources.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/ui/webui/chromeos/edu_account_login_handler_chromeos.h"
 #include "chrome/browser/ui/webui/signin/inline_login_handler_chromeos.h"
-#include "chrome/browser/ui/webui/webui_util.h"
-#include "chrome/grit/gaia_auth_host_resources.h"
-#include "chrome/grit/gaia_auth_host_resources_map.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/resources/grit/webui_resources.h"
 #include "ui/strings/grit/ui_strings.h"
 #else
 #include "chrome/browser/ui/webui/signin/inline_login_handler_impl.h"
@@ -42,27 +43,19 @@
 
 namespace {
 
-#if defined(OS_CHROMEOS)
 constexpr char kResourcesGeneratedPath[] =
     "@out_folder@/gen/chrome/browser/resources/";
 
+#if defined(OS_CHROMEOS)
 void AddEduStrings(content::WebUIDataSource* source,
                    const base::string16& username) {
   source->AddLocalizedString("okButton", IDS_APP_OK);
   source->AddLocalizedString("backButton", IDS_EDU_LOGIN_BACK);
   source->AddLocalizedString("nextButton", IDS_EDU_LOGIN_NEXT);
 
-  source->AddLocalizedString("welcomeTitle", IDS_EDU_LOGIN_WELCOME_TITLE);
-  source->AddLocalizedString("welcomeBody", IDS_EDU_LOGIN_WELCOME_BODY);
-  source->AddLocalizedString("welcomeReauthTitle",
-                             IDS_EDU_LOGIN_WELCOME_REAUTH_TITLE);
-  source->AddLocalizedString("welcomeReauthBody",
-                             IDS_EDU_LOGIN_WELCOME_REAUTH_BODY);
-  source->AddLocalizedString("parentsListTitle",
-                             IDS_EDU_LOGIN_PARENTS_LIST_TITLE);
-  source->AddLocalizedString("parentsListBody",
-                             IDS_EDU_LOGIN_PARENTS_LIST_BODY);
-
+  source->AddLocalizedString("parentsListTitle", IDS_EDU_LOGIN_WELCOME_TITLE_2);
+  source->AddLocalizedString("parentsListBody", IDS_EDU_LOGIN_WELCOME_BODY_2);
+  source->AddLocalizedString("reauthBody", IDS_EDU_LOGIN_WELCOME_REAUTH_BODY);
   source->AddLocalizedString("parentSigninTitle",
                              IDS_EDU_LOGIN_PARENT_SIGNIN_TITLE);
   source->AddString(
@@ -91,23 +84,20 @@ void AddEduStrings(content::WebUIDataSource* source,
       l10n_util::GetStringFUTF16(
           IDS_EDU_LOGIN_INFO_BODY,
           base::ASCIIToUTF16(chrome::kGsuiteTermsEducationPrivacyURL)));
-  source->AddString(
-      "parentInfoDataProtectionText",
-      l10n_util::GetStringFUTF16(
-          IDS_EDU_LOGIN_INFO_DATA_PROTECTION,
-          base::ASCIIToUTF16(chrome::kClassroomSigninLearnMoreURL)));
-  source->AddLocalizedString("parentInfoResourcesAvailabilityText",
-                             IDS_EDU_LOGIN_INFO_RESOURCES_AVAILABILITY);
+  source->AddLocalizedString("coexistenceTitle",
+                             IDS_EDU_LOGIN_INFO_COEXISTENCE_TITLE);
+  source->AddLocalizedString("coexistenceBody",
+                             IDS_EDU_LOGIN_INFO_COEXISTENCE_BODY);
 }
 #endif  // defined(OS_CHROMEOS)
 
 content::WebUIDataSource* CreateWebUIDataSource() {
   content::WebUIDataSource* source =
         content::WebUIDataSource::Create(chrome::kChromeUIChromeSigninHost);
-  source->OverrideContentSecurityPolicyObjectSrc("object-src chrome:;");
-  source->UseStringsJs();
-
-  source->SetDefaultResource(IDR_INLINE_LOGIN_HTML);
+  webui::SetupWebUIDataSource(
+      source,
+      base::make_span(kGaiaAuthHostResources, kGaiaAuthHostResourcesSize),
+      kResourcesGeneratedPath, IDR_INLINE_LOGIN_HTML);
 
   // Only add a filter when runing as test.
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
@@ -118,55 +108,61 @@ content::WebUIDataSource* CreateWebUIDataSource() {
                              test::GetTestFilesRequestFilter());
   }
 
-  source->AddResourcePath("inline_login.css", IDR_INLINE_LOGIN_CSS);
-  source->AddResourcePath("inline_login.js", IDR_INLINE_LOGIN_JS);
-  source->AddResourcePath("gaia_auth_host.js", IDR_GAIA_AUTH_AUTHENTICATOR_JS);
-
+  static constexpr webui::ResourcePath kResources[] = {
+    {"inline_login_app.js", IDR_INLINE_LOGIN_APP_JS},
+    {"inline_login_browser_proxy.js", IDR_INLINE_LOGIN_BROWSER_PROXY_JS},
 #if defined(OS_CHROMEOS)
-  source->OverrideContentSecurityPolicyScriptSrc(
-      "script-src chrome://resources chrome://test 'self';");
-
-  source->AddResourcePath("edu", IDR_EDU_LOGIN_EDU_LOGIN_HTML);
-  source->AddResourcePath("app.js", IDR_EDU_LOGIN_EDU_LOGIN_JS);
-  source->AddResourcePath("edu_login_button.js",
-                          IDR_EDU_LOGIN_EDU_LOGIN_BUTTON_JS);
-  source->AddResourcePath("edu_login_template.js",
-                          IDR_EDU_LOGIN_EDU_LOGIN_TEMPLATE_JS);
-  source->AddResourcePath("edu_login_css.js", IDR_EDU_LOGIN_EDU_LOGIN_CSS_JS);
-  source->AddResourcePath("icons.js", IDR_EDU_LOGIN_ICONS_JS);
-  source->AddResourcePath("browser_proxy.js", IDR_EDU_LOGIN_BROWSER_PROXY_JS);
-  source->AddResourcePath("edu_login_util.js", IDR_EDU_LOGIN_EDU_LOGIN_UTIL_JS);
-  source->AddResourcePath("edu_login_welcome.js",
-                          IDR_EDU_LOGIN_EDU_LOGIN_WELCOME_JS);
-  source->AddResourcePath("edu_login_parents.js",
-                          IDR_EDU_LOGIN_EDU_LOGIN_PARENTS_JS);
-  source->AddResourcePath("edu_login_parent_signin.js",
-                          IDR_EDU_LOGIN_EDU_LOGIN_PARENT_SIGNIN_JS);
-  source->AddResourcePath("edu_login_parent_info.js",
-                          IDR_EDU_LOGIN_EDU_LOGIN_PARENT_INFO_JS);
-  source->AddResourcePath("edu_login_signin.js",
-                          IDR_EDU_LOGIN_EDU_LOGIN_SIGNIN_JS);
-
-  source->AddResourcePath("test_loader.js", IDR_WEBUI_JS_TEST_LOADER);
-  source->AddResourcePath("test_loader.html", IDR_WEBUI_HTML_TEST_LOADER);
+    {"gaia_action_buttons.js", IDR_GAIA_ACTION_BUTTONS_JS},
+    {"error_screen.js", IDR_ACCOUNT_MANAGER_COMPONENTS_ERROR_SCREEN_JS},
+    {"edu", IDR_EDU_LOGIN_EDU_LOGIN_HTML},
+    {"app.js", IDR_EDU_LOGIN_EDU_LOGIN_JS},
+    {"edu_login_button.js", IDR_EDU_LOGIN_EDU_LOGIN_BUTTON_JS},
+    {"edu_login_template.js", IDR_EDU_LOGIN_EDU_LOGIN_TEMPLATE_JS},
+    {"edu_login_css.js", IDR_EDU_LOGIN_EDU_LOGIN_CSS_JS},
+    {"icons.js", IDR_EDU_LOGIN_ICONS_JS},
+    {"browser_proxy.js", IDR_EDU_LOGIN_BROWSER_PROXY_JS},
+    {"edu_login_util.js", IDR_EDU_LOGIN_EDU_LOGIN_UTIL_JS},
+    {"edu_login_coexistence_info.js",
+     IDR_EDU_LOGIN_EDU_LOGIN_COEXISTENCE_INFO_JS},
+    {"edu_login_parents.js", IDR_EDU_LOGIN_EDU_LOGIN_PARENTS_JS},
+    {"edu_login_parent_signin.js", IDR_EDU_LOGIN_EDU_LOGIN_PARENT_SIGNIN_JS},
+    {"edu_login_parent_info.js", IDR_EDU_LOGIN_EDU_LOGIN_PARENT_INFO_JS},
+    {"edu_login_signin.js", IDR_EDU_LOGIN_EDU_LOGIN_SIGNIN_JS},
+    {"edu_login_error.js", IDR_EDU_LOGIN_EDU_LOGIN_ERROR_JS},
+    // Resources for the server-based edu coexistence flow.
+    {"edu-coexistence", IDR_EDU_COEXISTENCE_EDU_COEXISTENCE_HTML},
+    {"edu_coexistence_app.js", IDR_EDU_COEXISTENCE_EDU_COEXISTENCE_APP_JS},
+    {"edu_coexistence_ui.js", IDR_EDU_COEXISTENCE_EDU_COEXISTENCE_UI_JS},
+    {"edu_coexistence_controller.js",
+     IDR_EDU_COEXISTENCE_EDU_COEXISTENCE_CONTROLLER_JS},
+    {"chromeos/add_supervision/post_message_api.m.js",
+     IDR_ADD_SUPERVISION_POST_MESSAGE_API_M_JS},
 
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-  source->AddResourcePath("googleg.svg",
-                          IDR_ACCOUNT_MANAGER_WELCOME_GOOGLE_LOGO_SVG);
+    {"googleg.svg", IDR_ACCOUNT_MANAGER_WELCOME_GOOGLE_LOGO_SVG},
 #endif
-  source->AddResourcePath("family_link_logo.svg", IDR_FAMILY_LINK_LOGO_SVG);
-
-  webui::SetupWebUIDataSource(
-      source,
-      base::make_span(kGaiaAuthHostResources, kGaiaAuthHostResourcesSize),
-      kResourcesGeneratedPath, IDR_INLINE_LOGIN_HTML);
+    {"family_link_logo.svg", IDR_FAMILY_LINK_LOGO_SVG},
 #endif  // defined(OS_CHROMEOS)
+  };
+
+  webui::AddResourcePathsBulk(source, kResources);
 
   source->AddLocalizedString("title", IDS_CHROME_SIGNIN_TITLE);
   source->AddLocalizedString(
       "accessibleCloseButtonLabel", IDS_SIGNIN_ACCESSIBLE_CLOSE_BUTTON);
   source->AddLocalizedString(
       "accessibleBackButtonLabel", IDS_SIGNIN_ACCESSIBLE_BACK_BUTTON);
+#if defined(OS_CHROMEOS)
+  source->AddLocalizedString("accountManagerErrorNoInternetTitle",
+                             IDS_ACCOUNT_MANAGER_ERROR_NO_INTERNET_TITLE);
+  source->AddLocalizedString("accountManagerErrorNoInternetBody",
+                             IDS_ACCOUNT_MANAGER_ERROR_NO_INTERNET_BODY);
+  source->AddLocalizedString(
+      "accountManagerErrorCannotAddAccountTitle",
+      IDS_ACCOUNT_MANAGER_ERROR_CANNOT_ADD_ACCOUNT_TITLE);
+  source->AddLocalizedString("accountManagerErrorCannotAddAccountBody",
+                             IDS_ACCOUNT_MANAGER_ERROR_CANNOT_ADD_ACCOUNT_BODY);
+#endif
   return source;
 }
 

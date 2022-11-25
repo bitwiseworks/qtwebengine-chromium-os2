@@ -12,6 +12,7 @@
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
 #include "net/http/http_request_headers.h"
+#include "net/http/http_util.h"
 #include "services/network/public/cpp/cors/cors.h"
 
 namespace network {
@@ -57,7 +58,9 @@ bool ParseAccessControlMaxAge(const base::Optional<std::string>& max_age,
   return true;
 }
 
-// At this moment, this function always succeeds.
+// Parses |string| as a Access-Control-Allow-* header value, storing the result
+// in |set|. This function returns false when |string| does not satisfy the
+// syntax here: https://fetch.spec.whatwg.org/#http-new-header-syntax.
 bool ParseAccessControlAllowList(const base::Optional<std::string>& string,
                                  base::flat_set<std::string>* set,
                                  bool insert_in_lower_case) {
@@ -66,11 +69,15 @@ bool ParseAccessControlAllowList(const base::Optional<std::string>& string,
   if (!string)
     return true;
 
-  for (const auto& value : base::SplitString(
-           *string, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
-    // TODO(toyoshim): Strict ABNF header field checks want to be applied, e.g.
-    // strict VCHAR check of RFC-7230.
-    set->insert(insert_in_lower_case ? base::ToLowerASCII(value) : value);
+  net::HttpUtil::ValuesIterator it(string->begin(), string->end(), ',', true);
+  while (it.GetNext()) {
+    base::StringPiece value = it.value_piece();
+    if (!net::HttpUtil::IsToken(value)) {
+      set->clear();
+      return false;
+    }
+    set->insert(insert_in_lower_case ? base::ToLowerASCII(value)
+                                     : value.as_string());
   }
   return true;
 }
@@ -128,8 +135,7 @@ base::Optional<CorsErrorStatus> PreflightResult::EnsureAllowedCrossOriginMethod(
 base::Optional<CorsErrorStatus>
 PreflightResult::EnsureAllowedCrossOriginHeaders(
     const net::HttpRequestHeaders& headers,
-    bool is_revalidating,
-    const base::flat_set<std::string>& extra_safelisted_header_names) const {
+    bool is_revalidating) const {
   if (!credentials_ && headers_.find("*") != headers_.end())
     return base::nullopt;
 
@@ -137,8 +143,7 @@ PreflightResult::EnsureAllowedCrossOriginHeaders(
   // beforehand. But user-agents may add these headers internally, and it's
   // fine.
   for (const auto& name : CorsUnsafeNotForbiddenRequestHeaderNames(
-           headers.GetHeaderVector(), is_revalidating,
-           extra_safelisted_header_names)) {
+           headers.GetHeaderVector(), is_revalidating)) {
     // Header list check is performed in case-insensitive way. Here, we have a
     // parsed header list set in lower case, and search each header in lower
     // case.

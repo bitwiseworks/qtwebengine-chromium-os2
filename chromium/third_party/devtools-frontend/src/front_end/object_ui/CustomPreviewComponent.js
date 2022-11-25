@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as SDK from '../sdk/sdk.js';  // eslint-disable-line no-unused-vars
 import * as UI from '../ui/ui.js';
@@ -16,7 +19,8 @@ export class CustomPreviewSection {
    * @param {!SDK.RemoteObject.RemoteObject} object
    */
   constructor(object) {
-    this._sectionElement = createElementWithClass('span', 'custom-expandable-section');
+    this._sectionElement = document.createElement('span');
+    this._sectionElement.classList.add('custom-expandable-section');
     this._object = object;
     this._expanded = false;
     this._cachedContent = null;
@@ -72,7 +76,7 @@ export class CustomPreviewSection {
    */
   _renderElement(object) {
     const tagName = object.shift();
-    if (!CustomPreviewSection._tagsWhiteList.has(tagName)) {
+    if (!CustomPreviewSection._allowedTags.has(tagName)) {
       Common.Console.Console.instance().error('Broken formatter: element ' + tagName + ' is not allowed!');
       return createElement('span');
     }
@@ -235,7 +239,8 @@ export class CustomPreviewComponent {
   constructor(object) {
     this._object = object;
     this._customPreviewSection = new CustomPreviewSection(object);
-    this.element = createElementWithClass('span', 'source-code');
+    this.element = document.createElement('span');
+    this.element.classList.add('source-code');
     const shadowRoot = UI.Utils.createShadowRootWithCoreStyles(this.element, 'object_ui/customPreviewComponent.css');
     this.element.addEventListener('contextmenu', this._contextMenuEventFired.bind(this), false);
     shadowRoot.appendChild(this._customPreviewSection.element());
@@ -268,4 +273,4 @@ export class CustomPreviewComponent {
   }
 }
 
-CustomPreviewSection._tagsWhiteList = new Set(['span', 'div', 'ol', 'li', 'table', 'tr', 'td']);
+CustomPreviewSection._allowedTags = new Set(['span', 'div', 'ol', 'li', 'table', 'tr', 'td']);

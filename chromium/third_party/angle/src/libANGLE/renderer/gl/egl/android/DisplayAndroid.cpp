@@ -188,7 +188,6 @@ void DisplayAndroid::terminate()
     }
 
     mRenderer.reset();
-    mCurrentNativeContext.clear();
 
     egl::Error result = mEGL->terminate();
     if (result.isError())
@@ -230,7 +229,8 @@ ContextImpl *DisplayAndroid::createContext(const gl::State &state,
         }
     }
 
-    return new ContextEGL(state, errorSet, renderer);
+    return new ContextEGL(state, errorSet, renderer,
+                          RobustnessVideoMemoryPurgeStatus::NOT_REQUESTED);
 }
 
 bool DisplayAndroid::isValidNativeWindow(EGLNativeWindowType window) const
@@ -273,7 +273,7 @@ egl::Error DisplayAndroid::makeCurrent(egl::Surface *drawSurface,
                                        egl::Surface *readSurface,
                                        gl::Context *context)
 {
-    CurrentNativeContext &currentContext = mCurrentNativeContext[std::this_thread::get_id()];
+    CurrentNativeContext &currentContext = mCurrentNativeContexts[std::this_thread::get_id()];
 
     EGLSurface newSurface = EGL_NO_SURFACE;
     if (drawSurface)
@@ -331,17 +331,6 @@ egl::Error DisplayAndroid::makeCurrent(egl::Surface *drawSurface,
 void DisplayAndroid::destroyNativeContext(EGLContext context)
 {
     DisplayEGL::destroyNativeContext(context);
-
-    // If this context is current, remove it from the tracking of current contexts to make sure we
-    // don't try to make it current again.
-    for (auto &currentContext : mCurrentNativeContext)
-    {
-        if (currentContext.second.context == context)
-        {
-            currentContext.second.surface = EGL_NO_SURFACE;
-            currentContext.second.context = EGL_NO_CONTEXT;
-        }
-    }
 }
 
 void DisplayAndroid::generateExtensions(egl::DisplayExtensions *outExtensions) const
@@ -373,7 +362,7 @@ egl::Error DisplayAndroid::createRenderer(EGLContext shareContext,
     outRenderer->reset(
         new RendererEGL(std::move(functionsGL), mDisplayAttributes, this, context, attribs));
 
-    CurrentNativeContext &currentContext = mCurrentNativeContext[std::this_thread::get_id()];
+    CurrentNativeContext &currentContext = mCurrentNativeContexts[std::this_thread::get_id()];
     if (makeNewContextCurrent)
     {
         currentContext.surface = mDummyPbuffer;

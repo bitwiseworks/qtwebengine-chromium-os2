@@ -51,10 +51,7 @@ QuicSentPacketManager* QuicConnectionPeer::GetSentPacketManager(
 // static
 QuicTime::Delta QuicConnectionPeer::GetNetworkTimeout(
     QuicConnection* connection) {
-  if (connection->use_idle_network_detector_) {
-    return connection->idle_network_detector_.idle_network_timeout_;
-  }
-  return connection->idle_network_timeout_;
+  return connection->idle_network_detector_.idle_network_timeout_;
 }
 
 // static
@@ -88,12 +85,6 @@ void QuicConnectionPeer::SetEffectivePeerAddress(
     QuicConnection* connection,
     const QuicSocketAddress& effective_peer_address) {
   connection->effective_peer_address_ = effective_peer_address;
-}
-
-// static
-bool QuicConnectionPeer::IsSilentCloseEnabled(QuicConnection* connection) {
-  return connection->idle_timeout_connection_close_behavior_ ==
-         ConnectionCloseBehavior::SILENT_CLOSE;
 }
 
 // static
@@ -149,20 +140,9 @@ QuicAlarm* QuicConnectionPeer::GetSendAlarm(QuicConnection* connection) {
 }
 
 // static
-QuicAlarm* QuicConnectionPeer::GetTimeoutAlarm(QuicConnection* connection) {
-  return connection->timeout_alarm_.get();
-}
-
-// static
 QuicAlarm* QuicConnectionPeer::GetMtuDiscoveryAlarm(
     QuicConnection* connection) {
   return connection->mtu_discovery_alarm_.get();
-}
-
-// static
-QuicAlarm* QuicConnectionPeer::GetPathDegradingAlarm(
-    QuicConnection* connection) {
-  return connection->path_degrading_alarm_.get();
 }
 
 // static
@@ -227,26 +207,6 @@ void QuicConnectionPeer::ReInitializeMtuDiscoverer(
     QuicPacketNumber next_probe_at) {
   connection->mtu_discoverer_ =
       QuicConnectionMtuDiscoverer(packets_between_probes_base, next_probe_at);
-}
-
-// static
-void QuicConnectionPeer::SetAckMode(QuicConnection* connection,
-                                    AckMode ack_mode) {
-  for (auto& received_packet_manager :
-       connection->uber_received_packet_manager_.received_packet_managers_) {
-    received_packet_manager.ack_mode_ = ack_mode;
-  }
-}
-
-// static
-void QuicConnectionPeer::SetFastAckAfterQuiescence(
-    QuicConnection* connection,
-    bool fast_ack_after_quiescence) {
-  for (auto& received_packet_manager :
-       connection->uber_received_packet_manager_.received_packet_managers_) {
-    received_packet_manager.fast_ack_after_quiescence_ =
-        fast_ack_after_quiescence;
-  }
 }
 
 // static
@@ -376,9 +336,47 @@ QuicTime QuicConnectionPeer::GetBlackholeDetectionDeadline(
 }
 
 // static
+QuicTime QuicConnectionPeer::GetPathMtuReductionDetectionDeadline(
+    QuicConnection* connection) {
+  return connection->blackhole_detector_.path_mtu_reduction_deadline_;
+}
+
+// static
+QuicTime QuicConnectionPeer::GetIdleNetworkDeadline(
+    QuicConnection* connection) {
+  return connection->idle_network_detector_.GetIdleNetworkDeadline();
+}
+
+// static
 QuicAlarm* QuicConnectionPeer::GetIdleNetworkDetectorAlarm(
     QuicConnection* connection) {
   return connection->idle_network_detector_.alarm_.get();
+}
+
+// static
+QuicIdleNetworkDetector& QuicConnectionPeer::GetIdleNetworkDetector(
+    QuicConnection* connection) {
+  return connection->idle_network_detector_;
+}
+
+// static
+void QuicConnectionPeer::SetServerConnectionId(
+    QuicConnection* connection,
+    const QuicConnectionId& server_connection_id) {
+  connection->server_connection_id_ = server_connection_id;
+  connection->InstallInitialCrypters(server_connection_id);
+}
+
+// static
+size_t QuicConnectionPeer::NumUndecryptablePackets(QuicConnection* connection) {
+  return connection->undecryptable_packets_.size();
+}
+
+// static
+const QuicCircularDeque<std::pair<QuicPathFrameBuffer, QuicSocketAddress>>&
+QuicConnectionPeer::pending_path_challenge_payloads(
+    QuicConnection* connection) {
+  return connection->pending_path_challenge_payloads_;
 }
 
 }  // namespace test

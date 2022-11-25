@@ -5,7 +5,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/logging.h"
 #include "base/macros.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -483,7 +482,8 @@ TEST_F(OriginTest, UnsafelyCreate) {
       {"http", "example.com", 123},
       {"https", "example.com", 443},
       {"https", "example.com", 123},
-      {"file", "", 0},
+      {"http", "example.com", 0},  // 0 is a valid port for http.
+      {"file", "", 0},             // 0 indicates "no port" for file: scheme.
       {"file", "example.com", 0},
   };
 
@@ -539,12 +539,10 @@ TEST_F(OriginTest, UnsafelyCreateUniqueOnInvalidInput) {
                {"http", "example.com\rnot-example.com"},
                {"http", "example.com\n"},
                {"http", "example.com\r"},
-               {"http", "example.com", 0},
                {"unknown-scheme", "example.com"},
                {"host-only", "\r", 0},
                {"host-only", "example.com", 22},
-               {"host-port-only", "example.com", 0},
-               {"file", ""}};
+               {"file", "", 123}};  // file: shouldn't have a port.
 
   for (const auto& test : cases) {
     SCOPED_TRACE(testing::Message()
@@ -848,6 +846,10 @@ TEST_F(OriginTest, GetDebugString) {
       http_opaque_origin.GetDebugString().c_str(),
       ::testing::MatchesRegex(
           "null \\[internally: \\(\\w*\\) derived from http://192.168.9.1\\]"));
+  EXPECT_THAT(
+      http_opaque_origin.GetDebugString(false /* include_nonce */).c_str(),
+      ::testing::MatchesRegex(
+          "null \\[internally: derived from http://192.168.9.1\\]"));
 
   Origin data_origin = Origin::Create(GURL("data:"));
   EXPECT_STREQ(data_origin.GetDebugString().c_str(),
@@ -859,6 +861,9 @@ TEST_F(OriginTest, GetDebugString) {
   EXPECT_THAT(
       data_derived_origin.GetDebugString().c_str(),
       ::testing::MatchesRegex("null \\[internally: \\(\\w*\\) anonymous\\]"));
+  EXPECT_THAT(
+      data_derived_origin.GetDebugString(false /* include_nonce */).c_str(),
+      ::testing::MatchesRegex("null \\[internally: anonymous\\]"));
 
   Origin file_origin = Origin::Create(GURL("file:///etc/passwd"));
   EXPECT_STREQ(file_origin.GetDebugString().c_str(),

@@ -59,6 +59,27 @@ class CORE_EXPORT CSSFontSelector : public FontSelector {
 
   void ReportFailedLocalFontMatch(const AtomicString& font_name) override;
 
+  void ReportFontLookupByUniqueOrFamilyName(
+      const AtomicString& name,
+      const FontDescription& font_description,
+      SimpleFontData* resulting_font_data) override;
+
+  void ReportFontLookupByUniqueNameOnly(
+      const AtomicString& name,
+      const FontDescription& font_description,
+      SimpleFontData* resulting_font_data,
+      bool is_loading_fallback = false) override;
+
+  void ReportFontLookupByFallbackCharacter(
+      UChar32 fallback_character,
+      FontFallbackPriority fallback_priority,
+      const FontDescription& font_description,
+      SimpleFontData* resulting_font_data) override;
+
+  void ReportLastResortFallbackFontLookup(
+      const FontDescription& font_description,
+      SimpleFontData* resulting_font_data) override;
+
   scoped_refptr<FontData> GetFontData(const FontDescription&,
                                       const AtomicString&) override;
   void WillUseFontData(const FontDescription&,
@@ -70,7 +91,7 @@ class CORE_EXPORT CSSFontSelector : public FontSelector {
   bool IsPlatformFamilyMatchAvailable(const FontDescription&,
                                       const AtomicString& family) override;
 
-  void FontFaceInvalidated() override;
+  void FontFaceInvalidated(FontInvalidationReason) override;
 
   // FontCacheClient implementation
   void FontCacheInvalidated() override;
@@ -88,10 +109,10 @@ class CORE_EXPORT CSSFontSelector : public FontSelector {
   }
   void UpdateGenericFontFamilySettings(Document&);
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  protected:
-  void DispatchInvalidationCallbacks();
+  void DispatchInvalidationCallbacks(FontInvalidationReason);
 
  private:
   // TODO(Oilpan): Ideally this should just be a traced Member but that will

@@ -6,12 +6,12 @@
 
 #include <memory>
 
+#include "base/check.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/hash/hash.h"
 #include "base/location.h"
-#include "base/logging.h"
 #include "base/pickle.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -462,9 +462,9 @@ TEST_F(SimpleIndexFileTest, WriteThenLoadIndex) {
   net::TestClosure closure;
   {
     WrappedSimpleIndexFile simple_index_file(cache_dir.GetPath());
-    simple_index_file.WriteToDisk(
-        net::DISK_CACHE, SimpleIndex::INDEX_WRITE_REASON_SHUTDOWN, entries,
-        kCacheSize, base::TimeTicks(), false, closure.closure());
+    simple_index_file.WriteToDisk(net::DISK_CACHE,
+                                  SimpleIndex::INDEX_WRITE_REASON_SHUTDOWN,
+                                  entries, kCacheSize, closure.closure());
     closure.WaitForResult();
     EXPECT_TRUE(base::PathExists(simple_index_file.GetIndexFilePath()));
   }
@@ -637,9 +637,9 @@ TEST_F(SimpleIndexFileTest, OverwritesStaleTempFile) {
   SimpleIndex::EntrySet entries;
   SimpleIndex::InsertInEntrySet(11, EntryMetadata(Time(), 11u), &entries);
   net::TestClosure closure;
-  simple_index_file.WriteToDisk(
-      net::DISK_CACHE, SimpleIndex::INDEX_WRITE_REASON_SHUTDOWN, entries, 120U,
-      base::TimeTicks(), false, closure.closure());
+  simple_index_file.WriteToDisk(net::DISK_CACHE,
+                                SimpleIndex::INDEX_WRITE_REASON_SHUTDOWN,
+                                entries, 120U, closure.closure());
   closure.WaitForResult();
 
   // Check that the temporary file was deleted and the index file was created.

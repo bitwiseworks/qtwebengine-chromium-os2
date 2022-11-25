@@ -25,6 +25,10 @@
 
 class TestLoader;
 
+// The loading time of the CFGAS_FontMgr is linear in the number of times it is
+// loaded. So, if a test suite has a lot of tests that need a font manager they
+// can end up executing very, very slowly.
+
 // This class is used to load a PDF document, and then run programatic
 // API tests against it.
 class EmbedderTest : public ::testing::Test,
@@ -65,10 +69,22 @@ class EmbedderTest : public ::testing::Test,
     // Equivalent to FPDF_FORMFILLINFO::FFI_DoURIAction().
     virtual void DoURIAction(FPDF_BYTESTRING uri) {}
 
+    // Equivalent to FPDF_FORMFILLINFO::FFI_DoGoToAction().
+    virtual void DoGoToAction(FPDF_FORMFILLINFO* info,
+                              int page_index,
+                              int zoom_mode,
+                              float* pos_arry,
+                              int array_size) {}
+
     // Equivalent to FPDF_FORMFILLINFO::FFI_OnFocusChange().
     virtual void OnFocusChange(FPDF_FORMFILLINFO* info,
                                FPDF_ANNOTATION annot,
                                int page_index) {}
+
+    // Equivalent to FPDF_FORMFILLINFO::FFI_DoURIActionWithKeyboardModifier().
+    virtual void DoURIActionWithKeyboardModifier(FPDF_FORMFILLINFO* info,
+                                                 FPDF_BYTESTRING uri,
+                                                 int modifiers) {}
   };
 
   EmbedderTest();
@@ -76,11 +92,6 @@ class EmbedderTest : public ::testing::Test,
 
   void SetUp() override;
   void TearDown() override;
-
-#ifdef PDF_ENABLE_V8
-  // Call before SetUp to pass shared isolate, otherwise PDFium creates one.
-  void SetExternalIsolate(void* isolate);
-#endif  // PDF_ENABLE_V8
 
   void SetDelegate(Delegate* delegate) {
     delegate_ = delegate ? delegate : default_delegate_.get();
@@ -269,7 +280,6 @@ class EmbedderTest : public ::testing::Test,
   FPDF_FILEACCESS file_access_;                       // must outlive |avail_|.
   std::unique_ptr<FakeFileAccess> fake_file_access_;  // must outlive |avail_|.
 
-  void* external_isolate_ = nullptr;
   std::unique_ptr<TestLoader> loader_;
   size_t file_length_ = 0;
   std::unique_ptr<char, pdfium::FreeDeleter> file_contents_;
@@ -299,9 +309,17 @@ class EmbedderTest : public ::testing::Test,
                                      int page_index);
   static void DoURIActionTrampoline(FPDF_FORMFILLINFO* info,
                                     FPDF_BYTESTRING uri);
+  static void DoGoToActionTrampoline(FPDF_FORMFILLINFO* info,
+                                     int page_index,
+                                     int zoom_mode,
+                                     float* pos_array,
+                                     int array_size);
   static void OnFocusChangeTrampoline(FPDF_FORMFILLINFO* info,
                                       FPDF_ANNOTATION annot,
                                       int page_index);
+  static void DoURIActionWithKeyboardModifierTrampoline(FPDF_FORMFILLINFO* info,
+                                                        FPDF_BYTESTRING uri,
+                                                        int modifiers);
   static int WriteBlockCallback(FPDF_FILEWRITE* pFileWrite,
                                 const void* data,
                                 unsigned long size);

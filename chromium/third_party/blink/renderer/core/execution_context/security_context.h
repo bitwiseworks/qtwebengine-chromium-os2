@@ -31,9 +31,7 @@
 
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
-#include "services/network/public/mojom/ip_address_space.mojom-blink-forward.h"
-#include "third_party/blink/public/common/feature_policy/document_policy.h"
-#include "third_party/blink/public/common/frame/sandbox_flags.h"
+#include "services/network/public/mojom/web_sandbox_flags.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/feature_policy/document_policy_feature.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/feature_policy/feature_policy.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/feature_policy/feature_policy_feature.mojom-blink-forward.h"
@@ -47,18 +45,25 @@
 
 namespace blink {
 
-class Agent;
 class ContentSecurityPolicy;
+class DocumentPolicy;
+class ExecutionContext;
 class FeaturePolicy;
 class PolicyValue;
-class OriginTrialContext;
-class SecurityContextInit;
 class SecurityOrigin;
 struct ParsedFeaturePolicyDeclaration;
 
 using ParsedFeaturePolicy = std::vector<ParsedFeaturePolicyDeclaration>;
 
 enum class SecureContextMode { kInsecureContext, kSecureContext };
+
+// Explanation as to why |SecureContextMode| was set as it was set.
+enum class SecureContextModeExplanation {
+  kSecure,
+  kSecureLocalhost,
+  kInsecureScheme,
+  kInsecureAncestor,
+};
 
 // Whether to report policy violations when checking whether a feature is
 // enabled.
@@ -76,12 +81,12 @@ class CORE_EXPORT SecurityContext {
   DISALLOW_NEW();
 
  public:
-  enum SecurityContextType { kLocal, kRemote };
+  explicit SecurityContext(ExecutionContext*);
+  SecurityContext(const SecurityContext&) = delete;
+  SecurityContext& operator=(const SecurityContext&) = delete;
+  virtual ~SecurityContext();
 
-  SecurityContext(const SecurityContextInit&, SecurityContextType context_type);
-  virtual ~SecurityContext() = default;
-
-  void Trace(Visitor*);
+  void Trace(Visitor*) const;
 
   using InsecureNavigationsSet = HashSet<unsigned, WTF::AlreadyHashed>;
   static WTF::Vector<unsigned> SerializeInsecureNavigationSet(
@@ -104,18 +109,11 @@ class CORE_EXPORT SecurityContext {
   // Like SetSecurityOrigin(), but no security CHECKs.
   void SetSecurityOriginForTesting(scoped_refptr<SecurityOrigin>);
 
-  mojom::blink::WebSandboxFlags GetSandboxFlags() const {
+  network::mojom::blink::WebSandboxFlags GetSandboxFlags() const {
     return sandbox_flags_;
   }
-  bool IsSandboxed(mojom::blink::WebSandboxFlags mask) const;
-  void ApplySandboxFlags(mojom::blink::WebSandboxFlags flags) {
-    sandbox_flags_ |= flags;
-  }
-
-  void SetAddressSpace(network::mojom::IPAddressSpace space) {
-    address_space_ = space;
-  }
-  network::mojom::IPAddressSpace AddressSpace() const { return address_space_; }
+  bool IsSandboxed(network::mojom::blink::WebSandboxFlags mask) const;
+  void ApplySandboxFlags(network::mojom::blink::WebSandboxFlags flags);
 
   void SetRequireTrustedTypes();
   void SetRequireTrustedTypesForTesting();  // Skips sanity checks.
@@ -148,26 +146,24 @@ class CORE_EXPORT SecurityContext {
   const FeaturePolicy* GetFeaturePolicy() const {
     return feature_policy_.get();
   }
-  void SetFeaturePolicy(std::unique_ptr<FeaturePolicy> feature_policy);
+  void SetFeaturePolicy(std::unique_ptr<FeaturePolicy>);
+  void SetReportOnlyFeaturePolicy(std::unique_ptr<FeaturePolicy>);
 
   const DocumentPolicy* GetDocumentPolicy() const {
     return document_policy_.get();
   }
+  void SetDocumentPolicy(std::unique_ptr<DocumentPolicy> policy);
 
   const DocumentPolicy* GetReportOnlyDocumentPolicy() const {
     return report_only_document_policy_.get();
   }
-
-  void SetDocumentPolicyForTesting(
-      std::unique_ptr<DocumentPolicy> document_policy);
+  void SetReportOnlyDocumentPolicy(std::unique_ptr<DocumentPolicy> policy);
 
   // Tests whether the policy-controlled feature is enabled in this frame.
   // Use ExecutionContext::IsFeatureEnabled if a failure should be reported.
   // |should_report| is an extra return value that indicates whether
   // the potential violation should be reported.
-  bool IsFeatureEnabled(mojom::blink::FeaturePolicyFeature) const;
   bool IsFeatureEnabled(mojom::blink::FeaturePolicyFeature,
-                        PolicyValue threshold_value,
                         bool* should_report = nullptr) const;
 
   bool IsFeatureEnabled(mojom::blink::DocumentPolicyFeature) const;
@@ -178,26 +174,16 @@ class CORE_EXPORT SecurityContext {
   FeatureStatus IsFeatureEnabled(mojom::blink::DocumentPolicyFeature,
                                  PolicyValue threshold_value) const;
 
-  Agent* GetAgent() const { return agent_; }
-
-  OriginTrialContext* GetOriginTrialContext() const {
-    return origin_trial_context_;
-  }
-
   SecureContextMode GetSecureContextMode() const {
-    // secure_context_mode_ is not initialized for RemoteSecurityContexts.
-    DCHECK_EQ(context_type_, kLocal);
     return secure_context_mode_;
   }
 
-  void SetSecureContextModeForTesting(SecureContextMode mode) {
-    secure_context_mode_ = mode;
+  SecureContextModeExplanation GetSecureContextModeExplanation() const {
+    return secure_context_explanation_;
   }
 
-  bool BindCSPImmediately() const { return bind_csp_immediately_; }
-
  protected:
-  mojom::blink::WebSandboxFlags sandbox_flags_;
+  network::mojom::blink::WebSandboxFlags sandbox_flags_;
   scoped_refptr<SecurityOrigin> security_origin_;
   std::unique_ptr<FeaturePolicy> feature_policy_;
   std::unique_ptr<FeaturePolicy> report_only_feature_policy_;
@@ -205,18 +191,15 @@ class CORE_EXPORT SecurityContext {
   std::unique_ptr<DocumentPolicy> report_only_document_policy_;
 
  private:
+  // execution_context_ will be nullptr if this is a RemoteSecurityContext.
+  Member<ExecutionContext> execution_context_;
   Member<ContentSecurityPolicy> content_security_policy_;
-
-  network::mojom::IPAddressSpace address_space_;
   mojom::blink::InsecureRequestPolicy insecure_request_policy_;
   InsecureNavigationsSet insecure_navigations_to_upgrade_;
-  bool require_safe_types_;
-  const SecurityContextType context_type_;
-  Member<Agent> agent_;
-  SecureContextMode secure_context_mode_;
-  Member<OriginTrialContext> origin_trial_context_;
-  bool bind_csp_immediately_ = false;
-  DISALLOW_COPY_AND_ASSIGN(SecurityContext);
+  bool require_safe_types_ = false;
+  SecureContextMode secure_context_mode_ = SecureContextMode::kInsecureContext;
+  SecureContextModeExplanation secure_context_explanation_ =
+      SecureContextModeExplanation::kInsecureScheme;
 };
 
 }  // namespace blink

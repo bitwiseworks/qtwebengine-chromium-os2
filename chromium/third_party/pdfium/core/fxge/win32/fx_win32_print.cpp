@@ -10,7 +10,9 @@
 #include <memory>
 #include <vector>
 
+#include "core/fxcrt/fx_memory_wrappers.h"
 #include "core/fxcrt/fx_system.h"
+#include "core/fxge/cfx_fillrenderoptions.h"
 #include "core/fxge/cfx_font.h"
 #include "core/fxge/cfx_windowsrenderdevice.h"
 #include "core/fxge/dib/cfx_dibextractor.h"
@@ -199,12 +201,14 @@ bool CGdiPrinterDriver::StartDIBits(const RetainPtr<CFX_DIBBase>& pSource,
                        FXDIB_ResampleOptions(), blend_type);
 }
 
-bool CGdiPrinterDriver::DrawDeviceText(int nChars,
-                                       const TextCharPos* pCharPos,
-                                       CFX_Font* pFont,
-                                       const CFX_Matrix& mtObject2Device,
-                                       float font_size,
-                                       uint32_t color) {
+bool CGdiPrinterDriver::DrawDeviceText(
+    int nChars,
+    const TextCharPos* pCharPos,
+    CFX_Font* pFont,
+    const CFX_Matrix& mtObject2Device,
+    float font_size,
+    uint32_t color,
+    const CFX_TextRenderOptions& /*options*/) {
 #if defined(PDFIUM_PRINT_TEXT_WITH_GDI)
   if (!g_pdfium_print_text_with_gdi)
     return false;
@@ -259,7 +263,7 @@ bool CGdiPrinterDriver::DrawDeviceText(int nChars,
       return false;
   }
 
-  std::vector<BYTE> buf(nTextMetricSize);
+  std::vector<BYTE, FxAllocAllocator<BYTE>> buf(nTextMetricSize);
   OUTLINETEXTMETRIC* pTextMetric =
       reinterpret_cast<OUTLINETEXTMETRIC*>(buf.data());
   if (GetOutlineTextMetrics(m_hDC, nTextMetricSize, pTextMetric) == 0)
@@ -290,7 +294,7 @@ bool CGdiPrinterDriver::DrawDeviceText(int nChars,
 
   // Text
   WideString wsText;
-  std::vector<INT> spacing(nChars);
+  std::vector<INT, FxAllocAllocator<INT>> spacing(nChars);
   float fPreviousOriginX = 0;
   for (int i = 0; i < nChars; ++i) {
     // Only works with PDFs from Skia's PDF generator. Cannot handle arbitrary
@@ -364,7 +368,7 @@ CPSPrinterDriver::CPSPrinterDriver(HDC hDC,
   if (::GetClipRgn(m_hDC, hRgn) == 1) {
     DWORD dwCount = ::GetRegionData(hRgn, 0, nullptr);
     if (dwCount) {
-      std::vector<uint8_t> buffer(dwCount);
+      std::vector<uint8_t, FxAllocAllocator<uint8_t>> buffer(dwCount);
       RGNDATA* pData = reinterpret_cast<RGNDATA*>(buffer.data());
       if (::GetRegionData(hRgn, dwCount, pData)) {
         CFX_PathData path;
@@ -376,7 +380,8 @@ CPSPrinterDriver::CPSPrinterDriver(HDC hDC,
                           static_cast<float>(pRect->right),
                           static_cast<float>(pRect->top));
         }
-        m_PSRenderer.SetClip_PathFill(&path, nullptr, FXFILL_WINDING);
+        m_PSRenderer.SetClip_PathFill(&path, nullptr,
+                                      CFX_FillRenderOptions::WindingOptions());
       }
     }
   }
@@ -384,7 +389,7 @@ CPSPrinterDriver::CPSPrinterDriver(HDC hDC,
 }
 
 CPSPrinterDriver::~CPSPrinterDriver() {
-  EndRendering();
+  m_PSRenderer.EndRendering();
 }
 
 DeviceType CPSPrinterDriver::GetDeviceType() const {
@@ -411,14 +416,6 @@ int CPSPrinterDriver::GetDeviceCaps(int caps_id) const {
   }
 }
 
-bool CPSPrinterDriver::StartRendering() {
-  return m_PSRenderer.StartRendering();
-}
-
-void CPSPrinterDriver::EndRendering() {
-  m_PSRenderer.EndRendering();
-}
-
 void CPSPrinterDriver::SaveState() {
   m_PSRenderer.SaveState();
 }
@@ -427,10 +424,11 @@ void CPSPrinterDriver::RestoreState(bool bKeepSaved) {
   m_PSRenderer.RestoreState(bKeepSaved);
 }
 
-bool CPSPrinterDriver::SetClip_PathFill(const CFX_PathData* pPathData,
-                                        const CFX_Matrix* pObject2Device,
-                                        int fill_mode) {
-  m_PSRenderer.SetClip_PathFill(pPathData, pObject2Device, fill_mode);
+bool CPSPrinterDriver::SetClip_PathFill(
+    const CFX_PathData* pPathData,
+    const CFX_Matrix* pObject2Device,
+    const CFX_FillRenderOptions& fill_options) {
+  m_PSRenderer.SetClip_PathFill(pPathData, pObject2Device, fill_options);
   return true;
 }
 
@@ -447,12 +445,12 @@ bool CPSPrinterDriver::DrawPath(const CFX_PathData* pPathData,
                                 const CFX_GraphStateData* pGraphState,
                                 FX_ARGB fill_color,
                                 FX_ARGB stroke_color,
-                                int fill_mode,
+                                const CFX_FillRenderOptions& fill_options,
                                 BlendMode blend_type) {
   if (blend_type != BlendMode::kNormal)
     return false;
   return m_PSRenderer.DrawPath(pPathData, pObject2Device, pGraphState,
-                               fill_color, stroke_color, fill_mode & 3);
+                               fill_color, stroke_color, fill_options);
 }
 
 bool CPSPrinterDriver::GetClipBox(FX_RECT* pRect) {
@@ -503,12 +501,14 @@ bool CPSPrinterDriver::StartDIBits(const RetainPtr<CFX_DIBBase>& pBitmap,
   return m_PSRenderer.DrawDIBits(pBitmap, color, matrix, options);
 }
 
-bool CPSPrinterDriver::DrawDeviceText(int nChars,
-                                      const TextCharPos* pCharPos,
-                                      CFX_Font* pFont,
-                                      const CFX_Matrix& mtObject2Device,
-                                      float font_size,
-                                      uint32_t color) {
+bool CPSPrinterDriver::DrawDeviceText(
+    int nChars,
+    const TextCharPos* pCharPos,
+    CFX_Font* pFont,
+    const CFX_Matrix& mtObject2Device,
+    float font_size,
+    uint32_t color,
+    const CFX_TextRenderOptions& /*options*/) {
   return m_PSRenderer.DrawText(nChars, pCharPos, pFont, mtObject2Device,
                                font_size, color);
 }
@@ -524,9 +524,7 @@ CTextOnlyPrinterDriver::CTextOnlyPrinterDriver(HDC hDC)
   m_nBitsPerPixel = ::GetDeviceCaps(m_hDC, BITSPIXEL);
 }
 
-CTextOnlyPrinterDriver::~CTextOnlyPrinterDriver() {
-  EndRendering();
-}
+CTextOnlyPrinterDriver::~CTextOnlyPrinterDriver() = default;
 
 DeviceType CTextOnlyPrinterDriver::GetDeviceType() const {
   return DeviceType::kPrinter;
@@ -552,9 +550,10 @@ int CTextOnlyPrinterDriver::GetDeviceCaps(int caps_id) const {
   }
 }
 
-bool CTextOnlyPrinterDriver::SetClip_PathFill(const CFX_PathData* pPathData,
-                                              const CFX_Matrix* pObject2Device,
-                                              int fill_mode) {
+bool CTextOnlyPrinterDriver::SetClip_PathFill(
+    const CFX_PathData* pPathData,
+    const CFX_Matrix* pObject2Device,
+    const CFX_FillRenderOptions& fill_options) {
   return true;
 }
 
@@ -570,7 +569,7 @@ bool CTextOnlyPrinterDriver::DrawPath(const CFX_PathData* pPathData,
                                       const CFX_GraphStateData* pGraphState,
                                       uint32_t fill_color,
                                       uint32_t stroke_color,
-                                      int fill_mode,
+                                      const CFX_FillRenderOptions& fill_options,
                                       BlendMode blend_type) {
   return false;
 }
@@ -616,12 +615,14 @@ bool CTextOnlyPrinterDriver::StartDIBits(
   return false;
 }
 
-bool CTextOnlyPrinterDriver::DrawDeviceText(int nChars,
-                                            const TextCharPos* pCharPos,
-                                            CFX_Font* pFont,
-                                            const CFX_Matrix& mtObject2Device,
-                                            float font_size,
-                                            uint32_t color) {
+bool CTextOnlyPrinterDriver::DrawDeviceText(
+    int nChars,
+    const TextCharPos* pCharPos,
+    CFX_Font* pFont,
+    const CFX_Matrix& mtObject2Device,
+    float font_size,
+    uint32_t color,
+    const CFX_TextRenderOptions& /*options*/) {
   if (g_pdfium_print_mode != 1)
     return false;
   if (nChars < 1 || !pFont || !pFont->IsEmbedded() || !pFont->IsTTFont())

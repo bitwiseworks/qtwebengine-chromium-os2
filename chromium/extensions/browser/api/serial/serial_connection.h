@@ -110,7 +110,8 @@ class SerialConnection : public ApiResource,
   virtual void StartPolling(const ReceiveEventCallback& callback);
 
   // Flushes input and output buffers.
-  void Flush(FlushCompleteCallback callback) const;
+  void Flush(device::mojom::SerialPortFlushMode mode,
+             FlushCompleteCallback callback) const;
 
   // Configures some subset of port options for this connection.
   // Omitted options are unchanged.
@@ -146,8 +147,6 @@ class SerialConnection : public ApiResource,
   void OnSendError(device::mojom::SerialSendError error) override;
 
   void OnOpen(
-      mojo::ScopedDataPipeConsumerHandle consumer,
-      mojo::ScopedDataPipeProducerHandle producer,
       mojo::PendingReceiver<device::mojom::SerialPortClient> client_receiver,
       OpenCompleteCallback callback,
       bool success);
@@ -160,8 +159,8 @@ class SerialConnection : public ApiResource,
 
   void CreatePipe(mojo::ScopedDataPipeProducerHandle* producer,
                   mojo::ScopedDataPipeConsumerHandle* consumer);
-  void SetUpReceiveDataPipe(mojo::ScopedDataPipeConsumerHandle producer);
-  void SetUpSendDataPipe(mojo::ScopedDataPipeProducerHandle consumer);
+  void SetUpReceiveDataPipe();
+  void SetUpSendDataPipe();
 
   void SetTimeoutCallback();
 

@@ -35,6 +35,7 @@
 #include "base/test/test_timeouts.h"
 #include "fuchsia/engine/context_provider_impl.h"
 #include "fuchsia/engine/fake_context.h"
+#include "fuchsia/engine/switches.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/multiprocess_func_list.h"
 
@@ -101,15 +102,21 @@ base::Process LaunchFakeContextProcess(const base::CommandLine& command_line,
 }
 
 fuchsia::web::CreateContextParams BuildCreateContextParams() {
-  fidl::InterfaceHandle<fuchsia::io::Directory> directory;
-  zx_status_t result =
-      fdio_service_connect(base::fuchsia::kServiceDirectoryPath,
-                           directory.NewRequest().TakeChannel().release());
-  ZX_CHECK(result == ZX_OK, result) << "Failed to open /svc";
-
   fuchsia::web::CreateContextParams output;
-  output.set_service_directory(std::move(directory));
+  zx_status_t result = fdio_service_connect(
+      base::fuchsia::kServiceDirectoryPath,
+      output.mutable_service_directory()->NewRequest().TakeChannel().release());
+  ZX_CHECK(result == ZX_OK, result) << "Failed to open /svc";
   return output;
+}
+
+fidl::InterfaceHandle<fuchsia::io::Directory> OpenCacheDirectory() {
+  fidl::InterfaceHandle<fuchsia::io::Directory> cache_handle;
+  zx_status_t result =
+      fdio_service_connect(base::fuchsia::kPersistedCacheDirectoryPath,
+                           cache_handle.NewRequest().TakeChannel().release());
+  ZX_CHECK(result == ZX_OK, result) << "Failed to open /cache";
+  return cache_handle;
 }
 
 }  // namespace
@@ -209,7 +216,7 @@ class ContextProviderImplTest : public base::MultiProcessTest {
   DISALLOW_COPY_AND_ASSIGN(ContextProviderImplTest);
 };
 
-TEST_F(ContextProviderImplTest, LaunchContext) {
+TEST_F(ContextProviderImplTest, CanCreateContext) {
   // Connect to a new context process.
   fidl::InterfacePtr<fuchsia::web::Context> context;
   fuchsia::web::CreateContextParams create_params = BuildCreateContextParams();
@@ -217,35 +224,90 @@ TEST_F(ContextProviderImplTest, LaunchContext) {
   CheckContextResponsive(&context);
 }
 
-TEST_F(ContextProviderImplTest, LaunchContextInvalidArguments) {
-  {
-    // Attempt to create a Context without specifying a service directory.
-    fidl::InterfacePtr<fuchsia::web::Context> context;
-    fuchsia::web::CreateContextParams create_params;
-    provider_ptr_->Create(std::move(create_params), context.NewRequest());
-    base::RunLoop run_loop;
-    context.set_error_handler([&run_loop](zx_status_t status) {
-      EXPECT_EQ(status, ZX_ERR_INVALID_ARGS);
-      run_loop.Quit();
-    });
-  }
+TEST_F(ContextProviderImplTest, CreateValidatesServiceDirectory) {
+  // Attempt to create a Context without specifying a service directory.
+  fidl::InterfacePtr<fuchsia::web::Context> context;
+  fuchsia::web::CreateContextParams create_params;
+  provider_ptr_->Create(std::move(create_params), context.NewRequest());
+  base::RunLoop run_loop;
+  context.set_error_handler([&run_loop](zx_status_t status) {
+    EXPECT_EQ(status, ZX_ERR_INVALID_ARGS);
+    run_loop.Quit();
+  });
+  run_loop.Run();
+}
 
+TEST_F(ContextProviderImplTest, CreateValidatesDataDirectory) {
   // Deliberately supply the wrong kind of object as the data-directory.
+  fidl::InterfacePtr<fuchsia::web::Context> context;
+  fuchsia::web::CreateContextParams create_params = BuildCreateContextParams();
+  zx::socket socket1, socket2;
+  ASSERT_EQ(zx::socket::create(0, &socket1, &socket2), ZX_OK);
+  create_params.set_data_directory(
+      fidl::InterfaceHandle<fuchsia::io::Directory>(
+          zx::channel(socket1.release())));
+  provider_ptr_->Create(std::move(create_params), context.NewRequest());
+  base::RunLoop run_loop;
+  context.set_error_handler([&run_loop](zx_status_t status) {
+    EXPECT_EQ(status, ZX_ERR_INVALID_ARGS);
+    run_loop.Quit();
+  });
+  run_loop.Run();
+}
+
+TEST_F(ContextProviderImplTest, CreateValidatesDrmFlags) {
   {
+    // Request Widevine DRM but do not enable VULKAN.
     fidl::InterfacePtr<fuchsia::web::Context> context;
     fuchsia::web::CreateContextParams create_params =
         BuildCreateContextParams();
-    zx::socket socket1, socket2;
-    ASSERT_EQ(zx::socket::create(0, &socket1, &socket2), ZX_OK);
-    create_params.set_data_directory(
-        fidl::InterfaceHandle<fuchsia::io::Directory>(
-            zx::channel(socket1.release())));
+    *create_params.mutable_features() =
+        fuchsia::web::ContextFeatureFlags::WIDEVINE_CDM;
+    *create_params.mutable_cdm_data_directory() = OpenCacheDirectory();
     provider_ptr_->Create(std::move(create_params), context.NewRequest());
     base::RunLoop run_loop;
     context.set_error_handler([&run_loop](zx_status_t status) {
-      EXPECT_EQ(status, ZX_ERR_INVALID_ARGS);
+      EXPECT_EQ(status, ZX_ERR_NOT_SUPPORTED);
       run_loop.Quit();
     });
+    run_loop.Run();
+  }
+
+  {
+    // Request PlayReady DRM but do not enable VULKAN.
+    fidl::InterfacePtr<fuchsia::web::Context> context;
+    fuchsia::web::CreateContextParams create_params =
+        BuildCreateContextParams();
+    create_params.set_playready_key_system("foo");
+    *create_params.mutable_cdm_data_directory() = OpenCacheDirectory();
+    provider_ptr_->Create(std::move(create_params), context.NewRequest());
+    base::RunLoop run_loop;
+    context.set_error_handler([&run_loop](zx_status_t status) {
+      EXPECT_EQ(status, ZX_ERR_NOT_SUPPORTED);
+      run_loop.Quit();
+    });
+    run_loop.Run();
+  }
+
+  {
+    // Requesting DRM without VULKAN is acceptable for HEADLESS Contexts.
+    fidl::InterfacePtr<fuchsia::web::Context> context;
+    fuchsia::web::CreateContextParams create_params =
+        BuildCreateContextParams();
+    *create_params.mutable_features() =
+        fuchsia::web::ContextFeatureFlags::WIDEVINE_CDM |
+        fuchsia::web::ContextFeatureFlags::HEADLESS;
+    *create_params.mutable_cdm_data_directory() = OpenCacheDirectory();
+    provider_ptr_->Create(std::move(create_params), context.NewRequest());
+    base::RunLoop run_loop;
+    context.set_error_handler([&run_loop](zx_status_t status) {
+      ZX_LOG(ERROR, status);
+      ADD_FAILURE();
+      run_loop.Quit();
+    });
+    // Spin the loop to allow CreateContext() to be handled, and the |context|
+    // channel to be disconnected, in case of failure.
+    run_loop.RunUntilIdle();
   }
 }
 
@@ -372,7 +434,7 @@ TEST(ContextProviderImplConfigTest, WithConfigWithCommandLineArgs) {
 
   base::RunLoop loop;
   ContextProviderImpl context_provider;
-  context_provider.set_config_override_for_test(std::move(config_dict));
+  context_provider.set_config_for_test(std::move(config_dict));
   context_provider.SetLaunchCallbackForTest(
       base::BindLambdaForTesting([&loop](const base::CommandLine& command,
                                          const base::LaunchOptions& options) {
@@ -405,7 +467,7 @@ TEST(ContextProviderImplConfigTest, WithConfigWithDisallowedCommandLineArgs) {
 
   base::RunLoop loop;
   ContextProviderImpl context_provider;
-  context_provider.set_config_override_for_test(std::move(config_dict));
+  context_provider.set_config_for_test(std::move(config_dict));
   context_provider.SetLaunchCallbackForTest(
       base::BindLambdaForTesting([&loop](const base::CommandLine& command,
                                          const base::LaunchOptions& options) {
@@ -438,7 +500,7 @@ TEST(ContextProviderImplConfigTest, WithConfigWithWronglyTypedCommandLineArgs) {
 
   base::RunLoop loop;
   ContextProviderImpl context_provider;
-  context_provider.set_config_override_for_test(std::move(config_dict));
+  context_provider.set_config_for_test(std::move(config_dict));
   context_provider.SetLaunchCallbackForTest(
       base::BindLambdaForTesting([&](const base::CommandLine& command,
                                      const base::LaunchOptions& options) {

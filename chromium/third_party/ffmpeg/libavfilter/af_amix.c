@@ -34,6 +34,7 @@
 #include "libavutil/avstring.h"
 #include "libavutil/channel_layout.h"
 #include "libavutil/common.h"
+#include "libavutil/eval.h"
 #include "libavutil/float_dsp.h"
 #include "libavutil/mathematics.h"
 #include "libavutil/opt.h"
@@ -180,6 +181,7 @@ typedef struct MixContext {
 #define OFFSET(x) offsetof(MixContext, x)
 #define A AV_OPT_FLAG_AUDIO_PARAM
 #define F AV_OPT_FLAG_FILTERING_PARAM
+#define T AV_OPT_FLAG_RUNTIME_PARAM
 static const AVOption amix_options[] = {
     { "inputs", "Number of inputs.",
             OFFSET(nb_inputs), AV_OPT_TYPE_INT, { .i64 = 2 }, 1, INT16_MAX, A|F },
@@ -192,7 +194,7 @@ static const AVOption amix_options[] = {
                             "renormalization when an input stream ends.",
             OFFSET(dropout_transition), AV_OPT_TYPE_FLOAT, { .dbl = 2.0 }, 0, INT_MAX, A|F },
     { "weights", "Set weight for each input.",
-            OFFSET(weights_str), AV_OPT_TYPE_STRING, {.str="1 1"}, 0, 0, A|F },
+            OFFSET(weights_str), AV_OPT_TYPE_STRING, {.str="1 1"}, 0, 0, A|F|T },
     { NULL }
 };
 
@@ -503,11 +505,36 @@ static int activate(AVFilterContext *ctx)
     return 0;
 }
 
+static void parse_weights(AVFilterContext *ctx)
+{
+    MixContext *s = ctx->priv;
+    float last_weight = 1.f;
+    char *p;
+    int i;
+
+    s->weight_sum = 0.f;
+    p = s->weights_str;
+    for (i = 0; i < s->nb_inputs; i++) {
+        last_weight = av_strtod(p, &p);
+        s->weights[i] = last_weight;
+        s->weight_sum += FFABS(last_weight);
+        if (p && *p) {
+            p++;
+        } else {
+            i++;
+            break;
+        }
+    }
+
+    for (; i < s->nb_inputs; i++) {
+        s->weights[i] = last_weight;
+        s->weight_sum += FFABS(last_weight);
+    }
+}
+
 static av_cold int init(AVFilterContext *ctx)
 {
     MixContext *s = ctx->priv;
-    char *p, *arg, *saveptr = NULL;
-    float last_weight = 1.f;
     int i, ret;
 
     for (i = 0; i < s->nb_inputs; i++) {
@@ -532,21 +559,7 @@ static av_cold int init(AVFilterContext *ctx)
     if (!s->weights)
         return AVERROR(ENOMEM);
 
-    p = s->weights_str;
-    for (i = 0; i < s->nb_inputs; i++) {
-        if (!(arg = av_strtok(p, " ", &saveptr)))
-            break;
-
-        p = NULL;
-        sscanf(arg, "%f", &last_weight);
-        s->weights[i] = last_weight;
-        s->weight_sum += FFABS(last_weight);
-    }
-
-    for (; i < s->nb_inputs; i++) {
-        s->weights[i] = last_weight;
-        s->weight_sum += FFABS(last_weight);
-    }
+    parse_weights(ctx);
 
     return 0;
 }
@@ -575,30 +588,36 @@ static av_cold void uninit(AVFilterContext *ctx)
 
 static int query_formats(AVFilterContext *ctx)
 {
-    AVFilterFormats *formats = NULL;
-    AVFilterChannelLayouts *layouts;
+    static const enum AVSampleFormat sample_fmts[] = {
+        AV_SAMPLE_FMT_FLT, AV_SAMPLE_FMT_FLTP,
+        AV_SAMPLE_FMT_DBL, AV_SAMPLE_FMT_DBLP,
+        AV_SAMPLE_FMT_NONE
+    };
     int ret;
 
-    layouts = ff_all_channel_counts();
-    if (!layouts) {
-        ret = AVERROR(ENOMEM);
-        goto fail;
-    }
-
-    if ((ret = ff_add_format(&formats, AV_SAMPLE_FMT_FLT ))          < 0 ||
-        (ret = ff_add_format(&formats, AV_SAMPLE_FMT_FLTP))          < 0 ||
-        (ret = ff_add_format(&formats, AV_SAMPLE_FMT_DBL ))          < 0 ||
-        (ret = ff_add_format(&formats, AV_SAMPLE_FMT_DBLP))          < 0 ||
-        (ret = ff_set_common_formats        (ctx, formats))          < 0 ||
-        (ret = ff_set_common_channel_layouts(ctx, layouts))          < 0 ||
+    if ((ret = ff_set_common_formats(ctx, ff_make_format_list(sample_fmts))) < 0 ||
         (ret = ff_set_common_samplerates(ctx, ff_all_samplerates())) < 0)
-        goto fail;
+        return ret;
+
+    return ff_set_common_channel_layouts(ctx, ff_all_channel_counts());
+}
+
+static int process_command(AVFilterContext *ctx, const char *cmd, const char *args,
+                           char *res, int res_len, int flags)
+{
+    MixContext *s = ctx->priv;
+    int ret;
+
+    ret = ff_filter_process_command(ctx, cmd, args, res, res_len, flags);
+    if (ret < 0)
+        return ret;
+
+    parse_weights(ctx);
+    for (int i = 0; i < s->nb_inputs; i++)
+        s->scale_norm[i] = s->weight_sum / FFABS(s->weights[i]);
+    calculate_scales(s, 0);
+
     return 0;
-fail:
-    if (layouts)
-        av_freep(&layouts->channel_layouts);
-    av_freep(&layouts);
-    return ret;
 }
 
 static const AVFilterPad avfilter_af_amix_outputs[] = {
@@ -621,5 +640,6 @@ AVFilter ff_af_amix = {
     .query_formats  = query_formats,
     .inputs         = NULL,
     .outputs        = avfilter_af_amix_outputs,
+    .process_command = process_command,
     .flags          = AVFILTER_FLAG_DYNAMIC_INPUTS,
 };

@@ -8,21 +8,20 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/post_task.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/common/origin_util.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "storage/browser/database/database_util.h"
 #include "storage/browser/database/vfs_backend.h"
 #include "storage/browser/quota/quota_manager.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
 #include "storage/common/database/database_identifier.h"
+#include "third_party/blink/public/common/loader/network_utils.h"
 #include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 #include "third_party/sqlite/sqlite3.h"
 #include "url/origin.h"
@@ -116,8 +115,8 @@ void WebDatabaseHostImpl::OpenFileValidated(const base::string16& vfs_file_name,
   std::string origin_identifier;
   base::string16 database_name;
 
-  // When in incognito mode, we want to make sure that all DB files are
-  // removed when the incognito browser context goes away, so we add the
+  // When in OffTheRecord mode, we want to make sure that all DB files are
+  // removed when the OffTheRecord browser context goes away, so we add the
   // SQLITE_OPEN_DELETEONCLOSE flag when opening all files, and keep
   // open handles to them in the database tracker to make sure they're
   // around for as long as needed.
@@ -131,14 +130,14 @@ void WebDatabaseHostImpl::OpenFileValidated(const base::string16& vfs_file_name,
     base::FilePath db_file = DatabaseUtil::GetFullFilePathForVfsFile(
         db_tracker_.get(), vfs_file_name);
     if (!db_file.empty()) {
-      if (db_tracker_->IsIncognitoProfile()) {
-        tracked_file = db_tracker_->GetIncognitoFile(vfs_file_name);
+      if (db_tracker_->IsOffTheRecordProfile()) {
+        tracked_file = db_tracker_->GetOffTheRecordFile(vfs_file_name);
         if (!tracked_file) {
           file = VfsBackend::OpenFile(
               db_file, desired_flags | SQLITE_OPEN_DELETEONCLOSE);
           if (!(desired_flags & SQLITE_OPEN_DELETEONCLOSE)) {
-            tracked_file =
-                db_tracker_->SaveIncognitoFile(vfs_file_name, std::move(file));
+            tracked_file = db_tracker_->SaveOffTheRecordFile(vfs_file_name,
+                                                             std::move(file));
           }
         }
       } else {
@@ -288,20 +287,20 @@ void WebDatabaseHostImpl::DatabaseDeleteFile(
   base::FilePath db_file =
       DatabaseUtil::GetFullFilePathForVfsFile(db_tracker_.get(), vfs_file_name);
   if (!db_file.empty()) {
-    // In order to delete a journal file in incognito mode, we only need to
+    // In order to delete a journal file in OffTheRecord mode, we only need to
     // close the open handle to it that's stored in the database tracker.
-    if (db_tracker_->IsIncognitoProfile()) {
+    if (db_tracker_->IsOffTheRecordProfile()) {
       const base::string16 wal_suffix(base::ASCIIToUTF16("-wal"));
       base::string16 sqlite_suffix;
 
       // WAL files can be deleted without having previously been opened.
-      if (!db_tracker_->HasSavedIncognitoFileHandle(vfs_file_name) &&
+      if (!db_tracker_->HasSavedOffTheRecordFileHandle(vfs_file_name) &&
           DatabaseUtil::CrackVfsFileName(vfs_file_name, nullptr, nullptr,
                                          &sqlite_suffix) &&
           sqlite_suffix == wal_suffix) {
         error_code = SQLITE_OK;
       } else {
-        db_tracker_->CloseIncognitoFileHandle(vfs_file_name);
+        db_tracker_->CloseOffTheRecordFileHandle(vfs_file_name);
         error_code = SQLITE_OK;
       }
     } else {
@@ -347,7 +346,8 @@ void WebDatabaseHostImpl::OpenedValidated(
     int64_t estimated_size) {
   DCHECK(db_tracker_->task_runner()->RunsTasksInCurrentSequence());
 
-  UMA_HISTOGRAM_BOOLEAN("websql.OpenDatabase", IsOriginSecure(origin.GetURL()));
+  UMA_HISTOGRAM_BOOLEAN("websql.OpenDatabase",
+                        blink::network_utils::IsOriginSecure(origin.GetURL()));
 
   int64_t database_size = 0;
   std::string origin_identifier(storage::GetIdentifierFromOrigin(origin));
@@ -446,8 +446,8 @@ blink::mojom::WebDatabase& WebDatabaseHostImpl::GetWebDatabase() {
   if (!database_provider_) {
     // The interface binding needs to occur on the UI thread, as we can
     // only call RenderProcessHost::FromID() on the UI thread.
-    base::PostTask(
-        FROM_HERE, {BrowserThread::UI},
+    GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE,
         base::BindOnce(
             [](int process_id,
                mojo::PendingReceiver<blink::mojom::WebDatabase> receiver) {
@@ -467,8 +467,8 @@ void WebDatabaseHostImpl::ValidateOrigin(const url::Origin& origin,
     return;
   }
 
-  base::PostTask(
-      FROM_HERE, {BrowserThread::UI},
+  GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce(&ValidateOriginOnUIThread, process_id_, origin,
                      base::RetainedRef(db_tracker_->task_runner()),
                      std::move(callback), mojo::GetBadMessageCallback()));

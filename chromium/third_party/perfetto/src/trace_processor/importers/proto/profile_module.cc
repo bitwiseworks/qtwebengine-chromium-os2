@@ -17,18 +17,18 @@
 #include "src/trace_processor/importers/proto/profile_module.h"
 
 #include "perfetto/base/logging.h"
-#include "src/trace_processor/clock_tracker.h"
+#include "src/trace_processor/importers/common/clock_tracker.h"
+#include "src/trace_processor/importers/common/process_tracker.h"
 #include "src/trace_processor/importers/proto/packet_sequence_state.h"
 #include "src/trace_processor/importers/proto/profile_packet_utils.h"
-#include "src/trace_processor/process_tracker.h"
-#include "src/trace_processor/stack_profile_tracker.h"
+#include "src/trace_processor/importers/proto/stack_profile_tracker.h"
 #include "src/trace_processor/storage/trace_storage.h"
 #include "src/trace_processor/tables/profiler_tables.h"
 #include "src/trace_processor/timestamped_trace_piece.h"
-#include "src/trace_processor/trace_processor_context.h"
 #include "src/trace_processor/trace_sorter.h"
+#include "src/trace_processor/types/trace_processor_context.h"
 
-#include "protos/perfetto/trace/clock_snapshot.pbzero.h"
+#include "protos/perfetto/common/builtin_clock.pbzero.h"
 #include "protos/perfetto/trace/profiling/profile_packet.pbzero.h"
 
 namespace perfetto {
@@ -88,7 +88,7 @@ ModuleResult ProfileModule::TokenizeStreamingProfilePacket(
   auto packet_ts =
       sequence_state->IncrementAndGetTrackEventTimeNs(/*delta_ns=*/0);
   auto trace_ts = context_->clock_tracker->ToTraceTime(
-      protos::pbzero::ClockSnapshot::Clock::MONOTONIC, packet_ts);
+      protos::pbzero::BUILTIN_CLOCK_MONOTONIC, packet_ts);
   if (trace_ts)
     packet_ts = *trace_ts;
 
@@ -112,8 +112,8 @@ void ProfileModule::ParseStreamingProfilePacket(
 
   ProcessTracker* procs = context_->process_tracker.get();
   TraceStorage* storage = context_->storage.get();
-  StackProfileTracker& stack_profile_tracker =
-      sequence_state->state()->stack_profile_tracker();
+  SequenceStackProfileTracker& sequence_stack_profile_tracker =
+      sequence_state->state()->sequence_stack_profile_tracker();
   ProfilePacketInternLookup intern_lookup(sequence_state);
 
   uint32_t pid = static_cast<uint32_t>(sequence_state->state()->pid());
@@ -131,19 +131,18 @@ void ProfileModule::ParseStreamingProfilePacket(
       break;
     }
 
-    auto opt_cs_id = stack_profile_tracker.FindOrInsertCallstack(
+    auto opt_cs_id = sequence_stack_profile_tracker.FindOrInsertCallstack(
         *callstack_it, &intern_lookup);
     if (!opt_cs_id) {
       context_->storage->IncrementStats(stats::stackprofile_parser_error);
-      PERFETTO_ELOG("StreamingProfilePacket referencing invalid callstack!");
       continue;
     }
 
     // Resolve the delta timestamps based on the packet's root timestamp.
     timestamp += *timestamp_it * 1000;
 
-    tables::CpuProfileStackSampleTable::Row sample_row{timestamp, *opt_cs_id,
-                                                       utid};
+    tables::CpuProfileStackSampleTable::Row sample_row{
+        timestamp, *opt_cs_id, utid, packet.process_priority()};
     storage->mutable_cpu_profile_stack_sample_table()->Insert(sample_row);
   }
 }

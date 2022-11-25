@@ -35,6 +35,7 @@ class IPDFSDK_AnnotHandler {
   virtual WideString GetSelectedText(CPDFSDK_Annot* pAnnot) = 0;
   virtual void ReplaceSelection(CPDFSDK_Annot* pAnnot,
                                 const WideString& text) = 0;
+  virtual bool SelectAllText(CPDFSDK_Annot* pAnnot) = 0;
   virtual bool CanUndo(CPDFSDK_Annot* pAnnot) = 0;
   virtual bool CanRedo(CPDFSDK_Annot* pAnnot) = 0;
   virtual bool Undo(CPDFSDK_Annot* pAnnot) = 0;
@@ -73,8 +74,8 @@ class IPDFSDK_AnnotHandler {
   virtual bool OnMouseWheel(CPDFSDK_PageView* pPageView,
                             ObservedPtr<CPDFSDK_Annot>* pAnnot,
                             uint32_t nFlags,
-                            short zDelta,
-                            const CFX_PointF& point) = 0;
+                            const CFX_PointF& point,
+                            const CFX_Vector& delta) = 0;
   virtual bool OnRButtonDown(CPDFSDK_PageView* pPageView,
                              ObservedPtr<CPDFSDK_Annot>* pAnnot,
                              uint32_t nFlags,

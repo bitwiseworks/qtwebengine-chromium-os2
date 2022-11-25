@@ -15,9 +15,13 @@
 #include "dawn_native/PassResourceUsageTracker.h"
 
 #include "dawn_native/Buffer.h"
+#include "dawn_native/EnumMaskIterator.h"
+#include "dawn_native/Format.h"
 #include "dawn_native/Texture.h"
 
 namespace dawn_native {
+    PassResourceUsageTracker::PassResourceUsageTracker(PassType passType) : mPassType(passType) {
+    }
 
     void PassResourceUsageTracker::BufferUsedAs(BufferBase* buffer, wgpu::BufferUsage usage) {
         // std::map's operator[] will create the key and return 0 if the key didn't exist
@@ -25,15 +29,62 @@ namespace dawn_native {
         mBufferUsages[buffer] |= usage;
     }
 
-    void PassResourceUsageTracker::TextureUsedAs(TextureBase* texture, wgpu::TextureUsage usage) {
-        // std::map's operator[] will create the key and return 0 if the key didn't exist
-        // before.
-        mTextureUsages[texture] |= usage;
+    void PassResourceUsageTracker::TextureViewUsedAs(TextureViewBase* view,
+                                                     wgpu::TextureUsage usage) {
+        TextureBase* texture = view->GetTexture();
+        const SubresourceRange& range = view->GetSubresourceRange();
+
+        // std::map's operator[] will create the key and return a PassTextureUsage with usage = 0
+        // and an empty vector for subresourceUsages.
+        // TODO (yunchao.he@intel.com): optimize this
+        PassTextureUsage& textureUsage = mTextureUsages[texture];
+
+        // Set parameters for the whole texture
+        textureUsage.usage |= usage;
+        textureUsage.sameUsagesAcrossSubresources &=
+            (range.levelCount == texture->GetNumMipLevels() &&  //
+             range.layerCount == texture->GetArrayLayers() &&   //
+             range.aspects == texture->GetFormat().aspects);
+
+        // Set usages for subresources
+        if (!textureUsage.subresourceUsages.size()) {
+            textureUsage.subresourceUsages = std::vector<wgpu::TextureUsage>(
+                texture->GetSubresourceCount(), wgpu::TextureUsage::None);
+        }
+        for (Aspect aspect : IterateEnumMask(range.aspects)) {
+            for (uint32_t arrayLayer = range.baseArrayLayer;
+                 arrayLayer < range.baseArrayLayer + range.layerCount; ++arrayLayer) {
+                for (uint32_t mipLevel = range.baseMipLevel;
+                     mipLevel < range.baseMipLevel + range.levelCount; ++mipLevel) {
+                    uint32_t subresourceIndex =
+                        texture->GetSubresourceIndex(mipLevel, arrayLayer, aspect);
+                    textureUsage.subresourceUsages[subresourceIndex] |= usage;
+                }
+            }
+        }
+    }
+
+    void PassResourceUsageTracker::AddTextureUsage(TextureBase* texture,
+                                                   const PassTextureUsage& textureUsage) {
+        PassTextureUsage& passTextureUsage = mTextureUsages[texture];
+        passTextureUsage.usage |= textureUsage.usage;
+        passTextureUsage.sameUsagesAcrossSubresources &= textureUsage.sameUsagesAcrossSubresources;
+
+        uint32_t subresourceCount = texture->GetSubresourceCount();
+        ASSERT(textureUsage.subresourceUsages.size() == subresourceCount);
+        if (!passTextureUsage.subresourceUsages.size()) {
+            passTextureUsage.subresourceUsages = textureUsage.subresourceUsages;
+            return;
+        }
+        for (uint32_t i = 0; i < subresourceCount; ++i) {
+            passTextureUsage.subresourceUsages[i] |= textureUsage.subresourceUsages[i];
+        }
     }
 
     // Returns the per-pass usage for use by backends for APIs with explicit barriers.
     PassResourceUsage PassResourceUsageTracker::AcquireResourceUsage() {
         PassResourceUsage result;
+        result.passType = mPassType;
         result.buffers.reserve(mBufferUsages.size());
         result.bufferUsages.reserve(mBufferUsages.size());
         result.textures.reserve(mTextureUsages.size());
@@ -46,7 +97,7 @@ namespace dawn_native {
 
         for (auto& it : mTextureUsages) {
             result.textures.push_back(it.first);
-            result.textureUsages.push_back(it.second);
+            result.textureUsages.push_back(std::move(it.second));
         }
 
         mBufferUsages.clear();

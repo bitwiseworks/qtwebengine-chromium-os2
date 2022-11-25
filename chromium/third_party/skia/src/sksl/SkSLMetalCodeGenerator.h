@@ -11,6 +11,7 @@
 #include <stack>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "src/sksl/SkSLCodeGenerator.h"
 #include "src/sksl/SkSLMemoryLayout.h"
@@ -28,6 +29,7 @@
 #include "src/sksl/ir/SkSLFunctionDefinition.h"
 #include "src/sksl/ir/SkSLIfStatement.h"
 #include "src/sksl/ir/SkSLIndexExpression.h"
+#include "src/sksl/ir/SkSLInlineMarker.h"
 #include "src/sksl/ir/SkSLIntLiteral.h"
 #include "src/sksl/ir/SkSLInterfaceBlock.h"
 #include "src/sksl/ir/SkSLPostfixExpression.h"
@@ -116,6 +118,9 @@ protected:
         kGreaterThanEqual_MetalIntrinsic,
     };
 
+    class GlobalStructVisitor;
+    void visitGlobalStruct(GlobalStructVisitor* visitor);
+
     void setupIntrinsics();
 
     void write(const char* s);
@@ -146,6 +151,7 @@ protected:
     int alignment(const Type* type, bool isPacked) const;
 
     void writeGlobalStruct();
+    void writeGlobalInit();
 
     void writePrecisionModifier();
 
@@ -167,8 +173,6 @@ protected:
 
     void writeModifiers(const Modifiers& modifiers, bool globalContext);
 
-    void writeGlobalVars(const VarDeclaration& vs);
-
     void writeVarInitializer(const Variable& var, const Expression& value);
 
     void writeName(const String& name);
@@ -189,7 +193,11 @@ protected:
 
     void writeInverseHack(const Expression& mat);
 
-    String getMatrixConstructHelper(const Type& matrix, const Type& arg);
+    bool matrixConstructHelperIsNeeded(const Constructor& c);
+    String getMatrixConstructHelper(const Constructor& c);
+    void assembleMatrixFromMatrix(const Type& sourceMatrix, int rows, int columns);
+    void assembleMatrixFromExpressions(const std::vector<std::unique_ptr<Expression>>& args,
+                                       int rows, int columns);
 
     void writeMatrixTimesEqualHelper(const Type& left, const Type& right, const Type& result);
 
@@ -245,20 +253,17 @@ protected:
 
     Requirements requirements(const FunctionDeclaration& f);
 
-    Requirements requirements(const Expression& e);
+    Requirements requirements(const Expression* e);
 
-    Requirements requirements(const Statement& e);
+    Requirements requirements(const Statement* s);
 
     typedef std::pair<IntrinsicKind, int32_t> Intrinsic;
     std::unordered_map<String, Intrinsic> fIntrinsicMap;
     std::unordered_set<String> fReservedWords;
-    std::vector<const VarDeclaration*> fInitNonConstGlobalVars;
-    std::vector<const Variable*> fTextures;
     std::unordered_map<const Type::Field*, const InterfaceBlock*> fInterfaceBlockMap;
     std::unordered_map<const InterfaceBlock*, String> fInterfaceBlockNameMap;
     int fAnonInterfaceCount = 0;
     int fPaddingCount = 0;
-    bool fNeedsGlobalStructInit = false;
     const char* fLineEnding;
     const Context& fContext;
     StringStream fHeader;
@@ -278,13 +283,13 @@ protected:
     std::unordered_map<const FunctionDeclaration*, Requirements> fRequirements;
     bool fSetupFragPositionGlobal = false;
     bool fSetupFragPositionLocal = false;
-    std::unordered_map<String, String> fHelpers;
+    std::unordered_set<String> fHelpers;
     int fUniformBuffer = -1;
     String fRTHeightName;
 
-    typedef CodeGenerator INHERITED;
+    using INHERITED = CodeGenerator;
 };
 
-}
+}  // namespace SkSL
 
 #endif

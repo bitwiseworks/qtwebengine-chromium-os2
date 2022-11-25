@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//printing/buildflags/buildflags.gni")
 import("//third_party/blink/renderer/core/core.gni")
 
 blink_core_sources("frame") {
@@ -12,6 +13,8 @@ blink_core_sources("frame") {
     "bar_prop.h",
     "browser_controls.cc",
     "browser_controls.h",
+    "coop_access_violation_report_body.cc",
+    "coop_access_violation_report_body.h",
     "csp/content_security_policy.cc",
     "csp/content_security_policy.h",
     "csp/csp_directive.h",
@@ -132,6 +135,8 @@ blink_core_sources("frame") {
     "opened_frame_tracker.h",
     "overlay_interstitial_ad_detector.cc",
     "overlay_interstitial_ad_detector.h",
+    "page_dismissal_scope.cc",
+    "page_dismissal_scope.h",
     "page_scale_constraints.cc",
     "page_scale_constraints.h",
     "page_scale_constraints_set.cc",
@@ -173,20 +178,22 @@ blink_core_sources("frame") {
     "rotation_viewport_anchor.h",
     "sandbox_flags.cc",
     "sandbox_flags.h",
+    "savable_resources.cc",
+    "savable_resources.h",
     "scheduling.cc",
     "scheduling.h",
     "screen.cc",
     "screen.h",
-    "screen_orientation_controller.cc",
-    "screen_orientation_controller.h",
+    "screen_metrics_emulator.cc",
+    "screen_metrics_emulator.h",
     "settings.cc",
     "settings.h",
     "settings_delegate.cc",
     "settings_delegate.h",
     "smart_clip.cc",
     "smart_clip.h",
-    "sticky_frame_tracker.cc",
-    "sticky_frame_tracker.h",
+    "sticky_ad_detector.cc",
+    "sticky_ad_detector.h",
     "test_report_body.cc",
     "test_report_body.h",
     "use_counter_helper.cc",
@@ -195,6 +202,8 @@ blink_core_sources("frame") {
     "user_activation.h",
     "viewport_data.cc",
     "viewport_data.h",
+    "virtual_keyboard_overlay_changed_observer.cc",
+    "virtual_keyboard_overlay_changed_observer.h",
     "visual_viewport.cc",
     "visual_viewport.h",
     "web_feature.h",
@@ -215,8 +224,21 @@ blink_core_sources("frame") {
   ]
 
   deps = [
+    "//printing/buildflags",
     "//skia",
-    "//ui/base/cursor",
-    "//ui/base/mojom:cursor_type_blink",
+    "//ui/accessibility:ax_base",
+    "//ui/base/cursor:cursor_base",
+    "//ui/base/cursor/mojom:cursor_type_blink",
+    "//ui/base/dragdrop/mojom:mojom_blink",
+    "//ui/gfx:geometry_skia",
+    "//ui/gfx/geometry",
   ]
+
+  if (is_mac) {
+    deps += [ "//ui/base/mojom" ]
+  }
+
+  if (enable_basic_printing) {
+    deps += [ "//printing" ]
+  }
 }

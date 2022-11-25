@@ -15,15 +15,14 @@
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/safe_browsing/core/features.h"
 #include "components/security_interstitials/content/security_interstitial_controller_client.h"
+#include "components/security_interstitials/content/settings_page_helper.h"
 #include "components/security_interstitials/content/unsafe_resource_util.h"
 #include "components/security_interstitials/core/metrics_helper.h"
 #include "components/security_interstitials/core/safe_browsing_loud_error_ui.h"
 #include "components/security_interstitials/core/unsafe_resource.h"
-#include "content/public/browser/interstitial_page.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 
-using content::InterstitialPage;
 using content::WebContents;
 using security_interstitials::BaseSafeBrowsingErrorUI;
 using security_interstitials::SafeBrowsingLoudErrorUI;
@@ -56,11 +55,7 @@ BaseBlockingPage::BaseBlockingPage(
                                std::move(controller_client)),
       ui_manager_(ui_manager),
       main_frame_url_(main_frame_url),
-      navigation_entry_index_to_remove_(
-          IsMainPageLoadBlocked(unsafe_resources) ||
-                  base::FeatureList::IsEnabled(kCommittedSBInterstitials)
-              ? -1
-              : web_contents->GetController().GetLastCommittedEntryIndex()),
+      navigation_entry_index_to_remove_(-1),
       unsafe_resources_(unsafe_resources),
       proceeded_(false),
       threat_details_proceed_delay_ms_(kThreatDetailsProceedDelayMilliSeconds),
@@ -73,8 +68,7 @@ BaseBlockingPage::BaseBlockingPage(
           base::Time::NowFromSystemTime(),
           controller(),
           /* created_prior_to_navigation */
-          IsMainPageLoadBlocked(unsafe_resources) &&
-              base::FeatureList::IsEnabled(kCommittedSBInterstitials))) {}
+          IsMainPageLoadBlocked(unsafe_resources))) {}
 
 BaseBlockingPage::~BaseBlockingPage() {}
 
@@ -92,35 +86,9 @@ BaseBlockingPage::CreateDefaultDisplayOptions(
       false,                 // kSafeBrowsingProceedAnywayDisabled
       false,                 // should_open_links_in_new_tab
       true,                  // always_show_back_to_safety
+      false,                 // is_enhanced_protection_message_enabled
+      false,                 // is_safe_browsing_managed
       "cpn_safe_browsing");  // help_center_article_link
-}
-
-// static
-void BaseBlockingPage::ShowBlockingPage(
-    BaseUIManager* ui_manager,
-    const UnsafeResource& unsafe_resource) {
-  WebContents* web_contents = unsafe_resource.web_contents_getter.Run();
-
-  if (InterstitialPage::GetInterstitialPage(web_contents) &&
-      unsafe_resource.is_subresource) {
-    // This is an interstitial for a page's resource, let's queue it.
-    UnsafeResourceMap* unsafe_resource_map = GetUnsafeResourcesMap();
-    (*unsafe_resource_map)[web_contents].push_back(unsafe_resource);
-  } else {
-    // There is no interstitial currently showing in that tab, or we are about
-    // to display a new one for the main frame. If there is already an
-    // interstitial, showing the new one will automatically hide the old one.
-    content::NavigationEntry* entry =
-        GetNavigationEntryForResource(unsafe_resource);
-    const UnsafeResourceList unsafe_resources{unsafe_resource};
-    BaseBlockingPage* blocking_page = new BaseBlockingPage(
-        ui_manager, web_contents, entry ? entry->GetURL() : GURL(),
-        unsafe_resources,
-        CreateControllerClient(web_contents, unsafe_resources, ui_manager,
-                               nullptr),
-        CreateDefaultDisplayOptions(unsafe_resources));
-    blocking_page->Show();
-  }
 }
 
 // static
@@ -132,46 +100,10 @@ bool BaseBlockingPage::IsMainPageLoadBlocked(
          unsafe_resources[0].IsMainPageLoadBlocked();
 }
 
-void BaseBlockingPage::OnProceed() {
-  set_proceeded(true);
-  OnInterstitialClosing();
-
-  // Send the threat details, if we opted to.
-  FinishThreatDetails(
-      base::TimeDelta::FromMilliseconds(threat_details_proceed_delay_ms_),
-      true, /* did_proceed */
-      controller()->metrics_helper()->NumVisits());
-
-  ui_manager_->OnBlockingPageDone(unsafe_resources_, true /* proceed */,
-                                  web_contents(), main_frame_url_,
-                                  true /* showed_interstitial */);
-
-  HandleSubresourcesAfterProceed();
-}
-
 void BaseBlockingPage::HandleSubresourcesAfterProceed() {}
 
 void BaseBlockingPage::SetThreatDetailsProceedDelayForTesting(int64_t delay) {
   threat_details_proceed_delay_ms_ = delay;
-}
-
-void BaseBlockingPage::OnDontProceed() {
-  // With committed interstitials we shouldn't hit this code.
-  DCHECK(
-      !base::FeatureList::IsEnabled(safe_browsing::kCommittedSBInterstitials));
-
-  // We could have already called Proceed(), in which case we must not notify
-  // the SafeBrowsingUIManager again, as the client has been deleted.
-  if (proceeded_)
-    return;
-
-  OnInterstitialClosing();
-
-  // Send the malware details, if we opted to.
-  FinishThreatDetails(base::TimeDelta(), false /* did_proceed */,
-                      controller()->metrics_helper()->NumVisits());  // No delay
-
-  OnDontProceedDone();
 }
 
 void BaseBlockingPage::CommandReceived(const std::string& page_cmd) {
@@ -187,9 +119,8 @@ void BaseBlockingPage::CommandReceived(const std::string& page_cmd) {
   auto interstitial_command =
       static_cast<security_interstitials::SecurityInterstitialCommand>(command);
 
-  if (base::FeatureList::IsEnabled(safe_browsing::kCommittedSBInterstitials) &&
-      interstitial_command ==
-          security_interstitials::SecurityInterstitialCommand::CMD_PROCEED) {
+  if (interstitial_command ==
+      security_interstitials::SecurityInterstitialCommand::CMD_PROCEED) {
     // With committed interstitials, OnProceed() doesn't get called, so handle
     // adding to the allow list here.
     set_proceeded(true);
@@ -201,17 +132,9 @@ void BaseBlockingPage::CommandReceived(const std::string& page_cmd) {
   sb_error_ui_->HandleCommand(interstitial_command);
 }
 
-bool BaseBlockingPage::ShouldCreateNewNavigation() const {
-  return sb_error_ui_->is_main_frame_load_blocked();
-}
-
 void BaseBlockingPage::PopulateInterstitialStrings(
     base::DictionaryValue* load_time_data) {
   sb_error_ui_->PopulateStringsForHtml(load_time_data);
-}
-
-void BaseBlockingPage::OnInterstitialClosing() {
-  UpdateMetricsAfterSecurityInterstitial();
 }
 
 void BaseBlockingPage::FinishThreatDetails(const base::TimeDelta& delay,
@@ -357,7 +280,9 @@ BaseBlockingPage::CreateControllerClient(
     content::WebContents* web_contents,
     const UnsafeResourceList& unsafe_resources,
     BaseUIManager* ui_manager,
-    PrefService* pref_service) {
+    PrefService* pref_service,
+    std::unique_ptr<security_interstitials::SettingsPageHelper>
+        settings_page_helper) {
   history::HistoryService* history_service =
       ui_manager->history_service(web_contents);
 
@@ -368,7 +293,8 @@ BaseBlockingPage::CreateControllerClient(
 
   return std::make_unique<SafeBrowsingControllerClient>(
       web_contents, std::move(metrics_helper), pref_service,
-      ui_manager->app_locale(), ui_manager->default_safe_page());
+      ui_manager->app_locale(), ui_manager->default_safe_page(),
+      std::move(settings_page_helper));
 }
 
 int BaseBlockingPage::GetHTMLTemplateId() {

@@ -17,10 +17,10 @@
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/webui/chromeos/account_manager_welcome_dialog.h"
-#include "chrome/browser/ui/webui/chromeos/account_migration_welcome_dialog.h"
+#include "chrome/browser/ui/webui/chromeos/account_manager/account_manager_welcome_dialog.h"
+#include "chrome/browser/ui/webui/chromeos/account_manager/account_migration_welcome_dialog.h"
 #include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
-#include "chrome/browser/ui/webui/signin/inline_login_handler_dialog_chromeos.h"
+#include "chrome/browser/ui/webui/signin/inline_login_dialog_chromeos.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/components/account_manager/account_manager_factory.h"
 #include "components/signin/public/identity_manager/consent_level.h"
@@ -242,8 +242,9 @@ void AccountManagerUIHandler::OnGetAccounts(
   DCHECK(user);
 
   base::DictionaryValue gaia_device_account;
-  base::ListValue accounts = GetSecondaryGaiaAccounts(
-      stored_accounts, user->GetAccountId(), &gaia_device_account);
+  base::ListValue accounts =
+      GetSecondaryGaiaAccounts(stored_accounts, user->GetAccountId(),
+                               profile_->IsChild(), &gaia_device_account);
 
   AccountBuilder device_account;
   if (user->IsActiveDirectoryUser()) {
@@ -268,7 +269,10 @@ void AccountManagerUIHandler::OnGetAccounts(
 
     // Check if user is managed.
     if (profile_->IsChild()) {
-      device_account.SetOrganization(kFamilyLink);
+      std::string organization = kFamilyLink;
+      // Replace space with the non-breaking space.
+      base::ReplaceSubstringsAfterOffset(&organization, 0, " ", "&nbsp;");
+      device_account.SetOrganization(organization);
     } else if (user->IsActiveDirectoryUser()) {
       device_account.SetOrganization(
           GetEnterpriseDomainFromUsername(user->GetDisplayEmail()));
@@ -289,6 +293,7 @@ void AccountManagerUIHandler::OnGetAccounts(
 base::ListValue AccountManagerUIHandler::GetSecondaryGaiaAccounts(
     const std::vector<AccountManager::Account>& stored_accounts,
     const AccountId device_account_id,
+    const bool is_child_user,
     base::DictionaryValue* device_account) {
   base::ListValue accounts;
   for (const auto& stored_account : stored_accounts) {
@@ -312,7 +317,10 @@ base::ListValue AccountManagerUIHandler::GetSecondaryGaiaAccounts(
         .SetIsDeviceAccount(false)
         .SetFullName(maybe_account_info->full_name)
         .SetEmail(stored_account.raw_email)
-        .SetUnmigrated(account_manager_->HasDummyGaiaToken(account_key))
+        // Secondary accounts in child user session cannot be unmigrated. If
+        // such account has dummy gaia token, it was invalidated.
+        .SetUnmigrated(!is_child_user &&
+                       account_manager_->HasDummyGaiaToken(account_key))
         .SetIsSignedIn(!identity_manager_
                             ->HasAccountWithRefreshTokenInPersistentErrorState(
                                 maybe_account_info->account_id));
@@ -338,7 +346,8 @@ base::ListValue AccountManagerUIHandler::GetSecondaryGaiaAccounts(
 
 void AccountManagerUIHandler::HandleAddAccount(const base::ListValue* args) {
   AllowJavascript();
-  InlineLoginHandlerDialogChromeOS::Show();
+  InlineLoginDialogChromeOS::Show(
+      InlineLoginDialogChromeOS::Source::kSettingsAddAccountButton);
 }
 
 void AccountManagerUIHandler::HandleReauthenticateAccount(
@@ -348,7 +357,9 @@ void AccountManagerUIHandler::HandleReauthenticateAccount(
   CHECK(!args->GetList().empty());
   const std::string& account_email = args->GetList()[0].GetString();
 
-  InlineLoginHandlerDialogChromeOS::Show(account_email);
+  InlineLoginDialogChromeOS::Show(
+      account_email,
+      InlineLoginDialogChromeOS::Source::kSettingsReauthAccountButton);
 }
 
 void AccountManagerUIHandler::HandleMigrateAccount(

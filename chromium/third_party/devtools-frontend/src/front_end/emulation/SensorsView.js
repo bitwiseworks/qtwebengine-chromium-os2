@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Host from '../host/host.js';
 import * as SDK from '../sdk/sdk.js';
@@ -32,6 +35,10 @@ export class SensorsView extends UI.Widget.VBox {
     this.contentElement.createChild('div').classList.add('panel-section-separator');
 
     this._appendTouchControl();
+
+    this.contentElement.createChild('div').classList.add('panel-section-separator');
+
+    this._appendIdleEmulator();
   }
 
   /**
@@ -52,6 +59,7 @@ export class SensorsView extends UI.Widget.VBox {
     const geogroupTitle = UI.UIUtils.createLabel(ls`Location`, 'sensors-group-title');
     geogroup.appendChild(geogroupTitle);
     const fields = geogroup.createChild('div', 'geo-fields');
+    let selectedIndex = 0;
 
     const noOverrideOption = {title: Common.UIString.UIString('No override'), location: NonPresetOptions.NoOverride};
 
@@ -70,8 +78,12 @@ export class SensorsView extends UI.Widget.VBox {
     fields.appendChild(manageButton);
     const fillCustomSettings = () => {
       this._customLocationsGroup.removeChildren();
-      for (const location of customLocations.get()) {
-        this._customLocationsGroup.appendChild(new Option(location.title, JSON.stringify(location)));
+      for (const [i, customLocation] of customLocations.get().entries()) {
+        this._customLocationsGroup.appendChild(new Option(customLocation.title, JSON.stringify(customLocation)));
+        if (location.latitude === customLocation.lat && location.longitude === customLocation.long) {
+          // If the location coming from settings matches the custom location, use its index to select the option
+          selectedIndex = i + 1;
+        }
       }
     };
     customLocations.addChangeListener(fillCustomSettings);
@@ -86,7 +98,7 @@ export class SensorsView extends UI.Widget.VBox {
     group.label = ls`Error`;
     group.appendChild(new Option(ls`Location unavailable`, NonPresetOptions.Unavailable));
 
-    this._locationSelectElement.selectedIndex = 0;
+    this._locationSelectElement.selectedIndex = selectedIndex;
     this._locationSelectElement.addEventListener('change', this._LocationSelectChanged.bind(this));
 
     // Validated input fieldset.
@@ -150,6 +162,7 @@ export class SensorsView extends UI.Widget.VBox {
     const value = this._locationSelectElement.options[this._locationSelectElement.selectedIndex].value;
     if (value === NonPresetOptions.NoOverride) {
       this._LocationOverrideEnabled = false;
+      this._clearFieldsetElementInputs();
       this._fieldsetElement.disabled = true;
     } else if (value === NonPresetOptions.Custom) {
       this._LocationOverrideEnabled = true;
@@ -198,6 +211,8 @@ export class SensorsView extends UI.Widget.VBox {
   _applyLocation() {
     if (this._LocationOverrideEnabled) {
       this._LocationSetting.set(this._Location.toSetting());
+    } else {
+      this._LocationSetting.remove();
     }
     for (const emulationModel of SDK.SDKModel.TargetManager.instance().models(SDK.EmulationModel.EmulationModel)) {
       emulationModel.emulateLocation(this._LocationOverrideEnabled ? this._Location : null).catch(err => {
@@ -213,6 +228,13 @@ export class SensorsView extends UI.Widget.VBox {
         }
       });
     }
+  }
+
+  _clearFieldsetElementInputs() {
+    this._latitudeSetter(0);
+    this._longitudeSetter(0);
+    this._timezoneSetter('');
+    this._localeSetter('');
   }
 
   _createDeviceOrientationSection() {
@@ -260,9 +282,9 @@ export class SensorsView extends UI.Widget.VBox {
     this._boxElement.createChild('section', 'orientation-right orientation-element');
     this._boxElement.createChild('section', 'orientation-bottom orientation-element');
 
-    UI.UIUtils.installDragHandle(
-        this._stageElement, this._onBoxDragStart.bind(this), this._onBoxDrag.bind(this), null, '-webkit-grabbing',
-        '-webkit-grab');
+    UI.UIUtils.installDragHandle(this._stageElement, this._onBoxDragStart.bind(this), event => {
+      this._onBoxDrag(event);
+    }, null, '-webkit-grabbing', '-webkit-grab');
 
     fields.appendChild(this._deviceOrientationFieldset);
     this._enableOrientationFields(true);
@@ -513,32 +535,23 @@ export class SensorsView extends UI.Widget.VBox {
   }
 
   _appendTouchControl() {
-    const groupElement = this.contentElement.createChild('div', 'sensors-group');
-    const title = UI.UIUtils.createLabel(ls`Touch`, 'sensors-group-title');
-    groupElement.appendChild(title);
-    const fieldsElement = groupElement.createChild('div', 'sensors-group-fields');
+    const container = this.contentElement.createChild('div', 'touch-section');
+    const control = UI.SettingsUI.createControlForSetting(
+        Common.Settings.Settings.instance().moduleSetting('emulation.touch'), ls`Forces touch instead of click`);
 
-    const select = fieldsElement.createChild('select', 'chrome-select');
-    UI.ARIAUtils.bindLabelToControl(title, select);
-    select.appendChild(new Option(Common.UIString.UIString('Device-based'), 'auto'));
-    select.appendChild(new Option(Common.UIString.UIString('Force enabled'), 'enabled'));
-    select.addEventListener('change', applyTouch, false);
+    if (control) {
+      container.appendChild(control);
+    }
+  }
 
-    const reloadWarning = groupElement.createChild('div', 'reload-warning hidden');
-    reloadWarning.textContent = Common.UIString.UIString('*Requires reload');
-    UI.ARIAUtils.markAsAlert(reloadWarning);
+  _appendIdleEmulator() {
+    const container = this.contentElement.createChild('div', 'idle-section');
+    const control = UI.SettingsUI.createControlForSetting(
+        Common.Settings.Settings.instance().moduleSetting('emulation.idleDetection'),
+        ls`Forces selected idle state emulation`);
 
-    function applyTouch() {
-      for (const emulationModel of SDK.SDKModel.TargetManager.instance().models(SDK.EmulationModel.EmulationModel)) {
-        emulationModel.overrideEmulateTouch(select.value === 'enabled');
-      }
-      reloadWarning.classList.remove('hidden');
-      const resourceTreeModel =
-          SDK.SDKModel.TargetManager.instance().models(SDK.ResourceTreeModel.ResourceTreeModel)[0];
-      if (resourceTreeModel) {
-        resourceTreeModel.once(SDK.ResourceTreeModel.Events.MainFrameNavigated)
-            .then(() => reloadWarning.classList.add('hidden'));
-      }
+    if (control) {
+      container.appendChild(control);
     }
   }
 }

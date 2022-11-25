@@ -7,6 +7,7 @@
 #include "xfa/fxfa/parser/cxfa_box.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 #include "fxjs/xfa/cjx_object.h"
@@ -64,7 +65,7 @@ CXFA_Box::CXFA_Box(CXFA_Document* pDoc,
                    XFA_Element eType,
                    pdfium::span<const PropertyData> properties,
                    pdfium::span<const AttributeData> attributes,
-                   std::unique_ptr<CJX_Object> js_node)
+                   CJX_Object* js_node)
     : CXFA_Node(pDoc,
                 ePacket,
                 validPackets,
@@ -72,7 +73,7 @@ CXFA_Box::CXFA_Box(CXFA_Document* pDoc,
                 eType,
                 properties,
                 attributes,
-                std::move(js_node)) {}
+                js_node) {}
 
 CXFA_Box::~CXFA_Box() = default;
 

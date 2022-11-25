@@ -23,14 +23,6 @@ namespace blink {
 ReadableStreamDefaultController::ReadableStreamDefaultController()
     : queue_(MakeGarbageCollected<QueueWithSizes>()) {}
 
-double ReadableStreamDefaultController::desiredSize(bool& is_null) const {
-  // https://streams.spec.whatwg.org/#rs-default-controller-desired-size
-  // 2. Return ! ReadableStreamDefaultControllerGetDesiredSize(this).
-  base::Optional<double> desired_size = GetDesiredSize();
-  is_null = !desired_size.has_value();
-  return is_null ? 0.0 : desired_size.value();
-}
-
 void ReadableStreamDefaultController::close(ScriptState* script_state,
                                             ExceptionState& exception_state) {
   // https://streams.spec.whatwg.org/#rs-default-controller-close
@@ -264,7 +256,7 @@ const char* ReadableStreamDefaultController::EnqueueExceptionMessage(
   return "Cannot enqueue a chunk into a closed readable stream";
 }
 
-void ReadableStreamDefaultController::Trace(Visitor* visitor) {
+void ReadableStreamDefaultController::Trace(Visitor* visitor) const {
   visitor->Trace(cancel_algorithm_);
   visitor->Trace(controlled_readable_stream_);
   visitor->Trace(pull_algorithm_);
@@ -398,7 +390,7 @@ void ReadableStreamDefaultController::CallPullIfNeeded(
       }
     }
 
-    void Trace(Visitor* visitor) override {
+    void Trace(Visitor* visitor) const override {
       visitor->Trace(controller_);
       PromiseHandler::Trace(visitor);
     }
@@ -419,7 +411,7 @@ void ReadableStreamDefaultController::CallPullIfNeeded(
       Error(GetScriptState(), controller_, e);
     }
 
-    void Trace(Visitor* visitor) override {
+    void Trace(Visitor* visitor) const override {
       visitor->Trace(controller_);
       PromiseHandler::Trace(visitor);
     }
@@ -561,7 +553,7 @@ void ReadableStreamDefaultController::SetUp(
       CallPullIfNeeded(GetScriptState(), controller_);
     }
 
-    void Trace(Visitor* visitor) override {
+    void Trace(Visitor* visitor) const override {
       visitor->Trace(controller_);
       PromiseHandler::Trace(visitor);
     }
@@ -582,7 +574,7 @@ void ReadableStreamDefaultController::SetUp(
       Error(GetScriptState(), controller_, r);
     }
 
-    void Trace(Visitor* visitor) override {
+    void Trace(Visitor* visitor) const override {
       visitor->Trace(controller_);
       PromiseHandler::Trace(visitor);
     }

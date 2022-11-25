@@ -5,8 +5,8 @@
 #include "third_party/blink/renderer/core/paint/ng/ng_paint_fragment.h"
 
 #include "third_party/blink/renderer/core/dom/pseudo_element.h"
+#include "third_party/blink/renderer/core/editing/bidi_adjustment.h"
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
-#include "third_party/blink/renderer/core/editing/inline_box_traversal.h"
 #include "third_party/blink/renderer/core/editing/position_with_affinity.h"
 #include "third_party/blink/renderer/core/editing/text_affinity.h"
 #include "third_party/blink/renderer/core/layout/geometry/logical_rect.h"
@@ -31,6 +31,7 @@
 #include "third_party/blink/renderer/core/layout/ng/ng_physical_fragment.h"
 #include "third_party/blink/renderer/core/paint/ng/ng_box_fragment_painter.h"
 #include "third_party/blink/renderer/core/paint/ng/ng_paint_fragment_traversal.h"
+#include "third_party/blink/renderer/platform/wtf/size_assertions.h"
 
 namespace blink {
 
@@ -43,65 +44,7 @@ struct SameSizeAsNGPaintFragment : public RefCounted<NGPaintFragment>,
   unsigned flags;
 };
 
-static_assert(sizeof(NGPaintFragment) == sizeof(SameSizeAsNGPaintFragment),
-              "NGPaintFragment should stay small.");
-
-LogicalRect ComputeLogicalRectFor(const PhysicalRect& physical_rect,
-                                  WritingMode writing_mode,
-                                  TextDirection text_direction,
-                                  const PhysicalSize& outer_size) {
-  const LogicalOffset logical_offset = physical_rect.offset.ConvertToLogical(
-      writing_mode, text_direction, outer_size, physical_rect.size);
-  const LogicalSize logical_size =
-      physical_rect.size.ConvertToLogical(writing_mode);
-  return {logical_offset, logical_size};
-}
-
-LogicalRect ComputeLogicalRectFor(const PhysicalRect& physical_rect,
-                                  const NGPaintFragment& paint_fragment) {
-  return ComputeLogicalRectFor(
-      physical_rect, paint_fragment.Style().GetWritingMode(),
-      paint_fragment.PhysicalFragment().ResolvedDirection(),
-      paint_fragment.Size());
-}
-
-LogicalRect ComputeLogicalRectFor(const PhysicalRect& physical_rect,
-                                  const NGInlineCursor& cursor) {
-  if (const NGPaintFragment* paint_fragment = cursor.CurrentPaintFragment())
-    return ComputeLogicalRectFor(physical_rect, *paint_fragment);
-
-  const NGFragmentItem& item = *cursor.CurrentItem();
-  return ComputeLogicalRectFor(physical_rect, item.GetWritingMode(),
-                               item.ResolvedDirection(), item.Size());
-}
-
-PhysicalRect ComputePhysicalRectFor(const LogicalRect& logical_rect,
-                                    WritingMode writing_mode,
-                                    TextDirection text_direction,
-                                    const PhysicalSize& outer_size) {
-  const PhysicalSize physical_size =
-      ToPhysicalSize(logical_rect.size, writing_mode);
-  const PhysicalOffset physical_offset = logical_rect.offset.ConvertToPhysical(
-      writing_mode, text_direction, outer_size, physical_size);
-
-  return {physical_offset, physical_size};
-}
-PhysicalRect ComputePhysicalRectFor(const LogicalRect& logical_rect,
-                                    const NGPaintFragment& paint_fragment) {
-  return ComputePhysicalRectFor(
-      logical_rect, paint_fragment.Style().GetWritingMode(),
-      paint_fragment.PhysicalFragment().ResolvedDirection(),
-      paint_fragment.Size());
-}
-
-PhysicalRect ComputePhysicalRectFor(const LogicalRect& logical_rect,
-                                    const NGInlineCursor& cursor) {
-  if (const NGPaintFragment* paint_fragment = cursor.CurrentPaintFragment())
-    return ComputePhysicalRectFor(logical_rect, *paint_fragment);
-  const NGFragmentItem& item = *cursor.CurrentItem();
-  return ComputePhysicalRectFor(logical_rect, item.GetWritingMode(),
-                                item.ResolvedDirection(), item.Size());
-}
+ASSERT_SIZE(NGPaintFragment, SameSizeAsNGPaintFragment);
 
 LogicalRect ExpandedSelectionRectForSoftLineBreakIfNeeded(
     const LogicalRect& rect,
@@ -142,22 +85,7 @@ LogicalRect ExpandSelectionRectToLineHeight(const LogicalRect& rect,
           cursor.Current().OffsetInContainerBlock(),
       line.Current().Size());
   return ExpandSelectionRectToLineHeight(
-      rect, ComputeLogicalRectFor(line_physical_rect, cursor));
-}
-
-LogicalOffset ChildLogicalOffsetInParent(const NGPaintFragment& child) {
-  DCHECK(child.Parent());
-  const NGPaintFragment& parent = *child.Parent();
-  return child.Offset().ConvertToLogical(parent.Style().GetWritingMode(),
-                                         parent.Style().Direction(),
-                                         parent.Size(), child.Size());
-}
-
-LogicalSize ChildLogicalSizeInParent(const NGPaintFragment& child) {
-  DCHECK(child.Parent());
-  const NGPaintFragment& parent = *child.Parent();
-  return NGFragment(parent.Style().GetWritingMode(), child.PhysicalFragment())
-      .Size();
+      rect, cursor.Current().ConvertChildToLogical(line_physical_rect));
 }
 
 base::Optional<PositionWithAffinity> PositionForPointInChild(
@@ -417,10 +345,11 @@ bool NGPaintFragment::HasSelfPaintingLayer() const {
   return PhysicalFragment().HasSelfPaintingLayer();
 }
 
-bool NGPaintFragment::ShouldClipOverflow() const {
+bool NGPaintFragment::ShouldClipOverflowAlongEitherAxis() const {
   auto* box_physical_fragment =
       DynamicTo<NGPhysicalBoxFragment>(&PhysicalFragment());
-  return box_physical_fragment && box_physical_fragment->ShouldClipOverflow();
+  return box_physical_fragment &&
+         box_physical_fragment->ShouldClipOverflowAlongEitherAxis();
 }
 
 // Populate descendants from NGPhysicalFragment tree.
@@ -491,15 +420,8 @@ void NGPaintFragment::AssociateWithLayoutObject(
   DCHECK(layout_object->IsInline());
   DCHECK(PhysicalFragment().IsInline());
 
-#if DCHECK_IS_ON()
-  // Check we don't add the same fragment twice.
-  for (const NGPaintFragment* fragment :
-       FragmentRange(layout_object->FirstInlineFragment())) {
-    DCHECK_NE(this, fragment);
-  }
-#endif
-
   auto add_result = last_fragment_map->insert(layout_object, this);
+  NGPaintFragment* last_fragment;
   if (add_result.is_new_entry) {
     NGPaintFragment* first_fragment = layout_object->FirstInlineFragment();
     if (!first_fragment) {
@@ -507,16 +429,15 @@ void NGPaintFragment::AssociateWithLayoutObject(
       return;
     }
     // This |layout_object| was fragmented across multiple blocks.
-    DCHECK_EQ(layout_object, first_fragment->GetLayoutObject());
-    NGPaintFragment* last_fragment = first_fragment->LastForSameLayoutObject();
-    last_fragment->next_for_same_layout_object_ = this;
-    return;
+    last_fragment = first_fragment->LastForSameLayoutObject();
+  } else {
+    last_fragment = add_result.stored_value->value;
+    DCHECK(last_fragment) << layout_object;
+    add_result.stored_value->value = this;
   }
-  NGPaintFragment* last_fragment = add_result.stored_value->value;
-  DCHECK(last_fragment) << layout_object;
   DCHECK_EQ(layout_object, last_fragment->GetLayoutObject());
+  DCHECK_NE(this, last_fragment);
   last_fragment->next_for_same_layout_object_ = this;
-  add_result.stored_value->value = this;
 }
 
 // TODO(kojii): Consider unifying this with
@@ -538,7 +459,7 @@ void NGPaintFragment::ClearAssociationWithLayoutObject() {
       }
     }
     if (fragment.IsLineBox() || fragment.IsInlineBox() ||
-        fragment.IsColumnBox()) {
+        fragment.IsFragmentainerBox()) {
       child->ClearAssociationWithLayoutObject();
     } else {
       DCHECK(fragment.IsText() || fragment.IsFormattingContextRoot());
@@ -597,17 +518,7 @@ PhysicalRect NGPaintFragment::SelfInkOverflow() const {
 
   if (!ink_overflow_)
     return fragment.LocalRect();
-  return ink_overflow_->self_ink_overflow;
-}
-
-PhysicalRect NGPaintFragment::ContentsInkOverflow() const {
-  // Get the cached value in |LayoutBox| if there is one.
-  if (const LayoutBox* box = InkOverflowOwnerBox())
-    return box->PhysicalContentsVisualOverflowRect();
-
-  if (!ink_overflow_)
-    return PhysicalFragment().LocalRect();
-  return ink_overflow_->contents_ink_overflow;
+  return ink_overflow_->ink_overflow;
 }
 
 PhysicalRect NGPaintFragment::InkOverflow() const {
@@ -623,10 +534,10 @@ PhysicalRect NGPaintFragment::InkOverflow() const {
   if (!ink_overflow_)
     return fragment.LocalRect();
 
-  if (HasOverflowClip())
-    return ink_overflow_->self_ink_overflow;
+  if (HasNonVisibleOverflow())
+    return ink_overflow_->ink_overflow;
 
-  PhysicalRect rect = ink_overflow_->self_ink_overflow;
+  PhysicalRect rect = ink_overflow_->ink_overflow;
   rect.Unite(ink_overflow_->contents_ink_overflow);
   return rect;
 }
@@ -698,54 +609,10 @@ PhysicalRect NGPaintFragment::RecalcInkOverflow() {
     ink_overflow_ =
         std::make_unique<NGContainerInkOverflow>(self_rect, contents_rect);
   } else {
-    ink_overflow_->self_ink_overflow = self_rect;
+    ink_overflow_->ink_overflow = self_rect;
     ink_overflow_->contents_ink_overflow = contents_rect;
   }
   return self_and_contents_rect;
-}
-
-const LayoutObject& NGPaintFragment::VisualRectLayoutObject(
-    bool& this_as_inline_box) const {
-  const NGPhysicalFragment& fragment = PhysicalFragment();
-  if (const LayoutObject* layout_object = fragment.GetLayoutObject()) {
-    // For inline fragments, InlineBox uses one united rect for the LayoutObject
-    // even when it is fragmented across lines. Use the same technique.
-    //
-    // Atomic inlines have two VisualRect; one for the LayoutBox and another as
-    // InlineBox. NG creates two NGPaintFragment, one as the root of an inline
-    // formatting context and another as a child of the inline formatting
-    // context it participates. |Parent()| can distinguish them because a tree
-    // is created for each inline formatting context.
-    this_as_inline_box = Parent();
-    return *layout_object;
-  }
-
-  // Line box does not have corresponding LayoutObject. Use VisualRect of the
-  // containing LayoutBlockFlow as RootInlineBox does so.
-  this_as_inline_box = true;
-  DCHECK(fragment.IsLineBox());
-  // Line box is always a direct child of its containing block.
-  NGPaintFragment* containing_block_fragment = Parent();
-  DCHECK(containing_block_fragment);
-  DCHECK(containing_block_fragment->GetLayoutObject());
-  return *containing_block_fragment->GetLayoutObject();
-}
-
-IntRect NGPaintFragment::VisualRect() const {
-  // VisualRect is computed from fragment tree and set to LayoutObject in
-  // pre-paint. Use the stored value in the LayoutObject.
-  bool this_as_inline_box;
-  const auto& layout_object = VisualRectLayoutObject(this_as_inline_box);
-  return this_as_inline_box ? layout_object.VisualRectForInlineBox()
-                            : layout_object.FragmentsVisualRectBoundingBox();
-}
-
-IntRect NGPaintFragment::PartialInvalidationVisualRect() const {
-  bool this_as_inline_box;
-  const auto& layout_object = VisualRectLayoutObject(this_as_inline_box);
-  return this_as_inline_box
-             ? layout_object.PartialInvalidationVisualRectForInlineBox()
-             : layout_object.PartialInvalidationVisualRect();
 }
 
 base::Optional<PhysicalRect> NGPaintFragment::LocalVisualRectFor(
@@ -796,101 +663,6 @@ const NGPaintFragment* NGPaintFragment::Root() const {
   return root;
 }
 
-void NGPaintFragment::DirtyLinesFromChangedChild(LayoutObject* child) {
-  if (!RuntimeEnabledFeatures::LayoutNGLineCacheEnabled())
-    return;
-
-  // This function should be called on every child that has
-  // |IsInLayoutNGInlineFormattingContext()|, meaning it was once collected into
-  // |NGInlineNode|.
-  //
-  // New LayoutObjects will be handled in the next |CollectInline()|.
-  DCHECK(child && child->IsInLayoutNGInlineFormattingContext());
-
-  if (child->IsInline() || child->IsFloatingOrOutOfFlowPositioned())
-    MarkLineBoxesDirtyFor(*child);
-}
-
-void NGPaintFragment::MarkLineBoxesDirtyFor(const LayoutObject& layout_object) {
-  DCHECK(RuntimeEnabledFeatures::LayoutNGLineCacheEnabled());
-  DCHECK(layout_object.IsInline() ||
-         layout_object.IsFloatingOrOutOfFlowPositioned())
-      << layout_object;
-
-  // Since |layout_object| isn't in fragment tree, check preceding siblings.
-  // Note: Once we reuse lines below dirty lines, we should check next siblings.
-  for (LayoutObject* previous = layout_object.PreviousSibling(); previous;
-       previous = previous->PreviousSibling()) {
-    // If the previoius object had never been laid out, it should have already
-    // marked the line box dirty.
-    if (!previous->EverHadLayout())
-      return;
-
-    if (previous->IsFloatingOrOutOfFlowPositioned())
-      continue;
-
-    // |previous| may not be in inline formatting context, e.g. <object>.
-    if (TryMarkLastLineBoxDirtyFor(*previous))
-      return;
-  }
-
-  // There is no siblings, try parent. If it's a non-atomic inline (e.g., span),
-  // mark dirty for it, but if it's an atomic inline (e.g., inline block), do
-  // not propagate across inline formatting context boundary.
-  const LayoutObject& parent = *layout_object.Parent();
-  if (parent.IsInline() && !parent.IsAtomicInlineLevel())
-    return MarkLineBoxesDirtyFor(parent);
-
-  // The |layout_object| is inserted into an empty block.
-  // Mark the first line box dirty.
-  if (const NGPaintFragment* paint_fragment = parent.PaintFragment()) {
-    if (NGPaintFragment* first_line = paint_fragment->FirstLineBox()) {
-      first_line->is_dirty_inline_ = true;
-      return;
-    }
-  }
-}
-
-void NGPaintFragment::MarkContainingLineBoxDirty() {
-  DCHECK(RuntimeEnabledFeatures::LayoutNGLineCacheEnabled());
-  DCHECK(PhysicalFragment().IsInline() || PhysicalFragment().IsLineBox());
-  for (NGPaintFragment* fragment :
-       NGPaintFragmentTraversal::InclusiveAncestorsOf(*this)) {
-    if (fragment->is_dirty_inline_)
-      return;
-    fragment->is_dirty_inline_ = true;
-    if (fragment->PhysicalFragment().IsLineBox())
-      return;
-  }
-  NOTREACHED() << this;  // Should have a line box ancestor.
-}
-
-bool NGPaintFragment::TryMarkFirstLineBoxDirtyFor(
-    const LayoutObject& layout_object) {
-  if (!layout_object.IsInLayoutNGInlineFormattingContext())
-    return false;
-  // Once we reuse lines below dirty lines, we should mark lines for all
-  // inline fragments.
-  if (NGPaintFragment* const fragment = layout_object.FirstInlineFragment()) {
-    fragment->MarkContainingLineBoxDirty();
-    return true;
-  }
-  return false;
-}
-
-bool NGPaintFragment::TryMarkLastLineBoxDirtyFor(
-    const LayoutObject& layout_object) {
-  if (!layout_object.IsInLayoutNGInlineFormattingContext())
-    return false;
-  // Once we reuse lines below dirty lines, we should mark lines for all
-  // inline fragments.
-  if (NGPaintFragment* const fragment = layout_object.FirstInlineFragment()) {
-    fragment->LastForSameLayoutObject()->MarkContainingLineBoxDirty();
-    return true;
-  }
-  return false;
-}
-
 void NGPaintFragment::SetShouldDoFullPaintInvalidationRecursively() {
   if (LayoutObject* layout_object = GetMutableLayoutObject()) {
     layout_object->StyleRef().ClearCachedPseudoElementStyles();
@@ -918,7 +690,8 @@ PhysicalRect ComputeLocalSelectionRectForText(
     const LayoutSelectionStatus& selection_status) {
   const PhysicalRect selection_rect =
       cursor.CurrentLocalRect(selection_status.start, selection_status.end);
-  LogicalRect logical_rect = ComputeLogicalRectFor(selection_rect, cursor);
+  LogicalRect logical_rect =
+      cursor.Current().ConvertChildToLogical(selection_rect);
   // Let LocalRect for line break have a space width to paint line break
   // when it is only character in a line or only selected in a line.
   if (selection_status.start != selection_status.end &&
@@ -937,7 +710,7 @@ PhysicalRect ComputeLocalSelectionRectForText(
   const LogicalRect line_height_expanded_rect =
       ExpandSelectionRectToLineHeight(line_break_extended_rect, cursor);
   const PhysicalRect physical_rect =
-      ComputePhysicalRectFor(line_height_expanded_rect, cursor);
+      cursor.Current().ConvertChildToPhysical(line_height_expanded_rect);
   return physical_rect;
 }
 
@@ -947,11 +720,12 @@ PhysicalRect ComputeLocalSelectionRectForReplaced(
     const NGInlineCursor& cursor) {
   DCHECK(cursor.Current().GetLayoutObject()->IsLayoutReplaced());
   const PhysicalRect selection_rect = PhysicalRect({}, cursor.Current().Size());
-  LogicalRect logical_rect = ComputeLogicalRectFor(selection_rect, cursor);
+  LogicalRect logical_rect =
+      cursor.Current().ConvertChildToLogical(selection_rect);
   const LogicalRect line_height_expanded_rect =
       ExpandSelectionRectToLineHeight(logical_rect, cursor);
   const PhysicalRect physical_rect =
-      ComputePhysicalRectFor(line_height_expanded_rect, cursor);
+      cursor.Current().ConvertChildToPhysical(line_height_expanded_rect);
   return physical_rect;
 }
 
@@ -1000,10 +774,11 @@ PositionWithAffinity NGPaintFragment::PositionForPointInInlineLevelBox(
     if (child->PhysicalFragment().IsFloating())
       continue;
 
-    const LayoutUnit child_inline_min =
-        ChildLogicalOffsetInParent(*child).inline_offset;
+    const LogicalRect logical_child_rect =
+        PhysicalFragment().ConvertChildToLogical(child->Rect());
+    const LayoutUnit child_inline_min = logical_child_rect.offset.inline_offset;
     const LayoutUnit child_inline_max =
-        child_inline_min + ChildLogicalSizeInParent(*child).inline_size;
+        child_inline_min + logical_child_rect.size.inline_size;
 
     // Try to resolve if |point| falls in any child in inline direction.
     if (inline_point >= child_inline_min && inline_point <= child_inline_max) {
@@ -1056,23 +831,29 @@ PositionWithAffinity NGPaintFragment::PositionForPointInInlineFormattingContext(
       PhysicalSize(LayoutUnit(1), LayoutUnit(1)));
   const LayoutUnit block_point = logical_point.block_offset;
 
-  // Stores the closest line box child above |point| in the block direction.
-  // Used if we can't find any child |point| falls in to resolve the position.
-  const NGPaintFragment* closest_line_before = nullptr;
-  LayoutUnit closest_line_before_block_offset = LayoutUnit::Min();
-
   // Stores the closest line box child below |point| in the block direction.
   // Used if we can't find any child |point| falls in to resolve the position.
-  const NGPaintFragment* closest_line_after = nullptr;
-  LayoutUnit closest_line_after_block_offset = LayoutUnit::Max();
+  const NGPaintFragment* closest_line_below = nullptr;
+  LayoutUnit closest_line_below_block_offset = LayoutUnit::Min();
+
+  // Stores the closest line box child above |point| in the block direction.
+  // Used if we can't find any child |point| falls in to resolve the position.
+  const NGPaintFragment* closest_line_above = nullptr;
+  LayoutUnit closest_line_above_block_offset = LayoutUnit::Max();
 
   for (const NGPaintFragment* child : Children()) {
-    if (!child->PhysicalFragment().IsLineBox() || child->Children().IsEmpty())
+    if (!child->PhysicalFragment().IsLineBox())
       continue;
+    if (!NGInlineCursor(*child).TryToMoveToFirstInlineLeafChild()) {
+      // editing/selection/last-empty-inline.html requires this to skip
+      // empty <span> with padding.
+      continue;
+    }
 
-    const LayoutUnit line_min = ChildLogicalOffsetInParent(*child).block_offset;
-    const LayoutUnit line_max =
-        line_min + ChildLogicalSizeInParent(*child).block_size;
+    const LogicalRect logical_child_rect =
+        PhysicalFragment().ConvertChildToLogical(child->Rect());
+    const LayoutUnit line_min = logical_child_rect.offset.block_offset;
+    const LayoutUnit line_max = line_min + logical_child_rect.size.block_size;
 
     // Try to resolve if |point| falls in a line box in block direction.
     // Hitting on line bottom doesn't count, to match legacy behavior.
@@ -1084,30 +865,61 @@ PositionWithAffinity NGPaintFragment::PositionForPointInInlineFormattingContext(
     }
 
     if (block_point < line_min) {
-      if (line_min < closest_line_after_block_offset) {
-        closest_line_after = child;
-        closest_line_after_block_offset = line_min;
+      if (line_min < closest_line_above_block_offset) {
+        closest_line_above = child;
+        closest_line_above_block_offset = line_min;
       }
     }
 
     if (block_point >= line_max) {
-      if (line_max > closest_line_before_block_offset) {
-        closest_line_before = child;
-        closest_line_before_block_offset = line_max;
+      if (line_max > closest_line_below_block_offset) {
+        closest_line_below = child;
+        closest_line_below_block_offset = line_max;
       }
     }
   }
 
-  if (closest_line_after) {
-    if (auto child_position =
-            PositionForPointInChild(*closest_line_after, point))
+  // Note: |move_caret_to_boundary| is true for Mac and Unix.
+  const bool move_caret_to_boundary =
+      To<LayoutBlockFlow>(GetLayoutObject())
+          ->ShouldMoveCaretToHorizontalBoundaryWhenPastTopOrBottom();
+
+  // At here, |point| is not inside any line in |this|:
+  //   |closest_line_above|
+  //   |point|
+  //   |closest_line_below|
+  if (closest_line_above) {
+    if (move_caret_to_boundary) {
+      // Tests[1-3] reach here.
+      // [1] editing/selection/click-in-margins-inside-editable-div.html
+      // [2] fast/writing-mode/flipped-blocks-hit-test-line-edges.html
+      // [3] All/LayoutViewHitTestTest.HitTestHorizontal/4
+      NGInlineCursor line_box(*this);
+      line_box.MoveTo(*closest_line_above);
+      if (auto first_position = line_box.PositionForStartOfLine())
+        return PositionWithAffinity(first_position.GetPosition());
+    } else if (auto child_position =
+                   PositionForPointInChild(*closest_line_above, point)) {
       return child_position.value();
+    }
   }
 
-  if (closest_line_before) {
-    if (auto child_position =
-            PositionForPointInChild(*closest_line_before, point))
+  if (closest_line_below) {
+    if (move_caret_to_boundary) {
+      // Tests[1-3] reach here.
+      // [1] editing/selection/click-in-margins-inside-editable-div.html
+      // [2] fast/writing-mode/flipped-blocks-hit-test-line-edges.html
+      // [3] All/LayoutViewHitTestTest.HitTestHorizontal/4
+      NGInlineCursor line_box(*this);
+      line_box.MoveTo(*closest_line_below);
+      if (auto last_position = line_box.PositionForEndOfLine())
+        return PositionWithAffinity(last_position.GetPosition());
+    } else if (auto child_position =
+                   PositionForPointInChild(*closest_line_below, point)) {
+      // Test[1] reaches here.
+      // [1] editing/selection/last-empty-inline.html
       return child_position.value();
+    }
   }
 
   // TODO(xiaochengh): Looking at only the closest lines may not be enough,
@@ -1124,10 +936,14 @@ PositionWithAffinity NGPaintFragment::PositionForPoint(
     return PositionForPointInText(point);
 
   if (PhysicalFragment().IsBlockFlow()) {
-    // We current fall back to legacy for block formatting contexts, so we
-    // should reach here only for inline formatting contexts.
-    // TODO(xiaochengh): Do not fall back.
-    return PositionForPointInInlineFormattingContext(point);
+    const LayoutObject& layout_object = *PhysicalFragment().GetLayoutObject();
+    if (layout_object.ChildrenInline())
+      return PositionForPointInInlineFormattingContext(point);
+    // |NGInlineCursor::PositionForPointInChild()| calls this function with
+    // inline block with with block formatting context that has block
+    // children[1], e.g: <b style="display:inline-block"><div>b</div></b>
+    // [1] NGInlineCursorTest.PositionForPointInChildBlockChildren
+    return layout_object.PositionForPoint(point);
   }
 
   DCHECK(PhysicalFragment().IsInline() || PhysicalFragment().IsLineBox());

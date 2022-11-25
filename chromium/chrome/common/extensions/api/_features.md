@@ -190,6 +190,15 @@ present for the feature to be available.
 Accepted values are a single string for the command line switch (without the
 preceeding '--').
 
+### feature\_flag
+
+The `feature_flag` property specifies the name of a `base::Feature` flag that
+must be enabled for the feature to be available. This can be used to implement a
+remote kill switch for the feature. These feature flags should be defined at
+[feature_flags.cc](https://source.chromium.org/chromium/chromium/src/+/master:extensions/common/features/feature_flags.cc).
+
+Accepted value is a single string for the feature flag.
+
 ### component\_extensions\_auto\_granted
 
 The `component_extensions_auto_granted` specifies whether or not component
@@ -202,11 +211,14 @@ The only accepted value is the bool `false` (since true is the default).
 
 The `contexts` property specifies which JavaScript contexts can access the
 feature. All API features must specify at least one context, and only API
-features can specify contexts.
+features can specify contexts. The only exception to this are dummy namespaces
+like `manifestTypes` etc. which can specify an empty list as its `contexts`
+property.
 
 Accepted values are a list of strings from `blessed_extension`,
 `blessed_web_page`, `content_script`, `extension_service_worker`,
-`lock_screen_extension`, `web_page`, `webui`, and `unblessed_extension`.
+`lock_screen_extension`, `web_page`, `webui`, `webui_untrusted`, and
+`unblessed_extension`.
 
 The `lock_screen_extension` context is used instead of `blessed_extension`
 context for extensions on the Chrome OS lock screen. Other extensions related
@@ -302,8 +314,8 @@ The only accepted value is the bool `true`.
 The `platforms` property specifies the properties the feature should be
 available on.
 
-The accepted values are lists of strings from `chromeos`, `mac`, `linux`, and
-`win`.
+The accepted values are lists of strings from `chromeos`, `mac`, 'lacros',
+`linux`, and `win`.
 
 ### session\_types
 

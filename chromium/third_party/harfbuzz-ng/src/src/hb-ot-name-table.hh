@@ -112,7 +112,7 @@ struct NameRecord
     unsigned int e = encodingID;
 
     return (p == 0 ||
-            (p == 3 && (e == 0 || e == 1 || e == 10)));
+	    (p == 3 && (e == 0 || e == 1 || e == 10)));
   }
 
   static int cmp (const void *pa, const void *pb)
@@ -215,6 +215,8 @@ struct name
     this->count = it.len ();
 
     NameRecord *name_records = (NameRecord *) calloc (it.len (), NameRecord::static_size);
+    if (unlikely (!name_records)) return_trace (false);
+
     hb_array_t<NameRecord> records (name_records, it.len ());
 
     for (const NameRecord& record : it)
@@ -353,12 +355,12 @@ struct name
   };
 
   /* We only implement format 0 for now. */
-  HBUINT16	format;			/* Format selector (=0/1). */
-  HBUINT16	count;			/* Number of name records. */
+  HBUINT16	format;		/* Format selector (=0/1). */
+  HBUINT16	count;		/* Number of name records. */
   NNOffsetTo<UnsizedArrayOf<HBUINT8>>
-		stringOffset;		/* Offset to start of string storage (from start of table). */
+		stringOffset;	/* Offset to start of string storage (from start of table). */
   UnsizedArrayOf<NameRecord>
-		nameRecordZ;		/* The name records where count is the number of records. */
+		nameRecordZ;	/* The name records where count is the number of records. */
   public:
   DEFINE_SIZE_ARRAY (6, nameRecordZ);
 };

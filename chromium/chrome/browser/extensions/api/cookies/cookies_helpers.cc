@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -71,11 +71,11 @@ Profile* ChooseProfileFromStoreId(const std::string& store_id,
   DCHECK(profile);
   bool allow_original = !profile->IsOffTheRecord();
   bool allow_incognito = profile->IsOffTheRecord() ||
-      (include_incognito && profile->HasOffTheRecordProfile());
+                         (include_incognito && profile->HasPrimaryOTRProfile());
   if (store_id == kOriginalProfileStoreId && allow_original)
     return profile->GetOriginalProfile();
   if (store_id == kOffTheRecordProfileStoreId && allow_incognito)
-    return profile->GetOffTheRecordProfile();
+    return profile->GetPrimaryOTRProfile();
   return NULL;
 }
 
@@ -161,14 +161,14 @@ void GetAllCookiesFromManager(
 }
 
 GURL GetURLFromCanonicalCookie(const net::CanonicalCookie& cookie) {
-  const std::string& domain_key = cookie.Domain();
-  const std::string scheme =
-      cookie.IsSecure() ? url::kHttpsScheme : url::kHttpScheme;
-  const std::string host =
-      base::StartsWith(domain_key, ".", base::CompareCase::SENSITIVE)
-          ? domain_key.substr(1)
-          : domain_key;
-  return GURL(scheme + url::kStandardSchemeSeparator + host + "/");
+  // This is only ever called for CanonicalCookies that have come from a
+  // CookieStore, which means they should not have an empty domain. Only file
+  // cookies are allowed to have empty domains, and those are only permitted on
+  // Android, and hopefully not for much longer (see crbug.com/582985).
+  DCHECK(!cookie.Domain().empty());
+
+  return net::cookie_util::CookieOriginToURL(cookie.Domain(),
+                                             cookie.IsSecure());
 }
 
 void AppendMatchingCookiesFromCookieListToVector(
@@ -182,14 +182,14 @@ void AppendMatchingCookiesFromCookieListToVector(
   }
 }
 
-void AppendMatchingCookiesFromCookieStatusListToVector(
-    const net::CookieStatusList& all_cookies_with_statuses,
+void AppendMatchingCookiesFromCookieAccessResultListToVector(
+    const net::CookieAccessResultList& all_cookies_with_access_result,
     const GetAll::Params::Details* details,
     const Extension* extension,
     std::vector<Cookie>* match_vector) {
-  for (const net::CookieWithStatus& cookie_with_status :
-       all_cookies_with_statuses) {
-    const net::CanonicalCookie& cookie = cookie_with_status.cookie;
+  for (const net::CookieWithAccessResult& cookie_with_access_result :
+       all_cookies_with_access_result) {
+    const net::CanonicalCookie& cookie = cookie_with_access_result.cookie;
     AppendCookieToVectorIfMatchAndHasHostPermission(cookie, details, extension,
                                                     match_vector);
   }

@@ -6,22 +6,21 @@
 
 #include <memory>
 
-#include "fxjs/cfx_v8_unittest.h"
 #include "fxjs/cjs_object.h"
+#include "testing/fxv8_unittest.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/base/ptr_util.h"
 
 class FXJSEngineUnitTest : public FXV8UnitTest {
  public:
   FXJSEngineUnitTest() = default;
   ~FXJSEngineUnitTest() override = default;
 
+  // FXV8UnitTest:
   void SetUp() override {
     FXV8UnitTest::SetUp();
     FXJS_Initialize(1, isolate());
-    engine_ = pdfium::MakeUnique<CFXJS_Engine>(isolate());
+    engine_ = std::make_unique<CFXJS_Engine>(isolate());
   }
-
   void TearDown() override { FXJS_Release(); }
 
   CFXJS_Engine* engine() const { return engine_.get(); }
@@ -44,7 +43,7 @@ TEST_F(FXJSEngineUnitTest, GC) {
       "perm", FXJSOBJTYPE_DYNAMIC,
       [](CFXJS_Engine* pEngine, v8::Local<v8::Object> obj) {
         pEngine->SetObjectPrivate(obj,
-                                  pdfium::MakeUnique<CJS_Object>(obj, nullptr));
+                                  std::make_unique<CJS_Object>(obj, nullptr));
         perm_created = true;
       },
       [](v8::Local<v8::Object> obj) {
@@ -57,7 +56,7 @@ TEST_F(FXJSEngineUnitTest, GC) {
       "temp", FXJSOBJTYPE_DYNAMIC,
       [](CFXJS_Engine* pEngine, v8::Local<v8::Object> obj) {
         pEngine->SetObjectPrivate(obj,
-                                  pdfium::MakeUnique<CJS_Object>(obj, nullptr));
+                                  std::make_unique<CJS_Object>(obj, nullptr));
         temp_created = true;
       },
       [](v8::Local<v8::Object> obj) {

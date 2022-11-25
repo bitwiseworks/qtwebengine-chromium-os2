@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 
 <grit latest_public_release="0" current_release="1"
       output_all_resource_defines="false" source_lang_id="en" enc_check="möl">
@@ -30,6 +30,7 @@
       <output filename="components_strings_pa.pak" type="data_package" lang="pa" />
       <output filename="components_strings_si.pak" type="data_package" lang="si" />
       <output filename="components_strings_sq.pak" type="data_package" lang="sq" />
+      <output filename="components_strings_sr-Latn.pak" type="data_package" lang="sr-Latn" />
       <output filename="components_strings_ur.pak" type="data_package" lang="ur" />
       <output filename="components_strings_uz.pak" type="data_package" lang="uz" />
       <output filename="components_strings_zh-HK.pak" type="data_package" lang="zh-HK" />
@@ -173,6 +174,7 @@
       <output filename="java/res/values-sl/components_strings.xml" lang="sl" type="android" context="android_java" />
       <output filename="java/res/values-sq/components_strings.xml" lang="sq" type="android" context="android_java" />
       <output filename="java/res/values-sr/components_strings.xml" lang="sr" type="android" context="android_java" />
+      <output filename="java/res/values-b+sr+Latn/components_strings.xml" lang="sr-Latn" type="android" context="android_java" />
       <output filename="java/res/values-sv/components_strings.xml" lang="sv" type="android" context="android_java" />
       <output filename="java/res/values-sw/components_strings.xml" lang="sw" type="android" context="android_java" />
       <output filename="java/res/values-ta/components_strings.xml" lang="ta" type="android" context="android_java" />
@@ -280,6 +282,7 @@
       <part file="autofill_strings.grdp" />
       <part file="bookmark_bar_strings.grdp" />
       <part file="bookmark_component_strings.grdp" />
+      <part file="blocked_content_strings.grdp" />
       <part file="browsing_data_strings.grdp" />
       <part file="components_settings_strings.grdp" />
       <part file="crash_strings.grdp" />
@@ -309,6 +312,7 @@
       <part file="security_interstitials_strings.grdp" />
       <part file="security_state_strings.grdp" />
       <part file="send_tab_to_self_strings.grdp" />
+      <part file="sms_strings.grdp" />
       <part file="ssl_errors_strings.grdp" />
       <part file="sync_ui_strings.grdp" />
       <part file="translate_strings.grdp" />
@@ -322,6 +326,9 @@
       <if expr="is_android">
         <part file="android_system_error_page_strings.grdp" />
       </if>
+      <if expr="is_ios">
+        <part file="management_ios_strings.grdp" />
+      </if>
 
       <!-- Generic terms -->
       <message name="IDS_CANCEL" desc="Used for Cancel on buttons">
@@ -330,7 +337,7 @@
       <message name="IDS_CLOSE" desc="A generic term for Close on buttons and menus.">
         Close
       </message>
-      <message name="IDS_CLEAR" desc="A generic term for Clearing input fields.">
+      <message name="IDS_CLEAR" desc="A generic term for Clearing input fields." formatter_data="android_java">
         Clear
       </message>
       <message name="IDS_DONE" desc="A generic term for Done on buttons and menus.">
@@ -355,10 +362,10 @@
         Menu
       </message>
       <if expr="is_android">
-        <message name="IDS_SHOW" desc="Generic label to show content for a feature. [CHAR-LIMIT=20]" formatter_data="android_java">
+        <message name="IDS_SHOW_CONTENT" desc="Generic label to show content for a feature. [CHAR-LIMIT=20]" formatter_data="android_java">
           Show
         </message>
-        <message name="IDS_HIDE" desc="Generic label to hide content for a feature. [CHAR-LIMIT=20]" formatter_data="android_java">
+        <message name="IDS_HIDE_CONTENT" desc="Generic label to hide content for a feature. [CHAR-LIMIT=20]" formatter_data="android_java">
           Hide
         </message>
       </if>
@@ -478,6 +485,10 @@
       <!-- Advanced Section Titles -->
       <message name="IDS_OPTIONS_ADVANCED_SECTION_TITLE_PRIVACY">
         Privacy
+      </message>
+
+      <message name="IDS_OPTIONS_ADVANCED_SECTION_TITLE_SAFETY_CHECK">
+        Safety Check
       </message>
 
       <message name="IDS_PATCH_SERVICE_DISPLAY_NAME" desc="The display name (in the system task manager, etc) of the service process used for patching file operations.">

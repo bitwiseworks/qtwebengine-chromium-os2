@@ -7,8 +7,12 @@
 #include "build/build_config.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "third_party/blink/renderer/core/dom/static_node_list.h"
+#include "third_party/blink/renderer/core/editing/finder/text_finder.h"
+#include "third_party/blink/renderer/core/frame/find_in_page.h"
+#include "third_party/blink/renderer/core/frame/frame_test_helpers.h"
 #include "third_party/blink/renderer/core/frame/root_frame_viewport.h"
 #include "third_party/blink/renderer/core/frame/visual_viewport.h"
+#include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
 #include "third_party/blink/renderer/core/geometry/dom_rect.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/page/print_context.h"
@@ -17,6 +21,7 @@
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 #include "third_party/blink/renderer/platform/testing/histogram_tester.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
+#include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
 namespace blink {
 
@@ -101,7 +106,7 @@ class ScrollAnchorTest : public testing::WithParamInterface<bool>,
                         ->ConvertFromScrollbarToContainingEmbeddedContentView(
                             *scrollbar, IntPoint(0, thumb_center)));
     scrollbar->MouseDown(blink::WebMouseEvent(
-        blink::WebInputEvent::kMouseDown, *scrollbar_drag_point_,
+        blink::WebInputEvent::Type::kMouseDown, *scrollbar_drag_point_,
         *scrollbar_drag_point_, blink::WebPointerProperties::Button::kLeft, 0,
         blink::WebInputEvent::kNoModifiers, base::TimeTicks::Now()));
   }
@@ -116,7 +121,7 @@ class ScrollAnchorTest : public testing::WithParamInterface<bool>,
                (scroller->MaximumScrollOffset().Height() -
                 scroller->MinimumScrollOffset().Height()));
     scrollbar->MouseMoved(blink::WebMouseEvent(
-        blink::WebInputEvent::kMouseMove, *scrollbar_drag_point_,
+        blink::WebInputEvent::Type::kMouseMove, *scrollbar_drag_point_,
         *scrollbar_drag_point_, blink::WebPointerProperties::Button::kLeft, 0,
         blink::WebInputEvent::kNoModifiers, base::TimeTicks::Now()));
   }
@@ -124,7 +129,7 @@ class ScrollAnchorTest : public testing::WithParamInterface<bool>,
   void MouseUpOnVerticalScrollbar(Scrollbar* scrollbar) {
     DCHECK(scrollbar_drag_point_);
     scrollbar->MouseDown(blink::WebMouseEvent(
-        blink::WebInputEvent::kMouseUp, *scrollbar_drag_point_,
+        blink::WebInputEvent::Type::kMouseUp, *scrollbar_drag_point_,
         *scrollbar_drag_point_, blink::WebPointerProperties::Button::kLeft, 0,
         blink::WebInputEvent::kNoModifiers, base::TimeTicks::Now()));
     scrollbar_drag_point_.reset();
@@ -531,64 +536,6 @@ TEST_P(ScrollAnchorTest, FlexboxDelayedAdjustmentRespectsSANACLAP) {
   EXPECT_EQ(100, ScrollerForElement(scroller)->ScrollOffsetInt().Height());
 }
 
-// TODO(skobes): Convert this to web-platform-tests when document.rootScroller
-// is launched (http://crbug.com/505516).
-TEST_P(ScrollAnchorTest, NonDefaultRootScroller) {
-  SetBodyInnerHTML(R"HTML(
-    <style>
-        ::-webkit-scrollbar {
-          width: 0px; height: 0px;
-        }
-        body, html {
-          margin: 0px; width: 100%; height: 100%;
-        }
-        #rootscroller {
-          overflow: scroll; width: 100%; height: 100%;
-        }
-        .spacer {
-          height: 600px; width: 100px;
-        }
-        #target {
-          height: 100px; width: 100px; background-color: red;
-        }
-    </style>
-    <div id='rootscroller'>
-        <div id='firstChild' class='spacer'></div>
-        <div id='target'></div>
-        <div class='spacer'></div>
-    </div>
-    <div class='spacer'></div>
-  )HTML");
-
-  Element* root_scroller_element = GetDocument().getElementById("rootscroller");
-
-  NonThrowableExceptionState non_throw;
-  GetDocument().setRootScroller(root_scroller_element, non_throw);
-  UpdateAllLifecyclePhasesForTest();
-
-  ScrollableArea* scroller = ScrollerForElement(root_scroller_element);
-
-  // By making the #rootScroller DIV the rootScroller, it should become the
-  // layout viewport on the RootFrameViewport.
-  ASSERT_EQ(scroller,
-            &GetDocument().View()->GetRootFrameViewport()->LayoutViewport());
-
-  // The #rootScroller DIV's anchor should have the RootFrameViewport set as
-  // the scroller, rather than the FrameView's anchor.
-
-  root_scroller_element->setScrollTop(600);
-
-  SetHeight(GetDocument().getElementById("firstChild"), 1000);
-
-  // Scroll anchoring should be applied to #rootScroller.
-  EXPECT_EQ(1000, scroller->GetScrollOffset().Height());
-  EXPECT_EQ(GetDocument().getElementById("target")->GetLayoutObject(),
-            GetScrollAnchor(scroller).AnchorObject());
-  // Scroll anchoring should not apply within main frame.
-  EXPECT_EQ(0, LayoutViewport()->GetScrollOffset().Height());
-  EXPECT_EQ(nullptr, GetScrollAnchor(LayoutViewport()).AnchorObject());
-}
-
 // This test verifies that scroll anchoring is disabled when the document is in
 // printing mode.
 TEST_P(ScrollAnchorTest, AnchoringDisabledForPrinting) {
@@ -802,6 +749,30 @@ TEST_P(ScrollAnchorTest, SerializeAnchorVerticalWritingMode) {
 
   ScrollLayoutViewport(ScrollOffset(75, 0));
   ValidateSerializedAnchor("html>body>.barbaz", LayoutPoint(-50, 0));
+}
+
+TEST_P(ScrollAnchorTest, RestoreAnchorVerticalRlWritingMode) {
+  SetBodyInnerHTML(R"HTML(
+      <style>
+      body {
+          height: 100px;
+          margin: 0;
+          writing-mode:
+          vertical-rl;
+        }
+        div.big { width: 800px; }
+        div { width: 100px; height: 100px; }
+      </style>
+      <div class='big'></div>
+      <div id='last'></div>
+      )HTML");
+
+  SerializedAnchor serialized_anchor("#last", LayoutPoint(0, 0));
+
+  EXPECT_TRUE(
+      GetScrollAnchor(LayoutViewport()).RestoreAnchor(serialized_anchor));
+  EXPECT_EQ(LayoutViewport()->ScrollOffsetInt().Width(), 0);
+  EXPECT_EQ(LayoutViewport()->ScrollOffsetInt().Height(), 0);
 }
 
 TEST_P(ScrollAnchorTest, SerializeAnchorQualifiedTagName) {
@@ -1052,7 +1023,7 @@ TEST_P(ScrollAnchorTest, ClampAdjustsAnchorAnimation) {
   GetDocument().getElementById("hidden")->setAttribute(html_names::kStyleAttr,
                                                        "display:block");
   GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
-#if !defined(OS_MACOSX)
+#if !defined(OS_MAC)
   EXPECT_EQ(IntSize(0, 200), LayoutViewport()
                                  ->GetScrollAnimator()
                                  .ImplOnlyAnimationAdjustmentForTesting());
@@ -1065,5 +1036,234 @@ TEST_P(ScrollAnchorTest, ClampAdjustsAnchorAnimation) {
   EXPECT_EQ(IntSize(0, 0), LayoutViewport()
                                ->GetScrollAnimator()
                                .ImplOnlyAnimationAdjustmentForTesting());
+}
+
+class ScrollAnchorTestFindInPageClient : public mojom::blink::FindInPageClient {
+ public:
+  ~ScrollAnchorTestFindInPageClient() override = default;
+
+  void SetFrame(WebLocalFrameImpl* frame) {
+    frame->GetFindInPage()->SetClient(receiver_.BindNewPipeAndPassRemote());
+  }
+
+  void SetNumberOfMatches(
+      int request_id,
+      unsigned int current_number_of_matches,
+      mojom::blink::FindMatchUpdateType final_update) final {
+    count_ = current_number_of_matches;
+  }
+
+  void SetActiveMatch(int request_id,
+                      const gfx::Rect& active_match_rect,
+                      int active_match_ordinal,
+                      mojom::blink::FindMatchUpdateType final_update) final {}
+
+  int Count() const { return count_; }
+  void Reset() { count_ = -1; }
+
+ private:
+  int count_ = -1;
+  mojo::Receiver<mojom::blink::FindInPageClient> receiver_{this};
+};
+
+class ScrollAnchorFindInPageTest : public testing::Test {
+ public:
+  void SetUp() override { web_view_helper_.Initialize(); }
+  void TearDown() override { web_view_helper_.Reset(); }
+
+  Document& GetDocument() {
+    return *static_cast<Document*>(
+        web_view_helper_.LocalMainFrame()->GetDocument());
+  }
+  FindInPage* GetFindInPage() {
+    return web_view_helper_.LocalMainFrame()->GetFindInPage();
+  }
+  WebLocalFrameImpl* LocalMainFrame() {
+    return web_view_helper_.LocalMainFrame();
+  }
+
+  void UpdateAllLifecyclePhasesForTest() {
+    GetDocument().View()->UpdateAllLifecyclePhases(DocumentUpdateReason::kTest);
+  }
+
+  void SetHtmlInnerHTML(const char* content) {
+    GetDocument().documentElement()->setInnerHTML(String::FromUTF8(content));
+    UpdateAllLifecyclePhasesForTest();
+  }
+
+  void ResizeAndFocus() {
+    web_view_helper_.Resize(WebSize(640, 480));
+    web_view_helper_.GetWebView()->MainFrameWidget()->SetFocus(true);
+    test::RunPendingTasks();
+  }
+
+  mojom::blink::FindOptionsPtr FindOptions(bool new_session = true) {
+    auto find_options = mojom::blink::FindOptions::New();
+    find_options->run_synchronously_for_testing = true;
+    find_options->new_session = new_session;
+    find_options->forward = true;
+    return find_options;
+  }
+
+  void Find(String search_text,
+            ScrollAnchorTestFindInPageClient& client,
+            bool new_session = true) {
+    client.Reset();
+    GetFindInPage()->Find(FAKE_FIND_ID, search_text, FindOptions(new_session));
+    test::RunPendingTasks();
+  }
+
+  ScrollableArea* LayoutViewport() {
+    return GetDocument().View()->LayoutViewport();
+  }
+
+  const int FAKE_FIND_ID = 1;
+
+ private:
+  frame_test_helpers::WebViewHelper web_view_helper_;
+};
+
+TEST_F(ScrollAnchorFindInPageTest, FindInPageResultPrioritized) {
+  ResizeAndFocus();
+  SetHtmlInnerHTML(R"HTML(
+    <style>
+    body { height: 4000px }
+    .spacer { height: 100px }
+    #growing { height: 100px }
+    </style>
+
+    <div class=spacer></div>
+    <div class=spacer></div>
+    <div class=spacer></div>
+    <div class=spacer></div>
+    <div id=growing></div>
+    <div class=spacer></div>
+    <div id=target>findme</div>
+    <div class=spacer></div>
+    <div class=spacer></div>
+  )HTML");
+
+  LayoutViewport()->SetScrollOffset(ScrollOffset(0, 150),
+                                    mojom::blink::ScrollType::kUser);
+
+  const String search_text = "findme";
+  ScrollAnchorTestFindInPageClient client;
+  client.SetFrame(LocalMainFrame());
+  Find(search_text, client);
+  ASSERT_EQ(1, client.Count());
+
+  // Save the old bounds for comparison.
+  auto* old_bounds =
+      GetDocument().getElementById("target")->getBoundingClientRect();
+
+  GetDocument().getElementById("growing")->setAttribute(html_names::kStyleAttr,
+                                                        "height: 3000px");
+  UpdateAllLifecyclePhasesForTest();
+
+  auto* new_bounds =
+      GetDocument().getElementById("target")->getBoundingClientRect();
+
+  // The y coordinate of the target should not change.
+  EXPECT_EQ(old_bounds->y(), new_bounds->y());
+}
+
+TEST_F(ScrollAnchorFindInPageTest, FocusPrioritizedOverFindInPage) {
+  ResizeAndFocus();
+  SetHtmlInnerHTML(R"HTML(
+    <style>
+    body { height: 4000px }
+    .spacer { height: 100px }
+    #growing { height: 100px }
+    #focus_target { height: 10px }
+    </style>
+
+    <div class=spacer></div>
+    <div class=spacer></div>
+    <div class=spacer></div>
+    <div class=spacer></div>
+    <div id=focus_target contenteditable></div>
+    <div id=growing></div>
+    <div id=find_target>findme</div>
+    <div class=spacer></div>
+    <div class=spacer></div>
+  )HTML");
+
+  LayoutViewport()->SetScrollOffset(ScrollOffset(0, 150),
+                                    mojom::blink::ScrollType::kUser);
+
+  const String search_text = "findme";
+  ScrollAnchorTestFindInPageClient client;
+  client.SetFrame(LocalMainFrame());
+  Find(search_text, client);
+  ASSERT_EQ(1, client.Count());
+
+  GetDocument().getElementById("focus_target")->focus();
+
+  // Save the old bounds for comparison.
+  auto* old_focus_bounds =
+      GetDocument().getElementById("focus_target")->getBoundingClientRect();
+  auto* old_find_bounds =
+      GetDocument().getElementById("find_target")->getBoundingClientRect();
+
+  GetDocument().getElementById("growing")->setAttribute(html_names::kStyleAttr,
+                                                        "height: 3000px");
+  UpdateAllLifecyclePhasesForTest();
+
+  auto* new_focus_bounds =
+      GetDocument().getElementById("focus_target")->getBoundingClientRect();
+  auto* new_find_bounds =
+      GetDocument().getElementById("find_target")->getBoundingClientRect();
+
+  // `focus_target` should remain where it is, since it is prioritized.
+  // `find_target`, however, is shifted.
+  EXPECT_EQ(old_focus_bounds->y(), new_focus_bounds->y());
+  EXPECT_NE(old_find_bounds->y(), new_find_bounds->y());
+}
+
+TEST_F(ScrollAnchorFindInPageTest, FocusedUnderStickyIsSkipped) {
+  ResizeAndFocus();
+  SetHtmlInnerHTML(R"HTML(
+    <style>
+    body { height: 4000px; position: relative; }
+    .spacer { height: 100px }
+    #growing { height: 100px }
+    .sticky { position: sticky; top: 10px; }
+    #target { width: 10px; height: 10px; }
+    </style>
+
+    <div class=spacer></div>
+    <div class=spacer></div>
+    <div class=spacer></div>
+    <div class=spacer></div>
+    <div id=growing></div>
+    <div class=spacer></div>
+    <div id=check></div>
+    <div class=sticky>
+      <div id=target contenteditable></div>
+    </div>
+    <div class=spacer></div>
+    <div class=spacer></div>
+  )HTML");
+
+  LayoutViewport()->SetScrollOffset(ScrollOffset(0, 150),
+                                    mojom::blink::ScrollType::kUser);
+
+  GetDocument().getElementById("target")->focus();
+
+  // Save the old bounds for comparison. Use #check, since sticky won't move
+  // regardless of scroll anchoring.
+  auto* old_bounds =
+      GetDocument().getElementById("check")->getBoundingClientRect();
+
+  GetDocument().getElementById("growing")->setAttribute(html_names::kStyleAttr,
+                                                        "height: 3000px");
+  UpdateAllLifecyclePhasesForTest();
+
+  auto* new_bounds =
+      GetDocument().getElementById("check")->getBoundingClientRect();
+
+  // The y coordinate of #check should change since #target is not a valid
+  // anchor, so we should have selected one of the spacers as the anchor.
+  EXPECT_NE(old_bounds->y(), new_bounds->y());
 }
 }

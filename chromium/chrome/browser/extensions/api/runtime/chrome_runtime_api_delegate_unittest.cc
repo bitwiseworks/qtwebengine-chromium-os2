@@ -94,7 +94,7 @@ class DownloaderTestDelegate : public ExtensionDownloaderTestDelegate {
       no_updates_.erase(id);
     DownloadFinishedArgs args;
     args.path = path;
-    args.version = version;
+    args.version = base::Version(version);
     updates_[id] = std::move(args);
   }
 
@@ -107,7 +107,7 @@ class DownloaderTestDelegate : public ExtensionDownloaderTestDelegate {
     // expecting a synchronous reply (the real code has to go do at least one
     // network request before getting a response, so this is is a reasonable
     // expectation by delegates).
-    for (const std::string& id : fetch_data->extension_ids()) {
+    for (const std::string& id : fetch_data->GetExtensionIds()) {
       auto no_update = no_updates_.find(id);
       if (no_update != no_updates_.end()) {
         no_updates_.erase(no_update);
@@ -124,16 +124,16 @@ class DownloaderTestDelegate : public ExtensionDownloaderTestDelegate {
       }
       auto update = updates_.find(id);
       if (update != updates_.end()) {
-        CRXFileInfo info(id, update->second.path, "" /* no hash */,
-                         GetTestVerifierFormat());
-        std::string version = update->second.version;
+        CRXFileInfo crx_info(update->second.path, GetTestVerifierFormat());
+        crx_info.expected_version = update->second.version;
+        crx_info.extension_id = id;
         updates_.erase(update);
         base::ThreadTaskRunnerHandle::Get()->PostTask(
             FROM_HERE,
             base::BindOnce(
                 &ExtensionDownloaderDelegate::OnExtensionDownloadFinished,
-                base::Unretained(delegate), info,
-                false /* file_ownership_passed */, GURL(), version,
+                base::Unretained(delegate), crx_info,
+                false /* file_ownership_passed */, GURL(),
                 ExtensionDownloaderDelegate::PingResult(),
                 fetch_data->request_ids(),
                 ExtensionDownloaderDelegate::InstallCallback()));
@@ -147,7 +147,7 @@ class DownloaderTestDelegate : public ExtensionDownloaderTestDelegate {
   // Simple holder for the data passed in AddUpdateResponse calls.
   struct DownloadFinishedArgs {
     base::FilePath path;
-    std::string version;
+    base::Version version;
   };
 
   // These keep track of what response we should give for update checks, keyed
@@ -206,7 +206,8 @@ class ChromeRuntimeAPIDelegateTest : public ExtensionServiceTestWithInstall {
 
     // Setup the ExtensionService so that extension updates won't complete
     // installation until the extension is idle.
-    update_install_gate_ = std::make_unique<UpdateInstallGate>(service());
+    update_install_gate_ =
+        std::make_unique<UpdateInstallGate>(service()->profile());
     service()->RegisterInstallGate(ExtensionPrefs::DELAY_REASON_WAIT_FOR_IDLE,
                                    update_install_gate_.get());
     static_cast<TestExtensionSystem*>(ExtensionSystem::Get(browser_context()))

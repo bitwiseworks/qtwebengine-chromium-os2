@@ -26,13 +26,13 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_initializer.h"
 
 #include <algorithm>
+#include <limits>
 #include <memory>
 #include <utility>
 
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_macros.h"
-#include "services/metrics/public/cpp/ukm_builders.h"
-#include "services/metrics/public/cpp/ukm_recorder.h"
+#include "base/system/sys_info.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/bindings/core/v8/binding_security.h"
 #include "third_party/blink/renderer/bindings/core/v8/isolated_world_csp.h"
@@ -52,11 +52,11 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_error_event.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_gc_controller.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_idle_task_runner.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_metrics.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_throw_dom_exception.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_trusted_script.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_wasm_response_extensions.h"
 #include "third_party/blink/renderer/bindings/core/v8/worker_or_worklet_script_controller.h"
-#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event_dispatch_forbidden_scope.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
@@ -68,9 +68,11 @@
 #include "third_party/blink/renderer/core/trustedtypes/trusted_types_util.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/core/workers/worklet_global_scope.h"
+#include "third_party/blink/renderer/platform/bindings/active_script_wrappable_manager.h"
 #include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
 #include "third_party/blink/renderer/platform/bindings/v8_dom_wrapper.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_context_data.h"
+#include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
@@ -187,20 +189,11 @@ void V8Initializer::MessageHandlerInMainThread(v8::Local<v8::Message> message,
 void V8Initializer::MessageHandlerInWorker(v8::Local<v8::Message> message,
                                            v8::Local<v8::Value> data) {
   v8::Isolate* isolate = v8::Isolate::GetCurrent();
-  V8PerIsolateData* per_isolate_data = V8PerIsolateData::From(isolate);
 
   // During the frame teardown, there may not be a valid context.
   ScriptState* script_state = ScriptState::Current(isolate);
   if (!script_state->ContextIsValid())
     return;
-
-  // Exceptions that occur in error handler should be ignored since in that case
-  // WorkerGlobalScope::dispatchErrorEvent will send the exception to the worker
-  // object.
-  if (per_isolate_data->IsReportingException())
-    return;
-
-  per_isolate_data->SetReportingException(true);
 
   ExecutionContext* context = ExecutionContext::From(script_state);
   std::unique_ptr<SourceLocation> location =
@@ -228,8 +221,6 @@ void V8Initializer::MessageHandlerInWorker(v8::Local<v8::Message> message,
     ExecutionContext::From(script_state)
         ->DispatchErrorEvent(event, sanitize_script_errors);
   }
-
-  per_isolate_data->SetReportingException(false);
 }
 
 namespace {
@@ -364,18 +355,14 @@ static bool ContentSecurityPolicyCodeGenerationCheck(
     v8::Local<v8::Context> context,
     v8::Local<v8::String> source) {
   if (ExecutionContext* execution_context = ToExecutionContext(context)) {
-    DCHECK(execution_context->IsDocument() ||
-           execution_context->IsMainThreadWorkletGlobalScope());
-
-    v8::Context::Scope scope(context);
-
     // Note this callback is only triggered for contexts which have eval
     // disabled. Hence we don't need to handle the case of isolated world
     // contexts with no CSP specified. (They should be exempt from the page CSP.
     // See crbug.com/982388.)
 
     if (ContentSecurityPolicy* policy =
-            execution_context->GetContentSecurityPolicyForWorld()) {
+            execution_context->GetContentSecurityPolicyForCurrentWorld()) {
+      v8::Context::Scope scope(context);
       v8::String::Value source_str(context->GetIsolate(), source);
       UChar snippet[ContentSecurityPolicy::kMaxSampleLength + 1];
       size_t len = std::min((sizeof(snippet) / sizeof(UChar)) - 1,
@@ -456,7 +443,7 @@ static bool WasmCodeGenerationCheckCallbackInMainThread(
     v8::Local<v8::String> source) {
   if (ExecutionContext* execution_context = ToExecutionContext(context)) {
     if (ContentSecurityPolicy* policy =
-            Document::From(execution_context)->GetContentSecurityPolicy()) {
+            execution_context->GetContentSecurityPolicy()) {
       v8::String::Value source_str(context->GetIsolate(), source);
       UChar snippet[ContentSecurityPolicy::kMaxSampleLength + 1];
       size_t len = std::min((sizeof(snippet) / sizeof(UChar)) - 1,
@@ -475,6 +462,14 @@ static bool WasmCodeGenerationCheckCallbackInMainThread(
     }
   }
   return false;
+}
+
+static bool WasmSimdEnabledCallback(v8::Local<v8::Context> context) {
+  ExecutionContext* execution_context = ToExecutionContext(context);
+  if (!execution_context)
+    return false;
+
+  return RuntimeEnabledFeatures::WebAssemblySimdEnabled(execution_context);
 }
 
 static bool WasmThreadsEnabledCallback(v8::Local<v8::Context> context) {
@@ -625,16 +620,18 @@ static void HostGetImportMetaProperties(v8::Local<v8::Context> context,
 static void InitializeV8Common(v8::Isolate* isolate) {
   // Set up garbage collection before setting up anything else as V8 may trigger
   // GCs during Blink setup.
-  isolate->AddGCPrologueCallback(V8GCController::GcPrologue);
-  isolate->AddGCEpilogueCallback(V8GCController::GcEpilogue);
+  V8PerIsolateData::From(isolate)->SetGCCallbacks(
+      isolate, V8GCController::GcPrologue, V8GCController::GcEpilogue);
   ThreadState::Current()->AttachToIsolate(
-      isolate, V8GCController::TraceDOMWrappers,
-      EmbedderGraphBuilder::BuildEmbedderGraphCallback);
+      isolate, EmbedderGraphBuilder::BuildEmbedderGraphCallback);
+  V8PerIsolateData::From(isolate)->SetActiveScriptWrappableManager(
+      MakeGarbageCollected<ActiveScriptWrappableManager>());
 
   isolate->SetMicrotasksPolicy(v8::MicrotasksPolicy::kScoped);
   isolate->SetUseCounterCallback(&UseCounterCallback);
   isolate->SetWasmModuleCallback(WasmModuleOverride);
   isolate->SetWasmInstanceCallback(WasmInstanceOverride);
+  isolate->SetWasmSimdEnabledCallback(WasmSimdEnabledCallback);
   isolate->SetWasmThreadsEnabledCallback(WasmThreadsEnabledCallback);
   isolate->SetHostImportModuleDynamicallyCallback(HostImportModuleDynamically);
   isolate->SetHostInitializeImportMetaObjectCallback(
@@ -648,22 +645,58 @@ static void InitializeV8Common(v8::Isolate* isolate) {
 namespace {
 
 class ArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
+ public:
+  ArrayBufferAllocator() : total_allocation_(0) {
+    // size_t may be equivalent to uint32_t or uint64_t, cast all values to
+    // uint64_t to compare.
+    uint64_t virtual_size =
+        static_cast<uint64_t>(base::SysInfo::AmountOfVirtualMemory());
+    uint64_t size_t_max =
+        static_cast<uint64_t>(std::numeric_limits<std::size_t>::max());
+    DCHECK(virtual_size < size_t_max);
+    // If AmountOfVirtualMemory() returns 0, there is no limit on virtual
+    // memory, do not limit the total allocation. Otherwise, Limit the total
+    // allocation to 50% of available virtual memory.
+    max_allocation_ = static_cast<size_t>(virtual_size) / 2;
+  }
+
   // Allocate() methods return null to signal allocation failure to V8, which
   // should respond by throwing a RangeError, per
   // http://www.ecma-international.org/ecma-262/6.0/#sec-createbytedatablock.
   void* Allocate(size_t size) override {
-    return ArrayBufferContents::AllocateMemoryOrNull(
+    if (max_allocation_ != 0 &&
+        std::atomic_load(&total_allocation_) > max_allocation_ - size)
+      return nullptr;
+    void* result = ArrayBufferContents::AllocateMemoryOrNull(
         size, ArrayBufferContents::kZeroInitialize);
+    if (max_allocation_ != 0 && result)
+      total_allocation_.fetch_add(size, std::memory_order_relaxed);
+    return result;
   }
 
   void* AllocateUninitialized(size_t size) override {
-    return ArrayBufferContents::AllocateMemoryOrNull(
+    if (max_allocation_ != 0 &&
+        std::atomic_load(&total_allocation_) > max_allocation_ - size)
+      return nullptr;
+    void* result = ArrayBufferContents::AllocateMemoryOrNull(
         size, ArrayBufferContents::kDontInitialize);
+    if (max_allocation_ != 0 && result)
+      total_allocation_.fetch_add(size, std::memory_order_relaxed);
+    return result;
   }
 
   void Free(void* data, size_t size) override {
+    if (max_allocation_ != 0 && data)
+      total_allocation_.fetch_sub(size, std::memory_order_relaxed);
     ArrayBufferContents::FreeMemory(data);
   }
+
+ private:
+  // Total memory allocated in bytes.
+  std::atomic_size_t total_allocation_;
+  // If |max_allocation_| is 0, skip these atomic operations on
+  // |total_allocation_|.
+  size_t max_allocation_;
 };
 
 }  // namespace
@@ -719,6 +752,8 @@ void V8Initializer::InitializeMainThread(const intptr_t* reference_table) {
 
   isolate->SetPromiseRejectCallback(PromiseRejectHandlerInMainThread);
 
+  isolate->SetMetricsRecorder(std::make_shared<V8MetricsRecorder>(isolate));
+
   V8PerIsolateData::From(isolate)->SetThreadDebugger(
       std::make_unique<MainThreadDebugger>(isolate));
 }
@@ -747,6 +782,8 @@ void V8Initializer::InitializeWorker(v8::Isolate* isolate) {
 
   isolate->SetStackLimit(WTF::GetCurrentStackPosition() - kWorkerMaxStackSize);
   isolate->SetPromiseRejectCallback(PromiseRejectHandlerInWorker);
+  isolate->SetModifyCodeGenerationFromStringsCallback(
+      CodeGenerationCheckCallbackInMainThread);
 }
 
 }  // namespace blink

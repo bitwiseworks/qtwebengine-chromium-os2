@@ -78,7 +78,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include <sys/signal.h>
 #include <sys/ucontext.h>
 #include <sys/user.h>
 #include <ucontext.h>
@@ -88,6 +87,7 @@
 #include <vector>
 
 #include "common/basictypes.h"
+#include "common/linux/breakpad_getcontext.h"
 #include "common/linux/linux_libc_support.h"
 #include "common/memory_allocator.h"
 #include "client/linux/log/log.h"
@@ -419,8 +419,8 @@ struct ThreadArgument {
 // This is the entry function for the cloned process. We are in a compromised
 // context here: see the top of the file.
 // static
-int ExceptionHandler::ThreadEntry(void *arg) {
-  const ThreadArgument *thread_arg = reinterpret_cast<ThreadArgument*>(arg);
+int ExceptionHandler::ThreadEntry(void* arg) {
+  const ThreadArgument* thread_arg = reinterpret_cast<ThreadArgument*>(arg);
 
   // Close the write end of the pipe. This allows us to fail if the parent dies
   // while waiting for the continue signal.
@@ -495,7 +495,7 @@ bool ExceptionHandler::SimulateSignalDelivery(int sig) {
 }
 
 // This function may run in a compromised context: see the top of the file.
-bool ExceptionHandler::GenerateDump(CrashContext *context) {
+bool ExceptionHandler::GenerateDump(CrashContext* context) {
   if (IsOutOfProcess())
     return crash_generation_client_->RequestDump(context, sizeof(*context));
 

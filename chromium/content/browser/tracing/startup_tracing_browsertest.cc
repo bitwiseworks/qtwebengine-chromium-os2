@@ -13,6 +13,7 @@
 #include "components/tracing/common/tracing_switches.h"
 #include "content/browser/tracing/perfetto_file_tracer.h"
 #include "content/browser/tracing/tracing_controller_impl.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "services/tracing/perfetto/privacy_filtering_check.h"
@@ -60,9 +61,10 @@ class CommandlineStartupTracingTest : public ContentBrowserTest {
   DISALLOW_COPY_AND_ASSIGN(CommandlineStartupTracingTest);
 };
 
-// Failing on Android ASAN, Linux TSAN. crbug.com/1041392
+// Failing on Android/Win ASAN, Linux TSAN. crbug.com/1041392
 #if (defined(OS_ANDROID) && defined(ADDRESS_SANITIZER)) || \
-    (defined(OS_LINUX) && defined(THREAD_SANITIZER))
+    (defined(OS_WIN) && defined(ADDRESS_SANITIZER)) ||     \
+    ((defined(OS_LINUX) || defined(OS_CHROMEOS)) && defined(THREAD_SANITIZER))
 #define MAYBE_TestStartupTracing DISABLED_TestStartupTracing
 #else
 #define MAYBE_TestStartupTracing TestStartupTracing

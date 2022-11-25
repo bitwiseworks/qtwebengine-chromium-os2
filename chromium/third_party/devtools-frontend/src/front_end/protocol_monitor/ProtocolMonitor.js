@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as DataGrid from '../data_grid/data_grid.js';
 import * as Host from '../host/host.js';
 import * as ProtocolClient from '../protocol_client/protocol_client.js';
@@ -191,7 +194,7 @@ export class ProtocolMonitorImpl extends UI.Widget.VBox {
   _setRecording(recording) {
     if (recording) {
       ProtocolClient.InspectorBackend.test.onMessageSent = this._messageSent.bind(this);
-      ProtocolClient.InspectorBackend.test.onMessageReceived = this._messageRecieved.bind(this);
+      ProtocolClient.InspectorBackend.test.onMessageReceived = this._messageReceived.bind(this);
     } else {
       ProtocolClient.InspectorBackend.test.onMessageSent = null;
       ProtocolClient.InspectorBackend.test.onMessageReceived = null;
@@ -214,7 +217,7 @@ export class ProtocolMonitorImpl extends UI.Widget.VBox {
    * @param {!Object} message
    * @param {?ProtocolClient.InspectorBackend.TargetBase} target
    */
-  _messageRecieved(message, target) {
+  _messageReceived(message, target) {
     if ('id' in message) {
       const node = this._nodeForId[message.id];
       if (!node) {
@@ -232,7 +235,7 @@ export class ProtocolMonitorImpl extends UI.Widget.VBox {
     const sdkTarget = /** @type {?SDK.SDKModel.Target} */ (target);
     const node = new ProtocolNode({
       method: message.method,
-      direction: 'recieved',
+      direction: 'received',
       response: message.params,
       timestamp: Date.now() - this._startTime,
       request: '',
@@ -276,7 +279,7 @@ export class ProtocolNode extends DataGrid.SortableDataGrid.SortableDataGridNode
   /**
    * @override
    * @param {string} columnId
-   * @return {!Element}
+   * @return {!HTMLElement}
    */
   createCell(columnId) {
     switch (columnId) {
@@ -310,7 +313,7 @@ export class ProtocolNode extends DataGrid.SortableDataGrid.SortableDataGridNode
   element() {
     const element = super.element();
     element.classList.toggle('protocol-message-sent', this.data.direction === 'sent');
-    element.classList.toggle('protocol-message-recieved', this.data.direction !== 'sent');
+    element.classList.toggle('protocol-message-received', this.data.direction !== 'sent');
     element.classList.toggle('error', this.hasError);
     return element;
   }

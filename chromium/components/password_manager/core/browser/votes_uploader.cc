@@ -8,11 +8,13 @@
 #include <algorithm>
 #include <iostream>
 #include <utility>
+
+#include "base/check_op.h"
 #include "base/hash/hash.h"
-#include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/optional.h"
 #include "base/rand_util.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/autofill_download_manager.h"
 #include "components/autofill/core/browser/autofill_field.h"
@@ -20,6 +22,7 @@
 #include "components/autofill/core/browser/randomized_encoder.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_field_data.h"
+#include "components/autofill/core/common/signatures.h"
 #include "components/password_manager/core/browser/browser_save_password_progress_logger.h"
 #include "components/password_manager/core/browser/field_info_manager.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
@@ -32,7 +35,6 @@ using autofill::FieldSignature;
 using autofill::FormData;
 using autofill::FormFieldData;
 using autofill::FormStructure;
-using autofill::PasswordForm;
 using autofill::RandomizedEncoder;
 using autofill::ServerFieldType;
 using autofill::ServerFieldTypeSet;
@@ -175,7 +177,7 @@ size_t GetLowEntropyHashValue(const base::string16& value) {
 }  // namespace
 
 SingleUsernameVoteData::SingleUsernameVoteData(
-    uint32_t renderer_id,
+    autofill::FieldRendererId renderer_id,
     const FormPredictions& form_predictions)
     : renderer_id(renderer_id), form_predictions(form_predictions) {}
 
@@ -444,7 +446,7 @@ void VotesUploader::UploadFirstLoginVotes(
 }
 
 void VotesUploader::SetInitialHashValueOfUsernameField(
-    uint32_t username_element_renderer_id,
+    autofill::FieldRendererId username_element_renderer_id,
     FormStructure* form_structure) {
   auto it = initial_values_.find(username_element_renderer_id);
 
@@ -487,7 +489,8 @@ void VotesUploader::MaybeSendSingleUsernameVote(bool credentials_saved) {
     AutofillField* field = form_to_upload->field(i);
 
     ServerFieldType type = autofill::UNKNOWN_TYPE;
-    uint32_t field_renderer_id = predictions.fields[i].renderer_id;
+    autofill::FieldRendererId field_renderer_id =
+        predictions.fields[i].renderer_id;
     if (field_renderer_id == single_username_vote_data_->renderer_id) {
       if (field_info_manager->GetFieldType(predictions.form_signature,
                                            predictions.fields[i].signature) !=
@@ -520,7 +523,7 @@ void VotesUploader::AddGeneratedVote(FormStructure* form_structure) {
   DCHECK(form_structure);
   DCHECK(generation_popup_was_shown_);
 
-  if (generation_element_.empty())
+  if (!generation_element_)
     return;
 
   AutofillUploadContents::Field::PasswordGenerationType type =
@@ -548,7 +551,7 @@ void VotesUploader::AddGeneratedVote(FormStructure* form_structure) {
 
   for (size_t i = 0; i < form_structure->field_count(); ++i) {
     AutofillField* field = form_structure->field(i);
-    if (field->name == generation_element_) {
+    if (field->unique_renderer_id == generation_element_) {
       field->set_generation_type(type);
       if (has_generated_password_) {
         field->set_generated_password_changed(generated_password_changed_);
@@ -586,7 +589,7 @@ void VotesUploader::SetKnownValueFlag(
     if (field->value.empty())
       continue;
     if (known_username == field->value || known_password == field->value) {
-      field->properties_mask |= autofill::FieldPropertiesFlags::KNOWN_VALUE;
+      field->properties_mask |= autofill::FieldPropertiesFlags::kKnownValue;
     }
   }
 }
@@ -653,8 +656,7 @@ void VotesUploader::GeneratePasswordAttributesVote(
   bool respond_randomly = base::RandGenerator(2);
   bool randomized_value_for_character_class =
       respond_randomly ? base::RandGenerator(2)
-                       : std::any_of(password_value.begin(),
-                                     password_value.end(), predicate);
+                       : base::ranges::any_of(password_value, predicate);
   form_structure->set_password_attributes_vote(std::make_pair(
       character_class_attribute, randomized_value_for_character_class));
 
@@ -705,8 +707,8 @@ bool VotesUploader::StartUploadRequest(
       std::string(), true /* observed_submission */, nullptr /* prefs */);
 }
 
-void VotesUploader::SaveFieldVote(uint64_t form_signature,
-                                  uint32_t field_signature,
+void VotesUploader::SaveFieldVote(autofill::FormSignature form_signature,
+                                  autofill::FieldSignature field_signature,
                                   autofill::ServerFieldType field_type) {
   FieldInfoManager* field_info_manager = client_->GetFieldInfoManager();
   if (!field_info_manager)

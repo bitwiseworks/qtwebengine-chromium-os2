@@ -17,7 +17,7 @@
 
 namespace blink {
 
-class ResourceRequest;
+class ResourceRequestHead;
 class SegmentReader;
 
 // Utility class for loading, decoding, and potentially rescaling an icon on a
@@ -25,8 +25,6 @@ class SegmentReader;
 class CORE_EXPORT ThreadedIconLoader final
     : public GarbageCollected<ThreadedIconLoader>,
       public ThreadableLoaderClient {
-  USING_GARBAGE_COLLECTED_MIXIN(ThreadedIconLoader);
-
  public:
   // On failure, |callback| is called with a null SkBitmap and |resize_scale|
   // set to -1. On success, the icon is provided with a |resize_scale| <= 1.
@@ -37,7 +35,7 @@ class CORE_EXPORT ThreadedIconLoader final
   // If |resize_dimensions| is provided, the icon will will be downscaled to
   // those dimensions.
   void Start(ExecutionContext* execution_context,
-             const ResourceRequest& resource_request,
+             const ResourceRequestHead& resource_request,
              const base::Optional<gfx::Size>& resize_dimensions,
              IconCallback callback);
 
@@ -51,7 +49,7 @@ class CORE_EXPORT ThreadedIconLoader final
   void DidFail(const ResourceError& error) override;
   void DidFailRedirectCheck() override;
 
-  void Trace(Visitor* visitor) override;
+  void Trace(Visitor* visitor) const override;
 
  private:
   void DecodeAndResizeImageOnBackgroundThread(

@@ -18,7 +18,6 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -76,7 +75,9 @@ const char kSampleOpenedUnixSockets[] =
     "00000000: 00000002 00000000"
     " 00010000 0001 01 20894 @chrome_devtools_remote_1002\n"
     "00000000: 00000002 00000000"
-    " 00010000 0001 01 20895 @noprocess_devtools_remote\n";
+    " 00010000 0001 01 20895 @noprocess_devtools_remote\n"
+    "00000000: 00000002 00000000"
+    " 00010000 0001 01 20895 @node_devtools_remote\n";
 
 const char kSampleListProcesses[] =
     "USER    PID  PPID VSIZE  RSS    WCHAN    PC         NAME\n"
@@ -124,6 +125,11 @@ char kSampleWebViewVersion[] = "{\n"
     "   \"User-Agent\": \"Mozilla/5.0 (Linux; Android 4.3; Build/KRS74B) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Safari/537.36\",\n"
     "   \"WebKit-Version\": \"537.36 (@157588)\"\n"
+    "}";
+
+char kSampleNodeVersion[] = "{\n"
+    "   \"Browser\": \"node.js/v10.15.3\","
+    "   \"Protocol-Version\": \"1.1\""
     "}";
 
 char kSampleChromePages[] = "[ {\n"
@@ -178,6 +184,20 @@ char kSampleWebViewPages[] = "[ {\n"
     "   \"webSocketDebuggerUrl\": \"ws:///devtools/page/"
     "44681551-ADFD-2411-076B-3AB14C1C60E2\"\n"
     "}]";
+
+char kSampleNodePage[] = "[ {\n"
+    "   \"description\": \"\","
+    "   \"devtoolsFrontendUrl\": \"chrome-devtools://devtools/bundled/"
+    "js_app.html?experiments=true&v8only=true&ws=192.168.86.1:33279/"
+    "148b8b92-8ca0-43fd-b8c8-a351864644f8\","
+    "   \"faviconUrl\": \"https://nodejs.org/static/favicon.ico\","
+    "   \"id\": \"148b8b92-8ca0-43fd-b8c8-a351864644f8\","
+    "   \"title\": \"a-node-process\","
+    "   \"type\": \"node\","
+    "   \"url\": \"about:blank\",\n"
+    "   \"webSocketDebuggerUrl\": \"ws://192.168.86.1:33279/"
+    "148b8b92-8ca0-43fd-b8c8-a351864644f8\""
+    "} ]";
 
 static const int kBufferSize = 16*1024;
 static const uint16_t kAdbPort = 5037;
@@ -302,9 +322,8 @@ void SimpleHttpServer::Connection::ReadData() {
     input_buffer_->SetCapacity(input_buffer_->capacity() * 2);
 
   int read_result = socket_->Read(
-      input_buffer_.get(),
-      input_buffer_->RemainingCapacity(),
-      base::Bind(&Connection::OnDataRead, base::Unretained(this)));
+      input_buffer_.get(), input_buffer_->RemainingCapacity(),
+      base::BindOnce(&Connection::OnDataRead, base::Unretained(this)));
 
   if (read_result != net::ERR_IO_PENDING)
     OnDataRead(read_result);
@@ -345,7 +364,7 @@ void SimpleHttpServer::Connection::WriteData() {
 
   int write_result = socket_->Write(
       output_buffer_.get(), bytes_to_write_,
-      base::Bind(&Connection::OnDataWritten, base::Unretained(this)),
+      base::BindOnce(&Connection::OnDataWritten, base::Unretained(this)),
       TRAFFIC_ANNOTATION_FOR_TESTS);
 
   if (write_result != net::ERR_IO_PENDING)
@@ -377,8 +396,9 @@ void SimpleHttpServer::Connection::OnDataWritten(int count) {
 void SimpleHttpServer::OnConnect() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  int accept_result = socket_->Accept(&client_socket_,
-      base::Bind(&SimpleHttpServer::OnAccepted, base::Unretained(this)));
+  int accept_result = socket_->Accept(
+      &client_socket_,
+      base::BindOnce(&SimpleHttpServer::OnAccepted, base::Unretained(this)));
 
   if (accept_result != net::ERR_IO_PENDING)
     base::ThreadTaskRunnerHandle::Get()->PostTask(
@@ -536,7 +556,6 @@ void MockAndroidConnection::Receive(const std::string& data) {
   CHECK_EQ(3U, tokens.size());
   CHECK_EQ("GET", tokens[0]);
   CHECK_EQ("HTTP/1.1", tokens[2]);
-  CHECK_EQ("Host: 0.0.0.0:0", lines[1]);
 
   std::string path(tokens[1]);
   if (path == kJsonPath)
@@ -569,6 +588,13 @@ void MockAndroidConnection::Receive(const std::string& data) {
       SendHTTPResponse(kSampleWebViewVersion);
     else if (path == kJsonListPath)
       SendHTTPResponse(kSampleWebViewPages);
+    else
+      NOTREACHED() << "Unknown command " << request;
+  } else if (socket_name_ == "node_devtools_remote") {
+    if (path == kJsonVersionPath)
+      SendHTTPResponse(kSampleNodeVersion);
+    else if (path == kJsonListPath)
+      SendHTTPResponse(kSampleNodePage);
     else
       NOTREACHED() << "Unknown command " << request;
   } else {
@@ -624,17 +650,16 @@ void MockAndroidConnection::SendHTTPResponse(const std::string& body) {
 
 void StartMockAdbServer(FlushMode flush_mode) {
   base::RunLoop run_loop;
-  base::PostTaskAndReply(
-      FROM_HERE, {BrowserThread::IO},
-      base::BindOnce(&StartMockAdbServerOnIOThread, flush_mode),
+  content::GetIOThreadTaskRunner({})->PostTaskAndReply(
+      FROM_HERE, base::BindOnce(&StartMockAdbServerOnIOThread, flush_mode),
       run_loop.QuitClosure());
   run_loop.Run();
 }
 
 void StopMockAdbServer() {
   base::RunLoop run_loop;
-  base::PostTaskAndReply(FROM_HERE, {BrowserThread::IO},
-                         base::BindOnce(&StopMockAdbServerOnIOThread),
-                         run_loop.QuitClosure());
+  content::GetIOThreadTaskRunner({})->PostTaskAndReply(
+      FROM_HERE, base::BindOnce(&StopMockAdbServerOnIOThread),
+      run_loop.QuitClosure());
   run_loop.Run();
 }

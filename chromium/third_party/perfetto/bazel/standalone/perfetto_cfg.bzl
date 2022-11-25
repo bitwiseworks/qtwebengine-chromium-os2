@@ -43,6 +43,7 @@ PERFETTO_CONFIG = struct(
         protoc_lib = ["@com_google_protobuf//:protoc_lib"],
         protobuf_lite = ["@com_google_protobuf//:protobuf_lite"],
         protobuf_full = ["@com_google_protobuf//:protobuf"],
+        protobuf_descriptor_proto = ["@com_google_protobuf//:descriptor_proto"]
     ),
 
     # This struct allows embedders to customize the cc_opts for Perfetto
@@ -77,11 +78,15 @@ PERFETTO_CONFIG = struct(
         cc_binary = None,
         cc_library = None,
         cc_proto_library = None,
+
         # Supporting java rules pulls in the JDK and generally is not something
         # we need for most embedders.
         java_proto_library = _noop_override,
+        java_lite_proto_library = _noop_override,
+
         proto_library = None,
         py_binary = None,
+        py_library = None,
 
         # We only need this for internal binaries. No other embeedder should
         # care about this.

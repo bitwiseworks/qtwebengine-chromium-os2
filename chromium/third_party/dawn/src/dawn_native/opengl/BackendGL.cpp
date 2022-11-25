@@ -162,6 +162,7 @@ namespace dawn_native { namespace opengl {
             mFunctions.Enable(GL_PRIMITIVE_RESTART_FIXED_INDEX);
             mFunctions.Enable(GL_MULTISAMPLE);
             mFunctions.Enable(GL_FRAMEBUFFER_SRGB);
+            mFunctions.Enable(GL_SAMPLE_MASK);
 
             mPCIInfo.name = reinterpret_cast<const char*>(mFunctions.GetString(GL_RENDERER));
 
@@ -182,7 +183,7 @@ namespace dawn_native { namespace opengl {
         ResultOrError<DeviceBase*> CreateDeviceImpl(const DeviceDescriptor* descriptor) override {
             // There is no limit on the number of devices created from this adapter because they can
             // all share the same backing OpenGL context.
-            return {new Device(this, descriptor, mFunctions)};
+            return Device::Create(this, descriptor, mFunctions);
         }
 
         void InitializeSupportedExtensions() {

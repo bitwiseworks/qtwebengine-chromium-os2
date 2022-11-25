@@ -42,7 +42,7 @@
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/gfx/geometry/size.h"
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
 #include "third_party/crashpad/crashpad/client/crash_report_database.h"
 #endif
 
@@ -212,8 +212,9 @@ class HeadlessBrowserTestWithProxy : public HeadlessBrowserTest {
   net::SpawnedTestServer proxy_server_;
 };
 
-#if defined(OS_WIN)
+#if defined(OS_WIN) || (defined(OS_MAC) && defined(ADDRESS_SANITIZER))
 // TODO(crbug.com/1045971): Disabled due to flakiness.
+// TODO(crbug.com/1086872): Disabled due to flakiness on Mac ASAN.
 #define MAYBE_SetProxyConfig DISABLED_SetProxyConfig
 #else
 #define MAYBE_SetProxyConfig SetProxyConfig
@@ -280,7 +281,7 @@ IN_PROC_BROWSER_TEST_F(HeadlessBrowserTest, ClipboardCopyPasteText) {
       writer.WriteText(paste_text);
     }
     base::string16 copy_text;
-    clipboard->ReadText(buffer, &copy_text);
+    clipboard->ReadText(buffer, /* data_dst = */ nullptr, &copy_text);
     EXPECT_EQ(paste_text, copy_text);
   }
 }
@@ -301,7 +302,7 @@ IN_PROC_BROWSER_TEST_F(HeadlessBrowserTest, MAYBE_DefaultSizes) {
   HeadlessBrowser::Options::Builder builder;
   const HeadlessBrowser::Options kDefaultOptions = builder.Build();
 
-#if !defined(OS_MACOSX)
+#if !defined(OS_MAC)
   // On Mac headless does not override the screen dimensions, so they are
   // left with the actual screen values.
   EXPECT_EQ(kDefaultOptions.window_size.width(),
@@ -314,7 +315,7 @@ IN_PROC_BROWSER_TEST_F(HeadlessBrowserTest, MAYBE_DefaultSizes) {
                 ->GetResult()
                 ->GetValue()
                 ->GetInt());
-#endif  // !defined(OS_MACOSX)
+#endif  // !defined(OS_MAC)
   EXPECT_EQ(kDefaultOptions.window_size.width(),
             EvaluateScript(web_contents, "window.innerWidth")
                 ->GetResult()
@@ -380,11 +381,13 @@ class HeadlessBrowserRendererCommandPrefixTest : public HeadlessBrowserTest {
     base::ThreadRestrictions::SetIOAllowed(true);
     base::CreateTemporaryFile(&launcher_stamp_);
 
-    FILE* launcher_file = base::CreateAndOpenTemporaryFile(&launcher_script_);
-    fprintf(launcher_file, "#!/bin/sh\n");
-    fprintf(launcher_file, "echo $@ > %s\n", launcher_stamp_.value().c_str());
-    fprintf(launcher_file, "exec $@\n");
-    fclose(launcher_file);
+    base::ScopedFILE launcher_file =
+        base::CreateAndOpenTemporaryStream(&launcher_script_);
+    fprintf(launcher_file.get(), "#!/bin/sh\n");
+    fprintf(launcher_file.get(), "echo $@ > %s\n",
+            launcher_stamp_.value().c_str());
+    fprintf(launcher_file.get(), "exec $@\n");
+    launcher_file.reset();
 #if !defined(OS_FUCHSIA)
     base::SetPosixFilePermissions(launcher_script_,
                                   base::FILE_PERMISSION_READ_BY_USER |
@@ -396,9 +399,9 @@ class HeadlessBrowserRendererCommandPrefixTest : public HeadlessBrowserTest {
 
   void TearDown() override {
     if (!launcher_script_.empty())
-      base::DeleteFile(launcher_script_, false);
+      base::DeleteFile(launcher_script_);
     if (!launcher_stamp_.empty())
-      base::DeleteFile(launcher_stamp_, false);
+      base::DeleteFile(launcher_stamp_);
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -451,7 +454,7 @@ class CrashReporterTest : public HeadlessBrowserTest,
 
   void TearDown() override {
     base::ThreadRestrictions::SetIOAllowed(true);
-    base::DeleteFile(crash_dumps_dir_, /* recursive */ false);
+    base::DeleteFile(crash_dumps_dir_);
   }
 
   // HeadlessWebContents::Observer implementation:
@@ -476,12 +479,12 @@ class CrashReporterTest : public HeadlessBrowserTest,
 
 // TODO(skyostil): Minidump generation currently is only supported on Linux and
 // Mac.
-#if (defined(HEADLESS_USE_BREAKPAD) || defined(OS_MACOSX)) && \
+#if (defined(HEADLESS_USE_BREAKPAD) || defined(OS_MAC)) && \
     !defined(ADDRESS_SANITIZER)
 #define MAYBE_GenerateMinidump GenerateMinidump
 #else
 #define MAYBE_GenerateMinidump DISABLED_GenerateMinidump
-#endif  // defined(HEADLESS_USE_BREAKPAD) || defined(OS_MACOSX)
+#endif  // defined(HEADLESS_USE_BREAKPAD) || defined(OS_MAC)
 IN_PROC_BROWSER_TEST_F(CrashReporterTest, MAYBE_GenerateMinidump) {
   content::ScopedAllowRendererCrashes scoped_allow_renderer_crashes;
 
@@ -507,7 +510,7 @@ IN_PROC_BROWSER_TEST_F(CrashReporterTest, MAYBE_GenerateMinidump) {
   {
     base::ThreadRestrictions::SetIOAllowed(true);
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
     auto database = crashpad::CrashReportDatabase::Initialize(crash_dumps_dir_);
     std::vector<crashpad::CrashReportDatabase::Report> reports;
     ASSERT_EQ(database->GetPendingReports(&reports),
@@ -762,7 +765,9 @@ IN_PROC_BROWSER_TEST_F(HeadlessBrowserTest,
 #endif
 IN_PROC_BROWSER_TEST_F(HeadlessBrowserTest, MAYBE_AIAFetching) {
   net::EmbeddedTestServer server(net::EmbeddedTestServer::TYPE_HTTPS);
-  server.SetSSLConfig(net::EmbeddedTestServer::CERT_AUTO_AIA_INTERMEDIATE);
+  net::EmbeddedTestServer::ServerCertificateConfig cert_config;
+  cert_config.intermediate = net::EmbeddedTestServer::IntermediateType::kByAIA;
+  server.SetSSLConfig(cert_config);
   server.AddDefaultHandlers(base::FilePath(FILE_PATH_LITERAL("net/data/ssl")));
   ASSERT_TRUE(server.Start());
 

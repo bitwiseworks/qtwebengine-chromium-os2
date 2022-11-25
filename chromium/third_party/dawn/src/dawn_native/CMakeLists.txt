@@ -18,7 +18,13 @@ DawnJSONGenerator(
     RESULT_VARIABLE "DAWN_NATIVE_UTILS_GEN_SOURCES"
 )
 
-add_library(dawn_native STATIC ${DAWN_DUMMY_FILE})
+add_library(dawn_native ${DAWN_DUMMY_FILE})
+
+target_compile_definitions(dawn_native PRIVATE "DAWN_NATIVE_IMPLEMENTATION")
+if(BUILD_SHARED_LIBS)
+    target_compile_definitions(dawn_native PRIVATE "DAWN_NATIVE_SHARED_LIBRARY")
+endif()
+
 target_sources(dawn_native PRIVATE
     "${DAWN_INCLUDE_DIR}/dawn_native/DawnNative.h"
     "${DAWN_INCLUDE_DIR}/dawn_native/dawn_native_export.h"
@@ -31,10 +37,10 @@ target_sources(dawn_native PRIVATE
     "BackendConnection.h"
     "BindGroup.cpp"
     "BindGroup.h"
-    "BindGroupAndStorageBarrierTracker.h"
     "BindGroupLayout.cpp"
     "BindGroupLayout.h"
     "BindGroupTracker.h"
+    "BindingInfo.cpp"
     "BindingInfo.h"
     "BuddyAllocator.cpp"
     "BuddyAllocator.h"
@@ -66,6 +72,8 @@ target_sources(dawn_native PRIVATE
     "DynamicUploader.h"
     "EncodingContext.cpp"
     "EncodingContext.h"
+    "EnumClassBitmasks.h"
+    "EnumMaskIterator.h"
     "Error.cpp"
     "Error.h"
     "ErrorData.cpp"
@@ -87,6 +95,9 @@ target_sources(dawn_native PRIVATE
     "Forward.h"
     "Instance.cpp"
     "Instance.h"
+    "IntegerTypes.h"
+    "MapRequestTracker.cpp"
+    "MapRequestTracker.h"
     "ObjectBase.cpp"
     "ObjectBase.h"
     "PassResourceUsage.h"
@@ -98,12 +109,14 @@ target_sources(dawn_native PRIVATE
     "Pipeline.h"
     "PipelineLayout.cpp"
     "PipelineLayout.h"
+    "PooledResourceMemoryAllocator.cpp"
+    "PooledResourceMemoryAllocator.h"
     "ProgrammablePassEncoder.cpp"
     "ProgrammablePassEncoder.h"
+    "QuerySet.cpp"
+    "QuerySet.h"
     "Queue.cpp"
     "Queue.h"
-    "RefCounted.cpp"
-    "RefCounted.h"
     "RenderBundle.cpp"
     "RenderBundle.h"
     "RenderBundleEncoder.cpp"
@@ -124,6 +137,8 @@ target_sources(dawn_native PRIVATE
     "Sampler.h"
     "ShaderModule.cpp"
     "ShaderModule.h"
+    "SpirvUtils.cpp"
+    "SpirvUtils.h"
     "StagingBuffer.cpp"
     "StagingBuffer.h"
     "Surface.cpp"
@@ -142,13 +157,20 @@ target_link_libraries(dawn_native
     PRIVATE dawn_common
             dawn_platform
             dawn_internal_config
-            shaderc_spvc
             spirv-cross-core
+            spirv-cross-glsl
+            spirv-cross-hlsl
+            spirv-cross-msl
+            SPIRV-Tools
 )
 
 if (DAWN_USE_X11)
     find_package(X11 REQUIRED)
     target_link_libraries(dawn_native PRIVATE ${X11_LIBRARIES})
+endif()
+
+if (WIN32)
+    target_link_libraries(dawn_native PRIVATE user32.lib)
 endif()
 
 if (DAWN_ENABLE_D3D12)
@@ -164,6 +186,8 @@ if (DAWN_ENABLE_D3D12)
         "d3d12/BindGroupLayoutD3D12.h"
         "d3d12/BufferD3D12.cpp"
         "d3d12/BufferD3D12.h"
+        "d3d12/CPUDescriptorHeapAllocationD3D12.cpp"
+        "d3d12/CPUDescriptorHeapAllocationD3D12.h"
         "d3d12/CommandAllocatorManager.cpp"
         "d3d12/CommandAllocatorManager.h"
         "d3d12/CommandBufferD3D12.cpp"
@@ -176,23 +200,26 @@ if (DAWN_ENABLE_D3D12)
         "d3d12/D3D12Error.h"
         "d3d12/D3D12Info.cpp"
         "d3d12/D3D12Info.h"
-        "d3d12/DescriptorHeapAllocationD3D12.cpp",
-        "d3d12/DescriptorHeapAllocationD3D12.h",
-        "d3d12/DescriptorHeapAllocator.cpp"
-        "d3d12/DescriptorHeapAllocator.h"
         "d3d12/DeviceD3D12.cpp"
         "d3d12/DeviceD3D12.h"
         "d3d12/Forward.h"
+        "d3d12/GPUDescriptorHeapAllocationD3D12.cpp"
+        "d3d12/GPUDescriptorHeapAllocationD3D12.h"
         "d3d12/HeapAllocatorD3D12.cpp"
         "d3d12/HeapAllocatorD3D12.h"
         "d3d12/HeapD3D12.cpp"
         "d3d12/HeapD3D12.h"
+	"d3d12/IntegerTypes.h"
         "d3d12/NativeSwapChainImplD3D12.cpp"
         "d3d12/NativeSwapChainImplD3D12.h"
+        "d3d12/PageableD3D12.cpp"
+        "d3d12/PageableD3D12.h"
         "d3d12/PipelineLayoutD3D12.cpp"
         "d3d12/PipelineLayoutD3D12.h"
         "d3d12/PlatformFunctions.cpp"
         "d3d12/PlatformFunctions.h"
+        "d3d12/QuerySetD3D12.cpp"
+        "d3d12/QuerySetD3D12.h"
         "d3d12/QueueD3D12.cpp"
         "d3d12/QueueD3D12.h"
         "d3d12/RenderPassBuilderD3D12.cpp"
@@ -207,12 +234,16 @@ if (DAWN_ENABLE_D3D12)
         "d3d12/ResourceHeapAllocationD3D12.h"
         "d3d12/SamplerD3D12.cpp"
         "d3d12/SamplerD3D12.h"
+        "d3d12/SamplerHeapCacheD3D12.cpp"
+        "d3d12/SamplerHeapCacheD3D12.h"
         "d3d12/ShaderModuleD3D12.cpp"
         "d3d12/ShaderModuleD3D12.h"
-        "d3d12/ShaderVisibleDescriptorAllocatorD3D12.cpp",
-        "d3d12/ShaderVisibleDescriptorAllocatorD3D12.h",
+        "d3d12/ShaderVisibleDescriptorAllocatorD3D12.cpp"
+        "d3d12/ShaderVisibleDescriptorAllocatorD3D12.h"
         "d3d12/StagingBufferD3D12.cpp"
         "d3d12/StagingBufferD3D12.h"
+        "d3d12/StagingDescriptorAllocatorD3D12.cpp"
+        "d3d12/StagingDescriptorAllocatorD3D12.h"
         "d3d12/SwapChainD3D12.cpp"
         "d3d12/SwapChainD3D12.h"
         "d3d12/TextureCopySplitter.cpp"
@@ -271,6 +302,7 @@ if (DAWN_ENABLE_METAL)
         "-framework IOKit"
         "-framework IOSurface"
         "-framework QuartzCore"
+        "-framework Metal"
     )
 endif()
 
@@ -323,6 +355,8 @@ if (DAWN_ENABLE_OPENGL)
         "opengl/PipelineGL.h"
         "opengl/PipelineLayoutGL.cpp"
         "opengl/PipelineLayoutGL.h"
+        "opengl/QuerySetGL.cpp"
+        "opengl/QuerySetGL.h"
         "opengl/QueueGL.cpp"
         "opengl/QueueGL.h"
         "opengl/RenderPipelineGL.cpp"
@@ -361,8 +395,9 @@ if (DAWN_ENABLE_VULKAN)
         "vulkan/CommandRecordingContext.h"
         "vulkan/ComputePipelineVk.cpp"
         "vulkan/ComputePipelineVk.h"
-        "vulkan/DescriptorSetService.cpp"
-        "vulkan/DescriptorSetService.h"
+        "vulkan/DescriptorSetAllocation.h"
+        "vulkan/DescriptorSetAllocator.cpp"
+        "vulkan/DescriptorSetAllocator.h"
         "vulkan/DeviceVk.cpp"
         "vulkan/DeviceVk.h"
         "vulkan/ExternalHandle.h"
@@ -373,6 +408,8 @@ if (DAWN_ENABLE_VULKAN)
         "vulkan/NativeSwapChainImplVk.h"
         "vulkan/PipelineLayoutVk.cpp"
         "vulkan/PipelineLayoutVk.h"
+        "vulkan/QuerySetVk.cpp"
+        "vulkan/QuerySetVk.h"
         "vulkan/QueueVk.cpp"
         "vulkan/QueueVk.h"
         "vulkan/RenderPassCache.cpp"
@@ -397,6 +434,8 @@ if (DAWN_ENABLE_VULKAN)
         "vulkan/UtilsVulkan.h"
         "vulkan/VulkanError.cpp"
         "vulkan/VulkanError.h"
+        "vulkan/VulkanExtensions.cpp"
+        "vulkan/VulkanExtensions.h"
         "vulkan/VulkanFunctions.cpp"
         "vulkan/VulkanFunctions.h"
         "vulkan/VulkanInfo.cpp"

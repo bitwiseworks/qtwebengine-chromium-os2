@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <memory>
 #include <sstream>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -36,7 +35,6 @@
 #include "fpdfsdk/ipdfsdk_annothandler.h"
 #include "fxjs/ijs_event_context.h"
 #include "fxjs/ijs_runtime.h"
-#include "third_party/base/ptr_util.h"
 
 namespace {
 
@@ -70,7 +68,8 @@ bool IsFormFieldTypeXFA(FormFieldType fieldType) {
 }
 #endif  // PDF_ENABLE_XFA
 
-bool FDFToURLEncodedData(std::vector<uint8_t>* pBuffer) {
+bool FDFToURLEncodedData(
+    std::vector<uint8_t, FxAllocAllocator<uint8_t>>* pBuffer) {
   std::unique_ptr<CFDF_Document> pFDF = CFDF_Document::ParseMemory(*pBuffer);
   if (!pFDF)
     return true;
@@ -113,7 +112,7 @@ bool FDFToURLEncodedData(std::vector<uint8_t>* pBuffer) {
 CPDFSDK_InteractiveForm::CPDFSDK_InteractiveForm(
     CPDFSDK_FormFillEnvironment* pFormFillEnv)
     : m_pFormFillEnv(pFormFillEnv),
-      m_pInteractiveForm(pdfium::MakeUnique<CPDF_InteractiveForm>(
+      m_pInteractiveForm(std::make_unique<CPDF_InteractiveForm>(
           m_pFormFillEnv->GetPDFDocument())) {
   m_pInteractiveForm->SetNotifierIface(this);
   RemoveAllHighLights();
@@ -445,7 +444,8 @@ bool CPDFSDK_InteractiveForm::SubmitFields(
   if (textBuf.IsEmpty())
     return false;
 
-  std::vector<uint8_t> buffer(textBuf.begin(), textBuf.end());
+  std::vector<uint8_t, FxAllocAllocator<uint8_t>> buffer(textBuf.begin(),
+                                                         textBuf.end());
   if (bUrlEncoded && !FDFToURLEncodedData(&buffer))
     return false;
 
@@ -476,7 +476,8 @@ bool CPDFSDK_InteractiveForm::SubmitForm(const WideString& sDestination,
   if (fdfBuffer.IsEmpty())
     return false;
 
-  std::vector<uint8_t> buffer(fdfBuffer.begin(), fdfBuffer.end());
+  std::vector<uint8_t, FxAllocAllocator<uint8_t>> buffer(fdfBuffer.begin(),
+                                                         fdfBuffer.end());
   if (bUrlEncoded && !FDFToURLEncodedData(&buffer))
     return false;
 

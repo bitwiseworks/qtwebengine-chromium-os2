@@ -13,7 +13,6 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/task/post_task.h"
 #include "base/task/thread_pool.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
@@ -30,6 +29,7 @@
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/debug_daemon/debug_daemon_client.h"
 #include "chromeos/printing/printer_configuration.h"
+#include "chromeos/printing/printer_translator.h"
 #include "components/prefs/pref_service.h"
 #include "components/printing/browser/printer_capabilities.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -73,7 +73,7 @@ base::Value FetchCapabilitiesAsync(const std::string& device_name,
                                    const PrinterBasicInfo& basic_info,
                                    bool has_secure_protocol,
                                    const std::string& locale) {
-  auto print_backend = PrintBackend::CreateInstance(nullptr, locale);
+  auto print_backend = PrintBackend::CreateInstance(locale);
   return GetSettingsOnBlockingTaskRunner(
       device_name, basic_info, PrinterSemanticCapsAndDefaults::Papers(),
       has_secure_protocol, print_backend);
@@ -161,8 +161,8 @@ void LocalPrinterHandlerChromeos::GetDefaultPrinter(DefaultPrinterCallback cb) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   // TODO(crbug.com/660898): Add default printers to ChromeOS.
 
-  base::PostTask(FROM_HERE, {content::BrowserThread::UI},
-                 base::BindOnce(std::move(cb), ""));
+  content::GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindOnce(std::move(cb), ""));
 }
 
 void LocalPrinterHandlerChromeos::StartGetPrinters(
@@ -196,8 +196,8 @@ void LocalPrinterHandlerChromeos::StartGetCapability(
       printers_manager_->GetPrinter(printer_name);
   if (!printer) {
     // If the printer was removed, the lookup will fail.
-    base::PostTask(FROM_HERE, {content::BrowserThread::UI},
-                   base::BindOnce(std::move(cb), base::Value()));
+    content::GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE, base::BindOnce(std::move(cb), base::Value()));
     return;
   }
 
@@ -238,6 +238,22 @@ void LocalPrinterHandlerChromeos::StartGetEulaUrl(
                      weak_factory_.GetWeakPtr(), std::move(cb)));
 }
 
+void LocalPrinterHandlerChromeos::StartPrinterStatusRequest(
+    const std::string& printer_id,
+    PrinterStatusRequestCallback callback) {
+  printers_manager_->FetchPrinterStatus(
+      printer_id,
+      base::BindOnce(&LocalPrinterHandlerChromeos::OnPrinterStatusUpdated,
+                     weak_factory_.GetWeakPtr(), std::move(callback)));
+}
+
+void LocalPrinterHandlerChromeos::OnPrinterStatusUpdated(
+    PrinterStatusRequestCallback callback,
+    const chromeos::CupsPrinterStatus& cups_printers_status) {
+  std::move(callback).Run(
+      CreateCupsPrinterStatusDictionary(cups_printers_status));
+}
+
 void LocalPrinterHandlerChromeos::OnPrinterInstalled(
     const chromeos::Printer& printer,
     GetCapabilityCallback cb,
@@ -245,9 +261,7 @@ void LocalPrinterHandlerChromeos::OnPrinterInstalled(
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   if (result == chromeos::PrinterSetupResult::kSuccess) {
-    printers_manager_->PrinterInstalled(
-        printer, /*is_automatic=*/true,
-        chromeos::PrinterSetupSource::kPrintPreview);
+    printers_manager_->PrinterInstalled(printer, /*is_automatic=*/true);
   }
 
   HandlePrinterSetup(printer, std::move(cb), printer.IsUsbProtocol(), result);
@@ -288,31 +302,33 @@ void LocalPrinterHandlerChromeos::HandlePrinterSetup(
       FetchCapabilities(printer, GetNativePrinterPolicies(), std::move(cb));
       return;
     }
-    case chromeos::PrinterSetupResult::kPpdNotFound:
-      LOG(WARNING) << "Could not find PPD.  Check printer configuration.";
-      // Prompt user to update configuration.
-      // TODO(skau): Fill me in
-      break;
-    case chromeos::PrinterSetupResult::kPpdUnretrievable:
-      LOG(WARNING) << "Could not download PPD.  Check Internet connection.";
-      // Could not download PPD.  Connect to Internet.
-      // TODO(skau): Fill me in
-      break;
     case chromeos::PrinterSetupResult::kPrinterUnreachable:
+    case chromeos::PrinterSetupResult::kPrinterSentWrongResponse:
+    case chromeos::PrinterSetupResult::kPpdNotFound:
+    case chromeos::PrinterSetupResult::kPpdUnretrievable:
+      // Prompt user to update configuration or check internet connection.
+      // TODO(skau): Fill me in
+      LOG(WARNING) << ResultCodeToMessage(result);
+      break;
+    case chromeos::PrinterSetupResult::kFatalError:
     case chromeos::PrinterSetupResult::kDbusError:
-    case chromeos::PrinterSetupResult::kComponentUnavailable:
+    case chromeos::PrinterSetupResult::kNativePrintersNotAllowed:
     case chromeos::PrinterSetupResult::kPpdTooLarge:
     case chromeos::PrinterSetupResult::kInvalidPpd:
-    case chromeos::PrinterSetupResult::kFatalError:
-    case chromeos::PrinterSetupResult::kNativePrintersNotAllowed:
-    case chromeos::PrinterSetupResult::kInvalidPrinterUpdate:
+    case chromeos::PrinterSetupResult::kIoError:
+    case chromeos::PrinterSetupResult::kMemoryAllocationError:
+    case chromeos::PrinterSetupResult::kBadUri:
     case chromeos::PrinterSetupResult::kDbusNoReply:
     case chromeos::PrinterSetupResult::kDbusTimeout:
-    case chromeos::PrinterSetupResult::kEditSuccess:
-      LOG(ERROR) << "Unexpected error in printer setup. " << result;
+      LOG(ERROR) << ResultCodeToMessage(result);
       break;
+    case chromeos::PrinterSetupResult::kInvalidPrinterUpdate:
+    case chromeos::PrinterSetupResult::kEditSuccess:
+    case chromeos::PrinterSetupResult::kPrinterIsNotAutoconfigurable:
+    case chromeos::PrinterSetupResult::kComponentUnavailable:
     case chromeos::PrinterSetupResult::kMaxValue:
-      NOTREACHED() << "This value is not expected";
+      LOG(ERROR) << "Unexpected error in printer setup: "
+                 << ResultCodeToMessage(result);
       break;
   }
 

@@ -6,10 +6,9 @@
 
 #include "xfa/fxfa/parser/cxfa_linear.h"
 
-#include "core/fxge/render_defines.h"
 #include "fxjs/xfa/cjx_node.h"
-#include "third_party/base/ptr_util.h"
 #include "xfa/fxfa/parser/cxfa_color.h"
+#include "xfa/fxfa/parser/cxfa_document.h"
 #include "xfa/fxgraphics/cxfa_geshading.h"
 
 namespace {
@@ -37,7 +36,9 @@ CXFA_Linear::CXFA_Linear(CXFA_Document* doc, XFA_PacketType packet)
                 XFA_Element::Linear,
                 kLinearPropertyData,
                 kLinearAttributeData,
-                pdfium::MakeUnique<CJX_Node>(this)) {}
+                cppgc::MakeGarbageCollected<CJX_Node>(
+                    doc->GetHeap()->GetAllocationHandle(),
+                    this)) {}
 
 CXFA_Linear::~CXFA_Linear() = default;
 
@@ -86,6 +87,6 @@ void CXFA_Linear::Draw(CXFA_Graphics* pGS,
 
   pGS->SaveGraphState();
   pGS->SetFillColor(CXFA_GEColor(&shading));
-  pGS->FillPath(fillPath, FXFILL_WINDING, &matrix);
+  pGS->FillPath(fillPath, CFX_FillRenderOptions::FillType::kWinding, &matrix);
   pGS->RestoreGraphState();
 }

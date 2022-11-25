@@ -24,7 +24,6 @@
 #include "content/browser/accessibility/browser_accessibility_android.h"
 #include "content/browser/accessibility/browser_accessibility_manager_android.h"
 #include "content/browser/android/java/gin_java_bridge_dispatcher_host.h"
-#include "content/browser/frame_host/interstitial_page_impl.h"
 #include "content/browser/media/media_web_contents_observer.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
@@ -282,6 +281,17 @@ ScopedJavaLocalRef<jobject> WebContentsAndroid::GetFocusedFrame(
   return rfh->GetJavaRenderFrameHost();
 }
 
+ScopedJavaLocalRef<jobject> WebContentsAndroid::GetRenderFrameHostFromId(
+    JNIEnv* env,
+    jint render_process_id,
+    jint render_frame_id) const {
+  RenderFrameHost* rfh =
+      RenderFrameHost::FromID(render_process_id, render_frame_id);
+  if (!rfh)
+    return nullptr;
+  return rfh->GetJavaRenderFrameHost();
+}
+
 ScopedJavaLocalRef<jstring> WebContentsAndroid::GetTitle(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) const {
@@ -385,13 +395,6 @@ RenderWidgetHostViewAndroid*
     WebContentsAndroid::GetRenderWidgetHostViewAndroid() {
   RenderWidgetHostView* rwhv = NULL;
   rwhv = web_contents_->GetRenderWidgetHostView();
-  if (web_contents_->ShowingInterstitialPage()) {
-    rwhv = web_contents_->GetInterstitialPage()
-               ->GetMainFrame()
-               ->GetRenderViewHost()
-               ->GetWidget()
-               ->GetView();
-  }
   return static_cast<RenderWidgetHostViewAndroid*>(rwhv);
 }
 
@@ -453,12 +456,6 @@ void WebContentsAndroid::SetAudioMuted(JNIEnv* env,
   web_contents_->SetAudioMuted(mute);
 }
 
-jboolean WebContentsAndroid::IsShowingInterstitialPage(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
-  return web_contents_->ShowingInterstitialPage();
-}
-
 jboolean WebContentsAndroid::FocusLocationBarByDefault(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) {
@@ -468,7 +465,7 @@ jboolean WebContentsAndroid::FocusLocationBarByDefault(
 bool WebContentsAndroid::IsFullscreenForCurrentTab(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) {
-  return web_contents_->IsFullscreenForCurrentTab();
+  return web_contents_->IsFullscreen();
 }
 
 void WebContentsAndroid::ExitFullscreen(JNIEnv* env,
@@ -479,7 +476,7 @@ void WebContentsAndroid::ExitFullscreen(JNIEnv* env,
 void WebContentsAndroid::ScrollFocusedEditableNodeIntoView(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) {
-  auto* input_handler = web_contents_->GetFocusedFrameInputHandler();
+  auto* input_handler = web_contents_->GetFocusedFrameWidgetInputHandler();
   if (!input_handler)
     return;
   input_handler->ScrollFocusedEditableNodeIntoRect(gfx::Rect());
@@ -496,7 +493,7 @@ void WebContentsAndroid::SelectWordAroundCaretAck(bool did_select,
 void WebContentsAndroid::SelectWordAroundCaret(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) {
-  auto* input_handler = web_contents_->GetFocusedFrameInputHandler();
+  auto* input_handler = web_contents_->GetFocusedFrameWidgetInputHandler();
   if (!input_handler)
     return;
   input_handler->SelectWordAroundCaret(
@@ -514,6 +511,17 @@ void WebContentsAndroid::AdjustSelectionByCharacterOffset(
                                                   show_selection_menu);
 }
 
+bool WebContentsAndroid::InitializeRenderFrameForJavaScript() {
+  if (!web_contents_->GetFrameTree()
+           ->root()
+           ->render_manager()
+           ->InitializeMainRenderFrameForImmediateUse()) {
+    LOG(ERROR) << "Failed to initialize RenderFrame to evaluate javascript";
+    return false;
+  }
+  return true;
+}
+
 void WebContentsAndroid::EvaluateJavaScript(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
@@ -522,13 +530,8 @@ void WebContentsAndroid::EvaluateJavaScript(
   RenderViewHost* rvh = web_contents_->GetRenderViewHost();
   DCHECK(rvh);
 
-  if (!rvh->IsRenderViewLive()) {
-    if (!static_cast<WebContentsImpl*>(web_contents_)->
-        CreateRenderViewForInitialEmptyDocument()) {
-      LOG(ERROR) << "Failed to create RenderView in EvaluateJavaScript";
-      return;
-    }
-  }
+  if (!InitializeRenderFrameForJavaScript())
+    return;
 
   if (!callback) {
     // No callback requested.
@@ -555,13 +558,8 @@ void WebContentsAndroid::EvaluateJavaScriptForTests(
   RenderViewHost* rvh = web_contents_->GetRenderViewHost();
   DCHECK(rvh);
 
-  if (!rvh->IsRenderViewLive()) {
-    if (!static_cast<WebContentsImpl*>(web_contents_)->
-        CreateRenderViewForInitialEmptyDocument()) {
-      LOG(ERROR) << "Failed to create RenderView in EvaluateJavaScriptForTests";
-      return;
-    }
-  }
+  if (!InitializeRenderFrameForJavaScript())
+    return;
 
   if (!callback) {
     // No callback requested.
@@ -845,9 +843,7 @@ void WebContentsAndroid::SetDisplayCutoutSafeArea(
 void WebContentsAndroid::NotifyRendererPreferenceUpdate(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& obj) {
-  RenderViewHost* rvh = web_contents_->GetRenderViewHost();
-  DCHECK(rvh);
-  rvh->OnWebkitPreferencesChanged();
+  web_contents_->OnWebPreferencesChanged();
 }
 
 void WebContentsAndroid::NotifyBrowserControlsHeightChanged(

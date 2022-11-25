@@ -34,10 +34,10 @@ class DomDistillerViewerSource : public content::URLDataSource {
       content::URLDataSource::GotDataCallback callback) override;
   std::string GetMimeType(const std::string& path) override;
   bool ShouldServiceRequest(const GURL& url,
-                            content::ResourceContext* resource_context,
+                            content::BrowserContext* browser_context,
                             int render_process_id) override;
-  std::string GetContentSecurityPolicyStyleSrc() override;
-  std::string GetContentSecurityPolicyChildSrc() override;
+  std::string GetContentSecurityPolicy(
+      network::mojom::CSPDirectiveName directive) override;
 
   DomDistillerViewerSource(const DomDistillerViewerSource&) = delete;
   DomDistillerViewerSource& operator=(const DomDistillerViewerSource&) = delete;

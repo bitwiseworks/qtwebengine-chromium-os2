@@ -13,7 +13,6 @@
 #include "base/bind_helpers.h"
 #include "base/containers/circular_deque.h"
 #include "base/location.h"
-#include "base/logging.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/system/sys_info.h"
 #include "base/test/bind_test_util.h"
@@ -188,7 +187,7 @@ class RequestCoordinatorTest : public testing::Test {
   }
   OfflinerStub* offliner() const { return offliner_; }
   SchedulerStub* scheduler_stub() const {
-    return reinterpret_cast<SchedulerStub*>(coordinator()->scheduler());
+    return static_cast<SchedulerStub*>(coordinator()->scheduler());
   }
   RequestQueue* queue() {
     return coordinator_taco_->request_coordinator()->queue_for_testing();

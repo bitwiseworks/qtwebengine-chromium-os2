@@ -15,8 +15,9 @@
 #include "sandbox/linux/bpf_dsl/policy.h"
 #include "sandbox/sandbox_export.h"
 
-namespace sandbox {
 struct arch_seccomp_data;
+
+namespace sandbox {
 
 // This class can be used to apply a syscall sandboxing policy expressed in a
 // bpf_dsl::Policy object to the current process.
@@ -100,6 +101,13 @@ class SANDBOX_EXPORT SandboxBPF {
   // Assembles and installs a filter based on the policy that has previously
   // been configured with SetSandboxPolicy().
   void InstallFilter(bool must_sync_threads);
+
+  // Disable indirect branch speculation by prctl. This will be done by
+  // seccomp if SECCOMP_FILTER_FLAG_SPEC_ALLOW is not set. Seccomp will
+  // disable indirect branch speculation and speculative store bypass
+  // simultaneously. We use prctl in supplement to control the speculation
+  // features separately.
+  void DisableIBSpec();
 
   base::ScopedFD proc_fd_;
   bool sandbox_has_started_;

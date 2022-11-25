@@ -22,7 +22,6 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_SVG_SVG_SVG_ELEMENT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_SVG_SVG_SVG_ELEMENT_H_
 
-#include "third_party/blink/renderer/core/svg/svg_animated_length.h"
 #include "third_party/blink/renderer/core/svg/svg_fit_to_view_box.h"
 #include "third_party/blink/renderer/core/svg/svg_graphics_element.h"
 #include "third_party/blink/renderer/core/svg/svg_point.h"
@@ -33,6 +32,7 @@ namespace blink {
 
 class SMILTimeContainer;
 class SVGAngleTearOff;
+class SVGAnimatedLength;
 class SVGLengthTearOff;
 class SVGMatrixTearOff;
 class SVGNumberTearOff;
@@ -44,7 +44,6 @@ class SVGSVGElement final : public SVGGraphicsElement,
                             public SVGFitToViewBox,
                             public SVGZoomAndPan {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(SVGSVGElement);
 
  public:
   explicit SVGSVGElement(Document&);
@@ -109,7 +108,7 @@ class SVGSVGElement final : public SVGGraphicsElement,
   SVGAnimatedLength* width() const { return width_.Get(); }
   SVGAnimatedLength* height() const { return height_.Get(); }
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   ~SVGSVGElement() override;

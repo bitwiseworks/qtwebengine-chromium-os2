@@ -59,7 +59,7 @@ void StereoPannerHandler::Process(uint32_t frames_to_process) {
     return;
   }
 
-  bool is_sample_accurate = pan_->HasSampleAccurateValuesTimeline();
+  bool is_sample_accurate = pan_->HasSampleAccurateValues();
 
   if (is_sample_accurate && pan_->IsAudioRate()) {
     // Apply sample-accurate panning specified by AudioParam automation.
@@ -182,7 +182,7 @@ StereoPannerNode* StereoPannerNode::Create(BaseAudioContext* context,
   return node;
 }
 
-void StereoPannerNode::Trace(Visitor* visitor) {
+void StereoPannerNode::Trace(Visitor* visitor) const {
   visitor->Trace(pan_);
   AudioNode::Trace(visitor);
 }

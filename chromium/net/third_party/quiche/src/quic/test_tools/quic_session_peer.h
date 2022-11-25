@@ -54,13 +54,10 @@ class QuicSessionPeer {
   static QuicWriteBlockedList* GetWriteBlockedStreams(QuicSession* session);
   static QuicStream* GetOrCreateStream(QuicSession* session,
                                        QuicStreamId stream_id);
-  static std::map<QuicStreamId, QuicStreamOffset>&
+  static QuicHashMap<QuicStreamId, QuicStreamOffset>&
   GetLocallyClosedStreamsHighestOffset(QuicSession* session);
   static QuicSession::StreamMap& stream_map(QuicSession* session);
   static const QuicSession::ClosedStreams& closed_streams(QuicSession* session);
-  static QuicSession::ZombieStreamMap& zombie_streams(QuicSession* session);
-  static QuicUnorderedSet<QuicStreamId>* GetDrainingStreams(
-      QuicSession* session);
   static void ActivateStream(QuicSession* session,
                              std::unique_ptr<QuicStream> stream);
 
@@ -83,6 +80,8 @@ class QuicSessionPeer {
                                          QuicStreamId stream_id);
   static void set_is_configured(QuicSession* session, bool value);
   static void SetPerspective(QuicSession* session, Perspective perspective);
+  static size_t GetNumOpenDynamicStreams(QuicSession* session);
+  static size_t GetNumDrainingStreams(QuicSession* session);
 };
 
 }  // namespace test

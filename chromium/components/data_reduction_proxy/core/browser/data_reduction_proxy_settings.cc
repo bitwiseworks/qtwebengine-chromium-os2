@@ -13,7 +13,6 @@
 #include "base/time/clock.h"
 #include "base/time/default_clock.h"
 #include "build/build_config.h"
-#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_config.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_service.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_features.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
@@ -58,7 +57,6 @@ DataReductionProxySettings::DataReductionProxySettings(
     bool is_off_the_record_profile)
     : unreachable_(false),
       prefs_(nullptr),
-      config_(nullptr),
       clock_(base::DefaultClock::GetInstance()),
       is_off_the_record_profile_(is_off_the_record_profile) {
   DCHECK(!is_off_the_record_profile_);
@@ -72,9 +70,7 @@ void DataReductionProxySettings::InitDataReductionProxySettings(
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(prefs);
   DCHECK(data_reduction_proxy_service);
-  DCHECK(data_reduction_proxy_service->config());
   prefs_ = prefs;
-  config_ = data_reduction_proxy_service->config();
   data_reduction_proxy_service_ = std::move(data_reduction_proxy_service);
   RecordDataReductionInit();
 
@@ -142,9 +138,6 @@ void DataReductionProxySettings::SetDataSaverEnabledForTesting(
 }
 
 bool DataReductionProxySettings::IsDataReductionProxyEnabled() const {
-  if (!params::IsEnabledWithNetworkService()) {
-    return false;
-  }
   return IsDataSaverEnabledByUser(is_off_the_record_profile_,
                                   GetOriginalProfilePrefs());
 }
@@ -212,6 +205,15 @@ PrefService* DataReductionProxySettings::GetOriginalProfilePrefs() const {
   return prefs_;
 }
 
+base::Time DataReductionProxySettings::GetLastEnabledTime() const {
+  PrefService* prefs = GetOriginalProfilePrefs();
+  int64_t last_enabled_time =
+      prefs->GetInt64(prefs::kDataReductionProxyLastEnabledTime);
+  if (last_enabled_time <= 0)
+    return base::Time();
+  return base::Time::FromInternalValue(last_enabled_time);
+}
+
 void DataReductionProxySettings::RegisterDataReductionProxyFieldTrial() {
   register_synthetic_field_trial_.Run(
       "SyntheticDataReductionProxySetting",
@@ -249,15 +251,12 @@ void DataReductionProxySettings::MaybeActivateDataReductionProxy(
   bool enabled = IsDataSaverEnabledByUser(is_off_the_record_profile_, prefs);
 
   if (enabled && at_startup) {
-    // Record the number of days since data reduction proxy has been enabled.
-    int64_t last_enabled_time =
-        prefs->GetInt64(prefs::kDataReductionProxyLastEnabledTime);
-    if (last_enabled_time != 0) {
+    const auto last_enabled_time = GetLastEnabledTime();
+    if (!last_enabled_time.is_null()) {
       // Record the metric only if the time when data reduction proxy was
       // enabled is available.
       RecordDaysSinceEnabledMetric(
-          (clock_->Now() - base::Time::FromInternalValue(last_enabled_time))
-              .InDays());
+          (clock_->Now() - last_enabled_time).InDays());
     }
   }
 
@@ -314,19 +313,6 @@ void DataReductionProxySettings::UpdatePrefetchProxyHosts(
   LOCAL_HISTOGRAM_BOOLEAN("DataReductionProxy.Settings.ConfigReceived", true);
 }
 
-bool DataReductionProxySettings::IsConfiguredDataReductionProxy(
-    const net::ProxyServer& proxy_server) const {
-  if (proxy_server.is_direct() || !proxy_server.is_valid())
-    return false;
-
-  net::ProxyList proxies =
-      data_reduction_proxy_service_->config()->GetAllConfiguredProxies();
-  for (const auto& drp_proxy : proxies.GetAll()) {
-    if (drp_proxy.host_port_pair().Equals(proxy_server.host_port_pair()))
-      return true;
-  }
-  return false;
-}
 
 void DataReductionProxySettings::AddDataReductionProxySettingsObserver(
     DataReductionProxySettingsObserver* observer) {

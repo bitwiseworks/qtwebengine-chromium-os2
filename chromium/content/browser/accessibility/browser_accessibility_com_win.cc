@@ -21,6 +21,7 @@
 #include "content/browser/accessibility/browser_accessibility_win.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
+#include "ui/accessibility/ax_enum_util.h"
 #include "ui/accessibility/ax_mode.h"
 #include "ui/accessibility/ax_role_properties.h"
 #include "ui/base/win/accessibility_ids_win.h"
@@ -317,9 +318,8 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_newText(
   if (!new_text)
     return E_INVALIDARG;
 
-  if (!old_win_attributes_ && !force_new_hypertext_)
+  if (!old_win_attributes_)
     return E_FAIL;
-  force_new_hypertext_ = false;
 
   size_t start, old_len, new_len;
   ComputeHypertextRemovedAndInserted(&start, &old_len, &new_len);
@@ -445,18 +445,20 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_attributes(
   *start_offset = FindStartOfStyle(offset, ax::mojom::MoveDirection::kBackward);
   *end_offset = FindStartOfStyle(offset, ax::mojom::MoveDirection::kForward);
 
-  const ui::TextAttributeList& attributes =
-      offset_to_text_attributes().find(*start_offset)->second;
-
   std::ostringstream attributes_stream;
-  for (const ui::TextAttribute& attribute : attributes) {
-    // Don't expose the default language value of "en-US".
-    // TODO(nektar): Determine if it's possible to check against the interface
-    // language.
-    if (attribute.first == "language" && attribute.second == "en-US")
-      continue;
+  auto iter = offset_to_text_attributes().find(*start_offset);
+  if (iter != offset_to_text_attributes().end()) {
+    const ui::TextAttributeList& attributes = iter->second;
 
-    attributes_stream << attribute.first << ":" << attribute.second << ";";
+    for (const ui::TextAttribute& attribute : attributes) {
+      // Don't expose the default language value of "en-US".
+      // TODO(nektar): Determine if it's possible to check against the interface
+      // language.
+      if (attribute.first == "language" && attribute.second == "en-US")
+        continue;
+
+      attributes_stream << attribute.first << ":" << attribute.second << ";";
+    }
   }
   base::string16 attributes_str = base::UTF8ToUTF16(attributes_stream.str());
 
@@ -666,8 +668,9 @@ IFACEMETHODIMP BrowserAccessibilityComWin::doAction(LONG action_index) {
     return E_FAIL;
 
   if (!owner()->HasIntAttribute(ax::mojom::IntAttribute::kDefaultActionVerb) ||
-      action_index != 0)
+      action_index != 0) {
     return E_INVALIDARG;
+  }
 
   Manager()->DoDefaultAction(*owner());
   return S_OK;
@@ -708,8 +711,8 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_name(LONG action_index,
     return E_INVALIDARG;
   }
 
-  base::string16 action_verb = ui::ActionVerbToUnlocalizedString(
-      static_cast<ax::mojom::DefaultActionVerb>(action));
+  base::string16 action_verb = base::UTF8ToUTF16(
+      ui::ToString(static_cast<ax::mojom::DefaultActionVerb>(action)));
   if (action_verb.empty() || action_verb == L"none") {
     *name = nullptr;
     return S_FALSE;
@@ -739,8 +742,8 @@ BrowserAccessibilityComWin::get_localizedName(LONG action_index,
     return E_INVALIDARG;
   }
 
-  base::string16 action_verb = ui::ActionVerbToLocalizedString(
-      static_cast<ax::mojom::DefaultActionVerb>(action));
+  base::string16 action_verb = base::UTF8ToUTF16(
+      ui::ToLocalizedString(static_cast<ax::mojom::DefaultActionVerb>(action)));
   if (action_verb.empty()) {
     *localized_name = nullptr;
     return S_FALSE;
@@ -894,7 +897,7 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_nodeInfo(
 
   if (owner()->IsDocument()) {
     *node_type = NODETYPE_DOCUMENT;
-  } else if (owner()->IsTextOnlyObject()) {
+  } else if (owner()->IsText()) {
     *node_type = NODETYPE_TEXT;
   } else {
     *node_type = NODETYPE_ELEMENT;
@@ -1444,7 +1447,6 @@ void BrowserAccessibilityComWin::UpdateStep2ComputeHypertext() {
 }
 
 void BrowserAccessibilityComWin::UpdateStep3FireEvents() {
-  int32_t state = MSAAState();
   const bool ignored = owner()->IsIgnored();
 
   // Suppress all of these events when the node is ignored, or when the ignored
@@ -1459,14 +1461,6 @@ void BrowserAccessibilityComWin::UpdateStep3FireEvents() {
     if (description() != old_win_attributes_->description)
       FireNativeEvent(EVENT_OBJECT_DESCRIPTIONCHANGE);
 
-    // Do not fire EVENT_OBJECT_STATECHANGE if the change was due to a focus
-    // change.
-    if ((state & ~STATE_SYSTEM_FOCUSED) !=
-            (old_win_attributes_->ia_state & ~STATE_SYSTEM_FOCUSED) ||
-        ComputeIA2State() != old_win_attributes_->ia2_state) {
-      FireNativeEvent(EVENT_OBJECT_STATECHANGE);
-    }
-
     // Fire an event if this container object has scrolled.
     int sx = 0;
     int sy = 0;
@@ -1479,7 +1473,11 @@ void BrowserAccessibilityComWin::UpdateStep3FireEvents() {
     }
 
     // Fire hypertext-related events.
-    if (ShouldFireHypertextEvents()) {
+    // Do not fire removed/inserted when a name change event will be fired by
+    // AXEventGenerator, as they are providing redundant information and will
+    // lead to duplicate announcements.
+    if (name() == old_win_attributes_->name ||
+        GetData().GetNameFrom() == ax::mojom::NameFrom::kContents) {
       size_t start, old_len, new_len;
       ComputeHypertextRemovedAndInserted(&start, &old_len, &new_len);
       if (old_len > 0) {
@@ -1497,22 +1495,6 @@ void BrowserAccessibilityComWin::UpdateStep3FireEvents() {
 
   old_win_attributes_.reset(nullptr);
   old_hypertext_ = ui::AXHypertext();
-}
-
-bool BrowserAccessibilityComWin::ShouldFireHypertextEvents() const {
-  // Do not fire removed/inserted when a name change event will be fired by
-  // AXEventGenerator, as they are providing redundant information and will
-  // lead to duplicate announcements.
-  if (name() != old_win_attributes_->name &&
-      GetData().GetNameFrom() != ax::mojom::NameFrom::kContents)
-    return false;
-
-  // Similarly, for changes to live-regions we already fire an inserted event in
-  // BrowserAccessibilityManagerWin, so we don't want an extra event here.
-  if (GetData().IsContainedInActiveLiveRegion())
-    return false;
-
-  return true;
 }
 
 BrowserAccessibilityManager* BrowserAccessibilityComWin::Manager() const {
@@ -1620,6 +1602,9 @@ LONG BrowserAccessibilityComWin::FindStartOfStyle(
   DCHECK_LE(start_offset, text_length);
 
   switch (direction) {
+    case ax::mojom::MoveDirection::kNone:
+      NOTREACHED();
+      return start_offset;
     case ax::mojom::MoveDirection::kBackward: {
       if (offset_to_text_attributes().empty())
         return 0;
@@ -1648,36 +1633,23 @@ BrowserAccessibilityComWin* BrowserAccessibilityComWin::GetFromID(
   return ToBrowserAccessibilityComWin(Manager()->GetFromID(id));
 }
 
-bool BrowserAccessibilityComWin::IsListBoxOptionOrMenuListOption() {
-  if (!owner()->PlatformGetParent())
-    return false;
-
-  ax::mojom::Role role = owner()->GetRole();
-  ax::mojom::Role parent_role = owner()->PlatformGetParent()->GetRole();
-
-  if (role == ax::mojom::Role::kListBoxOption &&
-      parent_role == ax::mojom::Role::kListBox) {
-    return true;
-  }
-
-  if (role == ax::mojom::Role::kMenuListOption &&
-      parent_role == ax::mojom::Role::kMenuListPopup) {
-    return true;
-  }
-
-  return false;
-}
-
 void BrowserAccessibilityComWin::FireNativeEvent(LONG win_event_type) const {
-  if (owner()->IsChildOfLeaf())
+  // We only allow events on descendants of a platform leaf when that platform
+  // leaf is a popup button parent of a menu list popup. On Windows, the menu
+  // list popup is not part of the tree when its parent is collapsed but events
+  // should be fired anyway.
+  if (owner()->IsChildOfLeaf() &&
+      !owner()->GetCollapsedMenuListPopUpButtonAncestor()) {
     return;
+  }
+
   Manager()->ToBrowserAccessibilityManagerWin()->FireWinAccessibilityEvent(
       win_event_type, owner());
 }
 
 BrowserAccessibilityComWin* ToBrowserAccessibilityComWin(
     BrowserAccessibility* obj) {
-  if (!obj || !obj->IsNative())
+  if (!obj)
     return nullptr;
   auto* result = static_cast<BrowserAccessibilityWin*>(obj)->GetCOM();
   return result;

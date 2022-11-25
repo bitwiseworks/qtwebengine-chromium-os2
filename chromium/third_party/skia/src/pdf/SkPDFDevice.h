@@ -111,8 +111,7 @@ protected:
 
     void drawAnnotation(const SkRect&, const char key[], SkData* value) override;
 
-    void drawSpecial(SkSpecialImage*, int x, int y, const SkPaint&,
-                     SkImage*, const SkMatrix&) override;
+    void drawSpecial(SkSpecialImage*, int x, int y, const SkPaint&) override;
     sk_sp<SkSpecialImage> makeSpecial(const SkBitmap&) override;
     sk_sp<SkSpecialImage> makeSpecial(const SkImage*) override;
     SkImageFilterCache* getImageFilterCache() override;
@@ -191,7 +190,7 @@ private:
 
     void reset();
 
-    typedef SkClipStackDevice INHERITED;
+    using INHERITED = SkClipStackDevice;
 };
 
 #endif

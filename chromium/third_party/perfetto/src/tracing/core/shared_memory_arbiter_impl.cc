@@ -25,7 +25,6 @@
 #include "perfetto/base/time.h"
 #include "perfetto/ext/tracing/core/commit_data_request.h"
 #include "perfetto/ext/tracing/core/shared_memory.h"
-#include "perfetto/ext/tracing/core/startup_trace_writer_registry.h"
 #include "src/tracing/core/null_trace_writer.h"
 #include "src/tracing/core/trace_writer_impl.h"
 
@@ -250,7 +249,9 @@ void SharedMemoryArbiterImpl::UpdateCommitDataRequest(
     MaybeUnboundBufferID target_buffer,
     PatchList* patch_list) {
   // Note: chunk will be invalid if the call came from SendPatches().
-  base::TaskRunner* task_runner_to_post_callback_on = nullptr;
+  base::TaskRunner* task_runner_to_post_delayed_callback_on = nullptr;
+  // The delay with which the flush will be posted.
+  uint32_t flush_delay_ms = 0;
   base::WeakPtr<SharedMemoryArbiterImpl> weak_this;
   {
     std::lock_guard<std::mutex> scoped_lock(lock_);
@@ -260,9 +261,11 @@ void SharedMemoryArbiterImpl::UpdateCommitDataRequest(
 
       // Flushing the commit is only supported while we're |fully_bound_|. If we
       // aren't, we'll flush when |fully_bound_| is updated.
-      if (fully_bound_) {
+      if (fully_bound_ && !delayed_flush_scheduled_) {
         weak_this = weak_ptr_factory_.GetWeakPtr();
-        task_runner_to_post_callback_on = task_runner_;
+        task_runner_to_post_delayed_callback_on = task_runner_;
+        flush_delay_ms = batch_commits_duration_ms_;
+        delayed_flush_scheduled_ = true;
       }
     }
 
@@ -309,16 +312,40 @@ void SharedMemoryArbiterImpl::UpdateCommitDataRequest(
         patch_list->front().chunk_id == last_chunk_id) {
       last_chunk_req->set_has_more_patches(true);
     }
+
+    // If the buffer is filling up, we don't want to wait for the next delayed
+    // flush to happen. So post a flush for immediate execution.
+    if (fully_bound_ && bytes_pending_commit_ >= shmem_abi_.size() / 2) {
+      weak_this = weak_ptr_factory_.GetWeakPtr();
+      task_runner_to_post_delayed_callback_on = task_runner_;
+      flush_delay_ms = 0;
+    }
   }  // scoped_lock(lock_)
 
-  // We shouldn't post tasks while locked. |task_runner_to_post_callback_on|
-  // remains valid after unlocking, because |task_runner_| is never reset.
-  if (task_runner_to_post_callback_on) {
-    task_runner_to_post_callback_on->PostTask([weak_this] {
-      if (weak_this)
-        weak_this->FlushPendingCommitDataRequests();
-    });
+  // We shouldn't post tasks while locked.
+  // |task_runner_to_post_delayed_callback_on| remains valid after unlocking,
+  // because |task_runner_| is never reset.
+  if (task_runner_to_post_delayed_callback_on) {
+    task_runner_to_post_delayed_callback_on->PostDelayedTask(
+        [weak_this] {
+          if (!weak_this)
+            return;
+          {
+            std::lock_guard<std::mutex> scoped_lock(weak_this.get()->lock_);
+            // Clear |delayed_flush_scheduled_|, allowing the next call to
+            // UpdateCommitDataRequest to start another batching period.
+            weak_this.get()->delayed_flush_scheduled_ = false;
+          }
+          weak_this->FlushPendingCommitDataRequests();
+        },
+        flush_delay_ms);
   }
+}
+
+void SharedMemoryArbiterImpl::SetBatchCommitsDuration(
+    uint32_t batch_commits_duration_ms) {
+  std::lock_guard<std::mutex> scoped_lock(lock_);
+  batch_commits_duration_ms_ = batch_commits_duration_ms;
 }
 
 // This function is quite subtle. When making changes keep in mind these two
@@ -567,56 +594,6 @@ SharedMemoryArbiterImpl::TakePendingFlushCallbacksLocked() {
     for (auto& callback : pending_flush_callbacks)
       callback();
   };
-}
-
-void SharedMemoryArbiterImpl::BindStartupTraceWriterRegistry(
-    std::unique_ptr<StartupTraceWriterRegistry> registry,
-    BufferID target_buffer) {
-  // StartupTraceWriterRegistry is deprecated, and only supported on initially
-  // bound arbiters.
-  PERFETTO_DCHECK(initially_bound_);
-
-  // OK to access |task_runner_| without a lock because this method should only
-  // be called if |task_runner_| was set during construction.
-  if (!task_runner_->RunsTasksOnCurrentThread()) {
-    auto weak_this = weak_ptr_factory_.GetWeakPtr();
-    auto* raw_reg = registry.release();
-    task_runner_->PostTask([weak_this, raw_reg, target_buffer]() {
-      std::unique_ptr<StartupTraceWriterRegistry> owned_reg(raw_reg);
-      if (!weak_this)
-        return;
-      weak_this->BindStartupTraceWriterRegistry(std::move(owned_reg),
-                                                target_buffer);
-    });
-    return;
-  }
-
-  // The registry will be owned by the arbiter, so it's safe to capture |this|
-  // in the callback.
-  auto on_bound_callback = [this](StartupTraceWriterRegistry* bound_registry) {
-    std::unique_ptr<StartupTraceWriterRegistry> registry_to_delete;
-    {
-      std::lock_guard<std::mutex> scoped_lock(lock_);
-
-      for (auto it = startup_trace_writer_registries_.begin();
-           it != startup_trace_writer_registries_.end(); it++) {
-        if (it->get() == bound_registry) {
-          // We can't delete the registry while the arbiter's lock is held
-          // (to avoid lock inversion).
-          registry_to_delete = std::move(*it);
-          startup_trace_writer_registries_.erase(it);
-          break;
-        }
-      }
-    }
-
-    // The registry should have been in |startup_trace_writer_registries_|.
-    PERFETTO_DCHECK(registry_to_delete);
-    registry_to_delete.reset();
-  };
-  registry->BindToArbiter(this, target_buffer, task_runner_, on_bound_callback);
-  std::lock_guard<std::mutex> scoped_lock(lock_);
-  startup_trace_writer_registries_.push_back(std::move(registry));
 }
 
 void SharedMemoryArbiterImpl::NotifyFlushComplete(FlushRequestID req_id) {

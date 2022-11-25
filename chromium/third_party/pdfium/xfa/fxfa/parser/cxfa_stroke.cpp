@@ -9,8 +9,10 @@
 #include <utility>
 
 #include "fxjs/xfa/cjx_object.h"
+#include "third_party/base/stl_util.h"
 #include "xfa/fxfa/cxfa_ffwidget.h"
 #include "xfa/fxfa/parser/cxfa_color.h"
+#include "xfa/fxfa/parser/cxfa_document.h"
 #include "xfa/fxfa/parser/cxfa_measurement.h"
 #include "xfa/fxfa/parser/cxfa_node.h"
 #include "xfa/fxfa/parser/xfa_utils.h"
@@ -26,7 +28,7 @@ void XFA_StrokeTypeSetLineDash(CXFA_Graphics* pGraphics,
         dashArray[1] = 2;
         dashArray[3] = 2;
       }
-      pGraphics->SetLineDash(0, dashArray, FX_ArraySize(dashArray));
+      pGraphics->SetLineDash(0, dashArray, pdfium::size(dashArray));
       break;
     }
     case XFA_AttributeValue::DashDotDot: {
@@ -36,7 +38,7 @@ void XFA_StrokeTypeSetLineDash(CXFA_Graphics* pGraphics,
         dashArray[3] = 2;
         dashArray[5] = 2;
       }
-      pGraphics->SetLineDash(0, dashArray, FX_ArraySize(dashArray));
+      pGraphics->SetLineDash(0, dashArray, pdfium::size(dashArray));
       break;
     }
     case XFA_AttributeValue::Dashed: {
@@ -44,7 +46,7 @@ void XFA_StrokeTypeSetLineDash(CXFA_Graphics* pGraphics,
       if (iCapType != XFA_AttributeValue::Butt)
         dashArray[1] = 2;
 
-      pGraphics->SetLineDash(0, dashArray, FX_ArraySize(dashArray));
+      pGraphics->SetLineDash(0, dashArray, pdfium::size(dashArray));
       break;
     }
     case XFA_AttributeValue::Dotted: {
@@ -52,7 +54,7 @@ void XFA_StrokeTypeSetLineDash(CXFA_Graphics* pGraphics,
       if (iCapType != XFA_AttributeValue::Butt)
         dashArray[1] = 2;
 
-      pGraphics->SetLineDash(0, dashArray, FX_ArraySize(dashArray));
+      pGraphics->SetLineDash(0, dashArray, pdfium::size(dashArray));
       break;
     }
     default:
@@ -68,7 +70,7 @@ CXFA_Stroke::CXFA_Stroke(CXFA_Document* pDoc,
                          XFA_Element eType,
                          pdfium::span<const PropertyData> properties,
                          pdfium::span<const AttributeData> attributes,
-                         std::unique_ptr<CJX_Object> js_node)
+                         CJX_Object* js_node)
     : CXFA_Node(pDoc,
                 ePacket,
                 validPackets,
@@ -76,7 +78,7 @@ CXFA_Stroke::CXFA_Stroke(CXFA_Document* pDoc,
                 eType,
                 properties,
                 attributes,
-                std::move(js_node)) {}
+                js_node) {}
 
 CXFA_Stroke::~CXFA_Stroke() = default;
 
@@ -128,8 +130,7 @@ void CXFA_Stroke::SetColor(FX_ARGB argb) {
   int b;
   std::tie(a, r, g, b) = ArgbDecode(argb);
   pNode->JSObject()->SetCData(XFA_Attribute::Value,
-                              WideString::Format(L"%d,%d,%d", r, g, b), false,
-                              false);
+                              WideString::Format(L"%d,%d,%d", r, g, b));
 }
 
 XFA_AttributeValue CXFA_Stroke::GetJoinType() {

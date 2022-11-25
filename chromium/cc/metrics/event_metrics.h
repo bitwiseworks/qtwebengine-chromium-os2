@@ -5,11 +5,14 @@
 #ifndef CC_METRICS_EVENT_METRICS_H_
 #define CC_METRICS_EVENT_METRICS_H_
 
+#include <memory>
+#include <vector>
+
 #include "base/optional.h"
 #include "base/time/time.h"
 #include "cc/cc_export.h"
-#include "cc/input/scroll_input_type.h"
 #include "ui/events/types/event_type.h"
+#include "ui/events/types/scroll_input_type.h"
 
 namespace cc {
 
@@ -17,43 +20,92 @@ namespace cc {
 // latency metrics.
 class CC_EXPORT EventMetrics {
  public:
-  EventMetrics(ui::EventType type,
-               base::TimeTicks time_stamp,
-               base::Optional<ScrollInputType> scroll_input_type);
+  // Event types we are interested in. This list should be in the same order as
+  // values of EventLatencyEventType enum from enums.xml file.
+  enum class EventType {
+    kMousePressed,
+    kMouseReleased,
+    kMouseWheel,
+    // TODO(crbug/1071645): Currently, all ET_KEY_PRESSED events are reported
+    // under EventLatency.KeyPressed histogram. This includes both key-down and
+    // key-char events. Consider reporting them separately.
+    kKeyPressed,
+    kKeyReleased,
+    kTouchPressed,
+    kTouchReleased,
+    kTouchMoved,
+    kGestureScrollBegin,
+    kGestureScrollUpdate,
+    kGestureScrollEnd,
+    kGestureDoubleTap,
+    kGestureLongPress,
+    kGestureLongTap,
+    kGestureShowPress,
+    kGestureTap,
+    kGestureTapCancel,
+    kGestureTapDown,
+    kGestureTapUnconfirmed,
+    kGestureTwoFingerTap,
+    kFirstGestureScrollUpdate,
+    kMaxValue = kFirstGestureScrollUpdate,
+  };
+
+  // Type of scroll events. This list should be in the same order as values of
+  // EventLatencyScrollInputType enum from enums.xml file.
+  enum class ScrollType {
+    kAutoscroll,
+    kScrollbar,
+    kTouchscreen,
+    kWheel,
+    kMaxValue = kWheel,
+  };
+
+  // Determines whether a scroll-update event is the first one in a gesture
+  // scroll sequence or not.
+  enum class ScrollUpdateType {
+    kStarted,
+    kContinued,
+    kMaxValue = kContinued,
+  };
+
+  // Returns a new instance if |type| is an event type we are interested in.
+  // Otherwise, returns nullptr.
+  static std::unique_ptr<EventMetrics> Create(
+      ui::EventType type,
+      base::Optional<ScrollUpdateType> scroll_update_type,
+      base::TimeTicks time_stamp,
+      base::Optional<ui::ScrollInputType> scroll_input_type);
 
   EventMetrics(const EventMetrics&);
   EventMetrics& operator=(const EventMetrics&);
 
-  // Determines if the event is whitelisted for event latency reporting. If not,
-  // this event is ignored in histogram reporting.
-  bool IsWhitelisted() const;
+  EventType type() const { return type_; }
 
-  // Returns a string representing event type. Should only be called for
-  // whitelisted event types.
+  // Returns a string representing event type.
   const char* GetTypeName() const;
-
-  // Returns a string representing scroll input type. Should only be called for
-  // scroll events.
-  const char* GetScrollTypeName() const;
-
-  ui::EventType type() const { return type_; }
 
   base::TimeTicks time_stamp() const { return time_stamp_; }
 
-  const base::Optional<ScrollInputType>& scroll_input_type() const {
-    return scroll_input_type_;
-  }
+  const base::Optional<ScrollType>& scroll_type() const { return scroll_type_; }
+
+  // Returns a string representing input type for a scroll event. Should only be
+  // called for scroll events.
+  const char* GetScrollTypeName() const;
 
   // Used in tests to check expectations on EventMetrics objects.
   bool operator==(const EventMetrics& other) const;
 
  private:
-  ui::EventType type_;
+  EventMetrics(EventType type,
+               base::TimeTicks time_stamp,
+               base::Optional<ScrollType> scroll_type);
+
+  EventType type_;
   base::TimeTicks time_stamp_;
 
   // Only available for scroll events and represents the type of input device
   // for the event.
-  base::Optional<ScrollInputType> scroll_input_type_;
+  base::Optional<ScrollType> scroll_type_;
 };
 
 // Struct storing event metrics from both main and impl threads.

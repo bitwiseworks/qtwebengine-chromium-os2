@@ -12,11 +12,12 @@
 #include "base/synchronization/lock.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
-#include "content/browser/frame_host/render_frame_host_impl.h"
+#include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/content_features.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -286,7 +287,7 @@ IN_PROC_BROWSER_TEST_F(MediaSessionBrowserTest, MultiplePlayersPlayPause) {
 }
 
 // Flaky on Mac. See https://crbug.com/980663
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
 #define MAYBE_WebContents_Muted DISABLED_WebContents_Muted
 #else
 #define MAYBE_WebContents_Muted WebContents_Muted
@@ -468,6 +469,6 @@ IN_PROC_BROWSER_TEST_F(MediaSessionBrowserTestWithBackForwardCache,
 
   // The page should be cached in the back forward cache.
   EXPECT_FALSE(delete_observer_rfh_a.deleted());
-  EXPECT_TRUE(rfh_a->is_in_back_forward_cache());
+  EXPECT_TRUE(rfh_a->IsInBackForwardCache());
 }
 }  // namespace content

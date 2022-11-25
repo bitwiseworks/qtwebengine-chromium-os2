@@ -6,8 +6,11 @@
 
 #include "third_party/blink/renderer/core/layout/ng/exclusions/ng_exclusion_space.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_break_token.h"
+#include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_item_result.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_node.h"
+#include "third_party/blink/renderer/core/layout/ng/inline/ng_logical_line_item.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_physical_line_box_fragment.h"
+#include "third_party/blink/renderer/core/layout/ng/inline/ng_text_fragment_builder.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_fragment.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_layout_result.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_physical_box_fragment.h"
@@ -23,85 +26,27 @@ void NGLineBoxFragmentBuilder::Reset() {
   unpositioned_list_marker_ = NGUnpositionedListMarker();
 
   size_.inline_size = LayoutUnit();
-  metrics_ = NGLineHeightMetrics();
+  metrics_ = FontHeight::Empty();
   line_box_type_ = NGPhysicalLineBoxFragment::kNormalLineBox;
 
   break_appeal_ = kBreakAppealPerfect;
   has_floating_descendants_for_paint_ = false;
-  has_orthogonal_flow_roots_ = false;
   has_descendant_that_depends_on_percentage_block_size_ = false;
   has_block_fragmentation_ = false;
-  may_have_descendant_above_block_start_ = false;
 }
 
 void NGLineBoxFragmentBuilder::SetIsEmptyLineBox() {
   line_box_type_ = NGPhysicalLineBoxFragment::kEmptyLineBox;
 }
 
-NGLineBoxFragmentBuilder::Child*
-NGLineBoxFragmentBuilder::ChildList::FirstInFlowChild() {
-  for (auto& child : *this) {
-    if (child.HasInFlowFragment())
-      return &child;
-  }
-  return nullptr;
+void NGLineBoxFragmentBuilder::AddChild(
+    const NGPhysicalContainerFragment& child,
+    const LogicalOffset& child_offset) {
+  PropagateChildData(child, child_offset);
+  AddChildInternal(&child, child_offset);
 }
 
-NGLineBoxFragmentBuilder::Child*
-NGLineBoxFragmentBuilder::ChildList::LastInFlowChild() {
-  for (auto it = rbegin(); it != rend(); it++) {
-    auto& child = *it;
-    if (child.HasInFlowFragment())
-      return &child;
-  }
-  return nullptr;
-}
-
-void NGLineBoxFragmentBuilder::ChildList::WillInsertChild(
-    unsigned insert_before) {
-  unsigned index = 0;
-  for (Child& child : children_) {
-    if (index >= insert_before)
-      break;
-    if (child.children_count && index + child.children_count > insert_before)
-      ++child.children_count;
-    ++index;
-  }
-}
-
-void NGLineBoxFragmentBuilder::ChildList::InsertChild(unsigned index) {
-  WillInsertChild(index);
-  children_.insert(index, Child());
-}
-
-void NGLineBoxFragmentBuilder::ChildList::MoveInInlineDirection(
-    LayoutUnit delta) {
-  for (auto& child : children_)
-    child.rect.offset.inline_offset += delta;
-}
-
-void NGLineBoxFragmentBuilder::ChildList::MoveInInlineDirection(
-    LayoutUnit delta,
-    unsigned start,
-    unsigned end) {
-  for (unsigned index = start; index < end; index++)
-    children_[index].rect.offset.inline_offset += delta;
-}
-
-void NGLineBoxFragmentBuilder::ChildList::MoveInBlockDirection(
-    LayoutUnit delta) {
-  for (auto& child : children_)
-    child.rect.offset.block_offset += delta;
-}
-
-void NGLineBoxFragmentBuilder::ChildList::MoveInBlockDirection(LayoutUnit delta,
-                                                               unsigned start,
-                                                               unsigned end) {
-  for (unsigned index = start; index < end; index++)
-    children_[index].rect.offset.block_offset += delta;
-}
-
-void NGLineBoxFragmentBuilder::AddChildren(ChildList& children) {
+void NGLineBoxFragmentBuilder::AddChildren(NGLogicalLineItems& children) {
   children_.ReserveCapacity(children.size());
 
   for (auto& child : children) {
@@ -121,7 +66,8 @@ void NGLineBoxFragmentBuilder::AddChildren(ChildList& children) {
   }
 }
 
-void NGLineBoxFragmentBuilder::PropagateChildrenData(ChildList& children) {
+void NGLineBoxFragmentBuilder::PropagateChildrenData(
+    NGLogicalLineItems& children) {
   for (unsigned index = 0; index < children.size(); ++index) {
     auto& child = children[index];
     if (child.layout_result) {
@@ -150,7 +96,7 @@ void NGLineBoxFragmentBuilder::PropagateChildrenData(ChildList& children) {
 
 scoped_refptr<const NGLayoutResult>
 NGLineBoxFragmentBuilder::ToLineBoxFragment() {
-  writing_mode_ = ToLineWritingMode(writing_mode_);
+  writing_direction_.SetWritingMode(ToLineWritingMode(GetWritingMode()));
 
   if (!break_token_)
     break_token_ = NGInlineBreakToken::Create(node_);

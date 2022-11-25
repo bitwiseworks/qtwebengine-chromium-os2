@@ -16,10 +16,10 @@
 #include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
-#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/deprecation.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/modules/encryptedmedia/encrypted_media_utils.h"
@@ -59,7 +59,7 @@ class MediaKeySystemAccessInitializer final
       std::unique_ptr<WebContentDecryptionModuleAccess>) override;
   void RequestNotSupported(const WebString& error_message) override;
 
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     MediaKeySystemAccessInitializerBase::Trace(visitor);
   }
 
@@ -83,8 +83,8 @@ void MediaKeySystemAccessInitializer::RequestSucceeded(
   if (!IsExecutionContextValid())
     return;
 
-  resolver_->Resolve(
-      MakeGarbageCollected<MediaKeySystemAccess>(std::move(access)));
+  resolver_->Resolve(MakeGarbageCollected<MediaKeySystemAccess>(
+      KeySystem(), std::move(access)));
   resolver_.Clear();
 }
 
@@ -111,15 +111,13 @@ ScriptPromise NavigatorRequestMediaKeySystemAccess::requestMediaKeySystemAccess(
     ExceptionState& exception_state) {
   DVLOG(3) << __func__;
 
-  ExecutionContext* execution_context = ExecutionContext::From(script_state);
-  Document* document = Document::From(execution_context);
-
-  if (!document->IsFeatureEnabled(
+  LocalDOMWindow* window = LocalDOMWindow::From(script_state);
+  if (!window->IsFeatureEnabled(
           mojom::blink::FeaturePolicyFeature::kEncryptedMedia,
           ReportOptions::kReportOnFailure)) {
-    UseCounter::Count(document,
+    UseCounter::Count(window,
                       WebFeature::kEncryptedMediaDisabledByFeaturePolicy);
-    document->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+    window->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
         mojom::ConsoleMessageSource::kJavaScript,
         mojom::ConsoleMessageLevel::kWarning,
         kEncryptedMediaFeaturePolicyConsoleWarning));
@@ -147,15 +145,15 @@ ScriptPromise NavigatorRequestMediaKeySystemAccess::requestMediaKeySystemAccess(
 
   // 3. Let document be the calling context's Document.
   //    (Done at the begining of this function.)
-  if (!document->GetPage()) {
+  if (!window->GetFrame()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         "The context provided is not associated with a page.");
     return ScriptPromise();
   }
 
-  UseCounter::Count(*document, WebFeature::kEncryptedMediaSecureOrigin);
-  document->CountUseOnlyInCrossOriginIframe(
+  UseCounter::Count(*window, WebFeature::kEncryptedMediaSecureOrigin);
+  window->CountUseOnlyInCrossOriginIframe(
       WebFeature::kEncryptedMediaCrossOriginIframe);
 
   // 4. Let origin be the origin of document.
@@ -170,9 +168,9 @@ ScriptPromise NavigatorRequestMediaKeySystemAccess::requestMediaKeySystemAccess(
   // 6. Asynchronously determine support, and if allowed, create and
   //    initialize the MediaKeySystemAccess object.
   MediaKeysController* controller =
-      MediaKeysController::From(document->GetPage());
+      MediaKeysController::From(window->GetFrame()->GetPage());
   WebEncryptedMediaClient* media_client =
-      controller->EncryptedMediaClient(execution_context);
+      controller->EncryptedMediaClient(window);
   media_client->RequestMediaKeySystemAccess(
       WebEncryptedMediaRequest(initializer));
 

@@ -91,7 +91,7 @@ class CORE_EXPORT PreloadRequest {
     return referrer_policy_;
   }
 
-  void SetScriptType(mojom::ScriptType script_type) {
+  void SetScriptType(mojom::blink::ScriptType script_type) {
     script_type_ = script_type;
   }
 
@@ -113,13 +113,6 @@ class CORE_EXPORT PreloadRequest {
     return is_image_set_ == ResourceFetcher::kImageIsImageSet;
   }
 
-  void SetIsLazyLoadImageEnabled(bool is_enabled) {
-    is_lazy_load_image_enabled_ = is_enabled;
-  }
-  bool IsLazyLoadImageEnabledForTesting() {
-    return is_lazy_load_image_enabled_;
-  }
-
  private:
   PreloadRequest(const String& initiator_name,
                  const TextPosition& initiator_position,
@@ -137,7 +130,7 @@ class CORE_EXPORT PreloadRequest {
         resource_url_(resource_url),
         base_url_(base_url),
         resource_type_(resource_type),
-        script_type_(mojom::ScriptType::kClassic),
+        script_type_(mojom::blink::ScriptType::kClassic),
         cross_origin_(kCrossOriginAttributeNotSet),
         importance_(mojom::FetchImportanceMode::kImportanceAuto),
         defer_(FetchParameters::kNoDefer),
@@ -158,7 +151,7 @@ class CORE_EXPORT PreloadRequest {
   const KURL base_url_;
   String charset_;
   const ResourceType resource_type_;
-  mojom::ScriptType script_type_;
+  mojom::blink::ScriptType script_type_;
   CrossOriginAttributeValue cross_origin_;
   mojom::FetchImportanceMode importance_;
   String nonce_;

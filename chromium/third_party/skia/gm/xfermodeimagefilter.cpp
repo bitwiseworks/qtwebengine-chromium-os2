@@ -218,11 +218,11 @@ private:
     SkBitmap        fBitmap;
     sk_sp<SkImage>  fCheckerboard;
 
-    typedef GM INHERITED;
+    using INHERITED = GM;
 };
 
 //////////////////////////////////////////////////////////////////////////////
 
 DEF_GM( return new XfermodeImageFilterGM; );
 
-}
+}  // namespace skiagm

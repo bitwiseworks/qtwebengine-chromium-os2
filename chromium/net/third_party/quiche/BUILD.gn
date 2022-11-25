@@ -5,6 +5,16 @@
 import("//testing/libfuzzer/fuzzer_test.gni")
 import("//third_party/protobuf/proto_library.gni")
 
+# Since //net and //net/third_party/quiche have a circular dependency on each
+# other, exporting dependencies from the :quiche target directly does not work.
+# Thus, all public dependencies for QUICHE should go into the target below,
+# which is in turn propagated to all of //net source sets.
+source_set("quiche_public_deps") {
+  visibility = [ "//net:net_public_deps" ]
+
+  public_deps = [ "//third_party/abseil-cpp:absl" ]
+}
+
 source_set("quiche") {
   sources = [
     "src/quic/core/quic_error_codes.cc",
@@ -17,12 +27,12 @@ source_set("quiche") {
       "src/common/platform/api/quiche_endian.h",
       "src/common/platform/api/quiche_export.h",
       "src/common/platform/api/quiche_logging.h",
-      "src/common/platform/api/quiche_map_util.h",
       "src/common/platform/api/quiche_optional.h",
       "src/common/platform/api/quiche_ptr_util.h",
       "src/common/platform/api/quiche_str_cat.h",
       "src/common/platform/api/quiche_string_piece.h",
       "src/common/platform/api/quiche_text_utils.h",
+      "src/common/platform/api/quiche_time_utils.h",
       "src/common/platform/api/quiche_unordered_containers.h",
       "src/common/quiche_data_reader.cc",
       "src/common/quiche_data_reader.h",
@@ -253,6 +263,8 @@ source_set("quiche") {
       "src/quic/core/crypto/transport_parameters.h",
       "src/quic/core/frames/quic_ack_frame.cc",
       "src/quic/core/frames/quic_ack_frame.h",
+      "src/quic/core/frames/quic_ack_frequency_frame.cc",
+      "src/quic/core/frames/quic_ack_frequency_frame.h",
       "src/quic/core/frames/quic_blocked_frame.cc",
       "src/quic/core/frames/quic_blocked_frame.h",
       "src/quic/core/frames/quic_connection_close_frame.cc",
@@ -387,8 +399,6 @@ source_set("quiche") {
       "src/quic/core/quic_blocked_writer_interface.h",
       "src/quic/core/quic_buffer_allocator.cc",
       "src/quic/core/quic_buffer_allocator.h",
-      "src/quic/core/quic_buffered_packet_store.cc",
-      "src/quic/core/quic_buffered_packet_store.h",
       "src/quic/core/quic_circular_deque.h",
       "src/quic/core/quic_clock.cc",
       "src/quic/core/quic_clock.h",
@@ -433,6 +443,8 @@ source_set("quiche") {
       "src/quic/core/quic_interval.h",
       "src/quic/core/quic_interval_deque.h",
       "src/quic/core/quic_interval_set.h",
+      "src/quic/core/quic_legacy_version_encapsulator.cc",
+      "src/quic/core/quic_legacy_version_encapsulator.h",
       "src/quic/core/quic_lru_cache.h",
       "src/quic/core/quic_mtu_discovery.cc",
       "src/quic/core/quic_mtu_discovery.h",
@@ -550,6 +562,8 @@ source_set("quiche") {
       "src/quic/quic_transport/quic_transport_session_interface.h",
       "src/quic/quic_transport/quic_transport_stream.cc",
       "src/quic/quic_transport/quic_transport_stream.h",
+      "src/quic/quic_transport/web_transport_fingerprint_proof_verifier.cc",
+      "src/quic/quic_transport/web_transport_fingerprint_proof_verifier.h",
       "src/spdy/core/fifo_write_scheduler.h",
       "src/spdy/core/hpack/hpack_constants.cc",
       "src/spdy/core/hpack/hpack_constants.h",
@@ -647,7 +661,7 @@ proto_library("net_quic_test_tools_proto") {
   extra_configs = [ "//build/config/compiler:wexit_time_destructors" ]
 }
 
-if (is_linux) {
+if (is_linux || is_chromeos) {
   source_set("epoll_server_core") {
     sources = [
       "src/epoll_server/platform/api/epoll_bug.h",
@@ -852,6 +866,8 @@ source_set("quic_test_tools_core") {
     "src/quic/test_tools/failing_proof_source.h",
     "src/quic/test_tools/fake_proof_source.cc",
     "src/quic/test_tools/fake_proof_source.h",
+    "src/quic/test_tools/first_flight.cc",
+    "src/quic/test_tools/first_flight.h",
     "src/quic/test_tools/mock_clock.cc",
     "src/quic/test_tools/mock_clock.h",
     "src/quic/test_tools/mock_quic_client_promised_info.cc",
@@ -957,6 +973,8 @@ source_set("quic_test_tools_core") {
     "src/quic/test_tools/simulator/switch.h",
     "src/quic/test_tools/simulator/traffic_policer.cc",
     "src/quic/test_tools/simulator/traffic_policer.h",
+    "src/quic/test_tools/test_certificates.cc",
+    "src/quic/test_tools/test_certificates.h",
     "src/quic/tools/quic_tcp_like_trace_converter.cc",
     "src/quic/tools/quic_tcp_like_trace_converter.h",
   ]
@@ -975,7 +993,7 @@ source_set("quic_test_tools_core") {
     "//third_party/quic_trace:quic_trace_proto",
   ]
 
-  if (is_linux) {
+  if (is_linux || is_chromeos) {
     sources += [
       "src/epoll_server/fake_simple_epoll_server.cc",
       "src/epoll_server/fake_simple_epoll_server.h",
@@ -1015,6 +1033,8 @@ source_set("simple_quic_tools_core") {
     "src/quic/core/http/quic_spdy_client_stream.h",
     "src/quic/core/http/quic_spdy_server_stream_base.cc",
     "src/quic/core/http/quic_spdy_server_stream_base.h",
+    "src/quic/core/quic_buffered_packet_store.cc",
+    "src/quic/core/quic_buffered_packet_store.h",
     "src/quic/core/quic_dispatcher.cc",
     "src/quic/core/quic_dispatcher.h",
     "src/quic/core/quic_packet_writer_wrapper.cc",
@@ -1022,6 +1042,8 @@ source_set("simple_quic_tools_core") {
     "src/quic/core/quic_process_packet_interface.h",
     "src/quic/core/quic_time_wait_list_manager.cc",
     "src/quic/core/quic_time_wait_list_manager.h",
+    "src/quic/core/tls_chlo_extractor.cc",
+    "src/quic/core/tls_chlo_extractor.h",
     "src/quic/platform/api/quic_default_proof_providers.h",
     "src/quic/platform/api/quic_system_event_loop.h",
     "src/quic/tools/fake_proof_verifier.h",
@@ -1053,6 +1075,8 @@ source_set("simple_quic_tools_core") {
     "src/quic/tools/quic_transport_simple_server_session.h",
     "src/quic/tools/quic_url.cc",
     "src/quic/tools/quic_url.h",
+    "src/quic/tools/simple_ticket_crypter.cc",
+    "src/quic/tools/simple_ticket_crypter.h",
   ]
   deps = [
     "//base",
@@ -1222,6 +1246,7 @@ source_set("quiche_tests") {
     "src/common/platform/api/quiche_endian_test.cc",
     "src/common/platform/api/quiche_str_cat_test.cc",
     "src/common/platform/api/quiche_text_utils_test.cc",
+    "src/common/platform/api/quiche_time_utils_test.cc",
     "src/quic/core/congestion_control/bbr_sender_test.cc",
     "src/quic/core/congestion_control/cubic_bytes_test.cc",
     "src/quic/core/congestion_control/general_loss_algorithm_test.cc",
@@ -1321,6 +1346,7 @@ source_set("quiche_tests") {
     "src/quic/core/quic_interval_deque_test.cc",
     "src/quic/core/quic_interval_set_test.cc",
     "src/quic/core/quic_interval_test.cc",
+    "src/quic/core/quic_legacy_version_encapsulator_test.cc",
     "src/quic/core/quic_lru_cache_test.cc",
     "src/quic/core/quic_network_blackhole_detector_test.cc",
     "src/quic/core/quic_one_block_arena_test.cc",
@@ -1344,13 +1370,12 @@ source_set("quiche_tests") {
     "src/quic/core/quic_time_test.cc",
     "src/quic/core/quic_time_wait_list_manager_test.cc",
     "src/quic/core/quic_trace_visitor_test.cc",
-    "src/quic/core/quic_types_test.cc",
     "src/quic/core/quic_unacked_packet_map_test.cc",
     "src/quic/core/quic_utils_test.cc",
     "src/quic/core/quic_version_manager_test.cc",
     "src/quic/core/quic_versions_test.cc",
     "src/quic/core/quic_write_blocked_list_test.cc",
-    "src/quic/core/tls_handshaker_test.cc",
+    "src/quic/core/tls_chlo_extractor_test.cc",
     "src/quic/core/uber_quic_stream_id_manager_test.cc",
     "src/quic/core/uber_received_packet_manager_test.cc",
     "src/quic/platform/api/quic_containers_test.cc",
@@ -1366,6 +1391,7 @@ source_set("quiche_tests") {
     "src/quic/quic_transport/quic_transport_integration_test.cc",
     "src/quic/quic_transport/quic_transport_server_session_test.cc",
     "src/quic/quic_transport/quic_transport_stream_test.cc",
+    "src/quic/quic_transport/web_transport_fingerprint_proof_verifier_test.cc",
     "src/quic/test_tools/crypto_test_utils_test.cc",
     "src/quic/test_tools/mock_quic_time_wait_list_manager.cc",
     "src/quic/test_tools/mock_quic_time_wait_list_manager.h",
@@ -1375,6 +1401,7 @@ source_set("quiche_tests") {
     "src/quic/test_tools/simulator/simulator_test.cc",
     "src/quic/tools/quic_memory_cache_backend_test.cc",
     "src/quic/tools/quic_tcp_like_trace_converter_test.cc",
+    "src/quic/tools/simple_ticket_crypter_test.cc",
     "src/spdy/core/array_output_buffer.cc",
     "src/spdy/core/array_output_buffer.h",
     "src/spdy/core/array_output_buffer_test.cc",
@@ -1417,58 +1444,6 @@ source_set("quiche_tests") {
     "src/spdy/platform/api/spdy_test_helpers.h",
   ]
 
-  # Disable building Quartc tests on iOS as they appear to be flaky there.
-  if (!is_ios) {
-    sources += [
-      "src/quic/quartc/counting_packet_filter.h",
-      "src/quic/quartc/quartc_connection_helper.cc",
-      "src/quic/quartc/quartc_connection_helper.h",
-      "src/quic/quartc/quartc_crypto_helpers.cc",
-      "src/quic/quartc/quartc_crypto_helpers.h",
-      "src/quic/quartc/quartc_dispatcher.cc",
-      "src/quic/quartc/quartc_dispatcher.h",
-      "src/quic/quartc/quartc_endpoint.cc",
-      "src/quic/quartc/quartc_endpoint.h",
-      "src/quic/quartc/quartc_endpoint_test.cc",
-      "src/quic/quartc/quartc_factory.cc",
-      "src/quic/quartc/quartc_factory.h",
-      "src/quic/quartc/quartc_fakes.h",
-      "src/quic/quartc/quartc_interval_counter.h",
-      "src/quic/quartc/quartc_interval_counter_test.cc",
-      "src/quic/quartc/quartc_multiplexer.cc",
-      "src/quic/quartc/quartc_multiplexer.h",
-      "src/quic/quartc/quartc_multiplexer_test.cc",
-      "src/quic/quartc/quartc_packet_writer.cc",
-      "src/quic/quartc/quartc_packet_writer.h",
-      "src/quic/quartc/quartc_session.cc",
-      "src/quic/quartc/quartc_session.h",
-      "src/quic/quartc/quartc_session_test.cc",
-      "src/quic/quartc/quartc_stream.cc",
-      "src/quic/quartc/quartc_stream.h",
-      "src/quic/quartc/quartc_stream_test.cc",
-      "src/quic/quartc/simulated_packet_transport.cc",
-      "src/quic/quartc/simulated_packet_transport.h",
-      "src/quic/quartc/simulated_packet_transport_test.cc",
-      "src/quic/quartc/test/bidi_test_runner.cc",
-      "src/quic/quartc/test/bidi_test_runner.h",
-      "src/quic/quartc/test/quartc_bidi_test.cc",
-      "src/quic/quartc/test/quartc_competing_endpoint.cc",
-      "src/quic/quartc/test/quartc_competing_endpoint.h",
-      "src/quic/quartc/test/quartc_data_source.cc",
-      "src/quic/quartc/test/quartc_data_source.h",
-      "src/quic/quartc/test/quartc_data_source_test.cc",
-      "src/quic/quartc/test/quartc_peer.cc",
-      "src/quic/quartc/test/quartc_peer.h",
-      "src/quic/quartc/test/quartc_peer_test.cc",
-      "src/quic/quartc/test/quic_trace_interceptor.cc",
-      "src/quic/quartc/test/quic_trace_interceptor.h",
-      "src/quic/quartc/test/random_delay_link.cc",
-      "src/quic/quartc/test/random_delay_link.h",
-      "src/quic/quartc/test/random_packet_filter.cc",
-      "src/quic/quartc/test/random_packet_filter.h",
-    ]
-  }
-
   deps = [
     "//net",
     "//net:quic_test_tools",
@@ -1483,7 +1458,7 @@ source_set("quiche_tests") {
   if (is_desktop_linux) {
     public_deps += [ "//net:epoll_quic_tools" ]
   }
-  if (is_linux) {
+  if (is_linux || is_chromeos) {
     sources += [
       "src/epoll_server/simple_epoll_server_test.cc",
       "src/quic/core/chlo_extractor_test.cc",

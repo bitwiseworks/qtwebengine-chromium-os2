@@ -24,6 +24,7 @@
 namespace dawn_wire { namespace client {
 
     class Client;
+    class Queue;
 
     class Device : public ObjectBase {
       public:
@@ -31,14 +32,21 @@ namespace dawn_wire { namespace client {
         ~Device();
 
         Client* GetClient();
-        void HandleError(WGPUErrorType errorType, const char* message);
-        void HandleDeviceLost(const char* message);
         void SetUncapturedErrorCallback(WGPUErrorCallback errorCallback, void* errorUserdata);
         void SetDeviceLostCallback(WGPUDeviceLostCallback errorCallback, void* errorUserdata);
-
+        void InjectError(WGPUErrorType type, const char* message);
         void PushErrorScope(WGPUErrorFilter filter);
-        bool RequestPopErrorScope(WGPUErrorCallback callback, void* userdata);
-        bool PopErrorScope(uint64_t requestSerial, WGPUErrorType type, const char* message);
+        bool PopErrorScope(WGPUErrorCallback callback, void* userdata);
+        WGPUBuffer CreateBuffer(const WGPUBufferDescriptor* descriptor);
+        WGPUBuffer CreateErrorBuffer();
+
+        void HandleError(WGPUErrorType errorType, const char* message);
+        void HandleDeviceLost(const char* message);
+        bool OnPopErrorScopeCallback(uint64_t requestSerial,
+                                     WGPUErrorType type,
+                                     const char* message);
+
+        WGPUQueue GetDefaultQueue();
 
       private:
         struct ErrorScopeData {
@@ -52,8 +60,11 @@ namespace dawn_wire { namespace client {
         Client* mClient = nullptr;
         WGPUErrorCallback mErrorCallback = nullptr;
         WGPUDeviceLostCallback mDeviceLostCallback = nullptr;
-        void* mErrorUserdata;
-        void* mDeviceLostUserdata;
+        bool mDidRunLostCallback = false;
+        void* mErrorUserdata = nullptr;
+        void* mDeviceLostUserdata = nullptr;
+
+        Queue* mDefaultQueue = nullptr;
     };
 
 }}  // namespace dawn_wire::client

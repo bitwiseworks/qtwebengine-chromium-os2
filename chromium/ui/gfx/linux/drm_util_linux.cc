@@ -6,16 +6,7 @@
 
 #include <drm_fourcc.h>
 
-#include "base/logging.h"
-
-#ifndef DRM_FORMAT_INVALID
-// TODO(mcasas): Remove when uprevving //third_party/libdrm.
-#define DRM_FORMAT_INVALID 0
-#endif
-
-#ifndef DRM_FORMAT_P010
-#define DRM_FORMAT_P010 fourcc_code('P', '0', '1', '0')
-#endif
+#include "base/notreached.h"
 
 namespace ui {
 

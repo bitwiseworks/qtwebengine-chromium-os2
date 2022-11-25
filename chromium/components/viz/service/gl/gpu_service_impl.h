@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/callback.h"
+#include "base/clang_profiling_buildflags.h"
 #include "base/compiler_specific.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/observer_list.h"
@@ -22,7 +23,6 @@
 #include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
 #include "gpu/command_buffer/common/activity_flags.h"
 #include "gpu/command_buffer/service/sequence_id.h"
-#include "gpu/config/device_perf_info.h"
 #include "gpu/config/gpu_extra_info.h"
 #include "gpu/config/gpu_info.h"
 #include "gpu/config/gpu_preferences.h"
@@ -73,24 +73,31 @@ class VulkanContextProvider;
 class MetalContextProvider;
 class DawnContextProvider;
 
+enum class ExitCode {
+  // Matches service_manager::ResultCode::RESULT_CODE_NORMAL_EXIT
+  RESULT_CODE_NORMAL_EXIT = 0,
+  // Matches chrome::ResultCode::RESULT_CODE_GPU_EXIT_ON_CONTEXT_LOST
+  RESULT_CODE_GPU_EXIT_ON_CONTEXT_LOST = 34,
+};
+
 // This runs in the GPU process, and communicates with the gpu host (which is
 // the window server) over the mojom APIs. This is responsible for setting up
 // the connection to clients, allocating/free'ing gpu memory etc.
 class VIZ_SERVICE_EXPORT GpuServiceImpl : public gpu::GpuChannelManagerDelegate,
                                           public mojom::GpuService {
  public:
-  GpuServiceImpl(const gpu::GPUInfo& gpu_info,
-                 std::unique_ptr<gpu::GpuWatchdogThread> watchdog,
-                 scoped_refptr<base::SingleThreadTaskRunner> io_runner,
-                 const gpu::GpuFeatureInfo& gpu_feature_info,
-                 const gpu::GpuPreferences& gpu_preferences,
-                 const base::Optional<gpu::GPUInfo>& gpu_info_for_hardware_gpu,
-                 const base::Optional<gpu::GpuFeatureInfo>&
-                     gpu_feature_info_for_hardware_gpu,
-                 const gpu::GpuExtraInfo& gpu_extra_info,
-                 const base::Optional<gpu::DevicePerfInfo>& device_perf_info,
-                 gpu::VulkanImplementation* vulkan_implementation,
-                 base::OnceCallback<void(bool /*immediately*/)> exit_callback);
+  GpuServiceImpl(
+      const gpu::GPUInfo& gpu_info,
+      std::unique_ptr<gpu::GpuWatchdogThread> watchdog,
+      scoped_refptr<base::SingleThreadTaskRunner> io_runner,
+      const gpu::GpuFeatureInfo& gpu_feature_info,
+      const gpu::GpuPreferences& gpu_preferences,
+      const base::Optional<gpu::GPUInfo>& gpu_info_for_hardware_gpu,
+      const base::Optional<gpu::GpuFeatureInfo>&
+          gpu_feature_info_for_hardware_gpu,
+      const gpu::GpuExtraInfo& gpu_extra_info,
+      gpu::VulkanImplementation* vulkan_implementation,
+      base::OnceCallback<void(base::Optional<ExitCode>)> exit_callback);
 
   ~GpuServiceImpl() override;
 
@@ -160,11 +167,6 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl : public gpu::GpuChannelManagerDelegate,
   void GetPeakMemoryUsage(uint32_t sequence_num,
                           GetPeakMemoryUsageCallback callback) override;
 
-#if defined(OS_WIN)
-  void RequestCompleteGpuInfo(RequestCompleteGpuInfoCallback callback) override;
-  void GetGpuSupportedRuntimeVersionAndDevicePerfInfo(
-      GetGpuSupportedRuntimeVersionAndDevicePerfInfoCallback callback) override;
-#endif
   void RequestHDRStatus(RequestHDRStatusCallback callback) override;
   void LoadedShader(int32_t client_id,
                     const std::string& key,
@@ -181,9 +183,13 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl : public gpu::GpuChannelManagerDelegate,
   void OnMemoryPressure(
       base::MemoryPressureListener::MemoryPressureLevel level) override;
 #endif
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
   void BeginCATransaction() override;
   void CommitCATransaction(CommitCATransactionCallback callback) override;
+#endif
+#if BUILDFLAG(CLANG_PROFILING_INSIDE_SANDBOX)
+  void WriteClangProfilingProfile(
+      WriteClangProfilingProfileCallback callback) override;
 #endif
   void Crash() override;
   void Hang() override;
@@ -204,6 +210,7 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl : public gpu::GpuChannelManagerDelegate,
                       const GURL& active_url) override;
 #if defined(OS_WIN)
   void DidUpdateOverlayInfo(const gpu::OverlayInfo& overlay_info) override;
+  void DidUpdateHDRStatus(bool hdr_enabled) override;
 #endif
   void StoreShaderToDisk(int client_id,
                          const std::string& key,
@@ -309,8 +316,6 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl : public gpu::GpuChannelManagerDelegate,
                         const std::string& header,
                         const std::string& message);
 
-  void UpdateGpuInfoPlatform(base::OnceClosure on_gpu_info_updated);
-
 #if defined(OS_CHROMEOS)
   void CreateArcVideoDecodeAcceleratorOnMainThread(
       mojo::PendingReceiver<arc::mojom::VideoDecodeAccelerator> vda_receiver);
@@ -338,10 +343,10 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl : public gpu::GpuChannelManagerDelegate,
   // process. If |for_context_loss| is true an error message will be logged.
   void MaybeExit(bool for_context_loss);
 
-  // Update overlay info on the GPU process and send the updated info back
-  // to the browser process if there is a change.
+  // Update overlay info and HDR status on the GPU process and send the updated
+  // info back to the browser process if there is a change.
 #if defined(OS_WIN)
-  void UpdateOverlayInfo();
+  void UpdateOverlayAndHDRInfo();
 #endif
 
   scoped_refptr<base::SingleThreadTaskRunner> main_runner_;
@@ -359,6 +364,8 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl : public gpu::GpuChannelManagerDelegate,
   // Information about general chrome feature support for the GPU.
   gpu::GpuFeatureInfo gpu_feature_info_;
 
+  bool hdr_enabled_ = false;
+
   // What we would have gotten if we haven't fallen back to SwiftShader or
   // pure software (in the viz case).
   base::Optional<gpu::GPUInfo> gpu_info_for_hardware_gpu_;
@@ -366,10 +373,6 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl : public gpu::GpuChannelManagerDelegate,
 
   // Information about the GPU process populated on creation.
   gpu::GpuExtraInfo gpu_extra_info_;
-
-  // Information related to device perf category, only collected on the second
-  // unsandboxed GPU process.
-  base::Optional<gpu::DevicePerfInfo> device_perf_info_;
 
   mojo::SharedRemote<mojom::GpuHost> gpu_host_;
   std::unique_ptr<gpu::GpuChannelManager> gpu_channel_manager_;
@@ -400,7 +403,7 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl : public gpu::GpuChannelManagerDelegate,
   base::WaitableEvent* shutdown_event_ = nullptr;
 
   // Callback that safely exits GPU process.
-  base::OnceCallback<void(bool)> exit_callback_;
+  base::OnceCallback<void(base::Optional<ExitCode>)> exit_callback_;
   base::AtomicFlag is_exiting_;
 
   // Used for performing hardware decode acceleration of images. This is shared

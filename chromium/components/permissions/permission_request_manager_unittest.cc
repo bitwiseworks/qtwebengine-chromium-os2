@@ -23,6 +23,10 @@
 
 namespace permissions {
 
+namespace {
+using QuietUiReason = NotificationPermissionUiSelector::QuietUiReason;
+}
+
 class PermissionRequestManagerTest : public content::RenderViewHostTestHarness {
  public:
   PermissionRequestManagerTest()
@@ -39,6 +43,9 @@ class PermissionRequestManagerTest : public content::RenderViewHostTestHarness {
         request_camera_("cam",
                         PermissionRequestType::PERMISSION_MEDIASTREAM_CAMERA,
                         PermissionRequestGestureType::NO_GESTURE),
+        request_ptz_("ptz",
+                     PermissionRequestType::PERMISSION_CAMERA_PAN_TILT_ZOOM,
+                     PermissionRequestGestureType::NO_GESTURE),
         iframe_request_same_domain_(
             "iframe",
             PermissionRequestType::PERMISSION_NOTIFICATIONS,
@@ -46,6 +53,10 @@ class PermissionRequestManagerTest : public content::RenderViewHostTestHarness {
         iframe_request_other_domain_(
             "iframe",
             PermissionRequestType::PERMISSION_GEOLOCATION,
+            GURL("http://www.youtube.com")),
+        iframe_request_camera_other_domain_(
+            "iframe",
+            PermissionRequestType::PERMISSION_MEDIASTREAM_CAMERA,
             GURL("http://www.youtube.com")),
         iframe_request_mic_other_domain_(
             "iframe",
@@ -113,8 +124,10 @@ class PermissionRequestManagerTest : public content::RenderViewHostTestHarness {
   MockPermissionRequest request2_;
   MockPermissionRequest request_mic_;
   MockPermissionRequest request_camera_;
+  MockPermissionRequest request_ptz_;
   MockPermissionRequest iframe_request_same_domain_;
   MockPermissionRequest iframe_request_other_domain_;
+  MockPermissionRequest iframe_request_camera_other_domain_;
   MockPermissionRequest iframe_request_mic_other_domain_;
   PermissionRequestManager* manager_;
   std::unique_ptr<MockPermissionPromptFactory> prompt_factory_;
@@ -122,7 +135,7 @@ class PermissionRequestManagerTest : public content::RenderViewHostTestHarness {
 };
 
 TEST_F(PermissionRequestManagerTest, SingleRequest) {
-  manager_->AddRequest(&request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
   WaitForBubbleToBeShown();
 
   EXPECT_TRUE(prompt_factory_->is_visible());
@@ -133,7 +146,7 @@ TEST_F(PermissionRequestManagerTest, SingleRequest) {
 }
 
 TEST_F(PermissionRequestManagerTest, SingleRequestViewFirst) {
-  manager_->AddRequest(&request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
   WaitForBubbleToBeShown();
 
   EXPECT_TRUE(prompt_factory_->is_visible());
@@ -145,8 +158,8 @@ TEST_F(PermissionRequestManagerTest, SingleRequestViewFirst) {
 
 // Most requests should never be grouped.
 TEST_F(PermissionRequestManagerTest, TwoRequestsUngrouped) {
-  manager_->AddRequest(&request1_);
-  manager_->AddRequest(&request2_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request2_);
 
   WaitForBubbleToBeShown();
   EXPECT_TRUE(prompt_factory_->is_visible());
@@ -163,8 +176,8 @@ TEST_F(PermissionRequestManagerTest, TwoRequestsUngrouped) {
 
 // Only mic/camera requests from the same origin should be grouped.
 TEST_F(PermissionRequestManagerTest, MicCameraGrouped) {
-  manager_->AddRequest(&request_mic_);
-  manager_->AddRequest(&request_camera_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request_mic_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request_camera_);
   WaitForBubbleToBeShown();
 
   EXPECT_TRUE(prompt_factory_->is_visible());
@@ -175,8 +188,58 @@ TEST_F(PermissionRequestManagerTest, MicCameraGrouped) {
   EXPECT_TRUE(request_camera_.granted());
 
   // If the requests come from different origins, they should not be grouped.
-  manager_->AddRequest(&iframe_request_mic_other_domain_);
-  manager_->AddRequest(&request_camera_);
+  manager_->AddRequest(web_contents()->GetMainFrame(),
+                       &iframe_request_mic_other_domain_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request_camera_);
+  WaitForBubbleToBeShown();
+
+  EXPECT_TRUE(prompt_factory_->is_visible());
+  ASSERT_EQ(prompt_factory_->request_count(), 1);
+}
+
+// Only camera/ptz requests from the same origin should be grouped.
+TEST_F(PermissionRequestManagerTest, CameraPtzGrouped) {
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request_camera_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request_ptz_);
+  WaitForBubbleToBeShown();
+
+  EXPECT_TRUE(prompt_factory_->is_visible());
+  ASSERT_EQ(prompt_factory_->request_count(), 2);
+
+  Accept();
+  EXPECT_TRUE(request_camera_.granted());
+  EXPECT_TRUE(request_ptz_.granted());
+
+  // If the requests come from different origins, they should not be grouped.
+  manager_->AddRequest(web_contents()->GetMainFrame(),
+                       &iframe_request_camera_other_domain_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request_ptz_);
+  WaitForBubbleToBeShown();
+
+  EXPECT_TRUE(prompt_factory_->is_visible());
+  ASSERT_EQ(prompt_factory_->request_count(), 1);
+}
+
+// Only mic/camera/ptz requests from the same origin should be grouped.
+TEST_F(PermissionRequestManagerTest, MicCameraPtzGrouped) {
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request_mic_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request_camera_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request_ptz_);
+  WaitForBubbleToBeShown();
+
+  EXPECT_TRUE(prompt_factory_->is_visible());
+  ASSERT_EQ(prompt_factory_->request_count(), 3);
+
+  Accept();
+  EXPECT_TRUE(request_mic_.granted());
+  EXPECT_TRUE(request_camera_.granted());
+  EXPECT_TRUE(request_ptz_.granted());
+
+  // If the requests come from different origins, they should not be grouped.
+  manager_->AddRequest(web_contents()->GetMainFrame(),
+                       &iframe_request_mic_other_domain_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request_camera_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request_ptz_);
   WaitForBubbleToBeShown();
 
   EXPECT_TRUE(prompt_factory_->is_visible());
@@ -184,8 +247,8 @@ TEST_F(PermissionRequestManagerTest, MicCameraGrouped) {
 }
 
 TEST_F(PermissionRequestManagerTest, TwoRequestsTabSwitch) {
-  manager_->AddRequest(&request_mic_);
-  manager_->AddRequest(&request_camera_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request_mic_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request_camera_);
   WaitForBubbleToBeShown();
 
   EXPECT_TRUE(prompt_factory_->is_visible());
@@ -208,6 +271,33 @@ TEST_F(PermissionRequestManagerTest, TwoRequestsTabSwitch) {
   EXPECT_TRUE(request_camera_.granted());
 }
 
+TEST_F(PermissionRequestManagerTest, ThreeRequestsTabSwitch) {
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request_mic_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request_camera_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request_ptz_);
+  WaitForBubbleToBeShown();
+
+  EXPECT_TRUE(prompt_factory_->is_visible());
+  ASSERT_EQ(prompt_factory_->request_count(), 3);
+
+  MockTabSwitchAway();
+#if defined(OS_ANDROID)
+  EXPECT_TRUE(prompt_factory_->is_visible());
+#else
+  EXPECT_FALSE(prompt_factory_->is_visible());
+#endif
+
+  MockTabSwitchBack();
+  WaitForBubbleToBeShown();
+  EXPECT_TRUE(prompt_factory_->is_visible());
+  ASSERT_EQ(prompt_factory_->request_count(), 3);
+
+  Accept();
+  EXPECT_TRUE(request_mic_.granted());
+  EXPECT_TRUE(request_camera_.granted());
+  EXPECT_TRUE(request_ptz_.granted());
+}
+
 TEST_F(PermissionRequestManagerTest, NoRequests) {
   WaitForBubbleToBeShown();
   EXPECT_FALSE(prompt_factory_->is_visible());
@@ -215,7 +305,7 @@ TEST_F(PermissionRequestManagerTest, NoRequests) {
 
 TEST_F(PermissionRequestManagerTest, PermissionRequestWhileTabSwitchedAway) {
   MockTabSwitchAway();
-  manager_->AddRequest(&request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
   WaitForBubbleToBeShown();
   EXPECT_FALSE(prompt_factory_->is_visible());
 
@@ -225,18 +315,18 @@ TEST_F(PermissionRequestManagerTest, PermissionRequestWhileTabSwitchedAway) {
 }
 
 TEST_F(PermissionRequestManagerTest, TwoRequestsDoNotCoalesce) {
-  manager_->AddRequest(&request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
   WaitForBubbleToBeShown();
-  manager_->AddRequest(&request2_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request2_);
 
   EXPECT_TRUE(prompt_factory_->is_visible());
   ASSERT_EQ(prompt_factory_->request_count(), 1);
 }
 
 TEST_F(PermissionRequestManagerTest, TwoRequestsShownInTwoBubbles) {
-  manager_->AddRequest(&request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
   WaitForBubbleToBeShown();
-  manager_->AddRequest(&request2_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request2_);
 
   EXPECT_TRUE(prompt_factory_->is_visible());
   ASSERT_EQ(prompt_factory_->request_count(), 1);
@@ -250,8 +340,8 @@ TEST_F(PermissionRequestManagerTest, TwoRequestsShownInTwoBubbles) {
 }
 
 TEST_F(PermissionRequestManagerTest, TestAddDuplicateRequest) {
-  manager_->AddRequest(&request1_);
-  manager_->AddRequest(&request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
 
   WaitForBubbleToBeShown();
   EXPECT_TRUE(prompt_factory_->is_visible());
@@ -259,7 +349,7 @@ TEST_F(PermissionRequestManagerTest, TestAddDuplicateRequest) {
 }
 
 TEST_F(PermissionRequestManagerTest, SequentialRequests) {
-  manager_->AddRequest(&request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
   WaitForBubbleToBeShown();
   EXPECT_TRUE(prompt_factory_->is_visible());
 
@@ -268,7 +358,7 @@ TEST_F(PermissionRequestManagerTest, SequentialRequests) {
 
   EXPECT_FALSE(prompt_factory_->is_visible());
 
-  manager_->AddRequest(&request2_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request2_);
   WaitForBubbleToBeShown();
   EXPECT_TRUE(prompt_factory_->is_visible());
   Accept();
@@ -277,8 +367,8 @@ TEST_F(PermissionRequestManagerTest, SequentialRequests) {
 }
 
 TEST_F(PermissionRequestManagerTest, SameRequestRejected) {
-  manager_->AddRequest(&request1_);
-  manager_->AddRequest(&request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
   EXPECT_FALSE(request1_.finished());
 
   WaitForBubbleToBeShown();
@@ -287,17 +377,17 @@ TEST_F(PermissionRequestManagerTest, SameRequestRejected) {
 }
 
 TEST_F(PermissionRequestManagerTest, DuplicateQueuedRequest) {
-  manager_->AddRequest(&request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
   WaitForBubbleToBeShown();
-  manager_->AddRequest(&request2_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request2_);
 
   MockPermissionRequest dupe_request("test1");
-  manager_->AddRequest(&dupe_request);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &dupe_request);
   EXPECT_FALSE(dupe_request.finished());
   EXPECT_FALSE(request1_.finished());
 
   MockPermissionRequest dupe_request2("test2");
-  manager_->AddRequest(&dupe_request2);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &dupe_request2);
   EXPECT_FALSE(dupe_request2.finished());
   EXPECT_FALSE(request2_.finished());
 
@@ -312,10 +402,11 @@ TEST_F(PermissionRequestManagerTest, DuplicateQueuedRequest) {
 }
 
 TEST_F(PermissionRequestManagerTest, ForgetRequestsOnPageNavigation) {
-  manager_->AddRequest(&request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
   WaitForBubbleToBeShown();
-  manager_->AddRequest(&request2_);
-  manager_->AddRequest(&iframe_request_other_domain_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request2_);
+  manager_->AddRequest(web_contents()->GetMainFrame(),
+                       &iframe_request_other_domain_);
 
   EXPECT_TRUE(prompt_factory_->is_visible());
   ASSERT_EQ(prompt_factory_->request_count(), 1);
@@ -330,7 +421,8 @@ TEST_F(PermissionRequestManagerTest, ForgetRequestsOnPageNavigation) {
 }
 
 TEST_F(PermissionRequestManagerTest, MainFrameNoRequestIFrameRequest) {
-  manager_->AddRequest(&iframe_request_same_domain_);
+  manager_->AddRequest(web_contents()->GetMainFrame(),
+                       &iframe_request_same_domain_);
   WaitForBubbleToBeShown();
   WaitForFrameLoad();
 
@@ -340,8 +432,9 @@ TEST_F(PermissionRequestManagerTest, MainFrameNoRequestIFrameRequest) {
 }
 
 TEST_F(PermissionRequestManagerTest, MainFrameAndIFrameRequestSameDomain) {
-  manager_->AddRequest(&request1_);
-  manager_->AddRequest(&iframe_request_same_domain_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(),
+                       &iframe_request_same_domain_);
   WaitForFrameLoad();
   WaitForBubbleToBeShown();
 
@@ -359,8 +452,9 @@ TEST_F(PermissionRequestManagerTest, MainFrameAndIFrameRequestSameDomain) {
 }
 
 TEST_F(PermissionRequestManagerTest, MainFrameAndIFrameRequestOtherDomain) {
-  manager_->AddRequest(&request1_);
-  manager_->AddRequest(&iframe_request_other_domain_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(),
+                       &iframe_request_other_domain_);
   WaitForFrameLoad();
   WaitForBubbleToBeShown();
 
@@ -374,11 +468,12 @@ TEST_F(PermissionRequestManagerTest, MainFrameAndIFrameRequestOtherDomain) {
 }
 
 TEST_F(PermissionRequestManagerTest, IFrameRequestWhenMainRequestVisible) {
-  manager_->AddRequest(&request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
   WaitForBubbleToBeShown();
   EXPECT_TRUE(prompt_factory_->is_visible());
 
-  manager_->AddRequest(&iframe_request_same_domain_);
+  manager_->AddRequest(web_contents()->GetMainFrame(),
+                       &iframe_request_same_domain_);
   WaitForFrameLoad();
   ASSERT_EQ(prompt_factory_->request_count(), 1);
   Closing();
@@ -392,11 +487,12 @@ TEST_F(PermissionRequestManagerTest, IFrameRequestWhenMainRequestVisible) {
 
 TEST_F(PermissionRequestManagerTest,
        IFrameRequestOtherDomainWhenMainRequestVisible) {
-  manager_->AddRequest(&request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
   WaitForBubbleToBeShown();
   EXPECT_TRUE(prompt_factory_->is_visible());
 
-  manager_->AddRequest(&iframe_request_other_domain_);
+  manager_->AddRequest(web_contents()->GetMainFrame(),
+                       &iframe_request_other_domain_);
   WaitForFrameLoad();
   Closing();
   EXPECT_TRUE(request1_.finished());
@@ -409,9 +505,10 @@ TEST_F(PermissionRequestManagerTest,
 TEST_F(PermissionRequestManagerTest, RequestsDontNeedUserGesture) {
   WaitForFrameLoad();
   WaitForBubbleToBeShown();
-  manager_->AddRequest(&request1_);
-  manager_->AddRequest(&iframe_request_other_domain_);
-  manager_->AddRequest(&request2_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(),
+                       &iframe_request_other_domain_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request2_);
   base::RunLoop().RunUntilIdle();
 
   EXPECT_TRUE(prompt_factory_->is_visible());
@@ -423,7 +520,7 @@ TEST_F(PermissionRequestManagerTest, RequestsDontNeedUserGesture) {
 TEST_F(PermissionRequestManagerTest, UMAForSimpleDeniedBubbleAlternatePath) {
   base::HistogramTester histograms;
 
-  manager_->AddRequest(&request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
   WaitForBubbleToBeShown();
   // No need to test UMA for showing prompts again, they were tested in
   // UMAForSimpleAcceptedBubble.
@@ -438,7 +535,7 @@ TEST_F(PermissionRequestManagerTest, UMAForSimpleDeniedBubbleAlternatePath) {
 TEST_F(PermissionRequestManagerTest, UMAForTabSwitching) {
   base::HistogramTester histograms;
 
-  manager_->AddRequest(&request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
   WaitForBubbleToBeShown();
   histograms.ExpectUniqueSample(
       PermissionUmaUtil::kPermissionsPromptShown,
@@ -458,45 +555,46 @@ TEST_F(PermissionRequestManagerTest, UMAForTabSwitching) {
 class MockNotificationPermissionUiSelector
     : public NotificationPermissionUiSelector {
  public:
-  explicit MockNotificationPermissionUiSelector(UiToUse ui_to_use, bool async) {
-    ui_to_use_ = ui_to_use;
+  explicit MockNotificationPermissionUiSelector(
+      base::Optional<QuietUiReason> quiet_ui_reason,
+      bool async) {
+    quiet_ui_reason_ = quiet_ui_reason;
     async_ = async;
   }
 
   void SelectUiToUse(PermissionRequest* request,
                      DecisionMadeCallback callback) override {
-    base::Optional<QuietUiReason> reason;
-    if (ui_to_use_ == UiToUse::kQuietUi)
-      reason = QuietUiReason::kEnabledInPrefs;
+    Decision decision(quiet_ui_reason_, Decision::ShowNoWarning());
     if (async_) {
       base::SequencedTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::BindOnce(std::move(callback), ui_to_use_, reason));
+          FROM_HERE, base::BindOnce(std::move(callback), decision));
     } else {
-      std::move(callback).Run(ui_to_use_, reason);
+      std::move(callback).Run(decision);
     }
   }
 
   static void CreateForManager(PermissionRequestManager* manager,
-                               UiToUse ui_to_use,
+                               base::Optional<QuietUiReason> quiet_ui_reason,
                                bool async) {
     manager->set_notification_permission_ui_selector_for_testing(
-        std::make_unique<MockNotificationPermissionUiSelector>(ui_to_use,
+        std::make_unique<MockNotificationPermissionUiSelector>(quiet_ui_reason,
                                                                async));
   }
 
  private:
-  UiToUse ui_to_use_;
+  base::Optional<QuietUiReason> quiet_ui_reason_;
   bool async_;
 };
 
 TEST_F(PermissionRequestManagerTest,
        UiSelectorNotUsedForPermissionsOtherThanNotification) {
-  for (auto* request : {&request_mic_, &request_camera_}) {
+  for (auto* request : {&request_mic_, &request_camera_, &request_ptz_}) {
     MockNotificationPermissionUiSelector::CreateForManager(
-        manager_, NotificationPermissionUiSelector::UiToUse::kQuietUi,
+        manager_,
+        NotificationPermissionUiSelector::QuietUiReason::kEnabledInPrefs,
         false /* async */);
 
-    manager_->AddRequest(request);
+    manager_->AddRequest(web_contents()->GetMainFrame(), request);
     WaitForBubbleToBeShown();
 
     ASSERT_TRUE(prompt_factory_->is_visible());
@@ -510,32 +608,32 @@ TEST_F(PermissionRequestManagerTest,
 }
 
 TEST_F(PermissionRequestManagerTest, UiSelectorUsedForNotifications) {
-  using UiToUse = NotificationPermissionUiSelector::UiToUse;
   const struct {
-    NotificationPermissionUiSelector::UiToUse ui_to_use;
+    base::Optional<NotificationPermissionUiSelector::QuietUiReason>
+        quiet_ui_reason;
     bool async;
   } kTests[] = {
-      {UiToUse::kQuietUi, true},
-      {UiToUse::kNormalUi, true},
-      {UiToUse::kQuietUi, false},
-      {UiToUse::kNormalUi, false},
+      {QuietUiReason::kEnabledInPrefs, true},
+      {NotificationPermissionUiSelector::Decision::UseNormalUi(), true},
+      {QuietUiReason::kEnabledInPrefs, false},
+      {NotificationPermissionUiSelector::Decision::UseNormalUi(), false},
   };
 
   for (const auto& test : kTests) {
     MockNotificationPermissionUiSelector::CreateForManager(
-        manager_, test.ui_to_use, test.async);
+        manager_, test.quiet_ui_reason, test.async);
 
     MockPermissionRequest request(
         "foo", PermissionRequestType::PERMISSION_NOTIFICATIONS,
         PermissionRequestGestureType::GESTURE);
 
-    manager_->AddRequest(&request);
+    manager_->AddRequest(web_contents()->GetMainFrame(), &request);
     WaitForBubbleToBeShown();
 
     EXPECT_TRUE(prompt_factory_->is_visible());
     EXPECT_TRUE(
         prompt_factory_->RequestTypeSeen(request.GetPermissionRequestType()));
-    EXPECT_EQ(test.ui_to_use == UiToUse::kQuietUi,
+    EXPECT_EQ(!!test.quiet_ui_reason,
               manager_->ShouldCurrentRequestUseQuietUI());
     Accept();
 
@@ -545,13 +643,13 @@ TEST_F(PermissionRequestManagerTest, UiSelectorUsedForNotifications) {
 
 TEST_F(PermissionRequestManagerTest,
        UiSelectionHappensSeparatelyForEachRequest) {
-  using UiToUse = NotificationPermissionUiSelector::UiToUse;
+  using QuietUiReason = NotificationPermissionUiSelector::QuietUiReason;
   MockNotificationPermissionUiSelector::CreateForManager(
-      manager_, UiToUse::kQuietUi, true);
+      manager_, QuietUiReason::kEnabledInPrefs, true);
   MockPermissionRequest request1(
       "request1", PermissionRequestType::PERMISSION_NOTIFICATIONS,
       PermissionRequestGestureType::GESTURE);
-  manager_->AddRequest(&request1);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1);
   WaitForBubbleToBeShown();
   EXPECT_TRUE(manager_->ShouldCurrentRequestUseQuietUI());
   Accept();
@@ -560,22 +658,23 @@ TEST_F(PermissionRequestManagerTest,
       "request2", PermissionRequestType::PERMISSION_NOTIFICATIONS,
       PermissionRequestGestureType::GESTURE);
   MockNotificationPermissionUiSelector::CreateForManager(
-      manager_, UiToUse::kNormalUi, true);
-  manager_->AddRequest(&request2);
+      manager_, NotificationPermissionUiSelector::Decision::UseNormalUi(),
+      true);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request2);
   WaitForBubbleToBeShown();
   EXPECT_FALSE(manager_->ShouldCurrentRequestUseQuietUI());
   Accept();
 }
 
 TEST_F(PermissionRequestManagerTest, RequestsNotSupported) {
-  manager_->AddRequest(&request1_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request1_);
   WaitForBubbleToBeShown();
   Accept();
   EXPECT_TRUE(request1_.granted());
 
   manager_->set_web_contents_supports_permission_requests(false);
 
-  manager_->AddRequest(&request2_);
+  manager_->AddRequest(web_contents()->GetMainFrame(), &request2_);
   EXPECT_TRUE(request2_.cancelled());
 }
 }  // namespace permissions

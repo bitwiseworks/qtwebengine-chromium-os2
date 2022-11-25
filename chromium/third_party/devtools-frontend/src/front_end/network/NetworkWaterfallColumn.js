@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as PerfUI from '../perf_ui/perf_ui.js';
 import * as SDK from '../sdk/sdk.js';  // eslint-disable-line no-unused-vars
+import * as ThemeSupport from '../theme_support/theme_support.js';
 import * as UI from '../ui/ui.js';
 
 import {NetworkNode} from './NetworkDataGridNode.js';              // eslint-disable-line no-unused-vars
@@ -74,7 +78,8 @@ export class NetworkWaterfallColumn extends UI.Widget.VBox {
     /** @type {!Map<!Common.ResourceType.ResourceType, !_LayerStyle>} */
     this._styleForDownloadingResourceType = resourceStyleTuple[1];
 
-    const baseLineColor = self.UI.themeSupport.patchColorText('#a5a5a5', UI.UIUtils.ThemeSupport.ColorUsage.Foreground);
+    const baseLineColor =
+        ThemeSupport.ThemeSupport.instance().patchColorText('#a5a5a5', ThemeSupport.ThemeSupport.ColorUsage.Foreground);
     /** @type {!_LayerStyle} */
     this._wiskerStyle = {borderColor: baseLineColor, lineWidth: 1};
     /** @type {!_LayerStyle} */
@@ -84,9 +89,6 @@ export class NetworkWaterfallColumn extends UI.Widget.VBox {
     this._pathForStyle = new Map();
     /** @type {!Array<!_TextLayer>} */
     this._textLayers = [];
-
-    /** @type {?CSSStyleDeclaration} */
-    this._computedDatagridStyle = null;
   }
 
   /**
@@ -108,6 +110,7 @@ export class NetworkWaterfallColumn extends UI.Widget.VBox {
     styleMap.set(types.ReceivingPush, {fillStyle: '#03A9F4'});
     styleMap.set(types.ServiceWorker, {fillStyle: 'orange'});
     styleMap.set(types.ServiceWorkerPreparation, {fillStyle: 'orange'});
+    styleMap.set(types.ServiceWorkerRespondWith, {fillStyle: '#A8A3FF'});
     return styleMap;
   }
 
@@ -449,7 +452,8 @@ export class NetworkWaterfallColumn extends UI.Widget.VBox {
     this._drawLayers(context);
 
     context.save();
-    context.fillStyle = self.UI.themeSupport.patchColorText('#888', UI.UIUtils.ThemeSupport.ColorUsage.Foreground);
+    context.fillStyle =
+        ThemeSupport.ThemeSupport.instance().patchColorText('#888', ThemeSupport.ThemeSupport.ColorUsage.Foreground);
     for (const textData of this._textLayers) {
       context.fillText(textData.text, textData.x, textData.y);
     }
@@ -659,18 +663,10 @@ export class NetworkWaterfallColumn extends UI.Widget.VBox {
    * @param {number} y
    */
   _decorateRow(context, node, y) {
-    if (!this._computedDatagridStyle && node.dataGrid) {
-      // Get BackgroundColor for Waterfall from css variable on datagrid
-      this._computedDatagridStyle = window.getComputedStyle(node.dataGrid.element);
-    }
-    if (!this._computedDatagridStyle) {
-      context.restore();
-      return;
-    }
-    const nodeBgColor = node.backgroundColor();
+    const nodeBgColorId = node.backgroundColor();
     context.save();
     context.beginPath();
-    context.fillStyle = this._computedDatagridStyle.getPropertyValue(nodeBgColor);
+    context.fillStyle = ThemeSupport.ThemeSupport.instance().getComputedValue(nodeBgColorId);
     context.rect(0, y, this._offsetWidth, this._rowHeight);
     context.fill();
     context.restore();

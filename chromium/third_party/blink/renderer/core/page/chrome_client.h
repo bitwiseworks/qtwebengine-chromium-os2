@@ -34,17 +34,16 @@
 #include "cc/trees/paint_holding_commit_trigger.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "third_party/blink/public/common/dom_storage/session_storage_namespace_id.h"
-#include "third_party/blink/public/common/feature_policy/feature_policy.h"
+#include "third_party/blink/public/common/feature_policy/feature_policy_features.h"
+#include "third_party/blink/public/common/page/drag_operation.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/blame_context.h"
-#include "third_party/blink/public/platform/web_drag_operation.h"
-#include "third_party/blink/public/platform/web_float_rect.h"
+#include "third_party/blink/public/platform/web_battery_savings.h"
 #include "third_party/blink/public/web/web_swap_result.h"
 #include "third_party/blink/public/web/web_widget_client.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/frame/sandbox_flags.h"
 #include "third_party/blink/renderer/core/html/forms/external_date_time_chooser.h"
 #include "third_party/blink/renderer/core/html/forms/popup_menu.h"
 #include "third_party/blink/renderer/core/layout/geometry/physical_offset.h"
@@ -100,13 +99,20 @@ class PopupOpeningObserver;
 class WebDragData;
 class WebViewImpl;
 
+enum class FullscreenRequestType;
+
 struct DateTimeChooserParameters;
 struct FrameLoadRequest;
-struct WebTextAutosizerPageInfo;
 struct ViewportDescription;
-struct WebScreenInfo;
+struct ScreenInfo;
 struct WebWindowFeatures;
 struct WebRect;
+
+namespace mojom {
+namespace blink {
+class TextAutosizerPageInfo;
+}
+}  // namespace mojom
 
 using CompositorElementId = cc::ElementId;
 
@@ -121,10 +127,6 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
   // Converts the scalar value from window coordinates to viewport scale.
   virtual float WindowToViewportScalar(LocalFrame*,
                                        const float value) const = 0;
-
-  // Converts the scalar value from window coordinates to viewport rectangle.
-  virtual void WindowToViewportRect(LocalFrame& frame,
-                                    WebFloatRect* viewport_rect) const {}
 
   virtual bool IsPopup() { return false; }
 
@@ -141,15 +143,22 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
   virtual void ScheduleAnimation(const LocalFrameView*,
                                  base::TimeDelta = base::TimeDelta()) = 0;
 
-  // The specified rectangle is adjusted for the minimum window size and the
-  // screen, then setWindowRect with the adjusted rectangle is called.
-  void SetWindowRectWithAdjustment(const IntRect&, LocalFrame&);
+  // Adjusts |pending_rect| for the minimum window size and |frame|'s screen,
+  // then calls SetWindowRect on |frame| with the adjusted rectangle.
+  // Cross-screen window placements are passed on without same-screen clamping
+  // if the |requesting_frame| (i.e. the opener or |frame| itself) has
+  // experimental window placement features enabled. The browser will check
+  // permissions before actually supporting cross-screen placement requests.
+  void SetWindowRectWithAdjustment(const IntRect& pending_rect,
+                                   LocalFrame& frame,
+                                   LocalFrame& requesting_frame);
 
   // This gives the rect of the top level window that the given LocalFrame is a
   // part of.
   virtual IntRect RootWindowRect(LocalFrame&) = 0;
 
-  virtual void Focus(LocalFrame*) = 0;
+  virtual void FocusPage() = 0;
+  virtual void DidFocusPage() = 0;
 
   virtual bool CanTakeFocus(mojom::blink::FocusType) = 0;
   virtual void TakeFocus(mojom::blink::FocusType) = 0;
@@ -186,7 +195,7 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
   // Start a system drag and drop operation.
   virtual void StartDragging(LocalFrame*,
                              const WebDragData&,
-                             WebDragOperationsMask,
+                             DragOperationsMask,
                              const SkBitmap& drag_image,
                              const gfx::Point& drag_image_offset) = 0;
   virtual bool AcceptsLoadDrops() const = 0;
@@ -201,8 +210,8 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
                      const FrameLoadRequest&,
                      const AtomicString& frame_name,
                      const WebWindowFeatures&,
-                     mojom::blink::WebSandboxFlags,
-                     const FeaturePolicy::FeatureState&,
+                     network::mojom::blink::WebSandboxFlags,
+                     const FeaturePolicyFeatureState&,
                      const SessionStorageNamespaceId&);
   virtual void Show(NavigationPolicy) = 0;
 
@@ -265,7 +274,7 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
                             String& result);
   virtual bool TabsToLinks() = 0;
 
-  virtual WebScreenInfo GetScreenInfo(LocalFrame& frame) const = 0;
+  virtual ScreenInfo GetScreenInfo(LocalFrame& frame) const = 0;
   virtual void SetCursor(const ui::Cursor&, LocalFrame* local_root) = 0;
 
   virtual void SetCursorOverridden(bool) = 0;
@@ -314,6 +323,9 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
                                const HitTestResult&);
   virtual void SetToolTip(LocalFrame&, const String&, TextDirection) = 0;
   void ClearToolTip(LocalFrame&);
+  String GetLastToolTipTextForTesting() {
+    return current_tool_tip_text_for_test_;
+  }
 
   bool Print(LocalFrame*);
 
@@ -359,7 +371,7 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
 
   virtual void EnterFullscreen(LocalFrame&,
                                const FullscreenOptions*,
-                               bool for_cross_process_descendant) {}
+                               FullscreenRequestType) {}
   virtual void ExitFullscreen(LocalFrame&) {}
   virtual void FullscreenElementChanged(Element* old_element,
                                         Element* new_element) {}
@@ -484,15 +496,6 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
       WTF::CrossThreadOnceFunction<void(WebSwapResult, base::TimeTicks)>;
   virtual void NotifySwapTime(LocalFrame& frame, ReportTimeCallback callback) {}
 
-  virtual void FallbackCursorModeLockCursor(LocalFrame* frame,
-                                            bool left,
-                                            bool right,
-                                            bool up,
-                                            bool down) = 0;
-
-  virtual void FallbackCursorModeSetCursorVisibility(LocalFrame* frame,
-                                                     bool visible) = 0;
-
   // Enable or disable BeginMainFrameNotExpected signals from the compositor of
   // the local root of |frame|. These signals would be consumed by the blink
   // scheduler.
@@ -503,12 +506,25 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
   // tracing/debugging purposes.
   virtual int GetLayerTreeId(LocalFrame& frame) = 0;
 
-  virtual void Trace(Visitor*);
+  virtual void Trace(Visitor*) const;
 
-  virtual void DidUpdateTextAutosizerPageInfo(const WebTextAutosizerPageInfo&) {
-  }
+  virtual void DidUpdateTextAutosizerPageInfo(
+      const mojom::blink::TextAutosizerPageInfo&) {}
 
   virtual void DocumentDetached(Document&) {}
+
+  // Return the user's zoom factor which is different from the typical usage
+  // of "zoom factor" in blink (e.g., |LocalFrame::PageZoomFactor()|) which
+  // includes CSS zoom and the device scale factor (if use-zoom-for-dsf is
+  // enabled). This only includes the zoom initiated by the user (ctrl +/-).
+  virtual double UserZoomFactor() const { return 1; }
+
+  virtual void SetDelegatedInkMetadata(
+      LocalFrame* frame,
+      std::unique_ptr<viz::DelegatedInkMetadata> metadata) {}
+
+  virtual void BatterySavingsChanged(LocalFrame& main_frame,
+                                     WebBatterySavingsFlags savings) = 0;
 
  protected:
   ChromeClient() = default;
@@ -528,8 +544,8 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
                                      const FrameLoadRequest&,
                                      const AtomicString& frame_name,
                                      const WebWindowFeatures&,
-                                     mojom::blink::WebSandboxFlags,
-                                     const FeaturePolicy::FeatureState&,
+                                     network::mojom::blink::WebSandboxFlags,
+                                     const FeaturePolicyFeatureState&,
                                      const SessionStorageNamespaceId&) = 0;
 
  private:
@@ -541,6 +557,9 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
   WeakMember<Node> last_mouse_over_node_;
   PhysicalOffset last_tool_tip_point_;
   String last_tool_tip_text_;
+  // |last_tool_tip_text_| is kept even if ClearToolTip is called. This is for
+  // the tooltip text that is cleared when ClearToolTip is called.
+  String current_tool_tip_text_for_test_;
 
   FRIEND_TEST_ALL_PREFIXES(ChromeClientTest, SetToolTipFlood);
   FRIEND_TEST_ALL_PREFIXES(ChromeClientTest, SetToolTipEmptyString);

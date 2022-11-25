@@ -6,10 +6,15 @@ source_set("permissions") {
   sources = [
     "chooser_context_base.cc",
     "chooser_context_base.h",
+    "contexts/font_access_permission_context.cc",
+    "contexts/font_access_permission_context.h",
     "contexts/geolocation_permission_context.cc",
     "contexts/geolocation_permission_context.h",
+    "contexts/webxr_permission_context.cc",
+    "contexts/webxr_permission_context.h",
     "features.cc",
     "features.h",
+    "notification_permission_ui_selector.cc",
     "notification_permission_ui_selector.h",
     "permission_context_base.cc",
     "permission_context_base.h",
@@ -43,6 +48,8 @@ source_set("permissions") {
   ]
   deps = [
     "//base",
+    "//components/autofill_assistant/browser/public:public",
+    "//components/content_settings/browser",
     "//components/content_settings/core/browser",
     "//components/keyed_service/content",
     "//components/strings:components_strings_grit",
@@ -52,11 +59,14 @@ source_set("permissions") {
     "//components/vector_icons",
     "//content/public/browser",
     "//services/metrics/public/cpp:ukm_builders",
+    "//third_party/blink/public/common",
     "//ui/base",
     "//url",
   ]
   if (is_android) {
     sources += [
+      "android/android_permission_util.cc",
+      "android/android_permission_util.h",
       "android/permission_dialog_delegate.cc",
       "android/permission_dialog_delegate.h",
       "android/permission_prompt_android.cc",
@@ -97,6 +107,7 @@ source_set("test_support") {
   deps = [
     ":permissions",
     "//base",
+    "//components/content_settings/core/browser",
     "//components/sync_preferences:test_support",
     "//components/ukm/content",
     "//components/vector_icons",
@@ -127,6 +138,8 @@ source_set("unit_tests") {
     ":test_support",
     "//base",
     "//base/test:test_support",
+    "//components/content_settings/browser",
+    "//components/content_settings/browser:test_support",
     "//components/content_settings/core/browser",
     "//components/keyed_service/content",
     "//components/prefs:test_support",

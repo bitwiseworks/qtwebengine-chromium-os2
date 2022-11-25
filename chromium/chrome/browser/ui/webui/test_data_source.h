@@ -32,7 +32,8 @@ class TestDataSource : public content::URLDataSource {
 
   std::string GetSource() override;
 
-  std::string GetContentSecurityPolicyScriptSrc() override;
+  std::string GetContentSecurityPolicy(
+      network::mojom::CSPDirectiveName directive) override;
 
   GURL GetURLForPath(const std::string& path);
 

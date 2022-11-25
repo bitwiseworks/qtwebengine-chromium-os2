@@ -186,6 +186,12 @@ namespace compiler {
   V(Arm64F64x2Le)                           \
   V(Arm64F64x2Qfma)                         \
   V(Arm64F64x2Qfms)                         \
+  V(Arm64F64x2Pmin)                         \
+  V(Arm64F64x2Pmax)                         \
+  V(Arm64F64x2RoundUp)                      \
+  V(Arm64F64x2RoundDown)                    \
+  V(Arm64F64x2RoundTruncate)                \
+  V(Arm64F64x2RoundTiesEven)                \
   V(Arm64F32x4Splat)                        \
   V(Arm64F32x4ExtractLane)                  \
   V(Arm64F32x4ReplaceLane)                  \
@@ -209,6 +215,12 @@ namespace compiler {
   V(Arm64F32x4Le)                           \
   V(Arm64F32x4Qfma)                         \
   V(Arm64F32x4Qfms)                         \
+  V(Arm64F32x4Pmin)                         \
+  V(Arm64F32x4Pmax)                         \
+  V(Arm64F32x4RoundUp)                      \
+  V(Arm64F32x4RoundDown)                    \
+  V(Arm64F32x4RoundTruncate)                \
+  V(Arm64F32x4RoundTiesEven)                \
   V(Arm64I64x2Splat)                        \
   V(Arm64I64x2ExtractLane)                  \
   V(Arm64I64x2ReplaceLane)                  \
@@ -238,6 +250,8 @@ namespace compiler {
   V(Arm64I32x4AddHoriz)                     \
   V(Arm64I32x4Sub)                          \
   V(Arm64I32x4Mul)                          \
+  V(Arm64I32x4Mla)                          \
+  V(Arm64I32x4Mls)                          \
   V(Arm64I32x4MinS)                         \
   V(Arm64I32x4MaxS)                         \
   V(Arm64I32x4Eq)                           \
@@ -254,6 +268,7 @@ namespace compiler {
   V(Arm64I32x4GeU)                          \
   V(Arm64I32x4Abs)                          \
   V(Arm64I32x4BitMask)                      \
+  V(Arm64I32x4DotI16x8S)                    \
   V(Arm64I16x8Splat)                        \
   V(Arm64I16x8ExtractLaneU)                 \
   V(Arm64I16x8ExtractLaneS)                 \
@@ -270,6 +285,8 @@ namespace compiler {
   V(Arm64I16x8Sub)                          \
   V(Arm64I16x8SubSaturateS)                 \
   V(Arm64I16x8Mul)                          \
+  V(Arm64I16x8Mla)                          \
+  V(Arm64I16x8Mls)                          \
   V(Arm64I16x8MinS)                         \
   V(Arm64I16x8MaxS)                         \
   V(Arm64I16x8Eq)                           \
@@ -302,6 +319,8 @@ namespace compiler {
   V(Arm64I8x16Sub)                          \
   V(Arm64I8x16SubSaturateS)                 \
   V(Arm64I8x16Mul)                          \
+  V(Arm64I8x16Mla)                          \
+  V(Arm64I8x16Mls)                          \
   V(Arm64I8x16MinS)                         \
   V(Arm64I8x16MaxS)                         \
   V(Arm64I8x16Eq)                           \
@@ -319,6 +338,7 @@ namespace compiler {
   V(Arm64I8x16RoundingAverageU)             \
   V(Arm64I8x16Abs)                          \
   V(Arm64I8x16BitMask)                      \
+  V(Arm64S128Const)                         \
   V(Arm64S128Zero)                          \
   V(Arm64S128Dup)                           \
   V(Arm64S128And)                           \
@@ -347,26 +367,20 @@ namespace compiler {
   V(Arm64S8x16TransposeLeft)                \
   V(Arm64S8x16TransposeRight)               \
   V(Arm64S8x16Concat)                       \
-  V(Arm64S8x16Swizzle)                      \
-  V(Arm64S8x16Shuffle)                      \
+  V(Arm64I8x16Swizzle)                      \
+  V(Arm64I8x16Shuffle)                      \
   V(Arm64S32x2Reverse)                      \
   V(Arm64S16x4Reverse)                      \
   V(Arm64S16x2Reverse)                      \
   V(Arm64S8x8Reverse)                       \
   V(Arm64S8x4Reverse)                       \
   V(Arm64S8x2Reverse)                       \
-  V(Arm64S1x2AnyTrue)                       \
-  V(Arm64S1x2AllTrue)                       \
-  V(Arm64S1x4AnyTrue)                       \
-  V(Arm64S1x4AllTrue)                       \
-  V(Arm64S1x8AnyTrue)                       \
-  V(Arm64S1x8AllTrue)                       \
-  V(Arm64S1x16AnyTrue)                      \
-  V(Arm64S1x16AllTrue)                      \
-  V(Arm64S8x16LoadSplat)                    \
-  V(Arm64S16x8LoadSplat)                    \
-  V(Arm64S32x4LoadSplat)                    \
-  V(Arm64S64x2LoadSplat)                    \
+  V(Arm64V128AnyTrue)                       \
+  V(Arm64V64x2AllTrue)                      \
+  V(Arm64V32x4AllTrue)                      \
+  V(Arm64V16x8AllTrue)                      \
+  V(Arm64V8x16AllTrue)                      \
+  V(Arm64LoadSplat)                         \
   V(Arm64I16x8Load8x8S)                     \
   V(Arm64I16x8Load8x8U)                     \
   V(Arm64I32x4Load16x4S)                    \
@@ -408,7 +422,11 @@ namespace compiler {
   V(Arm64Word64AtomicCompareExchangeUint8)  \
   V(Arm64Word64AtomicCompareExchangeUint16) \
   V(Arm64Word64AtomicCompareExchangeUint32) \
-  V(Arm64Word64AtomicCompareExchangeUint64)
+  V(Arm64Word64AtomicCompareExchangeUint64) \
+  V(Arm64S128LoadMem32Zero)                 \
+  V(Arm64S128LoadMem64Zero)
+// TODO(v8:10930) Adding new codes before these atomic instructions causes a
+// mksnapshot error.
 
 // Addressing modes represent the "shape" of inputs to an instruction.
 // Many instructions support multiple addressing modes. Addressing modes

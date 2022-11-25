@@ -7,8 +7,9 @@
 #include <memory>
 #include <utility>
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/memory/ptr_util.h"
+#include "base/notreached.h"
 #include "base/values.h"
 #include "components/autofill/core/browser/geo/autofill_country.h"
 #include "components/autofill/core/browser/ui/country_combobox_model.h"
@@ -95,10 +96,6 @@ void GetAddressComponents(const std::string& country_code,
 
   base::ListValue* line = nullptr;
   for (size_t i = 0; i < components.size(); ++i) {
-    if (components[i].field == ::i18n::addressinput::ORGANIZATION &&
-        !base::FeatureList::IsEnabled(features::kAutofillEnableCompanyName)) {
-      continue;
-    }
     if (i == 0 ||
         components[i - 1].length_hint == AddressUiComponent::HINT_LONG ||
         components[i].length_hint == AddressUiComponent::HINT_LONG) {

@@ -7,6 +7,8 @@
 
 #include "extensions/browser/api/execute_code_function.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/task/post_task.h"
 #include "base/task/thread_pool.h"
@@ -112,7 +114,7 @@ void ExecuteCodeFunction::DidLoadAndLocalizeFile(
 
   std::string error;
   if (!Execute(*data, &error))
-    Respond(Error(error));
+    Respond(Error(std::move(error)));
 
   // If Execute() succeeds, the function will respond in
   // OnExecuteCodeFinished().
@@ -128,9 +130,13 @@ bool ExecuteCodeFunction::Execute(const std::string& code_string,
   if (!extension() && !IsWebView())
     return false;
 
-  ScriptExecutor::ScriptType script_type = ScriptExecutor::JAVASCRIPT;
+  DCHECK(!(ShouldInsertCSS() && ShouldRemoveCSS()));
+
+  auto action_type = UserScript::ActionType::ADD_JAVASCRIPT;
   if (ShouldInsertCSS())
-    script_type = ScriptExecutor::CSS;
+    action_type = UserScript::ActionType::ADD_CSS;
+  else if (ShouldRemoveCSS())
+    action_type = UserScript::ActionType::REMOVE_CSS;
 
   ScriptExecutor::FrameScope frame_scope =
       details_->all_frames.get() && *details_->all_frames
@@ -167,7 +173,7 @@ bool ExecuteCodeFunction::Execute(const std::string& code_string,
     css_origin = CSS_ORIGIN_AUTHOR;
 
   executor->ExecuteScript(
-      host_id_, script_type, code_string, frame_scope, frame_id,
+      host_id_, action_type, code_string, frame_scope, frame_id,
       match_about_blank, run_at,
       IsWebView() ? ScriptExecutor::WEB_VIEW_PROCESS
                   : ScriptExecutor::DEFAULT_PROCESS,
@@ -191,23 +197,23 @@ ExtensionFunction::ResponseAction ExecuteCodeFunction::Run() {
     return RespondNow(Error(kMoreThanOneValuesError));
 
   if (details_->css_origin != api::extension_types::CSS_ORIGIN_NONE &&
-      !ShouldInsertCSS()) {
+      !ShouldInsertCSS() && !ShouldRemoveCSS()) {
     return RespondNow(Error(kCSSOriginForNonCSSError));
   }
 
   std::string error;
   if (!CanExecuteScriptOnPage(&error))
-    return RespondNow(Error(error));
+    return RespondNow(Error(std::move(error)));
 
   if (details_->code) {
     if (!Execute(*details_->code, &error))
-      return RespondNow(Error(error));
+      return RespondNow(Error(std::move(error)));
     return did_respond() ? AlreadyResponded() : RespondLater();
   }
 
   DCHECK(details_->file);
   if (!LoadFile(*details_->file, &error))
-    return RespondNow(Error(error));
+    return RespondNow(Error(std::move(error)));
 
   // LoadFile will respond asynchronously later.
   return RespondLater();
@@ -234,7 +240,8 @@ bool ExecuteCodeFunction::LoadFile(const std::string& file,
           extension());
   // TODO(lazyboy): |extension_id| should not be empty(), turn this into a
   // DCHECK.
-  bool might_require_localization = ShouldInsertCSS() && !extension_id.empty();
+  bool might_require_localization =
+      (ShouldInsertCSS() || ShouldRemoveCSS()) && !extension_id.empty();
   int resource_id = 0;
   const ComponentExtensionResourceManager*
       component_extension_resource_manager =
@@ -283,9 +290,10 @@ void ExecuteCodeFunction::OnExecuteCodeFinished(const std::string& error,
     return;
   }
 
-  // insertCSS doesn't have a result argument.
-  Respond(ShouldInsertCSS() ? NoArguments()
-                            : OneArgument(result.CreateDeepCopy()));
+  // insertCSS and removeCSS don't have a result argument.
+  Respond(ShouldInsertCSS() || ShouldRemoveCSS()
+              ? NoArguments()
+              : OneArgument(result.CreateDeepCopy()));
 }
 
 }  // namespace extensions

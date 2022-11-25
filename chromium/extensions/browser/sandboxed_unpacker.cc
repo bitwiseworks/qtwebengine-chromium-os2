@@ -29,13 +29,12 @@
 #include "components/crx_file/crx_verifier.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "extensions/browser/api/declarative_net_request/constants.h"
 #include "extensions/browser/api/declarative_net_request/index_helper.h"
-#include "extensions/browser/api/declarative_net_request/ruleset_source.h"
 #include "extensions/browser/computed_hashes.h"
 #include "extensions/browser/extension_file_task_runner.h"
 #include "extensions/browser/install/crx_install_error.h"
 #include "extensions/browser/install/sandboxed_unpacker_failure_reason.h"
+#include "extensions/browser/install_stage.h"
 #include "extensions/browser/zipfile_installer.h"
 #include "extensions/common/api/declarative_net_request/dnr_manifest_data.h"
 #include "extensions/common/constants.h"
@@ -59,77 +58,8 @@
 using base::ASCIIToUTF16;
 using content::BrowserThread;
 
-// The following macro makes histograms that record the length of paths
-// in this file much easier to read.
-// Windows has a short max path length. If the path length to a
-// file being unpacked from a CRX exceeds the max length, we might
-// fail to install. To see if this is happening, see how long the
-// path to the temp unpack directory is. See crbug.com/69693 .
-#define PATH_LENGTH_HISTOGRAM(name, path) \
-  UMA_HISTOGRAM_CUSTOM_COUNTS(name, path.value().length(), 1, 500, 100)
-
-// Record a rate (kB per second) at which extensions are unpacked.
-// Range from 1kB/s to 100mB/s.
-#define UNPACK_RATE_HISTOGRAM(name, rate) \
-  UMA_HISTOGRAM_CUSTOM_COUNTS(name, rate, 1, 100000, 100);
-
 namespace extensions {
 namespace {
-
-void RecordSuccessfulUnpackTimeHistograms(const base::FilePath& crx_path,
-                                          const base::TimeDelta unpack_time) {
-  const int64_t kBytesPerKb = 1024;
-  const int64_t kBytesPerMb = 1024 * 1024;
-
-  UMA_HISTOGRAM_TIMES("Extensions.SandboxUnpackSuccessTime", unpack_time);
-
-  // To get a sense of how CRX size impacts unpack time, record unpack
-  // time for several increments of CRX size.
-  int64_t crx_file_size;
-  if (!base::GetFileSize(crx_path, &crx_file_size)) {
-    UMA_HISTOGRAM_COUNTS_1M("Extensions.SandboxUnpackSuccessCantGetCrxSize", 1);
-    return;
-  }
-
-  // Cast is safe as long as the number of bytes in the CRX is less than
-  // 2^31 * 2^10.
-  int crx_file_size_kb = static_cast<int>(crx_file_size / kBytesPerKb);
-  UMA_HISTOGRAM_COUNTS_1M("Extensions.SandboxUnpackSuccessCrxSize",
-                          crx_file_size_kb);
-
-  // We have time in seconds and file size in bytes.  We want the rate bytes are
-  // unpacked in kB/s.
-  double file_size_kb =
-      static_cast<double>(crx_file_size) / static_cast<double>(kBytesPerKb);
-  int unpack_rate_kb_per_s =
-      static_cast<int>(file_size_kb / unpack_time.InSecondsF());
-  UNPACK_RATE_HISTOGRAM("Extensions.SandboxUnpackRate", unpack_rate_kb_per_s);
-
-  if (crx_file_size < 50.0 * kBytesPerKb) {
-    UNPACK_RATE_HISTOGRAM("Extensions.SandboxUnpackRateUnder50kB",
-                          unpack_rate_kb_per_s);
-
-  } else if (crx_file_size < 1 * kBytesPerMb) {
-    UNPACK_RATE_HISTOGRAM("Extensions.SandboxUnpackRate50kBTo1mB",
-                          unpack_rate_kb_per_s);
-
-  } else if (crx_file_size < 2 * kBytesPerMb) {
-    UNPACK_RATE_HISTOGRAM("Extensions.SandboxUnpackRate1To2mB",
-                          unpack_rate_kb_per_s);
-
-  } else if (crx_file_size < 5 * kBytesPerMb) {
-    UNPACK_RATE_HISTOGRAM("Extensions.SandboxUnpackRate2To5mB",
-                          unpack_rate_kb_per_s);
-
-  } else if (crx_file_size < 10 * kBytesPerMb) {
-    UNPACK_RATE_HISTOGRAM("Extensions.SandboxUnpackRate5To10mB",
-                          unpack_rate_kb_per_s);
-
-  } else {
-    UNPACK_RATE_HISTOGRAM("Extensions.SandboxUnpackRateOver10mB",
-                          unpack_rate_kb_per_s);
-  }
-}
 
 // Work horse for FindWritableTempLocation. Creates a temp file in the folder
 // and uses NormalizeFilePath to check if the path is junction free.
@@ -147,7 +77,7 @@ bool VerifyJunctionFreeLocation(base::FilePath* temp_dir) {
   // If you change the exit points of this function please make sure all
   // exit points delete this temp file!
   if (base::WriteFile(temp_file, ".", 1) != 1) {
-    base::DeleteFile(temp_file, false);
+    base::DeleteFile(temp_file);
     return false;
   }
 
@@ -162,7 +92,7 @@ bool VerifyJunctionFreeLocation(base::FilePath* temp_dir) {
   }
 
   // Clean up the temp file.
-  base::DeleteFile(temp_file, false);
+  base::DeleteFile(temp_file);
 
   return normalized;
 }
@@ -227,7 +157,7 @@ base::Optional<crx_file::VerifierFormat> g_verifier_format_override_for_test;
 
 SandboxedUnpackerClient::SandboxedUnpackerClient()
     : RefCountedDeleteOnSequence<SandboxedUnpackerClient>(
-          base::CreateSingleThreadTaskRunner({content::BrowserThread::UI})) {
+          content::GetUIThreadTaskRunner({})) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 }
 
@@ -293,8 +223,7 @@ void SandboxedUnpacker::StartWithCrx(const CRXFileInfo& crx_info) {
   // We assume that we are started on the thread that the client wants us
   // to do file IO on.
   DCHECK(unpacker_io_task_runner_->RunsTasksInCurrentSequence());
-
-  crx_unpack_start_time_ = base::TimeTicks::Now();
+  client_->OnStageChanged(InstallationStage::kVerification);
   std::string expected_hash;
   if (!crx_info.expected_hash.empty() &&
       base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -302,15 +231,11 @@ void SandboxedUnpacker::StartWithCrx(const CRXFileInfo& crx_info) {
     expected_hash = base::ToLowerASCII(crx_info.expected_hash);
   }
 
-  PATH_LENGTH_HISTOGRAM("Extensions.SandboxUnpackInitialCrxPathLength",
-                        crx_info.path);
   if (!CreateTempDirectory())
     return;  // ReportFailure() already called.
 
   // Initialize the path that will eventually contain the unpacked extension.
   extension_root_ = temp_dir_.GetPath().AppendASCII(kTempExtensionName);
-  PATH_LENGTH_HISTOGRAM("Extensions.SandboxUnpackUnpackedCrxPathLength",
-                        extension_root_);
 
   // Extract the public key and validate the package.
   if (!ValidateSignature(crx_info.path, expected_hash,
@@ -318,11 +243,10 @@ void SandboxedUnpacker::StartWithCrx(const CRXFileInfo& crx_info) {
                              crx_info.required_format)))
     return;  // ValidateSignature() already reported the error.
 
+  client_->OnStageChanged(InstallationStage::kCopying);
   // Copy the crx file into our working directory.
   base::FilePath temp_crx_path =
       temp_dir_.GetPath().Append(crx_info.path.BaseName());
-  PATH_LENGTH_HISTOGRAM("Extensions.SandboxUnpackTempCrxPathLength",
-                        temp_crx_path);
 
   if (!base::CopyFile(crx_info.path, temp_crx_path)) {
     // Failed to copy extension file to temporary directory.
@@ -349,10 +273,7 @@ void SandboxedUnpacker::StartWithCrx(const CRXFileInfo& crx_info) {
         l10n_util::GetStringUTF16(IDS_EXTENSION_UNPACK_FAILED));
     return;
   }
-
-  PATH_LENGTH_HISTOGRAM("Extensions.SandboxUnpackLinkFreeCrxPathLength",
-                        link_free_crx_path);
-
+  client_->OnStageChanged(InstallationStage::kUnpacking);
   // Make sure to create the directory where the extension will be unzipped, as
   // the unzipper service requires it.
   base::FilePath unzipped_dir =
@@ -420,7 +341,8 @@ void SandboxedUnpacker::Unzip(const base::FilePath& crx_path,
 
   DCHECK(crx_path.DirName() == temp_dir_.GetPath());
 
-  ZipFileInstaller::Create(base::BindOnce(&SandboxedUnpacker::UnzipDone, this))
+  ZipFileInstaller::Create(unpacker_io_task_runner_,
+                           base::BindOnce(&SandboxedUnpacker::UnzipDone, this))
       ->LoadFromZipFileInDir(crx_path, unzipped_dir);
 }
 
@@ -551,7 +473,8 @@ void SandboxedUnpacker::UnpackExtensionSucceeded(base::Value manifest) {
   image_sanitizer_ = ImageSanitizer::CreateAndStart(
       &data_decoder_, extension_root_, image_paths,
       base::BindRepeating(&SandboxedUnpacker::ImageSanitizerDecodedImage, this),
-      base::BindOnce(&SandboxedUnpacker::ImageSanitizationDone, this));
+      base::BindOnce(&SandboxedUnpacker::ImageSanitizationDone, this),
+      unpacker_io_task_runner_);
 }
 
 void SandboxedUnpacker::ImageSanitizerDecodedImage(const base::FilePath& path,
@@ -645,7 +568,8 @@ void SandboxedUnpacker::SanitizeMessageCatalogs(
   DCHECK(unpacker_io_task_runner_->RunsTasksInCurrentSequence());
   json_file_sanitizer_ = JsonFileSanitizer::CreateAndStart(
       &data_decoder_, message_catalog_paths,
-      base::BindOnce(&SandboxedUnpacker::MessageCatalogsSanitized, this));
+      base::BindOnce(&SandboxedUnpacker::MessageCatalogsSanitized, this),
+      unpacker_io_task_runner_);
 }
 
 void SandboxedUnpacker::MessageCatalogsSanitized(
@@ -692,48 +616,26 @@ void SandboxedUnpacker::IndexAndPersistJSONRulesetsIfNeeded() {
   DCHECK(unpacker_io_task_runner_->RunsTasksInCurrentSequence());
   DCHECK(extension_);
 
-  if (!declarative_net_request::DNRManifestData::HasRuleset(*extension_)) {
-    // The extension did not provide a ruleset.
-    CheckComputeHashes();
-    return;
-  }
-
-  declarative_net_request::IndexHelper::Start(
-      declarative_net_request::RulesetSource::CreateStatic(*extension_),
+  declarative_net_request::IndexHelper::IndexStaticRulesets(
+      *extension_,
       base::BindOnce(&SandboxedUnpacker::OnJSONRulesetsIndexed, this));
 }
 
 void SandboxedUnpacker::OnJSONRulesetsIndexed(
-    std::vector<declarative_net_request::IndexAndPersistJSONRulesetResult>
-        results) {
-  base::TimeDelta total_index_and_persist_time;
-  size_t total_rules_count = 0;
-
-  // TODO(crbug.com/754526): Impose a limit on the total number of rules across
-  // all the rulesets for an extension. Also, limit the number of install
-  // warnings across all rulesets.
-  for (auto& result : results) {
-    if (!result.success) {
-      ReportFailure(
-          SandboxedUnpackerFailureReason::ERROR_INDEXING_DNR_RULESET,
-          l10n_util::GetStringFUTF16(IDS_EXTENSION_PACKAGE_ERROR_MESSAGE,
-                                     base::UTF8ToUTF16(result.error)));
-      return;
-    }
-
-    if (!result.warnings.empty())
-      extension_->AddInstallWarnings(std::move(result.warnings));
-
-    total_index_and_persist_time += result.index_and_persist_time;
-    total_rules_count += result.rules_count;
-    ruleset_checksums_.emplace_back(result.ruleset_id, result.ruleset_checksum);
+    declarative_net_request::IndexHelper::Result result) {
+  if (result.error) {
+    ReportFailure(
+        SandboxedUnpackerFailureReason::ERROR_INDEXING_DNR_RULESET,
+        l10n_util::GetStringFUTF16(IDS_EXTENSION_PACKAGE_ERROR_MESSAGE,
+                                   base::UTF8ToUTF16(*result.error)));
+    return;
   }
 
-  UMA_HISTOGRAM_TIMES(
-      declarative_net_request::kIndexAndPersistRulesTimeHistogram,
-      total_index_and_persist_time);
-  UMA_HISTOGRAM_COUNTS_100000(
-      declarative_net_request::kManifestRulesCountHistogram, total_rules_count);
+  if (!result.warnings.empty())
+    extension_->AddInstallWarnings(std::move(result.warnings));
+
+  ruleset_install_prefs_ = std::move(result.ruleset_install_prefs);
+
   CheckComputeHashes();
 }
 
@@ -975,9 +877,6 @@ void SandboxedUnpacker::ReportFailure(
   UMA_HISTOGRAM_ENUMERATION(
       "Extensions.SandboxUnpackFailureReason", reason,
       SandboxedUnpackerFailureReason::NUM_FAILURE_REASONS);
-  if (!crx_unpack_start_time_.is_null())
-    UMA_HISTOGRAM_TIMES("Extensions.SandboxUnpackFailureTime",
-                        base::TimeTicks::Now() - crx_unpack_start_time_);
   Cleanup();
 
   client_->OnUnpackFailure(CrxInstallError(reason, error));
@@ -988,10 +887,6 @@ void SandboxedUnpacker::ReportSuccess() {
 
   UMA_HISTOGRAM_COUNTS_1M("Extensions.SandboxUnpackSuccess", 1);
 
-  if (!crx_unpack_start_time_.is_null())
-    RecordSuccessfulUnpackTimeHistograms(
-        crx_path_for_histograms_,
-        base::TimeTicks::Now() - crx_unpack_start_time_);
   DCHECK(!temp_dir_.GetPath().empty());
 
   // Client takes ownership of temporary directory, manifest, and extension.
@@ -999,11 +894,11 @@ void SandboxedUnpacker::ReportSuccess() {
       temp_dir_.Take(), extension_root_,
       base::DictionaryValue::From(
           base::Value::ToUniquePtrValue(std::move(manifest_.value()))),
-      extension_.get(), install_icon_, std::move(ruleset_checksums_));
+      extension_.get(), install_icon_, std::move(ruleset_install_prefs_));
 
   // Interestingly, the C++ standard doesn't guarantee that a moved-from vector
   // is empty.
-  ruleset_checksums_.clear();
+  ruleset_install_prefs_.clear();
 
   extension_.reset();
 

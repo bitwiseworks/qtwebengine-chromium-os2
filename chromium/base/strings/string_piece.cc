@@ -6,11 +6,11 @@
 #include "base/strings/string_piece.h"
 
 #include <limits.h>
+#include <string.h>
 
 #include <algorithm>
 #include <ostream>
 
-#include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
 
 namespace base {
@@ -385,27 +385,6 @@ size_t find_last_not_of(const StringPiece16& self,
                         char16 c,
                         size_t pos) {
   return find_last_not_ofT(self, c, pos);
-}
-
-template<typename STR>
-BasicStringPiece<STR> substrT(const BasicStringPiece<STR>& self,
-                              size_t pos,
-                              size_t n) {
-  if (pos > self.size()) pos = self.size();
-  if (n > self.size() - pos) n = self.size() - pos;
-  return BasicStringPiece<STR>(self.data() + pos, n);
-}
-
-StringPiece substr(const StringPiece& self,
-                   size_t pos,
-                   size_t n) {
-  return substrT(self, pos, n);
-}
-
-StringPiece16 substr(const StringPiece16& self,
-                     size_t pos,
-                     size_t n) {
-  return substrT(self, pos, n);
 }
 
 }  // namespace internal

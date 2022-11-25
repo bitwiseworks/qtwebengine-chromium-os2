@@ -120,7 +120,7 @@ QuicStream* QuicSessionPeer::GetOrCreateStream(QuicSession* session,
 }
 
 // static
-std::map<QuicStreamId, QuicStreamOffset>&
+QuicHashMap<QuicStreamId, QuicStreamOffset>&
 QuicSessionPeer::GetLocallyClosedStreamsHighestOffset(QuicSession* session) {
   return session->locally_closed_streams_highest_offset_;
 }
@@ -134,18 +134,6 @@ QuicSession::StreamMap& QuicSessionPeer::stream_map(QuicSession* session) {
 const QuicSession::ClosedStreams& QuicSessionPeer::closed_streams(
     QuicSession* session) {
   return *session->closed_streams();
-}
-
-// static
-QuicSession::ZombieStreamMap& QuicSessionPeer::zombie_streams(
-    QuicSession* session) {
-  return session->zombie_streams_;
-}
-
-// static
-QuicUnorderedSet<QuicStreamId>* QuicSessionPeer::GetDrainingStreams(
-    QuicSession* session) {
-  return &session->draining_streams_;
 }
 
 // static
@@ -237,6 +225,27 @@ void QuicSessionPeer::set_is_configured(QuicSession* session, bool value) {
 void QuicSessionPeer::SetPerspective(QuicSession* session,
                                      Perspective perspective) {
   session->perspective_ = perspective;
+}
+
+// static
+size_t QuicSessionPeer::GetNumOpenDynamicStreams(QuicSession* session) {
+  size_t result = 0;
+  for (const auto& it : session->stream_map_) {
+    if (!it.second->is_static()) {
+      ++result;
+    }
+  }
+  // Exclude draining streams.
+  result -= session->num_draining_streams_;
+  // Add locally closed streams.
+  result += session->locally_closed_streams_highest_offset_.size();
+
+  return result;
+}
+
+// static
+size_t QuicSessionPeer::GetNumDrainingStreams(QuicSession* session) {
+  return session->num_draining_streams_;
 }
 
 }  // namespace test

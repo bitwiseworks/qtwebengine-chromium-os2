@@ -129,11 +129,10 @@ export class InspectorBackend {
    * @param {string} method
    * @param {!Array.<!{name: string, type: string, optional: boolean}>} signature
    * @param {!Array.<string>} replyArgs
-   * @param {boolean} hasErrorData
    */
-  registerCommand(method, signature, replyArgs, hasErrorData) {
+  registerCommand(method, signature, replyArgs) {
     const domainAndMethod = method.split('.');
-    this._agentPrototype(domainAndMethod[0]).registerCommand(domainAndMethod[1], signature, replyArgs, hasErrorData);
+    this._agentPrototype(domainAndMethod[0]).registerCommand(domainAndMethod[1], signature, replyArgs);
     this._initialized = true;
   }
 
@@ -168,9 +167,9 @@ export class InspectorBackend {
   /**
    * @param {function((T|undefined)):void} clientCallback
    * @param {string} errorPrefix
-   * @param {function(new:T,S)=} constructor
+   * @param {function(new:T,S):void=} constructor
    * @param {T=} defaultValue
-   * @return {function(?string, S)}
+   * @return {function(?string, S):void}
    * @template T,S
    */
   wrapClientCallback(clientCallback, errorPrefix, constructor, defaultValue) {
@@ -292,6 +291,8 @@ export const test = {
   onMessageReceived: null,
 };
 
+const LongPollingMethods = new Set(['CSS.takeComputedStyleUpdates']);
+
 export class SessionRouter {
   /**
    * @param {!Connection} connection
@@ -300,6 +301,8 @@ export class SessionRouter {
     this._connection = connection;
     this._lastMessageId = 1;
     this._pendingResponsesCount = 0;
+    /** @type {!Set<number>} */
+    this._pendingLongPollingMessageIds = new Set();
     this._domainToLogger = new Map();
 
     /** @type {!Map<string, {target: !TargetBase, callbacks: !Map<number, !_Callback>, proxyConnection: (?Connection|undefined)}>} */
@@ -412,6 +415,10 @@ export class SessionRouter {
     }
 
     ++this._pendingResponsesCount;
+    if (LongPollingMethods.has(method)) {
+      this._pendingLongPollingMessageIds.add(messageId);
+    }
+
     const session = this._sessions.get(sessionId);
     if (!session) {
       return;
@@ -495,8 +502,9 @@ export class SessionRouter {
 
       callback(messageObject.error, messageObject.result);
       --this._pendingResponsesCount;
+      this._pendingLongPollingMessageIds.delete(messageObject.id);
 
-      if (this._pendingScripts.length && !this._pendingResponsesCount) {
+      if (this._pendingScripts.length && !this._hasOutstandingNonLongPollingRequests()) {
         this._deprecatedRunAfterPendingDispatches();
       }
     } else {
@@ -518,8 +526,12 @@ export class SessionRouter {
     }
   }
 
+  _hasOutstandingNonLongPollingRequests() {
+    return this._pendingResponsesCount - this._pendingLongPollingMessageIds.size > 0;
+  }
+
   /**
-   * @param {function()=} script
+   * @param {function():void=} script
    */
   _deprecatedRunAfterPendingDispatches(script) {
     if (script) {
@@ -528,7 +540,7 @@ export class SessionRouter {
 
     // Execute all promises.
     setTimeout(() => {
-      if (!this._pendingResponsesCount) {
+      if (!this._hasOutstandingNonLongPollingRequests()) {
         this._executeAfterPendingDispatches();
       } else {
         this._deprecatedRunAfterPendingDispatches();
@@ -537,7 +549,7 @@ export class SessionRouter {
   }
 
   _executeAfterPendingDispatches() {
-    if (!this._pendingResponsesCount) {
+    if (!this._hasOutstandingNonLongPollingRequests()) {
       const scripts = this._pendingScripts;
       this._pendingScripts = [];
       for (let id = 0; id < scripts.length; ++id) {
@@ -646,6 +658,299 @@ export class TargetBase {
   router() {
     return this._router;
   }
+
+
+  // Agent accessors, keep alphabetically sorted.
+
+  /**
+   * @return {!ProtocolProxyApi.AccessibilityApi}
+   */
+  accessibilityAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.ApplicationCacheApi}
+   */
+  applicationCacheAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.AuditsApi}
+   */
+  auditsAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.CacheStorageApi}
+   */
+  cacheStorageAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.CSSApi}
+   */
+  cssAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.DebuggerApi}
+   */
+  debuggerAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.DOMApi}
+   */
+  domAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.DOMDebuggerApi}
+   */
+  domdebuggerAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.DOMSnapshotApi}
+   */
+  domsnapshotAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.HeapProfilerApi}
+   */
+  heapProfilerAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.IOApi}
+   */
+  ioAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.LayerTreeApi}
+   */
+  layerTreeAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.LogApi}
+   */
+  logAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.MediaApi}
+   */
+  mediaAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.MemoryApi}
+   */
+  memoryAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.NetworkApi}
+   */
+  networkAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.OverlayApi}
+   */
+  overlayAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.PageApi}
+   */
+  pageAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.ProfilerApi}
+   */
+  profilerAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.PerformanceApi}
+   */
+  performanceAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.RuntimeApi}
+   */
+  runtimeAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.ServiceWorkerApi}
+   */
+  serviceWorkerAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.StorageApi}
+   */
+  storageAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.TargetApi}
+   */
+  targetAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.TracingApi}
+   */
+  tracingAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @return {!ProtocolProxyApi.WebAuthnApi}
+   */
+  webAuthnAgent() {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+
+  // Dispatcher registration, keep alphabetically sorted.
+
+  /**
+   * @param {!ProtocolProxyApi.ApplicationCacheDispatcher} dispatcher
+   */
+  registerApplicationCacheDispatcher(dispatcher) {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @param {!ProtocolProxyApi.AuditsDispatcher} dispatcher
+   */
+  registerAuditsDispatcher(dispatcher) {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @param {!ProtocolProxyApi.DebuggerDispatcher} dispatcher
+   */
+  registerDebuggerDispatcher(dispatcher) {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @param {!ProtocolProxyApi.DOMDispatcher} dispatcher
+   */
+  registerDOMDispatcher(dispatcher) {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @param {!ProtocolProxyApi.HeapProfilerDispatcher} dispatcher
+   */
+  registerHeapProfilerDispatcher(dispatcher) {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @param {!ProtocolProxyApi.LogDispatcher} dispatcher
+   */
+  registerLogDispatcher(dispatcher) {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @param {!ProtocolProxyApi.MediaDispatcher} dispatcher
+   */
+  registerMediaDispatcher(dispatcher) {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @param {!ProtocolProxyApi.NetworkDispatcher} dispatcher
+   */
+  registerNetworkDispatcher(dispatcher) {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @param {!ProtocolProxyApi.OverlayDispatcher} dispatcher
+   */
+  registerOverlayDispatcher(dispatcher) {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @param {!ProtocolProxyApi.PageDispatcher} dispatcher
+   */
+  registerPageDispatcher(dispatcher) {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @param {!ProtocolProxyApi.ProfilerDispatcher} dispatcher
+   */
+  registerProfilerDispatcher(dispatcher) {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @param {!ProtocolProxyApi.StorageDispatcher} dispatcher
+   */
+  registerStorageDispatcher(dispatcher) {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @param {!ProtocolProxyApi.ServiceWorkerDispatcher} dispatcher
+   */
+  registerServiceWorkerDispatcher(dispatcher) {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @param {!ProtocolProxyApi.TargetDispatcher} dispatcher
+   */
+  registerTargetDispatcher(dispatcher) {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
+
+  /**
+   * @param {!ProtocolProxyApi.TracingDispatcher} dispatcher
+   */
+  registerTracingDispatcher(dispatcher) {
+    throw new Error('Implemented in InspectorBackend.js');
+  }
 }
 
 /**
@@ -658,8 +963,6 @@ class _AgentPrototype {
   constructor(domain) {
     /** @type {!Object<string, !Array<string>>} */
     this._replyArgs = {};
-    /** @type {!Object<string, boolean>} */
-    this._hasErrorData = {};
     this._domain = domain;
     /** @type {!TargetBase} */
     this._target;
@@ -669,9 +972,8 @@ class _AgentPrototype {
    * @param {string} methodName
    * @param {!Array.<!{name: string, type: string, optional: boolean}>} signature
    * @param {!Array.<string>} replyArgs
-   * @param {boolean} hasErrorData
    */
-  registerCommand(methodName, signature, replyArgs, hasErrorData) {
+  registerCommand(methodName, signature, replyArgs) {
     const domainAndMethod = this._domain + '.' + methodName;
 
     /**
@@ -688,11 +990,11 @@ class _AgentPrototype {
     this[methodName] = sendMessagePromise;
 
     /**
-     * @param {!Object} request
+     * @param {!Object=} request
      * @return {!Promise<?Object>}
      * @this {_AgentPrototype}
      */
-    function invoke(request) {
+    function invoke(request = {}) {
       return this._invoke(domainAndMethod, request);
     }
 
@@ -700,9 +1002,6 @@ class _AgentPrototype {
     this['invoke_' + methodName] = invoke;
 
     this._replyArgs[domainAndMethod] = replyArgs;
-    if (hasErrorData) {
-      this._hasErrorData[domainAndMethod] = true;
-    }
   }
 
   /**
@@ -773,7 +1072,7 @@ class _AgentPrototype {
       return Promise.resolve(null);
     }
 
-    return new Promise((resolve, reject) => {
+    return new Promise(resolve => {
       /**
        * @param {*} error
        * @param {*} result
@@ -783,11 +1082,9 @@ class _AgentPrototype {
           if (!test.suppressRequestErrors && error.code !== DevToolsStubErrorCode && error.code !== _GenericError &&
               error.code !== _ConnectionClosedErrorCode) {
             console.error('Request ' + method + ' failed. ' + JSON.stringify(error));
-            reject(error);
-          } else {
-            resolve(null);
           }
 
+          resolve(null);
           return;
         }
 
@@ -825,7 +1122,15 @@ class _AgentPrototype {
           result = {};
         }
         if (error) {
+          // TODO(crbug.com/1011811): Remove Old lookup of ProtocolError
           result[ProtocolError] = error.message;
+          result.getError = () => {
+            return error.message;
+          };
+        } else {
+          result.getError = () => {
+            return undefined;
+          };
         }
         fulfill(result);
       };
@@ -890,8 +1195,13 @@ class _DispatcherPrototype {
 
     for (let index = 0; index < this._dispatchers.length; ++index) {
       const dispatcher = this._dispatchers[index];
+
       if (functionName in dispatcher) {
-        dispatcher[functionName].apply(dispatcher, params);
+        if (dispatcher.usesObjectNotation && dispatcher.usesObjectNotation()) {
+          dispatcher[functionName].call(dispatcher, {...messageObject.params});
+        } else {
+          dispatcher[functionName].apply(dispatcher, params);
+        }
       }
     }
   }

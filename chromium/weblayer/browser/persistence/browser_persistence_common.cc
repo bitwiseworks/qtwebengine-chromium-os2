@@ -9,11 +9,11 @@
 #include "components/sessions/core/session_command.h"
 #include "components/sessions/core/session_service_commands.h"
 #include "components/sessions/core/session_types.h"
-#include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_url_handler.h"
 #include "content/public/browser/dom_storage_context.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/storage_partition.h"
+#include "weblayer/browser/browser_context_impl.h"
 #include "weblayer/browser/browser_impl.h"
 #include "weblayer/browser/profile_impl.h"
 #include "weblayer/browser/tab_impl.h"
@@ -69,10 +69,13 @@ void ProcessRestoreCommands(
     std::vector<std::unique_ptr<content::NavigationEntry>> entries =
         sessions::ContentSerializedNavigationBuilder::ToNavigationEntries(
             session_tab.navigations, browser_context);
-    // TODO(https://crbug.com/1061917): handle UA client hints override.
-    web_contents->SetUserAgentOverride(blink::UserAgentOverride::UserAgentOnly(
-                                           session_tab.user_agent_override),
-                                       false);
+
+    blink::UserAgentOverride ua_override;
+    ua_override.ua_string_override =
+        session_tab.user_agent_override.ua_string_override;
+    ua_override.ua_metadata_override = blink::UserAgentMetadata::Demarshal(
+        session_tab.user_agent_override.opaque_ua_metadata_override);
+    web_contents->SetUserAgentOverride(ua_override, false);
     // CURRENT_SESSION matches what clank does. On the desktop, we should
     // use a different type.
     web_contents->GetController().Restore(selected_navigation_index,
@@ -81,6 +84,7 @@ void ProcessRestoreCommands(
     DCHECK(entries.empty());
     TabImpl* tab = browser->CreateTabForSessionRestore(std::move(web_contents),
                                                        session_tab.guid);
+    tab->SetData(session_tab.data);
 
     if (!had_tabs && i == (windows[0])->selected_tab_index)
       browser->SetActiveTab(tab);
@@ -119,12 +123,15 @@ BuildCommandsForTabConfiguration(const SessionID& browser_session_id,
   result.push_back(sessions::CreateLastActiveTimeCommand(
       tab_id, tab->web_contents()->GetLastActiveTime()));
 
-  // TODO(https://crbug.com/1061917): handle UA client hints override.
-  const std::string& ua_override =
-      tab->web_contents()->GetUserAgentOverride().ua_string_override;
-  if (!ua_override.empty()) {
-    result.push_back(
-        sessions::CreateSetTabUserAgentOverrideCommand(tab_id, ua_override));
+  const blink::UserAgentOverride& ua_override =
+      tab->web_contents()->GetUserAgentOverride();
+  if (!ua_override.ua_string_override.empty()) {
+    sessions::SerializedUserAgentOverride serialized_override;
+    serialized_override.ua_string_override = ua_override.ua_string_override;
+    serialized_override.opaque_ua_metadata_override =
+        blink::UserAgentMetadata::Marshal(ua_override.ua_metadata_override);
+    result.push_back(sessions::CreateSetTabUserAgentOverrideCommand(
+        tab_id, serialized_override));
   }
   if (index_in_browser != -1) {
     result.push_back(
@@ -135,6 +142,8 @@ BuildCommandsForTabConfiguration(const SessionID& browser_session_id,
       tab_id, tab->web_contents()->GetController().GetCurrentEntryIndex()));
 
   result.push_back(sessions::CreateSetTabGuidCommand(tab_id, tab->GetGuid()));
+
+  result.push_back(sessions::CreateSetTabDataCommand(tab_id, tab->GetData()));
 
   return result;
 }

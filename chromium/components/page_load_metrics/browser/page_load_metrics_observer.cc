@@ -86,6 +86,14 @@ PageLoadMetricsObserver::ObservePolicy PageLoadMetricsObserver::OnShown() {
 }
 
 PageLoadMetricsObserver::ObservePolicy
+PageLoadMetricsObserver::OnEnterBackForwardCache(
+    const mojom::PageLoadTiming& timing) {
+  // Invoke OnComplete to ensure that recorded data is dumped.
+  OnComplete(timing);
+  return STOP_OBSERVING;
+}
+
+PageLoadMetricsObserver::ObservePolicy
 PageLoadMetricsObserver::FlushMetricsOnAppEnterBackground(
     const mojom::PageLoadTiming& timing) {
   return CONTINUE_OBSERVING;
@@ -102,35 +110,6 @@ PageLoadMetricsObserver::ShouldObserveMimeType(
 bool PageLoadMetricsObserver::IsStandardWebPageMimeType(
     const std::string& mime_type) {
   return mime_type == "text/html" || mime_type == "application/xhtml+xml";
-}
-
-// static
-bool PageLoadMetricsObserver::AssignTimeAndSizeForLargestContentfulPaint(
-    const page_load_metrics::mojom::PaintTimingPtr& paint_timing,
-    base::Optional<base::TimeDelta>* largest_content_paint_time,
-    uint64_t* largest_content_paint_size,
-    LargestContentType* largest_content_type) {
-  base::Optional<base::TimeDelta>& text_time = paint_timing->largest_text_paint;
-  base::Optional<base::TimeDelta>& image_time =
-      paint_timing->largest_image_paint;
-  uint64_t text_size = paint_timing->largest_text_paint_size;
-  uint64_t image_size = paint_timing->largest_image_paint_size;
-
-  // Size being 0 means the paint time is not recorded.
-  if (!text_size && !image_size)
-    return false;
-
-  if ((text_size > image_size) ||
-      (text_size == image_size && text_time < image_time)) {
-    *largest_content_paint_time = text_time;
-    *largest_content_paint_size = text_size;
-    *largest_content_type = LargestContentType::kText;
-  } else {
-    *largest_content_paint_time = image_time;
-    *largest_content_paint_size = image_size;
-    *largest_content_type = LargestContentType::kImage;
-  }
-  return true;
 }
 
 const PageLoadMetricsObserverDelegate& PageLoadMetricsObserver::GetDelegate()

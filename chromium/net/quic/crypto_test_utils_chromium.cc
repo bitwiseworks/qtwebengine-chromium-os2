@@ -5,12 +5,13 @@
 #include <utility>
 
 #include "base/callback_helpers.h"
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "net/base/net_errors.h"
+#include "net/base/network_isolation_key.h"
 #include "net/base/test_completion_callback.h"
 #include "net/cert/cert_status_flags.h"
 #include "net/cert/cert_verifier.h"
@@ -31,6 +32,7 @@
 #include "net/test/test_data_directory.h"
 #include "net/third_party/quiche/src/quic/core/crypto/crypto_utils.h"
 #include "net/third_party/quiche/src/quic/test_tools/crypto_test_utils.h"
+#include "net/third_party/quiche/src/quic/test_tools/test_ticket_crypter.h"
 
 using std::string;
 
@@ -52,7 +54,9 @@ class TestProofVerifierChromium : public ProofVerifierChromium {
                               ct_policy_enforcer.get(),
                               transport_security_state.get(),
                               cert_transparency_verifier.get(),
-                              {"test.example.com"}),
+                              /*sct_auditing_delegate=*/nullptr,
+                              {"test.example.com"},
+                              NetworkIsolationKey()),
         cert_verifier_(std::move(cert_verifier)),
         transport_security_state_(std::move(transport_security_state)),
         cert_transparency_verifier_(std::move(cert_transparency_verifier)),
@@ -90,6 +94,7 @@ std::unique_ptr<quic::ProofSource> ProofSourceForTesting() {
   CHECK(source->Initialize(certs_dir.AppendASCII("quic-chain.pem"),
                            certs_dir.AppendASCII("quic-leaf-cert.key"),
                            certs_dir.AppendASCII("quic-leaf-cert.key.sct")));
+  source->SetTicketCrypter(std::make_unique<quic::test::TestTicketCrypter>());
   return std::move(source);
 }
 

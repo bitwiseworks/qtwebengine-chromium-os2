@@ -42,8 +42,6 @@ class Navigator;
 
 class NavigatorDoNotTrack final : public GarbageCollected<NavigatorDoNotTrack>,
                                   public Supplement<Navigator> {
-  USING_GARBAGE_COLLECTED_MIXIN(NavigatorDoNotTrack);
-
  public:
   static const char kSupplementName[];
 
@@ -54,7 +52,7 @@ class NavigatorDoNotTrack final : public GarbageCollected<NavigatorDoNotTrack>,
 
   explicit NavigatorDoNotTrack(Navigator&);
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 };
 
 }  // namespace blink

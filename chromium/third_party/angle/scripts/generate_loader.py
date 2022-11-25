@@ -13,6 +13,9 @@ from datetime import date
 import registry_xml
 
 
+DEFAULT_INTERNAL_PREFIX = "l_"
+
+
 def write_header(data_source_name,
                  all_cmds,
                  api,
@@ -21,8 +24,10 @@ def write_header(data_source_name,
                  lib,
                  ns="",
                  prefix=None,
-                 export=""):
-    file_name = "%s_loader_autogen.h" % api
+                 export="",
+                 internal_prefix=DEFAULT_INTERNAL_PREFIX,
+                 file_prefix=""):
+    file_name = "%s%s_loader_autogen.h" % (file_prefix, api)
     header_path = registry_xml.path_to(path, file_name)
 
     def pre(cmd):
@@ -31,27 +36,42 @@ def write_header(data_source_name,
         return prefix + cmd[len(api):]
 
     with open(header_path, "w") as out:
+        defines = [
+            "#define %s%s %s%s%s" % (ns, pre(cmd), internal_prefix, ns, pre(cmd))
+            for cmd in all_cmds
+        ]
         var_protos = [
-            "%sextern PFN%sPROC %s%s;" % (export, cmd.upper(), ns, pre(cmd)) for cmd in all_cmds
+            "%sextern PFN%sPROC %s%s%s;" % (export, cmd.upper(), internal_prefix, ns, pre(cmd))
+            for cmd in all_cmds
         ]
         loader_header = template_loader_h.format(
             script_name=os.path.basename(sys.argv[0]),
             data_source_name=data_source_name,
             year=date.today().year,
+            defines="\n".join(defines),
             function_pointers="\n".join(var_protos),
             api_upper=api.upper(),
             api_lower=api,
             preamble=preamble,
             export=export,
             lib=lib.upper(),
-            load_fn_name="Load%s%s" % (prefix if prefix else "", api.upper()))
+            load_fn_name="Load%s%s" % (prefix if prefix else "", api.upper()),
+            file_prefix=file_prefix)
 
         out.write(loader_header)
         out.close()
 
 
-def write_source(data_source_name, all_cmds, api, path, ns="", prefix=None, export=""):
-    file_name = "%s_loader_autogen.cpp" % api
+def write_source(data_source_name,
+                 all_cmds,
+                 api,
+                 path,
+                 ns="",
+                 prefix=None,
+                 export="",
+                 internal_prefix=DEFAULT_INTERNAL_PREFIX,
+                 file_prefix=""):
+    file_name = "%s%s_loader_autogen.cpp" % (file_prefix, api)
     source_path = registry_xml.path_to(path, file_name)
 
     def pre(cmd):
@@ -60,10 +80,15 @@ def write_source(data_source_name, all_cmds, api, path, ns="", prefix=None, expo
         return prefix + cmd[len(api):]
 
     with open(source_path, "w") as out:
-        var_defs = ["%sPFN%sPROC %s%s;" % (export, cmd.upper(), ns, pre(cmd)) for cmd in all_cmds]
+        var_defs = [
+            "%sPFN%sPROC %s%s%s;" % (export, cmd.upper(), internal_prefix, ns, pre(cmd))
+            for cmd in all_cmds
+        ]
 
-        setter = "    %s%s = reinterpret_cast<PFN%sPROC>(loadProc(\"%s\"));"
-        setters = [setter % (ns, pre(cmd), cmd.upper(), pre(cmd)) for cmd in all_cmds]
+        setter = "    %s%s%s = reinterpret_cast<PFN%sPROC>(loadProc(\"%s\"));"
+        setters = [
+            setter % (internal_prefix, ns, pre(cmd), cmd.upper(), pre(cmd)) for cmd in all_cmds
+        ]
 
         loader_source = template_loader_cpp.format(
             script_name=os.path.basename(sys.argv[0]),
@@ -73,7 +98,8 @@ def write_source(data_source_name, all_cmds, api, path, ns="", prefix=None, expo
             set_pointers="\n".join(setters),
             api_upper=api.upper(),
             api_lower=api,
-            load_fn_name="Load%s%s" % (prefix if prefix else "", api.upper()))
+            load_fn_name="Load%s%s" % (prefix if prefix else "", api.upper()),
+            file_prefix=file_prefix)
 
         out.write(loader_source)
         out.close()
@@ -97,12 +123,19 @@ def gen_libegl_loader():
     all_cmds = xml.all_cmd_names.get_all_commands()
 
     path = os.path.join("..", "src", "libEGL")
-    write_header(data_source_name, all_cmds, "egl", libegl_preamble, path, "LIBEGL", "", "EGL_",
-                 "ANGLE_NO_EXPORT ")
-    write_source(data_source_name, all_cmds, "egl", path, "", "EGL_")
+    write_header(
+        data_source_name,
+        all_cmds,
+        "egl",
+        libegl_preamble,
+        path,
+        "LIBEGL",
+        prefix="EGL_",
+        export="ANGLE_NO_EXPORT ")
+    write_source(data_source_name, all_cmds, "egl", path, prefix="EGL_")
 
 
-def gen_gl_loader():
+def gen_gles_loader(gles_preamble, path, header_lib, export, internal_prefix, file_prefix):
 
     data_source_name = "gl.xml and gl_angle_ext.xml"
     xml = registry_xml.RegistryXML("gl.xml", "gl_angle_ext.xml")
@@ -128,13 +161,27 @@ def gen_gl_loader():
     if registry_xml.support_EGL_ANGLE_explicit_context:
         all_cmds += [cmd + "ContextANGLE" for cmd in xml.all_cmd_names.get_all_commands()]
 
-    path = os.path.join("..", "util")
-    ex = "ANGLE_UTIL_EXPORT "
-    write_header(data_source_name, all_cmds, "gles", util_gles_preamble, path, "UTIL", export=ex)
-    write_source(data_source_name, all_cmds, "gles", path, export=ex)
+    write_header(
+        data_source_name,
+        all_cmds,
+        "gles",
+        gles_preamble,
+        path,
+        header_lib,
+        export=export,
+        internal_prefix=internal_prefix,
+        file_prefix=file_prefix)
+    write_source(
+        data_source_name,
+        all_cmds,
+        "gles",
+        path,
+        export=export,
+        internal_prefix=internal_prefix,
+        file_prefix=file_prefix)
 
 
-def gen_egl_loader():
+def gen_egl_loader(egl_preamble, path, header_lib, export, internal_prefix, file_prefix):
 
     data_source_name = "egl.xml and egl_angle_ext.xml"
     xml = registry_xml.RegistryXML("egl.xml", "egl_angle_ext.xml")
@@ -151,13 +198,43 @@ def gen_egl_loader():
 
     all_cmds = xml.all_cmd_names.get_all_commands()
 
+    write_header(
+        data_source_name,
+        all_cmds,
+        "egl",
+        egl_preamble,
+        path,
+        header_lib,
+        export=export,
+        internal_prefix=internal_prefix,
+        file_prefix=file_prefix)
+    write_source(
+        data_source_name,
+        all_cmds,
+        "egl",
+        path,
+        export=export,
+        internal_prefix=internal_prefix,
+        file_prefix=file_prefix)
+
+
+def gen_util_gles_and_egl_loaders():
     path = os.path.join("..", "util")
-    ex = "ANGLE_UTIL_EXPORT "
-    write_header(data_source_name, all_cmds, "egl", util_egl_preamble, path, "UTIL", export=ex)
-    write_source(data_source_name, all_cmds, "egl", path, export=ex)
+    export = "ANGLE_UTIL_EXPORT "
+    lib = "UTIL"
+    gen_gles_loader(util_gles_preamble, path, lib, export, DEFAULT_INTERNAL_PREFIX, "")
+    gen_egl_loader(util_egl_preamble, path, lib, export, DEFAULT_INTERNAL_PREFIX, "")
 
 
-def gen_wgl_loader():
+def gen_trace_gles_and_egl_loaders():
+    path = os.path.join("..", "src", "tests", "restricted_traces")
+    export = "ANGLE_TRACE_EXPORT "
+    lib = "ANGLE_RESTRICTED_TRACES"
+    gen_gles_loader(trace_gles_preamble, path, lib, export, "t_", "trace_")
+    gen_egl_loader(trace_egl_preamble, path, lib, export, "t_", "trace_")
+
+
+def gen_util_wgl_loader():
 
     supported_wgl_extensions = [
         "WGL_ARB_create_context",
@@ -206,6 +283,10 @@ def main():
             '../util/gles_loader_autogen.h',
             '../util/windows/wgl_loader_autogen.cpp',
             '../util/windows/wgl_loader_autogen.h',
+            '../src/tests/restricted_traces/trace_egl_loader_autogen.cpp',
+            '../src/tests/restricted_traces/trace_egl_loader_autogen.h',
+            '../src/tests/restricted_traces/trace_gles_loader_autogen.cpp',
+            '../src/tests/restricted_traces/trace_gles_loader_autogen.h',
         ]
 
         if sys.argv[1] == 'inputs':
@@ -218,9 +299,9 @@ def main():
         return 0
 
     gen_libegl_loader()
-    gen_gl_loader()
-    gen_egl_loader()
-    gen_wgl_loader()
+    gen_util_gles_and_egl_loaders()
+    gen_util_wgl_loader()
+    gen_trace_gles_and_egl_loaders()
     return 0
 
 
@@ -238,6 +319,20 @@ util_gles_preamble = """#if defined(GL_GLES_PROTOTYPES) && GL_GLES_PROTOTYPES
 """
 
 util_egl_preamble = """#include "util/util_export.h"
+
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+"""
+
+trace_gles_preamble = """#if defined(GL_GLES_PROTOTYPES) && GL_GLES_PROTOTYPES
+#error "Don't define GL prototypes if you want to use a loader!"
+#endif  // defined(GL_GLES_PROTOTYPES)
+
+#include "angle_gl.h"
+#include "restricted_traces_autogen.h"
+"""
+
+trace_egl_preamble = """#include "restricted_traces_autogen.h"
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -266,9 +361,10 @@ template_loader_h = """// GENERATED FILE - DO NOT EDIT.
 #define {lib}_{api_upper}_LOADER_AUTOGEN_H_
 
 {preamble}
+{defines}
 {function_pointers}
 
-namespace angle
+namespace {file_prefix}angle
 {{
 using GenericProc = void (*)();
 using LoadProc = GenericProc (KHRONOS_APIENTRY *)(const char *);
@@ -288,11 +384,11 @@ template_loader_cpp = """// GENERATED FILE - DO NOT EDIT.
 // {api_lower}_loader_autogen.cpp:
 //   Simple {api_upper} function loader.
 
-#include "{api_lower}_loader_autogen.h"
+#include "{file_prefix}{api_lower}_loader_autogen.h"
 
 {function_pointers}
 
-namespace angle
+namespace {file_prefix}angle
 {{
 void {load_fn_name}(LoadProc loadProc)
 {{

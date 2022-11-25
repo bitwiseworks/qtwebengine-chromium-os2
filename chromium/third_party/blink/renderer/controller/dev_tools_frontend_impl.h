@@ -32,11 +32,12 @@
 #define THIRD_PARTY_BLINK_RENDERER_CONTROLLER_DEV_TOOLS_FRONTEND_IMPL_H_
 
 #include "base/macros.h"
-#include "mojo/public/cpp/bindings/associated_receiver.h"
-#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "third_party/blink/public/mojom/devtools/devtools_frontend.mojom-blink.h"
 #include "third_party/blink/renderer/core/inspector/inspector_frontend_client.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_associated_receiver.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_associated_remote.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_wrapper_mode.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -53,8 +54,6 @@ class DevToolsFrontendImpl final
       public Supplement<LocalFrame>,
       public mojom::blink::DevToolsFrontend,
       public InspectorFrontendClient {
-  USING_GARBAGE_COLLECTED_MIXIN(DevToolsFrontendImpl);
-
  public:
   static const char kSupplementName[];
 
@@ -68,7 +67,7 @@ class DevToolsFrontendImpl final
       mojo::PendingAssociatedReceiver<mojom::blink::DevToolsFrontend>);
   ~DevToolsFrontendImpl() override;
   void DidClearWindowObject();
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   void DestroyOnHostGone();
@@ -85,8 +84,13 @@ class DevToolsFrontendImpl final
 
   Member<DevToolsHost> devtools_host_;
   String api_script_;
-  mojo::AssociatedRemote<mojom::blink::DevToolsFrontendHost> host_;
-  mojo::AssociatedReceiver<mojom::blink::DevToolsFrontend> receiver_;
+  HeapMojoAssociatedRemote<mojom::blink::DevToolsFrontendHost,
+                           HeapMojoWrapperMode::kForceWithoutContextObserver>
+      host_;
+  HeapMojoAssociatedReceiver<mojom::blink::DevToolsFrontend,
+                             DevToolsFrontendImpl,
+                             HeapMojoWrapperMode::kForceWithoutContextObserver>
+      receiver_;
 
   DISALLOW_COPY_AND_ASSIGN(DevToolsFrontendImpl);
 };

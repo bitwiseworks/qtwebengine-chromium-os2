@@ -17,6 +17,7 @@
 #include "third_party/blink/public/web/web_associated_url_loader_options.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/loader/web_associated_url_loader_impl.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
@@ -121,10 +122,10 @@ MultiResolutionImageResourceFetcher::MultiResolutionImageResourceFetcher(
   if (request_context == mojom::blink::RequestContextType::FAVICON) {
     // To prevent cache tainting, the cross-origin favicon requests have to
     // by-pass the service workers. This should ideally not happen. But Chrome’s
-    // ThumbnailDatabase is using the icon URL as a key of the "favicons" table.
+    // FaviconDatabase is using the icon URL as a key of the "favicons" table.
     // So if we don't set the skip flag here, malicious service workers can
     // override the favicon image of any origins.
-    if (!frame->GetDocument()->GetSecurityOrigin()->CanAccess(
+    if (!frame->DomWindow()->GetSecurityOrigin()->CanAccess(
             SecurityOrigin::Create(image_url).get())) {
       SetSkipServiceWorker(true);
     }
@@ -213,7 +214,7 @@ void MultiResolutionImageResourceFetcher::Start(
 
   client_ = std::make_unique<ClientImpl>(std::move(callback));
 
-  loader_ = std::make_unique<WebAssociatedURLLoaderImpl>(frame->GetDocument(),
+  loader_ = std::make_unique<WebAssociatedURLLoaderImpl>(frame->DomWindow(),
                                                          options_);
   loader_->LoadAsynchronously(request_, client_.get());
 

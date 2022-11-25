@@ -29,6 +29,7 @@
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/webui/local_discovery/local_discovery_ui_handler.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_switches.h"
@@ -36,6 +37,7 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "chrome/test/base/web_ui_browser_test.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
+#include "content/public/test/browser_test.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "net/http/http_status_code.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
@@ -350,7 +352,13 @@ class LocalDiscoveryUITest : public WebUIBrowserTest {
     // a DCHECK during TestServiceDiscoveryClient construction.
     media_router::DualMediaSinkService::SetInstanceForTest(
         new media_router::NoopDualMediaSinkService());
-    feature_list_.InitAndDisableFeature(media_router::kDialMediaRouteProvider);
+    // The Media Route Providers must be disabled because they rely on the
+    // presence of a valid DualMediaSinkService.
+    // TODO(crbug.com/1028753): Enable the Media Route Provider features.
+    feature_list_.InitWithFeatures(
+        /* enabled_features */ {features::kForceEnableDevicesPage},
+        /* disabled_features */ {media_router::kDialMediaRouteProvider,
+                                 media_router::kCastMediaRouteProvider});
     WebUIBrowserTest::SetUp();
   }
 
@@ -416,7 +424,6 @@ class LocalDiscoveryUITest : public WebUIBrowserTest {
     command_line->AppendSwitchASCII(chromeos::switches::kLoginProfile,
                                     chrome::kTestUserProfileDir);
 #endif
-    command_line->AppendSwitch(switches::kDisableDeviceDiscoveryNotifications);
     WebUIBrowserTest::SetUpCommandLine(command_line);
   }
 

@@ -10,9 +10,10 @@
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
+#include "third_party/blink/public/common/widget/screen_info.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink.h"
+#include "third_party/blink/public/mojom/widget/screen_orientation.mojom-blink.h"
 #include "third_party/blink/public/platform/modules/remoteplayback/web_remote_playback_client.h"
-#include "third_party/blink/public/platform/web_screen_info.h"
 #include "third_party/blink/public/platform/web_size.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_gc_controller.h"
 #include "third_party/blink/renderer/core/css/css_property_value_set.h"
@@ -26,6 +27,7 @@
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/dom/text.h"
+#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/geometry/dom_rect.h"
 #include "third_party/blink/renderer/core/html/media/html_media_element.h"
@@ -66,9 +68,10 @@ namespace {
 class FakeChromeClient : public EmptyChromeClient {
  public:
   // ChromeClient overrides.
-  WebScreenInfo GetScreenInfo(LocalFrame&) const override {
-    WebScreenInfo screen_info;
-    screen_info.orientation_type = kWebScreenOrientationLandscapePrimary;
+  ScreenInfo GetScreenInfo(LocalFrame&) const override {
+    ScreenInfo screen_info;
+    screen_info.orientation_type =
+        mojom::blink::ScreenOrientation::kLandscapePrimary;
     return screen_info;
   }
 };
@@ -313,7 +316,7 @@ class MediaControlsImplTest : public PageTestBase,
 };
 
 void MediaControlsImplTest::MouseDownAt(gfx::PointF pos) {
-  WebMouseEvent mouse_down_event(WebInputEvent::kMouseDown,
+  WebMouseEvent mouse_down_event(WebInputEvent::Type::kMouseDown,
                                  pos /* client pos */, pos /* screen pos */,
                                  WebPointerProperties::Button::kLeft, 1,
                                  WebInputEvent::Modifiers::kLeftButtonDown,
@@ -324,7 +327,7 @@ void MediaControlsImplTest::MouseDownAt(gfx::PointF pos) {
 }
 
 void MediaControlsImplTest::MouseMoveTo(gfx::PointF pos) {
-  WebMouseEvent mouse_move_event(WebInputEvent::kMouseMove,
+  WebMouseEvent mouse_move_event(WebInputEvent::Type::kMouseMove,
                                  pos /* client pos */, pos /* screen pos */,
                                  WebPointerProperties::Button::kLeft, 1,
                                  WebInputEvent::Modifiers::kLeftButtonDown,
@@ -336,7 +339,7 @@ void MediaControlsImplTest::MouseMoveTo(gfx::PointF pos) {
 
 void MediaControlsImplTest::MouseUpAt(gfx::PointF pos) {
   WebMouseEvent mouse_up_event(
-      WebMouseEvent::kMouseUp, pos /* client pos */, pos /* screen pos */,
+      WebMouseEvent::Type::kMouseUp, pos /* client pos */, pos /* screen pos */,
       WebPointerProperties::Button::kLeft, 1, WebInputEvent::kNoModifiers,
       WebInputEvent::GetStaticTimeStampForTests());
   mouse_up_event.SetFrameScale(1);
@@ -346,7 +349,7 @@ void MediaControlsImplTest::MouseUpAt(gfx::PointF pos) {
 
 void MediaControlsImplTest::GestureTapAt(gfx::PointF pos) {
   WebGestureEvent gesture_tap_event(
-      WebInputEvent::kGestureTap, WebInputEvent::kNoModifiers,
+      WebInputEvent::Type::kGestureTap, WebInputEvent::kNoModifiers,
       WebInputEvent::GetStaticTimeStampForTests());
 
   // Adjust |pos| by current frame scale.
@@ -725,7 +728,7 @@ TEST_F(MediaControlsImplTest, TimelineMetricsDragFromCurrentPosition) {
   DOMRect* thumb_rect =
       TimelineElement()
           ->UserAgentShadowRoot()
-          ->getElementById(shadow_element_names::SliderThumb())
+          ->getElementById(shadow_element_names::kIdSliderThumb)
           ->getBoundingClientRect();
   gfx::PointF thumb(thumb_rect->x() + (thumb_rect->width() / 2),
                     thumb_rect->y() + 1);
@@ -1124,10 +1127,7 @@ TEST_F(MediaControlsImplTest,
 
   test::RunPendingTasks();
 
-  // Needs to call into V8's GC here to trigger a unified garbage collection.
-  V8GCController::CollectAllGarbageForTesting(
-      ThreadState::Current()->GetIsolate(),
-      v8::EmbedderHeapTracer::EmbedderStackState::kEmpty);
+  ThreadState::Current()->CollectAllGarbageForTesting();
   EXPECT_EQ(nullptr, weak_persistent_video);
 }
 

@@ -64,8 +64,8 @@ class ElementData : public GarbageCollected<ElementData> {
   const AtomicString& IdForStyleResolution() const {
     return id_for_style_resolution_;
   }
-  void SetIdForStyleResolution(const AtomicString& new_id) const {
-    id_for_style_resolution_ = new_id;
+  AtomicString SetIdForStyleResolution(AtomicString new_id) const {
+    return std::exchange(id_for_style_resolution_, std::move(new_id));
   }
 
   const CSSPropertyValueSet* InlineStyle() const { return inline_style_.Get(); }
@@ -82,7 +82,7 @@ class ElementData : public GarbageCollected<ElementData> {
   bool IsUnique() const { return bit_field_.get<IsUniqueFlag>(); }
 
   void TraceAfterDispatch(blink::Visitor*) const;
-  void Trace(Visitor*);
+  void Trace(Visitor*) const;
 
  protected:
   using BitField = WTF::ConcurrentlyReadBitField<uint32_t>;
@@ -93,8 +93,7 @@ class ElementData : public GarbageCollected<ElementData> {
   using PresentationAttributeStyleIsDirty = ArraySize::DefineNextValue<bool, 1>;
   using StyleAttributeIsDirty =
       PresentationAttributeStyleIsDirty::DefineNextValue<bool, 1>;
-  using AnimatedSvgAttributesAreDirty =
-      StyleAttributeIsDirty::DefineNextValue<bool, 1>;
+  using SvgAttributesAreDirty = StyleAttributeIsDirty::DefineNextValue<bool, 1>;
 
   ElementData();
   explicit ElementData(unsigned array_size);
@@ -106,8 +105,8 @@ class ElementData : public GarbageCollected<ElementData> {
   bool style_attribute_is_dirty() const {
     return bit_field_.get<StyleAttributeIsDirty>();
   }
-  bool animated_svg_attributes_are_dirty() const {
-    return bit_field_.get<AnimatedSvgAttributesAreDirty>();
+  bool svg_attributes_are_dirty() const {
+    return bit_field_.get<SvgAttributesAreDirty>();
   }
 
   // Following 3 fields are meant to be mutable and can change even when const.
@@ -121,10 +120,9 @@ class ElementData : public GarbageCollected<ElementData> {
     const_cast<BitField*>(&bit_field_)
         ->set<StyleAttributeIsDirty>(style_attribute_is_dirty);
   }
-  void SetAnimatedSvgAttributesAreDirty(
-      bool animated_svg_attributes_are_dirty) const {
+  void SetSvgAttributesAreDirty(bool svg_attributes_are_dirty) const {
     const_cast<BitField*>(&bit_field_)
-        ->set<AnimatedSvgAttributesAreDirty>(animated_svg_attributes_are_dirty);
+        ->set<SvgAttributesAreDirty>(svg_attributes_are_dirty);
   }
 
   BitField bit_field_;

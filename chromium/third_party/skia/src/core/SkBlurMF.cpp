@@ -6,6 +6,7 @@
  */
 
 #include "include/core/SkMaskFilter.h"
+#include "include/core/SkPathBuilder.h"
 #include "include/core/SkRRect.h"
 #include "include/core/SkStrokeRec.h"
 #include "include/core/SkVertices.h"
@@ -13,14 +14,15 @@
 #include "src/core/SkBlurPriv.h"
 #include "src/core/SkGpuBlurUtils.h"
 #include "src/core/SkMaskFilterBase.h"
+#include "src/core/SkMathPriv.h"
+#include "src/core/SkMatrixProvider.h"
 #include "src/core/SkRRectPriv.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkStringUtils.h"
 #include "src/core/SkWriteBuffer.h"
 
 #if SK_SUPPORT_GPU
-#include "include/private/GrRecordingContext.h"
-#include "src/gpu/GrClip.h"
+#include "include/gpu/GrRecordingContext.h"
 #include "src/gpu/GrFragmentProcessor.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/GrRenderTargetContext.h"
@@ -32,7 +34,7 @@
 #include "src/gpu/effects/generated/GrCircleBlurFragmentProcessor.h"
 #include "src/gpu/effects/generated/GrRRectBlurEffect.h"
 #include "src/gpu/effects/generated/GrRectBlurEffect.h"
-#include "src/gpu/geometry/GrShape.h"
+#include "src/gpu/geometry/GrStyledShape.h"
 #include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/glsl/GrGLSLProgramDataManager.h"
@@ -49,7 +51,7 @@ public:
                     SkIPoint* margin) const override;
 
 #if SK_SUPPORT_GPU
-    bool canFilterMaskGPU(const GrShape& shape,
+    bool canFilterMaskGPU(const GrStyledShape& shape,
                           const SkIRect& devSpaceShapeBounds,
                           const SkIRect& clipBounds,
                           const SkMatrix& ctm,
@@ -57,9 +59,9 @@ public:
     bool directFilterMaskGPU(GrRecordingContext*,
                              GrRenderTargetContext* renderTargetContext,
                              GrPaint&&,
-                             const GrClip&,
+                             const GrClip*,
                              const SkMatrix& viewMatrix,
-                             const GrShape& shape) const override;
+                             const GrStyledShape& shape) const override;
     GrSurfaceProxyView filterMaskGPU(GrRecordingContext*,
                                      GrSurfaceProxyView srcView,
                                      GrColorType srcColorType,
@@ -109,73 +111,20 @@ private:
 
     friend class SkBlurMaskFilter;
 
-    typedef SkMaskFilter INHERITED;
+    using INHERITED = SkMaskFilter;
     friend void sk_register_blur_maskfilter_createproc();
 };
 
 const SkScalar SkBlurMaskFilterImpl::kMAX_BLUR_SIGMA = SkIntToScalar(128);
 
-// linearly interpolate between y1 & y3 to match x2's position between x1 & x3
-static SkScalar interp(SkScalar x1, SkScalar x2, SkScalar x3, SkScalar y1, SkScalar y3) {
-    SkASSERT(x1 <= x2 && x2 <= x3);
-    SkASSERT(y1 <= y3);
-
-    SkScalar t = (x2 - x1) / (x3 - x1);
-    return y1 + t * (y3 - y1);
-}
-
-// Insert 'lower' and 'higher' into 'array1' and insert a new value at each matching insertion
-// point in 'array2' that linearly interpolates between the existing values.
-// Return a bit mask which contains a copy of 'inputMask' for all the cells between the two
-// insertion points.
-static uint32_t insert_into_arrays(SkScalar* array1, SkScalar* array2,
-                                   SkScalar lower, SkScalar higher,
-                                   int* num, uint32_t inputMask, int maskSize) {
-    SkASSERT(lower < higher);
-    SkASSERT(lower >= array1[0] && higher <= array1[*num-1]);
-
-    int32_t skipMask = 0x0;
-    int i;
-    for (i = 0; i < *num; ++i) {
-        if (lower >= array1[i] && lower < array1[i+1]) {
-            if (!SkScalarNearlyEqual(lower, array1[i])) {
-                memmove(&array1[i+2], &array1[i+1], (*num-i-1)*sizeof(SkScalar));
-                array1[i+1] = lower;
-                memmove(&array2[i+2], &array2[i+1], (*num-i-1)*sizeof(SkScalar));
-                array2[i+1] = interp(array1[i], lower, array1[i+2], array2[i], array2[i+2]);
-                i++;
-                (*num)++;
-            }
-            break;
-        }
-    }
-    for ( ; i < *num; ++i) {
-        skipMask |= inputMask << (i*maskSize);
-        if (higher > array1[i] && higher <= array1[i+1]) {
-            if (!SkScalarNearlyEqual(higher, array1[i+1])) {
-                memmove(&array1[i+2], &array1[i+1], (*num-i-1)*sizeof(SkScalar));
-                array1[i+1] = higher;
-                memmove(&array2[i+2], &array2[i+1], (*num-i-1)*sizeof(SkScalar));
-                array2[i+1] = interp(array1[i], higher, array1[i+2], array2[i], array2[i+2]);
-                (*num)++;
-            }
-            break;
-        }
-    }
-
-    return skipMask;
-}
-
 bool SkComputeBlurredRRectParams(const SkRRect& srcRRect, const SkRRect& devRRect,
-                                 const SkRect& occluder,
                                  SkScalar sigma, SkScalar xformedSigma,
                                  SkRRect* rrectToDraw,
                                  SkISize* widthHeight,
                                  SkScalar rectXs[kSkBlurRRectMaxDivisions],
                                  SkScalar rectYs[kSkBlurRRectMaxDivisions],
                                  SkScalar texXs[kSkBlurRRectMaxDivisions],
-                                 SkScalar texYs[kSkBlurRRectMaxDivisions],
-                                 int* numXs, int* numYs, uint32_t* skipMask) {
+                                 SkScalar texYs[kSkBlurRRectMaxDivisions]) {
     unsigned int devBlurRadius = 3*SkScalarCeilToInt(xformedSigma-1/6.0f);
     SkScalar srcBlurRadius = 3.0f * sigma;
 
@@ -233,17 +182,6 @@ bool SkComputeBlurredRRectParams(const SkRRect& srcRRect, const SkRRect& devRRec
     texYs[2] = 2.0f*devBlurRadius + devTop + 1;
     texYs[3] = SkIntToScalar(widthHeight->fHeight);
 
-    SkRect temp = occluder;
-
-    *numXs = 4;
-    *numYs = 4;
-    *skipMask = 0;
-    if (!temp.isEmpty() && (srcProxyRect.contains(temp) || temp.intersect(srcProxyRect))) {
-        *skipMask = insert_into_arrays(rectXs, texXs, temp.fLeft, temp.fRight, numXs, 0x1, 1);
-        *skipMask = insert_into_arrays(rectYs, texYs, temp.fTop, temp.fBottom,
-                                       numYs, *skipMask, *numXs-1);
-    }
-
     const SkRect newRect = SkRect::MakeXYWH(SkIntToScalar(devBlurRadius),
                                             SkIntToScalar(devBlurRadius),
                                             SkIntToScalar(newRRWidth),
@@ -256,6 +194,38 @@ bool SkComputeBlurredRRectParams(const SkRRect& srcRRect, const SkRRect& devRRec
 
     rrectToDraw->setRectRadii(newRect, newRadii);
     return true;
+}
+
+// TODO: it seems like there should be some synergy with SkBlurMask::ComputeBlurProfile
+// TODO: maybe cache this on the cpu side?
+int SkCreateIntegralTable(float sixSigma, SkBitmap* table) {
+    // The texture we're producing represents the integral of a normal distribution over a
+    // six-sigma range centered at zero. We want enough resolution so that the linear
+    // interpolation done in texture lookup doesn't introduce noticeable artifacts. We
+    // conservatively choose to have 2 texels for each dst pixel.
+    int minWidth = 2 * sk_float_ceil2int(sixSigma);
+    // Bin by powers of 2 with a minimum so we get good profile reuse.
+    int width = std::max(SkNextPow2(minWidth), 32);
+
+    if (!table) {
+        return width;
+    }
+
+    if (!table->tryAllocPixels(SkImageInfo::MakeA8(width, 1))) {
+        return 0;
+    }
+    *table->getAddr8(0, 0) = 255;
+    const float invWidth = 1.f / width;
+    for (int i = 1; i < width - 1; ++i) {
+        float x = (i + 0.5f) * invWidth;
+        x = (-6 * x + 3) * SK_ScalarRoot2Over2;
+        float integral = 0.5f * (std::erf(x) + 1.f);
+        *table->getAddr8(i, 0) = SkToU8(sk_float_round2int(255.f * integral));
+    }
+
+    *table->getAddr8(width - 1, 0) = 0;
+    table->setImmutable();
+    return table->width();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -366,10 +336,10 @@ static bool draw_rects_into_mask(const SkRect rects[], int count, SkMask* mask) 
         canvas.drawRect(rects[0], paint);
     } else {
         // todo: do I need a fast way to do this?
-        SkPath path;
-        path.addRect(rects[0]);
-        path.addRect(rects[1]);
-        path.setFillType(SkPathFillType::kEvenOdd);
+        SkPath path = SkPathBuilder().addRect(rects[0])
+                                     .addRect(rects[1])
+                                     .setFillType(SkPathFillType::kEvenOdd)
+                                     .detach();
         canvas.drawPath(path, paint);
     }
     return true;
@@ -436,7 +406,7 @@ SkBlurMaskFilterImpl::filterRRectToNine(const SkRRect& rrect, const SkMatrix& ma
         case SkRRect::kRect_Type:
             // We should have caught this earlier.
             SkASSERT(false);
-            // Fall through.
+            [[fallthrough]];
         case SkRRect::kOval_Type:
             // The nine patch special case does not handle ovals, and we
             // already have code for rectangles.
@@ -701,11 +671,6 @@ sk_sp<SkFlattenable> SkBlurMaskFilterImpl::CreateProc(SkReadBuffer& buffer) {
     uint32_t flags = buffer.read32LE(0x3);  // historically we only recorded 2 bits
     bool respectCTM = !(flags & 1); // historically we stored ignoreCTM in low bit
 
-    if (buffer.isVersionLT(SkPicturePriv::kRemoveOccluderFromBlurMaskFilter)) {
-        SkRect unused;
-        buffer.readRect(&unused);
-    }
-
     return SkMaskFilter::MakeBlur((SkBlurStyle)style, sigma, respectCTM);
 }
 
@@ -721,16 +686,12 @@ void SkBlurMaskFilterImpl::flatten(SkWriteBuffer& buffer) const {
 bool SkBlurMaskFilterImpl::directFilterMaskGPU(GrRecordingContext* context,
                                                GrRenderTargetContext* renderTargetContext,
                                                GrPaint&& paint,
-                                               const GrClip& clip,
+                                               const GrClip* clip,
                                                const SkMatrix& viewMatrix,
-                                               const GrShape& shape) const {
+                                               const GrStyledShape& shape) const {
     SkASSERT(renderTargetContext);
 
     if (fBlurStyle != kNormal_SkBlurStyle) {
-        return false;
-    }
-
-    if (!viewMatrix.isScaleTranslate()) {
         return false;
     }
 
@@ -750,47 +711,62 @@ bool SkBlurMaskFilterImpl::directFilterMaskGPU(GrRecordingContext* context,
         return false;
     }
 
-    SkRRect devRRect;
-    if (!srcRRect.transform(viewMatrix, &devRRect)) {
-        return false;
-    }
-
-    if (!SkRRectPriv::AllCornersCircular(devRRect)) {
-        return false;
-    }
-
     std::unique_ptr<GrFragmentProcessor> fp;
 
-    if (devRRect.isRect() || SkRRectPriv::IsCircle(devRRect)) {
-        if (devRRect.isRect()) {
-            fp = GrRectBlurEffect::Make(context, *context->priv().caps()->shaderCaps(),
-                                        devRRect.rect(), xformedSigma);
+    bool canBeRect = srcRRect.isRect() && viewMatrix.preservesRightAngles();
+    bool canBeCircle = SkRRectPriv::IsCircle(srcRRect) && viewMatrix.isSimilarity();
+    if (canBeRect || canBeCircle) {
+        if (canBeRect) {
+            fp = GrRectBlurEffect::Make(
+                    /*inputFP=*/nullptr, context, *context->priv().caps()->shaderCaps(),
+                    srcRRect.rect(), viewMatrix, xformedSigma);
         } else {
-            fp = GrCircleBlurFragmentProcessor::Make(context, devRRect.rect(), xformedSigma);
+            SkPoint center = {srcRRect.getBounds().centerX(), srcRRect.getBounds().centerY()};
+            viewMatrix.mapPoints(&center, 1);
+            SkScalar radius = viewMatrix.mapVector(0, srcRRect.width()/2.f).length();
+            SkRect devBounds = {center.x() - radius,
+                                center.y() - radius,
+                                center.x() + radius,
+                                center.y() + radius};
+            fp = GrCircleBlurFragmentProcessor::Make(/*inputFP=*/nullptr, context, devBounds,
+                                                     xformedSigma);
         }
 
         if (!fp) {
             return false;
         }
-        paint.addCoverageFragmentProcessor(std::move(fp));
+        paint.setCoverageFragmentProcessor(std::move(fp));
 
         SkRect srcProxyRect = srcRRect.rect();
-        SkScalar outsetX = 3.0f*fSigma;
-        SkScalar outsetY = 3.0f*fSigma;
-        if (this->ignoreXform()) {
-            // When we're ignoring the CTM the padding added to the source rect also needs to ignore
-            // the CTM. The matrix passed in here is guaranteed to be just scale and translate so we
-            // can just grab the X and Y scales off the matrix and pre-undo the scale.
+        // Determine how much to outset the src rect to ensure we hit pixels within three sigma.
+        SkScalar outsetX = 3.0f*xformedSigma;
+        SkScalar outsetY = 3.0f*xformedSigma;
+        if (viewMatrix.isScaleTranslate()) {
             outsetX /= SkScalarAbs(viewMatrix.getScaleX());
             outsetY /= SkScalarAbs(viewMatrix.getScaleY());
+        } else {
+            SkSize scale;
+            if (!viewMatrix.decomposeScale(&scale, nullptr)) {
+                return false;
+            }
+            outsetX /= scale.width();
+            outsetY /= scale.height();
         }
         srcProxyRect.outset(outsetX, outsetY);
 
         renderTargetContext->drawRect(clip, std::move(paint), GrAA::kNo, viewMatrix, srcProxyRect);
         return true;
     }
+    if (!viewMatrix.isScaleTranslate()) {
+        return false;
+    }
+    SkRRect devRRect;
+    if (!srcRRect.transform(viewMatrix, &devRRect) || !SkRRectPriv::AllCornersCircular(devRRect)) {
+        return false;
+    }
 
-    fp = GrRRectBlurEffect::Make(context, fSigma, xformedSigma, srcRRect, devRRect);
+    fp = GrRRectBlurEffect::Make(/*inputFP=*/nullptr, context, fSigma, xformedSigma,
+                                 srcRRect, devRRect);
     if (!fp) {
         return false;
     }
@@ -806,8 +782,10 @@ bool SkBlurMaskFilterImpl::directFilterMaskGPU(GrRecordingContext* context,
         memcpy(builder.indices(), fullIndices, sizeof(fullIndices));
         sk_sp<SkVertices> vertices = builder.detach();
 
-        paint.addCoverageFragmentProcessor(std::move(fp));
-        renderTargetContext->drawVertices(clip, std::move(paint), viewMatrix, std::move(vertices));
+        paint.setCoverageFragmentProcessor(std::move(fp));
+        SkSimpleMatrixProvider matrixProvider(viewMatrix);
+        renderTargetContext->drawVertices(clip, std::move(paint), matrixProvider,
+                                          std::move(vertices));
     } else {
         SkMatrix inverse;
         if (!viewMatrix.invert(&inverse)) {
@@ -818,7 +796,7 @@ bool SkBlurMaskFilterImpl::directFilterMaskGPU(GrRecordingContext* context,
         SkRect proxyRect = devRRect.rect();
         proxyRect.outset(extra, extra);
 
-        paint.addCoverageFragmentProcessor(std::move(fp));
+        paint.setCoverageFragmentProcessor(std::move(fp));
         renderTargetContext->fillRectWithLocalMatrix(clip, std::move(paint), GrAA::kNo,
                                                      SkMatrix::I(), proxyRect, inverse);
     }
@@ -826,7 +804,7 @@ bool SkBlurMaskFilterImpl::directFilterMaskGPU(GrRecordingContext* context,
     return true;
 }
 
-bool SkBlurMaskFilterImpl::canFilterMaskGPU(const GrShape& shape,
+bool SkBlurMaskFilterImpl::canFilterMaskGPU(const GrStyledShape& shape,
                                             const SkIRect& devSpaceShapeBounds,
                                             const SkIRect& clipBounds,
                                             const SkMatrix& ctm,
@@ -851,15 +829,13 @@ bool SkBlurMaskFilterImpl::canFilterMaskGPU(const GrShape& shape,
     }
 
     // We prefer to blur paths with small blur radii on the CPU.
-    if (ctm.rectStaysRect()) {
-        static const SkScalar kMIN_GPU_BLUR_SIZE  = SkIntToScalar(64);
-        static const SkScalar kMIN_GPU_BLUR_SIGMA = SkIntToScalar(32);
+    static const SkScalar kMIN_GPU_BLUR_SIZE  = SkIntToScalar(64);
+    static const SkScalar kMIN_GPU_BLUR_SIGMA = SkIntToScalar(32);
 
-        if (devSpaceShapeBounds.width() <= kMIN_GPU_BLUR_SIZE &&
-            devSpaceShapeBounds.height() <= kMIN_GPU_BLUR_SIZE &&
-            xformedSigma <= kMIN_GPU_BLUR_SIGMA) {
-            return false;
-        }
+    if (devSpaceShapeBounds.width() <= kMIN_GPU_BLUR_SIZE &&
+        devSpaceShapeBounds.height() <= kMIN_GPU_BLUR_SIZE &&
+        xformedSigma <= kMIN_GPU_BLUR_SIGMA) {
+        return false;
     }
 
     return true;
@@ -898,7 +874,7 @@ GrSurfaceProxyView SkBlurMaskFilterImpl::filterMaskGPU(GrRecordingContext* conte
     if (!isNormalBlur) {
         GrPaint paint;
         // Blend pathTexture over blurTexture.
-        paint.addCoverageFragmentProcessor(GrTextureEffect::Make(std::move(srcView), srcAlphaType));
+        paint.setCoverageFragmentProcessor(GrTextureEffect::Make(std::move(srcView), srcAlphaType));
         if (kInner_SkBlurStyle == fBlurStyle) {
             // inner:  dst = dst * src
             paint.setCoverageSetOpXPFactory(SkRegion::kIntersect_Op);
@@ -914,7 +890,7 @@ GrSurfaceProxyView SkBlurMaskFilterImpl::filterMaskGPU(GrRecordingContext* conte
             paint.setCoverageSetOpXPFactory(SkRegion::kReplace_Op);
         }
 
-        renderTargetContext->drawRect(GrNoClip(), std::move(paint), GrAA::kNo, SkMatrix::I(),
+        renderTargetContext->drawRect(nullptr, std::move(paint), GrAA::kNo, SkMatrix::I(),
                                       SkRect::Make(clipRect));
     }
 

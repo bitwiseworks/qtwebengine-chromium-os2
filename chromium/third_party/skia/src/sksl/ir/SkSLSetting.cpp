@@ -14,9 +14,9 @@ namespace SkSL {
 std::unique_ptr<Expression> Setting::constantPropagate(const IRGenerator& irGenerator,
                                                        const DefinitionMap& definitions) {
     if (irGenerator.fSettings->fReplaceSettings) {
-        return VariableReference::copy_constant(irGenerator, fValue.get());
+        return fValue->clone();
     }
     return nullptr;
 }
 
-} // namespace
+}  // namespace SkSL

@@ -45,9 +45,8 @@ struct CustomHomePagesTableModel::Entry {
 
 CustomHomePagesTableModel::CustomHomePagesTableModel(Profile* profile)
     : profile_(profile),
-      observer_(NULL),
-      num_outstanding_title_lookups_(0) {
-}
+      observer_(nullptr),
+      num_outstanding_title_lookups_(0) {}
 
 CustomHomePagesTableModel::~CustomHomePagesTableModel() {
 }
@@ -245,11 +244,9 @@ void CustomHomePagesTableModel::LoadAllTitles() {
   for (Entry& entry : entries_) {
     if (history_service) {
       entry.task_id = history_service->QueryURL(
-          entry.url,
-          false,
-          base::Bind(&CustomHomePagesTableModel::OnGotOneOfManyTitles,
-                     base::Unretained(this),
-                     entry.url),
+          entry.url, false,
+          base::BindOnce(&CustomHomePagesTableModel::OnGotOneOfManyTitles,
+                         base::Unretained(this), entry.url),
           &task_tracker_);
     }
   }

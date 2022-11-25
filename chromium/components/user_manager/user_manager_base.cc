@@ -203,15 +203,9 @@ void UserManagerBase::UserLoggedIn(const AccountId& account_id,
         break;
 
       case USER_TYPE_KIOSK_APP:
-        KioskAppLoggedIn(user);
-        break;
-
       case USER_TYPE_ARC_KIOSK_APP:
-        ArcKioskAppLoggedIn(user);
-        break;
-
       case USER_TYPE_WEB_KIOSK_APP:
-        WebKioskAppLoggedIn(user);
+        KioskAppLoggedIn(user);
         break;
 
       default:
@@ -845,22 +839,25 @@ void UserManagerBase::EnsureUsersLoaded() {
     user->set_force_online_signin(LoadForceOnlineSignin(*it));
     user->set_using_saml(known_user::IsUsingSAML(*it));
     users_.push_back(user);
+  }
 
+  for (auto* user : users_) {
+    auto& account_id = user->GetAccountId();
     base::string16 display_name;
-    if (prefs_display_names->GetStringWithoutPathExpansion(it->GetUserEmail(),
-                                                           &display_name)) {
+    if (prefs_display_names->GetStringWithoutPathExpansion(
+            account_id.GetUserEmail(), &display_name)) {
       user->set_display_name(display_name);
     }
 
     base::string16 given_name;
-    if (prefs_given_names->GetStringWithoutPathExpansion(it->GetUserEmail(),
-                                                         &given_name)) {
+    if (prefs_given_names->GetStringWithoutPathExpansion(
+            account_id.GetUserEmail(), &given_name)) {
       user->set_given_name(given_name);
     }
 
     std::string display_email;
-    if (prefs_display_emails->GetStringWithoutPathExpansion(it->GetUserEmail(),
-                                                            &display_email)) {
+    if (prefs_display_emails->GetStringWithoutPathExpansion(
+            account_id.GetUserEmail(), &display_email)) {
       user->set_display_email(display_email);
     }
   }
@@ -1004,24 +1001,19 @@ bool UserManagerBase::LoadForceOnlineSignin(const AccountId& account_id) const {
 void UserManagerBase::RemoveNonCryptohomeData(const AccountId& account_id) {
   PrefService* prefs = GetLocalState();
   DictionaryPrefUpdate prefs_display_name_update(prefs, kUserDisplayName);
-  prefs_display_name_update->RemoveWithoutPathExpansion(
-      account_id.GetUserEmail(), nullptr);
+  prefs_display_name_update->RemoveKey(account_id.GetUserEmail());
 
   DictionaryPrefUpdate prefs_given_name_update(prefs, kUserGivenName);
-  prefs_given_name_update->RemoveWithoutPathExpansion(account_id.GetUserEmail(),
-                                                      nullptr);
+  prefs_given_name_update->RemoveKey(account_id.GetUserEmail());
 
   DictionaryPrefUpdate prefs_display_email_update(prefs, kUserDisplayEmail);
-  prefs_display_email_update->RemoveWithoutPathExpansion(
-      account_id.GetUserEmail(), nullptr);
+  prefs_display_email_update->RemoveKey(account_id.GetUserEmail());
 
   DictionaryPrefUpdate prefs_oauth_update(prefs, kUserOAuthTokenStatus);
-  prefs_oauth_update->RemoveWithoutPathExpansion(account_id.GetUserEmail(),
-                                                 nullptr);
+  prefs_oauth_update->RemoveKey(account_id.GetUserEmail());
 
   DictionaryPrefUpdate prefs_force_online_update(prefs, kUserForceOnlineSignin);
-  prefs_force_online_update->RemoveWithoutPathExpansion(
-      account_id.GetUserEmail(), nullptr);
+  prefs_force_online_update->RemoveKey(account_id.GetUserEmail());
 
   known_user::RemovePrefs(account_id);
 

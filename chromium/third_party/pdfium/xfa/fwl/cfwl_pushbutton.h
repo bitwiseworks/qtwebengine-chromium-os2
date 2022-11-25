@@ -8,7 +8,6 @@
 #define XFA_FWL_CFWL_PUSHBUTTON_H_
 
 #include "xfa/fwl/cfwl_widget.h"
-#include "xfa/fwl/cfwl_widgetproperties.h"
 
 #define FWL_STATE_PSB_Hovered (1 << FWL_WGTSTATE_MAX)
 #define FWL_STATE_PSB_Pressed (1 << (FWL_WGTSTATE_MAX + 1))
@@ -19,7 +18,7 @@ class CFWL_Widget;
 
 class CFWL_PushButton final : public CFWL_Widget {
  public:
-  explicit CFWL_PushButton(const CFWL_App*);
+  CONSTRUCT_VIA_MAKE_GARBAGE_COLLECTED;
   ~CFWL_PushButton() override;
 
   // CFWL_Widget
@@ -32,8 +31,9 @@ class CFWL_PushButton final : public CFWL_Widget {
                     const CFX_Matrix& matrix) override;
 
  private:
+  explicit CFWL_PushButton(CFWL_App* pApp);
+
   void DrawBkground(CXFA_Graphics* pGraphics,
-                    IFWL_ThemeProvider* pTheme,
                     const CFX_Matrix* pMatrix);
   uint32_t GetPartStates();
   void UpdateTextOutStyles();
@@ -45,8 +45,8 @@ class CFWL_PushButton final : public CFWL_Widget {
   void OnKeyDown(CFWL_MessageKey* pMsg);
 
   bool m_bBtnDown = false;
-  CFX_RectF m_rtClient;
-  CFX_RectF m_rtCaption;
+  CFX_RectF m_ClientRect;
+  CFX_RectF m_CaptionRect;
 };
 
 #endif  // XFA_FWL_CFWL_PUSHBUTTON_H_

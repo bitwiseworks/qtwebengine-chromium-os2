@@ -42,6 +42,10 @@
 #include "services/viz/privileged/mojom/viz_main.mojom.h"
 #include "url/gurl.h"
 
+#if defined(OS_WIN)
+#include "services/viz/privileged/mojom/gl/info_collection_gpu_service.mojom.h"
+#endif
+
 #if BUILDFLAG(USE_VIZ_DEVTOOLS)
 #include "content/browser/gpu/viz_devtools_connector.h"
 #endif
@@ -54,7 +58,7 @@ namespace content {
 class BrowserChildProcessHostImpl;
 class GpuThreadController;
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
 class CATransactionGPUCoordinator;
 #endif
 
@@ -69,7 +73,7 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
   // Returns null on failure. It is not safe to store the pointer once control
   // has returned to the message loop as it can be destroyed. Instead store the
   // associated GPU host ID.  This could return NULL if GPU access is not
-  // allowed (blacklisted).
+  // allowed (blocklisted).
   CONTENT_EXPORT static GpuProcessHost* Get(
       GpuProcessKind kind = GPU_PROCESS_KIND_SANDBOXED,
       bool force_create = true);
@@ -101,11 +105,20 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
   // Forcefully terminates the GPU process.
   void ForceShutdown();
 
+  // Dumps the stack of the child process without crashing it.
+  // Only implemented on Android.
+  void DumpProcessStack();
+
   // Asks the GPU process to run a service instance corresponding to the
   // specific interface receiver type carried by |receiver|.
   void RunService(mojo::GenericPendingReceiver receiver);
 
   CONTENT_EXPORT viz::mojom::GpuService* gpu_service();
+
+#if defined(OS_WIN)
+  CONTENT_EXPORT viz::mojom::InfoCollectionGpuService*
+  info_collection_gpu_service();
+#endif
 
   CONTENT_EXPORT int GetIDForTesting() const;
 
@@ -153,6 +166,7 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
   void MaybeShutdownGpuProcess() override;
 #if defined(OS_WIN)
   void DidUpdateOverlayInfo(const gpu::OverlayInfo& overlay_info) override;
+  void DidUpdateHDRStatus(bool hdr_enabled) override;
 #endif
   void BlockDomainFrom3DAPIs(const GURL& url, gpu::DomainGuilt guilt) override;
   void DisableGpuCompositing() override;
@@ -173,7 +187,6 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
       mojo::PendingReceiver<service_manager::mojom::Service> receiver) override;
 #if defined(USE_OZONE)
   void TerminateGpuProcess(const std::string& message) override;
-  void SendGpuProcessMessage(IPC::Message* message) override;
 #endif
 
   bool LaunchGpuProcess();
@@ -236,7 +249,7 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
   std::unique_ptr<BrowserChildProcessHostImpl> process_;
   std::unique_ptr<GpuThreadController> in_process_gpu_thread_;
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   scoped_refptr<CATransactionGPUCoordinator> ca_transaction_gpu_coordinator_;
 #endif
 

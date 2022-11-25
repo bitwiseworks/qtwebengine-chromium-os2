@@ -93,8 +93,10 @@ DnsResourceRecord& DnsResourceRecord::operator=(DnsResourceRecord&& other) {
 }
 
 void DnsResourceRecord::SetOwnedRdata(std::string value) {
+  DCHECK(!value.empty());
   owned_rdata = std::move(value);
   rdata = owned_rdata;
+  DCHECK_EQ(owned_rdata.data(), rdata.data());
 }
 
 size_t DnsResourceRecord::CalculateRecordSize() const {
@@ -363,8 +365,13 @@ bool DnsResponse::InitParse(size_t nbytes, const DnsQuery& query) {
     return false;
   }
 
+  // At this point, it has been validated that the response is at least large
+  // enough to read the ID field.
+  id_available_ = true;
+
   // Match the query id.
-  if (base::NetToHost16(header()->id) != query.id())
+  DCHECK(id());
+  if (id().value() != query.id())
     return false;
 
   // Not a response?
@@ -391,6 +398,7 @@ bool DnsResponse::InitParseWithoutQuery(size_t nbytes) {
   if (nbytes < kHeaderSize || nbytes > io_buffer_size_) {
     return false;
   }
+  id_available_ = true;
 
   parser_ = DnsRecordParser(io_buffer_->data(), nbytes, kHeaderSize);
 
@@ -407,6 +415,13 @@ bool DnsResponse::InitParseWithoutQuery(size_t nbytes) {
   }
 
   return true;
+}
+
+base::Optional<uint16_t> DnsResponse::id() const {
+  if (!id_available_)
+    return base::nullopt;
+
+  return base::NetToHost16(header()->id);
 }
 
 bool DnsResponse::IsValid() const {
@@ -557,8 +572,7 @@ bool DnsResponse::WriteQuestion(base::BigEndianWriter* writer,
 
 bool DnsResponse::WriteRecord(base::BigEndianWriter* writer,
                               const DnsResourceRecord& record) {
-  if (record.rdata.data() != record.owned_rdata.data() ||
-      record.rdata.size() != record.owned_rdata.size()) {
+  if (record.rdata != base::StringPiece(record.owned_rdata)) {
     VLOG(1) << "record.rdata should point to record.owned_rdata.";
     return false;
   }

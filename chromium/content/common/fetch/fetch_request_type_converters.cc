@@ -5,7 +5,7 @@
 #include "content/common/fetch/fetch_request_type_converters.h"
 
 #include "content/common/service_worker/service_worker_utils.h"
-#include "content/public/common/referrer.h"
+#include "third_party/blink/public/common/loader/referrer_utils.h"
 #include "ui/base/page_transition_types.h"
 
 namespace mojo {
@@ -28,18 +28,15 @@ blink::mojom::FetchAPIRequestPtr TypeConverter<
   if (input.request_body)
     output->body = input.request_body;
   output->referrer = blink::mojom::Referrer::New(
-      input.referrer, content::Referrer::NetReferrerPolicyToBlinkReferrerPolicy(
-                          input.referrer_policy));
+      input.referrer,
+      blink::ReferrerUtils::NetToMojoReferrerPolicy(input.referrer_policy));
   output->mode = input.mode;
   output->is_main_resource_load =
-      content::ServiceWorkerUtils::IsMainResourceType(
-          static_cast<blink::mojom::ResourceType>(input.resource_type));
+      content::ServiceWorkerUtils::IsMainRequestDestination(input.destination);
   output->credentials_mode = input.credentials_mode;
   output->cache_mode =
       content::ServiceWorkerUtils::GetCacheModeFromLoadFlags(input.load_flags);
   output->redirect_mode = input.redirect_mode;
-  output->request_context_type = static_cast<blink::mojom::RequestContextType>(
-      input.fetch_request_context_type);
   output->destination =
       static_cast<network::mojom::RequestDestination>(input.destination);
   output->is_reload = ui::PageTransitionCoreTypeIs(

@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <vector>
 
 #include "base/callback.h"
 #include "base/component_export.h"
@@ -18,6 +19,7 @@
 #include "base/sequenced_task_runner_helpers.h"
 #include "storage/browser/quota/quota_callbacks.h"
 #include "storage/browser/quota/quota_client.h"
+#include "storage/browser/quota/quota_client_type.h"
 #include "storage/browser/quota/quota_database.h"
 #include "storage/browser/quota/quota_manager.h"
 #include "storage/browser/quota/quota_task.h"
@@ -38,10 +40,13 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaManagerProxy
  public:
   using UsageAndQuotaCallback = QuotaManager::UsageAndQuotaCallback;
 
-  virtual void RegisterClient(scoped_refptr<QuotaClient> client);
+  virtual void RegisterClient(
+      scoped_refptr<QuotaClient> client,
+      QuotaClientType client_type,
+      const std::vector<blink::mojom::StorageType>& storage_types);
   virtual void NotifyStorageAccessed(const url::Origin& origin,
                                      blink::mojom::StorageType type);
-  virtual void NotifyStorageModified(QuotaClient::ID client_id,
+  virtual void NotifyStorageModified(QuotaClientType client_id,
                                      const url::Origin& origin,
                                      blink::mojom::StorageType type,
                                      int64_t delta);
@@ -49,7 +54,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaManagerProxy
   virtual void NotifyOriginNoLongerInUse(const url::Origin& origin);
   virtual void NotifyWriteFailed(const url::Origin& origin);
 
-  virtual void SetUsageCacheEnabled(QuotaClient::ID client_id,
+  virtual void SetUsageCacheEnabled(QuotaClientType client_id,
                                     const url::Origin& origin,
                                     blink::mojom::StorageType type,
                                     bool enabled);

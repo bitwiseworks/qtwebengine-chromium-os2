@@ -11,6 +11,8 @@
 
 #include "platform/Feature.h"
 
+#include <array>
+
 namespace angle
 {
 
@@ -40,22 +42,6 @@ struct FeaturesVk : FeatureSetBase
     Feature provokingVertex = {"provoking_vertex", FeatureCategory::VulkanFeatures,
                                "Enable provoking vertex mode via VK_EXT_provoking_vertex extension",
                                &members};
-
-    // Flips the viewport to render upside-down. This has the effect to render the same way as
-    // OpenGL. If this feature gets enabled, we enable the KHR_MAINTENANCE_1 extension to allow
-    // negative viewports. We inverse rendering to the backbuffer by reversing the height of the
-    // viewport and increasing Y by the height. So if the viewport was (0,0,width,height), it
-    // becomes (0, height, width, -height). Unfortunately, when we start doing this, we also need
-    // to adjust a lot of places since the rendering now happens upside-down. Affected places so
-    // far:
-    // -readPixels
-    // -copyTexImage
-    // -framebuffer blit
-    // -generating mipmaps
-    // -Point sprites tests
-    // -texStorage
-    Feature flipViewportY = {"flip_viewport_y", FeatureCategory::VulkanFeatures,
-                             "Flips the viewport to render upside-down", &members};
 
     // Add an extra copy region when using vkCmdCopyBuffer as the Windows Intel driver seems
     // to have a bug where the last region is ignored.
@@ -87,6 +73,10 @@ struct FeaturesVk : FeatureSetBase
         "vertex shader that reads from it is ineffective",
         &members, "http://anglebug.com/3016"};
 
+    Feature supportsRenderpass2 = {"supports_renderpass2", FeatureCategory::VulkanFeatures,
+                                   "VkDevice supports the VK_KHR_create_renderpass2 extension",
+                                   &members};
+
     // Whether the VkDevice supports the VK_KHR_incremental_present extension, on which the
     // EGL_KHR_swap_buffers_with_damage extension can be layered.
     Feature supportsIncrementalPresent = {
@@ -108,6 +98,12 @@ struct FeaturesVk : FeatureSetBase
         "VkDevice supports the VK_ANDROID_external_memory_android_hardware_buffer extension",
         &members};
 
+    // Whether the VkDevice supports the VK_GGP_frame_token extension, on which
+    // the EGL_ANGLE_swap_with_frame_token extension can be layered.
+    Feature supportsGGPFrameToken = {"supports_ggp_frame_token", FeatureCategory::VulkanFeatures,
+                                     "VkDevice supports the VK_GGP_frame_token extension",
+                                     &members};
+
     // Whether the VkDevice supports the VK_KHR_external_memory_fd extension, on which the
     // GL_EXT_memory_object_fd extension can be layered.
     Feature supportsExternalMemoryFd = {
@@ -116,9 +112,23 @@ struct FeaturesVk : FeatureSetBase
 
     // Whether the VkDevice supports the VK_FUCHSIA_external_memory
     // extension, on which the GL_ANGLE_memory_object_fuchsia extension can be layered.
-    angle::Feature supportsExternalMemoryFuchsia = {
+    Feature supportsExternalMemoryFuchsia = {
         "supports_external_memory_fuchsia", FeatureCategory::VulkanFeatures,
         "VkDevice supports the VK_FUCHSIA_external_memory extension", &members};
+
+    Feature supportsFilteringPrecision = {
+        "supports_filtering_precision_google", FeatureCategory::VulkanFeatures,
+        "VkDevice supports the VK_GOOGLE_sampler_filtering_precision extension", &members};
+
+    // Whether the VkDevice supports the VK_KHR_external_fence_capabilities extension.
+    Feature supportsExternalFenceCapabilities = {
+        "supports_external_fence_capabilities", FeatureCategory::VulkanFeatures,
+        "VkDevice supports the VK_KHR_external_fence_capabilities extension", &members};
+
+    // Whether the VkDevice supports the VK_KHR_external_semaphore_capabilities extension.
+    Feature supportsExternalSemaphoreCapabilities = {
+        "supports_external_semaphore_capabilities", FeatureCategory::VulkanFeatures,
+        "VkDevice supports the VK_KHR_external_semaphore_capabilities extension", &members};
 
     // Whether the VkDevice supports the VK_KHR_external_semaphore_fd extension, on which the
     // GL_EXT_semaphore_fd extension can be layered.
@@ -132,12 +142,31 @@ struct FeaturesVk : FeatureSetBase
         "supports_external_semaphore_fuchsia", FeatureCategory::VulkanFeatures,
         "VkDevice supports the VK_FUCHSIA_external_semaphore extension", &members};
 
+    // Whether the VkDevice supports the VK_KHR_external_fence_fd extension, on which the
+    // EGL_ANDROID_native_fence extension can be layered.
+    Feature supportsExternalFenceFd = {"supports_external_fence_fd",
+                                       FeatureCategory::VulkanFeatures,
+                                       "VkDevice supports the VK_KHR_external_fence_fd extension",
+                                       &members, "http://anglebug.com/2517"};
+
+    // Whether the VkDevice can support EGL_ANDROID_native_fence_sync extension.
+    Feature supportsAndroidNativeFenceSync = {
+        "supports_android_native_fence_sync", FeatureCategory::VulkanFeatures,
+        "VkDevice supports the EGL_ANDROID_native_fence_sync extension", &members,
+        "http://anglebug.com/2517"};
+
     // Whether the VkDevice supports the VK_EXT_shader_stencil_export extension, which is used to
     // perform multisampled resolve of stencil buffer.  A multi-step workaround is used instead if
     // this extension is not available.
     Feature supportsShaderStencilExport = {
         "supports_shader_stencil_export", FeatureCategory::VulkanFeatures,
         "VkDevice supports the VK_EXT_shader_stencil_export extension", &members};
+
+    // Whether the VkDevice supports the VK_KHR_sampler_ycbcr_conversion extension, which is needed
+    // to support Ycbcr conversion with external images.
+    Feature supportsYUVSamplerConversion = {
+        "supports_yuv_sampler_conversion", FeatureCategory::VulkanFeatures,
+        "VkDevice supports the VK_KHR_sampler_ycbcr_conversion extension", &members};
 
     // Where VK_EXT_transform_feedback is not support, an emulation path is used.
     // http://anglebug.com/3205
@@ -158,6 +187,15 @@ struct FeaturesVk : FeatureSetBase
     Feature supportsIndexTypeUint8 = {"supports_index_type_uint8", FeatureCategory::VulkanFeatures,
                                       "VkDevice supports the VK_EXT_index_type_uint8 extension",
                                       &members, "http://anglebug.com/4405"};
+
+    // Whether the VkDevice supports the VK_KHR_depth_stencil_resolve extension with the
+    // independentResolveNone feature.
+    // http://anglebug.com/4836
+    Feature supportsDepthStencilResolve = {"supports_depth_stencil_resolve",
+                                           FeatureCategory::VulkanFeatures,
+                                           "VkDevice supports the VK_KHR_depth_stencil_resolve "
+                                           "extension with the independentResolveNone feature",
+                                           &members, "http://anglebug.com/4836"};
 
     // VK_PRESENT_MODE_FIFO_KHR causes random timeouts on Linux Intel. http://anglebug.com/3153
     Feature disableFifoPresentMode = {
@@ -251,6 +289,21 @@ struct FeaturesVk : FeatureSetBase
         "Fill new allocations with non-zero values to flush out errors.", &members,
         "http://anglebug.com/4384"};
 
+    // Allocate a "shadow" buffer for GL buffer objects. For GPU-read only buffers
+    // glMap* latency can be reduced by maintaining a copy of the buffer which is
+    // writeable only by the CPU. We then return this shadow buffer on glMap* calls.
+    Feature shadowBuffers = {
+        "shadow_buffers", FeatureCategory::VulkanFeatures,
+        "Allocate a shadow buffer for GL buffer objects to reduce glMap* latency.", &members,
+        "http://anglebug.com/4339"};
+
+    // Persistently map buffer memory until destroy, saves on map/unmap IOCTL overhead
+    // for buffers that are updated frequently.
+    Feature persistentlyMappedBuffers = {
+        "persistently_mapped_buffers", FeatureCategory::VulkanFeatures,
+        "Persistently map buffer memory to reduce map/unmap IOCTL overhead.", &members,
+        "http://anglebug.com/2162"};
+
     // Android needs to pre-rotate surfaces that are not oriented per the native device's
     // orientation (e.g. a landscape application on a Pixel phone).  This feature works for
     // full-screen applications. http://anglebug.com/3502
@@ -269,11 +322,121 @@ struct FeaturesVk : FeatureSetBase
         "enable_precision_qualifiers", FeatureCategory::VulkanFeatures,
         "Enable precision qualifiers in shaders", &members, "http://anglebug.com/3078"};
 
-    // Support Depth/Stencil rendering feedback loops by masking out the depth/stencil buffer.
-    // Manhattan uses this feature in a few draw calls.
-    Feature supportDepthStencilRenderingFeedbackLoops = {
-        "support_depth_stencil_rendering_feedback_loops", FeatureCategory::VulkanFeatures,
-        "Suport depth/stencil rendering feedback loops", &members, "http://anglebug.com/4490"};
+    // Desktop (at least NVIDIA) drivers prefer combining barriers into one vkCmdPipelineBarrier
+    // call over issuing multiple barrier calls with fine grained dependency information to have
+    // better performance. http://anglebug.com/4633
+    Feature preferAggregateBarrierCalls = {
+        "prefer_aggregate_barrier_calls", FeatureCategory::VulkanWorkarounds,
+        "Single barrier call is preferred over multiple calls with "
+        "fine grained pipeline stage dependency information",
+        &members, "http://anglebug.com/4633"};
+
+    // Enable parallel thread that processes and submits vulkan command buffers.
+    // Currently off by default to enable testing.
+    Feature enableCommandProcessingThread = {
+        "enable_command_processing_thread", FeatureCategory::VulkanFeatures,
+        "Enable parallel processing and submission of Vulkan commands in worker thread", &members,
+        "http://anglebug.com/4324"};
+
+    // Whether the VkDevice supports the VK_KHR_shader_float16_int8 extension and has the
+    // shaderFloat16 feature.
+    Feature supportsShaderFloat16 = {"supports_shader_float16", FeatureCategory::VulkanFeatures,
+                                     "VkDevice supports the VK_KHR_shader_float16_int8 extension "
+                                     "and has the shaderFloat16 feature",
+                                     &members, "http://anglebug.com/4551"};
+
+    // Some devices don't meet the limits required to perform mipmap generation using the built-in
+    // compute shader.  On some other devices, VK_IMAGE_USAGE_STORAGE_BIT is detrimental to
+    // performance, making this solution impractical.
+    Feature allowGenerateMipmapWithCompute = {
+        "allow_generate_mipmap_with_compute", FeatureCategory::VulkanFeatures,
+        "Use the compute path to generate mipmaps on devices that meet the minimum requirements, "
+        "and the performance is better.",
+        &members, "http://anglebug.com/4551"};
+
+    // Force maxUniformBufferSize to 16K on Qualcomm's Adreno 540. Pixel2's Adreno540 reports
+    // maxUniformBufferSize 64k but various tests failed with that size. For that specific
+    // device, we set to 16k for now which is known to pass all tests.
+    // https://issuetracker.google.com/161903006
+    Feature forceMaxUniformBufferSize16KB = {
+        "force_max_uniform_buffer_size_16K", FeatureCategory::VulkanWorkarounds,
+        "Force max uniform buffer size to 16K on some device due to bug", &members,
+        "https://issuetracker.google.com/161903006"};
+
+    // Swiftshader on mac fails to initialize WebGL context when EXT_multisampled_render_to_texture
+    // is used by Chromium.
+    // http://anglebug.com/4937
+    Feature enableMultisampledRenderToTexture = {
+        "enable_multisampled_render_to_texture", FeatureCategory::VulkanWorkarounds,
+        "Expose EXT_multisampled_render_to_texture", &members, "http://anglebug.com/4937"};
+
+    // Qualcomm fails some tests when reducing the preferred block size to 4M.
+    // http://anglebug.com/4995
+    Feature preferredLargeHeapBlockSize4MB = {
+        "preferred_large_heap_block_size_4M", FeatureCategory::VulkanWorkarounds,
+        "Use 4 MB preferred large heap block size with AMD allocator", &members,
+        "http://anglebug.com/4995"};
+
+    // Manhattan is calling glFlush in the middle of renderpass which breaks renderpass and hurts
+    // performance on tile based GPU. When this is enabled, we will defer the glFlush call made in
+    // the middle of renderpass to the end of renderpass.
+    // https://issuetracker.google.com/issues/166475273
+    Feature deferFlushUntilEndRenderPass = {
+        "defer_flush_until_endrenderpass", FeatureCategory::VulkanWorkarounds,
+        "Allow glFlush to be deferred until renderpass ends", &members,
+        "https://issuetracker.google.com/issues/166475273"};
+
+    // Android mistakenly destroys oldSwapchain passed to vkCreateSwapchainKHR, causing crashes on
+    // certain drivers.  http://anglebug.com/5061
+    Feature waitIdleBeforeSwapchainRecreation = {
+        "wait_idle_before_swapchain_recreation", FeatureCategory::VulkanWorkarounds,
+        "Before passing an oldSwapchain to VkSwapchainCreateInfoKHR, wait for queue to be idle. "
+        "Works around a bug on platforms which destroy oldSwapchain in vkCreateSwapchainKHR.",
+        &members, "http://anglebug.com/5061"};
+
+    // Allow forcing an LOD offset on all sampling operations for performance comparisons. ANGLE is
+    // non-conformant if this feature is enabled.
+    std::array<angle::Feature, 4> forceTextureLODOffset = {
+        angle::Feature{"force_texture_lod_offset_1", angle::FeatureCategory::VulkanWorkarounds,
+                       "Increase the minimum texture level-of-detail by 1 when sampling.",
+                       &members},
+        angle::Feature{"force_texture_lod_offset_2", angle::FeatureCategory::VulkanWorkarounds,
+                       "Increase the minimum texture level-of-detail by 2 when sampling.",
+                       &members},
+        angle::Feature{"force_texture_lod_offset_3", angle::FeatureCategory::VulkanWorkarounds,
+                       "Increase the minimum texture level-of-detail by 3 when sampling.",
+                       &members},
+        angle::Feature{"force_texture_lod_offset_4", angle::FeatureCategory::VulkanWorkarounds,
+                       "Increase the minimum texture level-of-detail by 4 when sampling.",
+                       &members},
+    };
+
+    // Translate non-nearest filtering modes to nearest for all samplers for performance
+    // comparisons. ANGLE is non-conformant if this feature is enabled.
+    Feature forceNearestFiltering = {"force_nearest_filtering", FeatureCategory::VulkanWorkarounds,
+                                     "Force nearest filtering when sampling.", &members};
+
+    // Translate  non-nearest mip filtering modes to nearest mip for all samplers for performance
+    // comparisons. ANGLE is non-conformant if this feature is enabled.
+    Feature forceNearestMipFiltering = {"force_nearest_mip_filtering",
+                                        FeatureCategory::VulkanWorkarounds,
+                                        "Force nearest mip filtering when sampling.", &members};
+
+    // Compress float32 vertices in static buffers to float16 at draw time. ANGLE is non-conformant
+    // if this feature is enabled.
+    angle::Feature compressVertexData = {"compress_vertex_data",
+                                         angle::FeatureCategory::VulkanWorkarounds,
+                                         "Compress vertex data to smaller data types when "
+                                         "possible. Using this feature makes ANGLE non-conformant.",
+                                         &members};
+
+    // Qualcomm missynchronizes vkCmdClearAttachments in the middle of render pass.
+    // https://issuetracker.google.com/166809097
+    Feature preferDrawClearOverVkCmdClearAttachments = {
+        "prefer_draw_clear_over_vkCmdClearAttachments", FeatureCategory::VulkanWorkarounds,
+        "On some hardware, clear using a draw call instead of vkCmdClearAttachments in the middle "
+        "of render pass due to bugs",
+        &members, "https://issuetracker.google.com/166809097"};
 };
 
 inline FeaturesVk::FeaturesVk()  = default;

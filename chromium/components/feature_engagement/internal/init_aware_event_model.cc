@@ -16,12 +16,11 @@ InitAwareEventModel::InitAwareEventModel(
 
 InitAwareEventModel::~InitAwareEventModel() = default;
 
-void InitAwareEventModel::Initialize(
-    const OnModelInitializationFinished& callback,
-    uint32_t current_day) {
+void InitAwareEventModel::Initialize(OnModelInitializationFinished callback,
+                                     uint32_t current_day) {
   event_model_->Initialize(
-      base::Bind(&InitAwareEventModel::OnInitializeComplete,
-                 weak_ptr_factory_.GetWeakPtr(), callback),
+      base::BindOnce(&InitAwareEventModel::OnInitializeComplete,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)),
       current_day);
 }
 
@@ -32,6 +31,12 @@ bool InitAwareEventModel::IsReady() const {
 const Event* InitAwareEventModel::GetEvent(
     const std::string& event_name) const {
   return event_model_->GetEvent(event_name);
+}
+
+uint32_t InitAwareEventModel::GetEventCount(const std::string& event_name,
+                                            uint32_t current_day,
+                                            uint32_t window_size) const {
+  return event_model_->GetEventCount(event_name, current_day, window_size);
 }
 
 void InitAwareEventModel::IncrementEvent(const std::string& event_name,
@@ -48,7 +53,7 @@ void InitAwareEventModel::IncrementEvent(const std::string& event_name,
 }
 
 void InitAwareEventModel::OnInitializeComplete(
-    const OnModelInitializationFinished& callback,
+    OnModelInitializationFinished callback,
     bool success) {
   initialization_complete_ = true;
   if (success) {
@@ -57,7 +62,7 @@ void InitAwareEventModel::OnInitializeComplete(
   }
   queued_events_.clear();
 
-  callback.Run(success);
+  std::move(callback).Run(success);
 }
 
 size_t InitAwareEventModel::GetQueuedEventCountForTesting() {

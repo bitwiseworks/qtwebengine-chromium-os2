@@ -25,12 +25,15 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "test/mac/mach_errors.h"
-#include "test/mac/mach_multiprocess.h"
 #include "util/mac/mac_util.h"
 #include "util/mach/exception_behaviors.h"
 #include "util/mach/exception_types.h"
 #include "util/mach/mach_message.h"
 #include "util/misc/implicit_cast.h"
+
+#if defined(OS_MAC)
+#include "test/mac/mach_multiprocess.h"
+#endif  // OS_MAC
 
 namespace crashpad {
 namespace test {
@@ -472,8 +475,8 @@ class MockUniversalMachExcServer : public UniversalMachExcServer::Interface {
   // UniversalMachExcServer::Interface:
 
   // CatchMachException is the method to mock, but it has 13 parameters, and
-  // gmock can only mock methods with up to 10 parameters. Coalesce some related
-  // parameters together into structs, and call a mocked method.
+  // Google Mock can only mock methods with up to 10 parameters. Coalesce some
+  // related parameters together into structs, and call a mocked method.
   virtual kern_return_t CatchMachException(
       exception_behavior_t behavior,
       exception_handler_t exception_port,
@@ -958,6 +961,8 @@ TEST(ExcServerVariants, MachMessageServerRequestIDs) {
             expect_request_ids);
 }
 
+#if defined(OS_MAC)
+
 class TestExcServerVariants : public MachMultiprocess,
                               public UniversalMachExcServer::Interface {
  public:
@@ -970,8 +975,7 @@ class TestExcServerVariants : public MachMultiprocess,
         flavor_(flavor),
         state_count_(state_count),
         handled_(false) {
-    // This is how the __builtin_trap() in MachMultiprocessChild() appears.
-    SetExpectedChildTermination(kTerminationSignal, SIGILL);
+    SetExpectedChildTerminationBuiltinTrap();
   }
 
   // UniversalMachExcServer::Interface:
@@ -1138,43 +1142,47 @@ TEST(ExcServerVariants, ThreadStates) {
     mach_msg_type_number_t count;
   } test_data[] = {
 #if defined(ARCH_CPU_X86_FAMILY)
-      // For the x86 family, exception handlers can only properly receive the
-      // thread, float, and exception state flavors. There’s a bug in the kernel
-      // that causes it to call thread_getstatus() (a wrapper for the more
-      // familiar thread_get_state()) with an incorrect state buffer size
-      // parameter when delivering an exception. 10.9.4
-      // xnu-2422.110.17/osfmk/kern/exception.c exception_deliver() uses the
-      // _MachineStateCount[] array indexed by the flavor number to obtain the
-      // buffer size. 10.9.4 xnu-2422.110.17/osfmk/i386/pcb.c contains the
-      // definition of this array for the x86 family. The slots corresponding to
-      // thread, float, and exception state flavors in both native-width (32-
-      // and 64-bit) and universal are correct, but the remaining elements in
-      // the array are not. This includes elements that would correspond to
-      // debug and AVX state flavors, so these cannot be tested here.
-      //
-      // When machine_thread_get_state() (the machine-specific implementation of
-      // thread_get_state()) encounters an undersized buffer as reported by the
-      // buffer size parameter, it returns KERN_INVALID_ARGUMENT, which causes
-      // exception_deliver() to not actually deliver the exception and instead
-      // return that error code to exception_triage() as well.
-      //
-      // This bug is filed as radar 18312067.
-      //
-      // Additionaly, the AVX state flavors are also not tested because they’re
-      // not available on all CPUs and OS versions.
+    // For the x86 family, exception handlers can only properly receive the
+    // thread, float, and exception state flavors. There’s a bug in the kernel
+    // that causes it to call thread_getstatus() (a wrapper for the more
+    // familiar thread_get_state()) with an incorrect state buffer size
+    // parameter when delivering an exception. 10.9.4
+    // xnu-2422.110.17/osfmk/kern/exception.c exception_deliver() uses the
+    // _MachineStateCount[] array indexed by the flavor number to obtain the
+    // buffer size. 10.9.4 xnu-2422.110.17/osfmk/i386/pcb.c contains the
+    // definition of this array for the x86 family. The slots corresponding to
+    // thread, float, and exception state flavors in both native-width (32- and
+    // 64-bit) and universal are correct, but the remaining elements in the
+    // array are not. This includes elements that would correspond to debug and
+    // AVX state flavors, so these cannot be tested here.
+    //
+    // When machine_thread_get_state() (the machine-specific implementation of
+    // thread_get_state()) encounters an undersized buffer as reported by the
+    // buffer size parameter, it returns KERN_INVALID_ARGUMENT, which causes
+    // exception_deliver() to not actually deliver the exception and instead
+    // return that error code to exception_triage() as well.
+    //
+    // This bug is filed as radar 18312067.
+    //
+    // Additionaly, the AVX state flavors are also not tested because they’re
+    // not available on all CPUs and OS versions.
+    {x86_THREAD_STATE, x86_THREAD_STATE_COUNT},
+    {x86_FLOAT_STATE, x86_FLOAT_STATE_COUNT},
+    {x86_EXCEPTION_STATE, x86_EXCEPTION_STATE_COUNT},
 #if defined(ARCH_CPU_X86)
-      {x86_THREAD_STATE32, x86_THREAD_STATE32_COUNT},
-      {x86_FLOAT_STATE32, x86_FLOAT_STATE32_COUNT},
-      {x86_EXCEPTION_STATE32, x86_EXCEPTION_STATE32_COUNT},
+    {x86_THREAD_STATE32, x86_THREAD_STATE32_COUNT},
+    {x86_FLOAT_STATE32, x86_FLOAT_STATE32_COUNT},
+    {x86_EXCEPTION_STATE32, x86_EXCEPTION_STATE32_COUNT},
+#elif defined(ARCH_CPU_X86_64)
+    {x86_THREAD_STATE64, x86_THREAD_STATE64_COUNT},
+    {x86_FLOAT_STATE64, x86_FLOAT_STATE64_COUNT},
+    {x86_EXCEPTION_STATE64, x86_EXCEPTION_STATE64_COUNT},
 #endif
-#if defined(ARCH_CPU_X86_64)
-      {x86_THREAD_STATE64, x86_THREAD_STATE64_COUNT},
-      {x86_FLOAT_STATE64, x86_FLOAT_STATE64_COUNT},
-      {x86_EXCEPTION_STATE64, x86_EXCEPTION_STATE64_COUNT},
-#endif
-      {x86_THREAD_STATE, x86_THREAD_STATE_COUNT},
-      {x86_FLOAT_STATE, x86_FLOAT_STATE_COUNT},
-      {x86_EXCEPTION_STATE, x86_EXCEPTION_STATE_COUNT},
+#elif defined(ARCH_CPU_ARM64)
+    {ARM_UNIFIED_THREAD_STATE, ARM_UNIFIED_THREAD_STATE_COUNT},
+    {ARM_THREAD_STATE64, ARM_THREAD_STATE64_COUNT},
+    {ARM_NEON_STATE64, ARM_NEON_STATE64_COUNT},
+    {ARM_EXCEPTION_STATE64, ARM_EXCEPTION_STATE64_COUNT},
 #else
 #error Port this test to your CPU architecture.
 #endif
@@ -1193,9 +1201,16 @@ TEST(ExcServerVariants, ThreadStates) {
   }
 }
 
+#endif  // OS_MAC
+
 TEST(ExcServerVariants, ExcServerSuccessfulReturnValue) {
+#if defined(OS_IOS)
+  // iOS 9 ≅ OS X 10.11.
+  const kern_return_t prefer_not_set_thread_state = KERN_SUCCESS;
+#else
   const kern_return_t prefer_not_set_thread_state =
-      MacOSXMinorVersion() < 11 ? MACH_RCV_PORT_DIED : KERN_SUCCESS;
+      MacOSVersionNumber() < 10'11'00 ? MACH_RCV_PORT_DIED : KERN_SUCCESS;
+#endif
 
   const struct {
     exception_type_t exception;

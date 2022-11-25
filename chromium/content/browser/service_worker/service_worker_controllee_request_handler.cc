@@ -16,11 +16,13 @@
 #include "content/browser/service_worker/service_worker_container_host.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
+#include "content/browser/service_worker/service_worker_main_resource_loader.h"
 #include "content/browser/service_worker/service_worker_metrics.h"
-#include "content/browser/service_worker/service_worker_navigation_loader.h"
 #include "content/browser/service_worker/service_worker_object_host.h"
 #include "content/browser/service_worker/service_worker_registration.h"
 #include "content/common/service_worker/service_worker_utils.h"
+#include "content/public/browser/allow_service_worker_result.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
@@ -29,7 +31,6 @@
 #include "net/base/url_util.h"
 #include "services/network/public/cpp/resource_request_body.h"
 #include "third_party/blink/public/common/loader/resource_type_util.h"
-#include "third_party/blink/public/common/service_worker/service_worker_utils.h"
 
 #if BUILDFLAG(ENABLE_OFFLINE_PAGES)
 #include "components/offline_pages/core/request_header/offline_page_header.h"
@@ -67,12 +68,15 @@ ServiceWorkerControlleeRequestHandler::ServiceWorkerControlleeRequestHandler(
     base::WeakPtr<ServiceWorkerContextCore> context,
     base::WeakPtr<ServiceWorkerContainerHost> container_host,
     blink::mojom::ResourceType resource_type,
-    bool skip_service_worker)
+    bool skip_service_worker,
+    ServiceWorkerAccessedCallback service_worker_accessed_callback)
     : context_(std::move(context)),
       container_host_(std::move(container_host)),
       resource_type_(resource_type),
       skip_service_worker_(skip_service_worker),
-      force_update_started_(false) {
+      force_update_started_(false),
+      service_worker_accessed_callback_(
+          std::move(service_worker_accessed_callback)) {
   DCHECK(ServiceWorkerUtils::IsMainResourceType(resource_type));
   TRACE_EVENT_WITH_FLOW0("ServiceWorker",
                          "ServiceWorkerControlleeRequestHandler::"
@@ -228,12 +232,12 @@ bool ServiceWorkerControlleeRequestHandler::InitializeContainerHost(
   container_host_->SetControllerRegistration(nullptr,
                                              /*notify_controllerchange=*/false);
   stripped_url_ = net::SimplifyUrlForRequest(tentative_resource_request.url);
-  container_host_->UpdateUrls(
-      stripped_url_, tentative_resource_request.site_for_cookies,
-      tentative_resource_request.trusted_params
-          ? tentative_resource_request.trusted_params->network_isolation_key
-                .GetTopFrameOrigin()
-          : base::nullopt);
+  container_host_->UpdateUrls(stripped_url_,
+                              tentative_resource_request.site_for_cookies,
+                              tentative_resource_request.trusted_params
+                                  ? tentative_resource_request.trusted_params
+                                        ->isolation_info.top_frame_origin()
+                                  : base::nullopt);
   return true;
 }
 
@@ -278,22 +282,28 @@ void ServiceWorkerControlleeRequestHandler::ContinueWithRegistration(
     return;
   }
 
-  bool allow_service_worker = false;
+  AllowServiceWorkerResult allow_service_worker =
+      AllowServiceWorkerResult::No();
   if (ServiceWorkerContext::IsServiceWorkerOnUIEnabled()) {
     allow_service_worker =
         GetContentClient()->browser()->AllowServiceWorkerOnUI(
             registration->scope(),
             container_host_->site_for_cookies().RepresentativeUrl(),
             container_host_->top_frame_origin(), /*script_url=*/GURL(),
-            browser_context_, container_host_->web_contents_getter());
+            browser_context_);
   } else {
     allow_service_worker =
         GetContentClient()->browser()->AllowServiceWorkerOnIO(
             registration->scope(),
             container_host_->site_for_cookies().RepresentativeUrl(),
             container_host_->top_frame_origin(), /*script_url=*/GURL(),
-            resource_context_, container_host_->web_contents_getter());
+            resource_context_);
   }
+
+  RunOrPostTaskOnThread(
+      FROM_HERE, BrowserThread::UI,
+      base::BindOnce(service_worker_accessed_callback_, registration->scope(),
+                     allow_service_worker));
 
   if (!allow_service_worker) {
     TRACE_EVENT_WITH_FLOW1(
@@ -460,9 +470,9 @@ void ServiceWorkerControlleeRequestHandler::ContinueWithActivatedVersion(
   }
 
   // Finally, we want to forward to the service worker! Make a
-  // ServiceWorkerNavigationLoader which does that work.
-  loader_wrapper_ = std::make_unique<ServiceWorkerNavigationLoaderWrapper>(
-      std::make_unique<ServiceWorkerNavigationLoader>(
+  // ServiceWorkerMainResourceLoader which does that work.
+  loader_wrapper_ = std::make_unique<ServiceWorkerMainResourceLoaderWrapper>(
+      std::make_unique<ServiceWorkerMainResourceLoader>(
           std::move(fallback_callback_), container_host_,
           base::WrapRefCounted(context_->loader_factory_getter())));
 
@@ -473,7 +483,7 @@ void ServiceWorkerControlleeRequestHandler::ContinueWithActivatedVersion(
       TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT, "Info",
       "Forwarded to the ServiceWorker");
   std::move(loader_callback_)
-      .Run(base::BindOnce(&ServiceWorkerNavigationLoader::StartRequest,
+      .Run(base::BindOnce(&ServiceWorkerMainResourceLoader::StartRequest,
                           loader_wrapper_->get()->AsWeakPtr()));
 }
 

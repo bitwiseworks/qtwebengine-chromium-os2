@@ -21,17 +21,15 @@ namespace {
 // We divide the measurement interval into discretized time slices.
 // Each slice is marked as janky if it contained a janky task. A janky task is
 // one whose execution latency is greater than kJankThreshold.
-constexpr base::TimeDelta kMeasurementInterval =
-    base::TimeDelta::FromSeconds(30);
+constexpr auto kMeasurementInterval = base::TimeDelta::FromSeconds(30);
 
 // A task or event longer than kJankThreshold is considered janky.
-constexpr base::TimeDelta kJankThreshold =
-    base::TimeDelta::FromMilliseconds(100);
+constexpr auto kJankThreshold = base::TimeDelta::FromMilliseconds(100);
 
 // If there have been no events/tasks on the UI thread for a significant period
 // of time, it's likely because Chrome was suspended.
 // This value is copied from queueing_time_estimator.cc:kInvalidPeriodThreshold.
-constexpr base::TimeDelta kSuspendInterval = base::TimeDelta::FromSeconds(30);
+constexpr auto kSuspendInterval = base::TimeDelta::FromSeconds(30);
 
 // Given a |jank|, finds each janky slice between |start_time| and |end_time|,
 // and adds it to |janky_slices|.
@@ -50,7 +48,7 @@ void AddJankySlices(std::set<int>* janky_slices,
   // Find each janky slice, and add it to |janky_slices|.
   while (jank_start < jank_end) {
     // Convert |jank_start| to a slice label.
-    int64_t label = (jank_start - start_time) / kJankThreshold;
+    int64_t label = (jank_start - start_time).IntDiv(kJankThreshold);
     janky_slices->insert(label);
 
     jank_start += kJankThreshold;
@@ -141,7 +139,17 @@ void Calculator::TaskOrEventFinishedOnIOThread(
   }
 }
 
-void Calculator::EmitResponsiveness(JankType jank_type, size_t janky_slices) {
+void Calculator::SetProcessSuspended(bool suspended) {
+  // Keep track of the current power state.
+  is_process_suspended_ = suspended;
+  // Regardless of whether the process is entering or exiting suspension, the
+  // current 30-second interval should be flagged as containing suspended state.
+  was_process_suspended_ = true;
+}
+
+void Calculator::EmitResponsiveness(JankType jank_type,
+                                    size_t janky_slices,
+                                    bool was_process_suspended) {
   constexpr size_t kMaxJankySlices = 300;
   DCHECK_LE(janky_slices, kMaxJankySlices);
   switch (jank_type) {
@@ -149,6 +157,11 @@ void Calculator::EmitResponsiveness(JankType jank_type, size_t janky_slices) {
       UMA_HISTOGRAM_COUNTS_1000(
           "Browser.Responsiveness.JankyIntervalsPerThirtySeconds",
           janky_slices);
+      if (!was_process_suspended) {
+        UMA_HISTOGRAM_COUNTS_1000(
+            "Browser.Responsiveness.JankyIntervalsPerThirtySeconds.NoSuspend",
+            janky_slices);
+      }
       break;
     }
     case JankType::kQueueAndExecution: {
@@ -199,13 +212,8 @@ void Calculator::CalculateResponsivenessIfNecessary(
   // At least |kMeasurementInterval| time has passed, so we want to move forward
   // |last_calculation_time_| and make measurements based on janks in that
   // interval.
-  int64_t number_of_measurement_intervals =
-      time_since_last_calculation / kMeasurementInterval;
-  DCHECK_GE(number_of_measurement_intervals, 1);
-
   const base::TimeTicks new_calculation_time =
-      last_calculation_time_ +
-      number_of_measurement_intervals * kMeasurementInterval;
+      current_time - (time_since_last_calculation % kMeasurementInterval);
 
   // Acquire the janks in the measurement interval from the UI and IO threads.
   std::vector<JankList> execution_janks_from_multiple_threads;
@@ -233,6 +241,7 @@ void Calculator::CalculateResponsivenessIfNecessary(
       last_calculation_time_, new_calculation_time);
 
   last_calculation_time_ = new_calculation_time;
+  was_process_suspended_ = is_process_suspended_;
 }
 
 void Calculator::CalculateResponsiveness(
@@ -261,7 +270,7 @@ void Calculator::CalculateResponsiveness(
       }
     }
 
-    EmitResponsiveness(jank_type, janky_slices.size());
+    EmitResponsiveness(jank_type, janky_slices.size(), was_process_suspended_);
 
     start_time = current_interval_end_time;
   }

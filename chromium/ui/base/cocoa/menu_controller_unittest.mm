@@ -12,6 +12,7 @@
 #include "third_party/skia/include/core/SkBitmap.h"
 #import "ui/base/cocoa/menu_controller.h"
 #include "ui/base/l10n/l10n_util_mac.h"
+#include "ui/base/models/image_model.h"
 #include "ui/base/models/simple_menu_model.h"
 #include "ui/base/resource/resource_bundle.h"
 #import "ui/base/test/cocoa_helper.h"
@@ -148,13 +149,9 @@ class DynamicDelegate : public Delegate {
   base::string16 GetLabelForCommandId(int command_id) const override {
     return label_;
   }
-  bool GetIconForCommandId(int command_id, gfx::Image* icon) const override {
-    if (icon_.IsEmpty()) {
-      return false;
-    } else {
-      *icon = icon_;
-      return true;
-    }
+  ui::ImageModel GetIconForCommandId(int command_id) const override {
+    return icon_.IsEmpty() ? ui::ImageModel()
+                           : ui::ImageModel::FromImage(icon_);
   }
   void SetDynamicLabel(base::string16 label) { label_ = label; }
   void SetDynamicIcon(const gfx::Image& icon) { icon_ = icon; }
@@ -173,6 +170,7 @@ class OwningDelegate : public Delegate {
     model_.AddItem(1, ASCIIToUTF16("foo"));
     controller_.reset([[WatchedLifetimeMenuController alloc]
                  initWithModel:&model_
+                      delegate:nil
         useWithPopUpButtonCell:NO]);
     [controller_ setDeallocCalled:did_dealloc];
   }
@@ -228,6 +226,7 @@ TEST_F(MenuControllerTest, EmptyMenu) {
   SimpleMenuModel model(&delegate);
   base::scoped_nsobject<MenuControllerCocoa> menu([[MenuControllerCocoa alloc]
                initWithModel:&model
+                    delegate:nil
       useWithPopUpButtonCell:NO]);
   EXPECT_EQ(0, [[menu menu] numberOfItems]);
 }
@@ -244,6 +243,7 @@ TEST_F(MenuControllerTest, BasicCreation) {
 
   base::scoped_nsobject<MenuControllerCocoa> menu([[MenuControllerCocoa alloc]
                initWithModel:&model
+                    delegate:nil
       useWithPopUpButtonCell:NO]);
   EXPECT_EQ(6, [[menu menu] numberOfItems]);
 
@@ -270,6 +270,7 @@ TEST_F(MenuControllerTest, Submenus) {
 
   base::scoped_nsobject<MenuControllerCocoa> menu([[MenuControllerCocoa alloc]
                initWithModel:&model
+                    delegate:nil
       useWithPopUpButtonCell:NO]);
   EXPECT_EQ(3, [[menu menu] numberOfItems]);
 
@@ -304,6 +305,7 @@ TEST_F(MenuControllerTest, EmptySubmenu) {
 
   base::scoped_nsobject<MenuControllerCocoa> menu([[MenuControllerCocoa alloc]
                initWithModel:&model
+                    delegate:nil
       useWithPopUpButtonCell:NO]);
   EXPECT_EQ(2, [[menu menu] numberOfItems]);
 
@@ -331,6 +333,7 @@ TEST_F(MenuControllerTest, EmptySubmenuWhenAllChildItemsAreHidden) {
 
   base::scoped_nsobject<MenuControllerCocoa> menu([[MenuControllerCocoa alloc]
                initWithModel:&model
+                    delegate:nil
       useWithPopUpButtonCell:NO]);
   EXPECT_EQ(2, [[menu menu] numberOfItems]);
 
@@ -364,6 +367,7 @@ TEST_F(MenuControllerTest, HiddenSubmenu) {
   // Create the controller.
   base::scoped_nsobject<MenuControllerCocoa> menu_controller(
       [[MenuControllerCocoa alloc] initWithModel:&model
+                                        delegate:nil
                           useWithPopUpButtonCell:NO]);
   EXPECT_EQ(2, [[menu_controller menu] numberOfItems]);
   delegate.menu_to_close_ = [menu_controller menu];
@@ -413,6 +417,7 @@ TEST_F(MenuControllerTest, DisabledSubmenu) {
   // Create the controller.
   base::scoped_nsobject<MenuControllerCocoa> menu_controller(
       [[MenuControllerCocoa alloc] initWithModel:&model
+                                        delegate:nil
                           useWithPopUpButtonCell:NO]);
   delegate.menu_to_close_ = [menu_controller menu];
 
@@ -453,6 +458,7 @@ TEST_F(MenuControllerTest, PopUpButton) {
   // title.
   base::scoped_nsobject<MenuControllerCocoa> menu([[MenuControllerCocoa alloc]
                initWithModel:&model
+                    delegate:nil
       useWithPopUpButtonCell:YES]);
   EXPECT_EQ(4, [[menu menu] numberOfItems]);
   EXPECT_EQ(base::string16(),
@@ -469,6 +475,7 @@ TEST_F(MenuControllerTest, Execute) {
   model.AddItem(1, ASCIIToUTF16("one"));
   base::scoped_nsobject<MenuControllerCocoa> menu([[MenuControllerCocoa alloc]
                initWithModel:&model
+                    delegate:nil
       useWithPopUpButtonCell:NO]);
   EXPECT_EQ(1, [[menu menu] numberOfItems]);
 
@@ -499,6 +506,7 @@ TEST_F(MenuControllerTest, Validate) {
 
   base::scoped_nsobject<MenuControllerCocoa> menu([[MenuControllerCocoa alloc]
                initWithModel:&model
+                    delegate:nil
       useWithPopUpButtonCell:NO]);
   EXPECT_EQ(3, [[menu menu] numberOfItems]);
 
@@ -517,6 +525,7 @@ TEST_F(MenuControllerTest, LabelFontList) {
 
   base::scoped_nsobject<MenuControllerCocoa> menu([[MenuControllerCocoa alloc]
                initWithModel:&model
+                    delegate:nil
       useWithPopUpButtonCell:NO]);
   EXPECT_EQ(2, [[menu menu] numberOfItems]);
 
@@ -559,6 +568,7 @@ TEST_F(MenuControllerTest, Dynamic) {
   model.AddItem(1, ASCIIToUTF16("foo"));
   base::scoped_nsobject<MenuControllerCocoa> menu([[MenuControllerCocoa alloc]
                initWithModel:&model
+                    delegate:nil
       useWithPopUpButtonCell:NO]);
   EXPECT_EQ(1, [[menu menu] numberOfItems]);
   // Validate() simulates opening the menu - the item label/icon should be
@@ -601,6 +611,7 @@ TEST_F(MenuControllerTest, OpenClose) {
   // Create the controller.
   base::scoped_nsobject<MenuControllerCocoa> menu([[MenuControllerCocoa alloc]
                initWithModel:&model
+                    delegate:nil
       useWithPopUpButtonCell:NO]);
   delegate.menu_to_close_ = [menu menu];
 

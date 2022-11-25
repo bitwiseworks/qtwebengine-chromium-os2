@@ -4,8 +4,11 @@
 
 #include "third_party/blink/renderer/platform/loader/fetch/client_hints_preferences.h"
 
+#include "base/command_line.h"
 #include "base/macros.h"
+#include "services/network/public/cpp/client_hints.h"
 #include "third_party/blink/public/common/client_hints/client_hints.h"
+#include "third_party/blink/public/common/switches.h"
 #include "third_party/blink/renderer/platform/network/http_names.h"
 #include "third_party/blink/renderer/platform/network/http_parsers.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
@@ -15,26 +18,32 @@
 namespace blink {
 
 ClientHintsPreferences::ClientHintsPreferences() {
-  DCHECK_EQ(static_cast<size_t>(mojom::WebClientHintsType::kMaxValue) + 1,
-            kClientHintsMappingsCount);
+  DCHECK_EQ(
+      static_cast<size_t>(network::mojom::WebClientHintsType::kMaxValue) + 1,
+      kClientHintsMappingsCount);
 }
 
 void ClientHintsPreferences::UpdateFrom(
     const ClientHintsPreferences& preferences) {
   for (size_t i = 0;
-       i < static_cast<int>(mojom::WebClientHintsType::kMaxValue) + 1; ++i) {
-    mojom::WebClientHintsType type = static_cast<mojom::WebClientHintsType>(i);
+       i < static_cast<int>(network::mojom::WebClientHintsType::kMaxValue) + 1;
+       ++i) {
+    network::mojom::WebClientHintsType type =
+        static_cast<network::mojom::WebClientHintsType>(i);
     enabled_hints_.SetIsEnabled(type, preferences.ShouldSend(type));
   }
 }
 
-void ClientHintsPreferences::UpdateFromAcceptClientHintsHeader(
+bool ClientHintsPreferences::UserAgentClientHintEnabled() {
+  return RuntimeEnabledFeatures::UserAgentClientHintEnabled() &&
+         !base::CommandLine::ForCurrentProcess()->HasSwitch(
+             switches::kUserAgentClientHintDisable);
+}
+
+void ClientHintsPreferences::UpdateFromHttpEquivAcceptCH(
     const String& header_value,
     const KURL& url,
     Context* context) {
-  if (header_value.IsEmpty())
-    return;
-
   // Client hints should be allowed only on secure URLs.
   if (!IsClientHintsAllowed(url))
     return;
@@ -47,47 +56,28 @@ void ClientHintsPreferences::UpdateFromAcceptClientHintsHeader(
     return;
 
   // Note: .Ascii() would convert tab to ?, which is undesirable.
-  base::Optional<std::vector<blink::mojom::WebClientHintsType>> parsed_ch =
-      ParseAcceptCH(header_value.Latin1(),
-                    RuntimeEnabledFeatures::LangClientHintHeaderEnabled(),
-                    RuntimeEnabledFeatures::UserAgentClientHintEnabled());
+  base::Optional<std::vector<network::mojom::WebClientHintsType>> parsed_ch =
+      FilterAcceptCH(network::ParseAcceptCH(header_value.Latin1()),
+                     RuntimeEnabledFeatures::LangClientHintHeaderEnabled(),
+                     UserAgentClientHintEnabled());
   if (!parsed_ch.has_value())
     return;
 
-  // Note: this keeps previously enabled hints.
-  for (blink::mojom::WebClientHintsType newly_enabled : parsed_ch.value())
+  // The renderer only handles http-equiv, so this merges.
+  for (network::mojom::WebClientHintsType newly_enabled : parsed_ch.value())
     enabled_hints_.SetIsEnabled(newly_enabled, true);
 
   if (context) {
     for (size_t i = 0;
-         i < static_cast<int>(mojom::WebClientHintsType::kMaxValue) + 1; ++i) {
-      mojom::WebClientHintsType type =
-          static_cast<mojom::WebClientHintsType>(i);
+         i <
+         static_cast<int>(network::mojom::WebClientHintsType::kMaxValue) + 1;
+         ++i) {
+      network::mojom::WebClientHintsType type =
+          static_cast<network::mojom::WebClientHintsType>(i);
       if (enabled_hints_.IsEnabled(type))
         context->CountClientHints(type);
     }
   }
-}
-
-void ClientHintsPreferences::UpdateFromAcceptClientHintsLifetimeHeader(
-    const String& header_value,
-    const KURL& url,
-    Context* context) {
-  if (header_value.IsEmpty())
-    return;
-
-  // Client hints should be allowed only on secure URLs.
-  if (!IsClientHintsAllowed(url))
-    return;
-
-  bool conversion_ok = false;
-  int64_t persist_duration_seconds = header_value.ToInt64Strict(&conversion_ok);
-  if (!conversion_ok || persist_duration_seconds <= 0)
-    return;
-
-  persist_duration_ = base::TimeDelta::FromSeconds(persist_duration_seconds);
-  if (context)
-    context->CountPersistentClientHintHeaders();
 }
 
 // static
@@ -99,10 +89,6 @@ bool ClientHintsPreferences::IsClientHintsAllowed(const KURL& url) {
 
 WebEnabledClientHints ClientHintsPreferences::GetWebEnabledClientHints() const {
   return enabled_hints_;
-}
-
-base::TimeDelta ClientHintsPreferences::GetPersistDuration() const {
-  return persist_duration_;
 }
 
 }  // namespace blink

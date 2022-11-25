@@ -6,9 +6,9 @@
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
-#include "base/logging.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
+#include "base/notreached.h"
 #include "base/run_loop.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "chrome/browser/ui/browser.h"
@@ -19,6 +19,7 @@
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "third_party/blink/public/common/input/web_mouse_wheel_event.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
@@ -379,7 +380,7 @@ class ChromeRenderWidgetHostViewMacHistorySwiperTest
   }
 
   void ExpectUrlAndOffset(const GURL& url, int offset) {
-    content::WaitForLoadStop(GetWebContents());
+    EXPECT_TRUE(content::WaitForLoadStop(GetWebContents()));
     EXPECT_EQ(url, GetWebContents()->GetURL());
 
     const int scroll_offset = GetScrollTop();
@@ -680,7 +681,7 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderWidgetHostViewMacHistorySwiperTest,
   QueueEndEvents();
   RunQueuedEvents();
 
-  content::WaitForLoadStop(GetWebContents());
+  EXPECT_TRUE(content::WaitForLoadStop(GetWebContents()));
   EXPECT_EQ(url2_, GetWebContents()->GetURL());
 
   // Depending on the timing of the IPCs, some of the initial events might be
@@ -752,10 +753,10 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderWidgetHostViewMacHistorySwiperTest,
 
   content::InputEventAckWaiter wheel_end_ack_waiter(
       GetWebContents()->GetRenderViewHost()->GetWidget(),
-      base::BindRepeating([](content::InputEventAckSource,
-                             content::InputEventAckState,
+      base::BindRepeating([](blink::mojom::InputEventResultSource,
+                             blink::mojom::InputEventResultState,
                              const blink::WebInputEvent& event) {
-        return event.GetType() == blink::WebInputEvent::kMouseWheel &&
+        return event.GetType() == blink::WebInputEvent::Type::kMouseWheel &&
                static_cast<const blink::WebMouseWheelEvent&>(event).phase ==
                    blink::WebMouseWheelEvent::kPhaseEnded;
       }));
@@ -772,7 +773,7 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderWidgetHostViewMacHistorySwiperTest,
   // Wait for the scroll to end.
   wheel_end_ack_waiter.Wait();
 
-  content::WaitForLoadStop(GetWebContents());
+  EXPECT_TRUE(content::WaitForLoadStop(GetWebContents()));
   EXPECT_EQ(url_iframe_, GetWebContents()->GetURL());
 }
 
@@ -797,8 +798,10 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderWidgetHostViewMacHistorySwiperTest,
   ExpectUrlAndOffset(url1_, 0);
 }
 
-IN_PROC_BROWSER_TEST_F(ChromeRenderWidgetHostViewMacHistorySwiperTest,
-                       InnerScrollersOverscrollBehaviorPreventsNavigation) {
+// TODO(crbug.com/1070405): flaky.
+IN_PROC_BROWSER_TEST_F(
+    ChromeRenderWidgetHostViewMacHistorySwiperTest,
+    DISABLED_InnerScrollersOverscrollBehaviorPreventsNavigation) {
   if (!IsHistorySwipingSupported())
     return;
 

@@ -6,7 +6,7 @@
 
 #include <stddef.h>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
@@ -80,11 +80,11 @@ BluetoothUUID::BluetoothUUID(const std::string& uuid) {
 
 #if defined(OS_WIN)
 BluetoothUUID::BluetoothUUID(GUID uuid) {
-  auto buffer = base::win::String16FromGUID(uuid);
+  auto buffer = base::win::WStringFromGUID(uuid);
   DCHECK_EQ('{', buffer[0]);
   DCHECK_EQ('}', buffer[37]);
 
-  GetCanonicalUuid(base::UTF16ToUTF8(buffer.substr(1, 36)), &value_,
+  GetCanonicalUuid(base::WideToUTF8(buffer.substr(1, 36)), &value_,
                    &canonical_value_, &format_);
   DCHECK_EQ(kFormat128Bit, format_);
 }

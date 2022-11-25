@@ -14,6 +14,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_file_util.h"
 #include "base/test/test_reg_util_win.h"
+#include "base/win/scoped_com_initializer.h"
 #include "base/win/win_util.h"
 #include "base/win/windows_version.h"
 #include "components/services/quarantine/public/cpp/quarantine_features_win.h"
@@ -158,6 +159,9 @@ class QuarantineWinTest : public ::testing::Test {
 
   base::ScopedTempDir scoped_temp_dir_;
 
+  base::win::ScopedCOMInitializer com_initializer_{
+      base::win::ScopedCOMInitializer::Uninitialization::kBlockPremature};
+
   // Due to caching, these sites zone must be set for all tests, so that the
   // order the tests are run does not matter.
   std::unique_ptr<ScopedZoneForSite> scoped_zone_for_trusted_site_;
@@ -201,7 +205,7 @@ TEST_F(QuarantineWinTest, LocalFile_DependsOnLocalConfig) {
     // No zone identifier for local source.
     EXPECT_TRUE(zone_identifier.empty());
 
-    ASSERT_TRUE(base::DeleteFile(test_file, false));
+    ASSERT_TRUE(base::DeleteFile(test_file));
   }
 }
 
@@ -228,7 +232,7 @@ TEST_F(QuarantineWinTest, DownloadedFile_DependsOnLocalConfig) {
     // is a zone annotation.
     EXPECT_FALSE(zone_identifier.empty());
 
-    ASSERT_TRUE(base::DeleteFile(test_file, false));
+    ASSERT_TRUE(base::DeleteFile(test_file));
   }
 }
 
@@ -259,7 +263,7 @@ TEST_F(QuarantineWinTest, UnsafeReferrer_DependsOnLocalConfig) {
     // is a zone annotation.
     EXPECT_FALSE(zone_identifier.empty());
 
-    ASSERT_TRUE(base::DeleteFile(test_file, false));
+    ASSERT_TRUE(base::DeleteFile(test_file));
   }
 }
 

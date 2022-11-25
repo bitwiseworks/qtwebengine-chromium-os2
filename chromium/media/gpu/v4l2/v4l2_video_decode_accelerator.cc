@@ -76,6 +76,9 @@ const uint32_t V4L2VideoDecodeAccelerator::supported_input_fourccs_[] = {
     V4L2_PIX_FMT_H264, V4L2_PIX_FMT_VP8, V4L2_PIX_FMT_VP9,
 };
 
+// static
+base::AtomicRefCount V4L2VideoDecodeAccelerator::num_instances_(0);
+
 struct V4L2VideoDecodeAccelerator::BitstreamBufferRef {
   BitstreamBufferRef(
       base::WeakPtr<Client>& client,
@@ -132,7 +135,8 @@ V4L2VideoDecodeAccelerator::V4L2VideoDecodeAccelerator(
     const GetGLContextCallback& get_gl_context_cb,
     const MakeGLContextCurrentCallback& make_context_current_cb,
     scoped_refptr<V4L2Device> device)
-    : child_task_runner_(base::ThreadTaskRunnerHandle::Get()),
+    : can_use_decoder_(num_instances_.Increment() < kMaxNumOfInstances),
+      child_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       decoder_thread_("V4L2DecoderThread"),
       decoder_state_(kUninitialized),
       output_mode_(Config::OutputMode::ALLOCATE),
@@ -162,6 +166,8 @@ V4L2VideoDecodeAccelerator::~V4L2VideoDecodeAccelerator() {
   // These maps have members that should be manually destroyed, e.g. file
   // descriptors, mmap() segments, etc.
   DCHECK(output_buffer_map_.empty());
+
+  num_instances_.Decrement();
 }
 
 bool V4L2VideoDecodeAccelerator::Initialize(const Config& config,
@@ -170,6 +176,11 @@ bool V4L2VideoDecodeAccelerator::Initialize(const Config& config,
            << ", output_mode=" << static_cast<int>(config.output_mode);
   DCHECK(child_task_runner_->BelongsToCurrentThread());
   DCHECK_EQ(decoder_state_, kUninitialized);
+
+  if (!can_use_decoder_) {
+    VLOGF(1) << "Reached the maximum number of decoder instances";
+    return false;
+  }
 
   if (config.is_encrypted()) {
     NOTREACHED() << "Encrypted streams are not supported for this VDA";
@@ -418,8 +429,6 @@ void V4L2VideoDecodeAccelerator::AssignPictureBuffersTask(
   // Now setup the output record for each buffer and import it if needed.
   for (auto&& buffer : v4l2_buffers) {
     const int i = buffer.BufferId();
-
-    DCHECK(buffers[i].size() == egl_image_size_);
 
     OutputRecord& output_record = output_buffer_map_[i];
     DCHECK_EQ(output_record.egl_image, EGL_NO_IMAGE_KHR);
@@ -1391,17 +1400,15 @@ bool V4L2VideoDecodeAccelerator::DequeueResolutionChangeEvent() {
   DCHECK_NE(decoder_state_, kUninitialized);
   DVLOGF(3);
 
-  struct v4l2_event ev;
-  memset(&ev, 0, sizeof(ev));
-
-  while (device_->Ioctl(VIDIOC_DQEVENT, &ev) == 0) {
-    if (ev.type == V4L2_EVENT_SOURCE_CHANGE) {
-      if (ev.u.src_change.changes & V4L2_EVENT_SRC_CH_RESOLUTION) {
+  while (base::Optional<struct v4l2_event> event = device_->DequeueEvent()) {
+    if (event->type == V4L2_EVENT_SOURCE_CHANGE) {
+      if (event->u.src_change.changes & V4L2_EVENT_SRC_CH_RESOLUTION) {
         VLOGF(2) << "got resolution change event.";
         return true;
       }
     } else {
-      VLOGF(1) << "got an event (" << ev.type << ") we haven't subscribed to.";
+      VLOGF(1) << "got an event (" << event->type
+               << ") we haven't subscribed to.";
     }
   }
   return false;
@@ -1527,8 +1534,7 @@ bool V4L2VideoDecodeAccelerator::EnqueueOutputRecord(
       ret = std::move(buffer).QueueMMap();
       break;
     case V4L2_MEMORY_DMABUF:
-      ret = std::move(buffer).QueueDMABuf(
-          output_record.output_frame->DmabufFds());
+      ret = std::move(buffer).QueueDMABuf(output_record.output_frame);
       break;
     default:
       NOTREACHED();
@@ -1884,6 +1890,10 @@ bool V4L2VideoDecodeAccelerator::StartDevicePoll() {
     NOTIFY_ERROR(PLATFORM_FAILURE);
     return false;
   }
+  cancelable_service_device_task_.Reset(base::BindRepeating(
+      &V4L2VideoDecodeAccelerator::ServiceDeviceTask, base::Unretained(this)));
+  cancelable_service_device_task_callback_ =
+      cancelable_service_device_task_.callback();
   device_poll_thread_.task_runner()->PostTask(
       FROM_HERE, base::BindOnce(&V4L2VideoDecodeAccelerator::DevicePollTask,
                                 base::Unretained(this), 0));
@@ -1905,6 +1915,10 @@ bool V4L2VideoDecodeAccelerator::StopDevicePoll() {
     return false;
   }
   device_poll_thread_.Stop();
+  // Must be done after the Stop() above to ensure
+  // |cancelable_service_device_task_callback_| is not copied.
+  cancelable_service_device_task_.Cancel();
+  cancelable_service_device_task_callback_ = {};
   // Clear the interrupt now, to be sure.
   if (!device_->ClearDevicePollInterrupt()) {
     PLOG(ERROR) << "ClearDevicePollInterrupt: failed";
@@ -2031,8 +2045,8 @@ void V4L2VideoDecodeAccelerator::DevicePollTask(bool poll_device) {
   // All processing should happen on ServiceDeviceTask(), since we shouldn't
   // touch decoder state from this thread.
   decoder_thread_.task_runner()->PostTask(
-      FROM_HERE, base::BindOnce(&V4L2VideoDecodeAccelerator::ServiceDeviceTask,
-                                base::Unretained(this), event_pending));
+      FROM_HERE,
+      base::BindOnce(cancelable_service_device_task_callback_, event_pending));
 }
 
 bool V4L2VideoDecodeAccelerator::IsDestroyPending() {
@@ -2084,18 +2098,19 @@ bool V4L2VideoDecodeAccelerator::GetFormatInfo(struct v4l2_format* format,
   DCHECK(decoder_thread_.task_runner()->BelongsToCurrentThread());
 
   *again = false;
-  memset(format, 0, sizeof(*format));
-  format->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-  if (device_->Ioctl(VIDIOC_G_FMT, format) != 0) {
-    if (errno == EINVAL) {
+
+  auto ret = output_queue_->GetFormat();
+  switch (ret.second) {
+    case 0:
+      *format = *ret.first;
+      break;
+    case EINVAL:
       // EINVAL means we haven't seen sufficient stream to decode the format.
       *again = true;
       return true;
-    } else {
-      PLOG(ERROR) << "ioctl() failed: VIDIOC_G_FMT";
+    default:
       NOTIFY_ERROR(PLATFORM_FAILURE);
       return false;
-    }
   }
 
   // Make sure we are still getting the format we set on initialization.
@@ -2146,30 +2161,11 @@ gfx::Size V4L2VideoDecodeAccelerator::GetVisibleSize(
     const gfx::Size& coded_size) {
   DCHECK(decoder_thread_.task_runner()->BelongsToCurrentThread());
 
-  struct v4l2_rect* visible_rect;
-  struct v4l2_selection selection_arg;
-  memset(&selection_arg, 0, sizeof(selection_arg));
-  selection_arg.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  selection_arg.target = V4L2_SEL_TGT_COMPOSE;
-
-  if (device_->Ioctl(VIDIOC_G_SELECTION, &selection_arg) == 0) {
-    DVLOGF(3) << "VIDIOC_G_SELECTION is supported";
-    visible_rect = &selection_arg.r;
-  } else {
-    DVLOGF(3) << "Fallback to VIDIOC_G_CROP";
-    struct v4l2_crop crop_arg;
-    memset(&crop_arg, 0, sizeof(crop_arg));
-    crop_arg.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-
-    if (device_->Ioctl(VIDIOC_G_CROP, &crop_arg) != 0) {
-      VPLOGF(1) << "ioctl() VIDIOC_G_CROP failed";
-      return coded_size;
-    }
-    visible_rect = &crop_arg.c;
+  auto ret = output_queue_->GetVisibleRect();
+  if (!ret) {
+    return coded_size;
   }
-
-  gfx::Rect rect(visible_rect->left, visible_rect->top, visible_rect->width,
-                 visible_rect->height);
+  gfx::Rect rect = std::move(*ret);
   DVLOGF(3) << "visible rectangle is " << rect.ToString();
   if (!gfx::Rect(coded_size).Contains(rect)) {
     DVLOGF(3) << "visible rectangle " << rect.ToString()
@@ -2336,9 +2332,9 @@ bool V4L2VideoDecodeAccelerator::CreateImageProcessor() {
 
   image_processor_ = v4l2_vda_helpers::CreateImageProcessor(
       *output_format_fourcc_, *egl_image_format_fourcc_, coded_size_,
-      egl_image_size_, visible_size_, output_buffer_map_.size(),
-      image_processor_device_, image_processor_output_mode,
-      decoder_thread_.task_runner(),
+      egl_image_size_, visible_size_, VideoFrame::StorageType::STORAGE_DMABUFS,
+      output_buffer_map_.size(), image_processor_device_,
+      image_processor_output_mode, decoder_thread_.task_runner(),
       // Unretained(this) is safe for ErrorCB because |decoder_thread_| is owned
       // by this V4L2VideoDecodeAccelerator and |this| must be valid when
       // ErrorCB is executed.
@@ -2398,11 +2394,10 @@ bool V4L2VideoDecodeAccelerator::CreateOutputBuffers() {
   DCHECK(output_buffer_map_.empty());
 
   // Number of output buffers we need.
-  struct v4l2_control ctrl;
-  memset(&ctrl, 0, sizeof(ctrl));
-  ctrl.id = V4L2_CID_MIN_BUFFERS_FOR_CAPTURE;
-  IOCTL_OR_ERROR_RETURN_FALSE(VIDIOC_G_CTRL, &ctrl);
-  output_dpb_size_ = ctrl.value;
+  auto ctrl = device_->GetCtrl(V4L2_CID_MIN_BUFFERS_FOR_CAPTURE);
+  if (!ctrl)
+    return false;
+  output_dpb_size_ = ctrl->value;
 
   // Output format setup in Initialize().
 

@@ -798,7 +798,9 @@ LayoutUnit IndefiniteSizeStrategy::MaxContentForChild(LayoutBox& child) const {
   DCHECK(GridLayoutUtils::IsOrthogonalChild(*GetLayoutGrid(), child));
 
   return child.LogicalHeight() +
-         GridLayoutUtils::MarginLogicalHeightForChild(*GetLayoutGrid(), child);
+         GridLayoutUtils::MarginLogicalHeightForChild(*GetLayoutGrid(), child) +
+         algorithm_.BaselineOffsetForChild(child,
+                                           GridAxisForDirection(Direction()));
 }
 
 bool IndefiniteSizeStrategy::IsComputingSizeContainment() const {
@@ -854,14 +856,15 @@ const GridTrackSize& GridTrackSizingAlgorithm::RawGridTrackSize(
     size_t translated_index) const {
   bool is_row_axis = direction == kForColumns;
   const Vector<GridTrackSize>& track_styles =
-      is_row_axis ? layout_grid_->StyleRef().GridTemplateColumns()
-                  : layout_grid_->StyleRef().GridTemplateRows();
+      is_row_axis
+          ? layout_grid_->StyleRef().GridTemplateColumns().LegacyTrackList()
+          : layout_grid_->StyleRef().GridTemplateRows().LegacyTrackList();
   const Vector<GridTrackSize>& auto_repeat_track_styles =
       is_row_axis ? layout_grid_->StyleRef().GridAutoRepeatColumns()
                   : layout_grid_->StyleRef().GridAutoRepeatRows();
   const Vector<GridTrackSize>& auto_track_styles =
-      is_row_axis ? layout_grid_->StyleRef().GridAutoColumns()
-                  : layout_grid_->StyleRef().GridAutoRows();
+      is_row_axis ? layout_grid_->StyleRef().GridAutoColumns().LegacyTrackList()
+                  : layout_grid_->StyleRef().GridAutoRows().LegacyTrackList();
   size_t insertion_point =
       is_row_axis
           ? layout_grid_->StyleRef().GridAutoRepeatColumnsInsertionPoint()
@@ -875,7 +878,7 @@ const GridTrackSize& GridTrackSizingAlgorithm::RawGridTrackSize(
   size_t explicit_tracks_count = track_styles.size() + auto_repeat_tracks_count;
 
   int untranslated_index_as_int =
-      translated_index + grid_.SmallestTrackStart(direction);
+      translated_index - grid_.ExplicitGridStart(direction);
   size_t auto_track_styles_size = auto_track_styles.size();
   if (untranslated_index_as_int < 0) {
     int index =
@@ -941,15 +944,25 @@ GridTrackSize GridTrackSizingAlgorithm::CalculateGridTrackSize(
 
   GridLength min_track_breadth = track_size.MinTrackBreadth();
   GridLength max_track_breadth = track_size.MaxTrackBreadth();
-  if (strategy_->IsComputingSizeContainment())
-    return GridTrackSize(min_track_breadth, max_track_breadth);
 
   // If the logical width/height of the grid container is indefinite, percentage
   // values are treated as <auto>.
   if (IsRelativeSizedTrackAsAuto(track_size, direction)) {
     if (direction == kForRows) {
-      UseCounter::Count(layout_grid_->GetDocument(),
-                        WebFeature::kGridRowTrackPercentIndefiniteHeight);
+      // We avoid counting the cases in which it doesn't matter if we resolve
+      // the percentages row tracks against the intrinsic height of the grid
+      // container or we treat them as auto. Basically if we have just one row,
+      // it has 100% size and the max-block-size is none.
+      if ((grid_.NumTracks(direction) != 1) || !min_track_breadth.IsLength() ||
+          !min_track_breadth.length().IsPercent() ||
+          (min_track_breadth.length().Percent() != 100.0f) ||
+          !max_track_breadth.IsLength() ||
+          !max_track_breadth.length().IsPercent() ||
+          (max_track_breadth.length().Percent() != 100.0f) ||
+          !layout_grid_->StyleRef().LogicalMaxHeight().IsNone()) {
+        UseCounter::Count(layout_grid_->GetDocument(),
+                          WebFeature::kGridRowTrackPercentIndefiniteHeight);
+      }
     }
     if (min_track_breadth.HasPercentage())
       min_track_breadth = Length::Auto();
@@ -971,11 +984,14 @@ GridTrackSize GridTrackSizingAlgorithm::CalculateGridTrackSize(
 LayoutUnit GridTrackSizingAlgorithm::InitialBaseSize(
     const GridTrackSize& track_size) const {
   const GridLength& grid_length = track_size.MinTrackBreadth();
-  if (grid_length.IsFlex())
-    return LayoutUnit();
+
+  // TODO(obrufau): https://github.com/w3c/csswg-drafts/issues/2611 may allow
+  // flexible lengths to be used as min track sizing functions.
+  DCHECK(!grid_length.IsFlex());
 
   const Length& track_length = grid_length.length();
   if (track_length.IsSpecified()) {
+    DCHECK(!grid_length.HasPercentage() || AvailableSpace());
     return ValueForLength(track_length,
                           AvailableSpace().value_or(LayoutUnit()));
   }
@@ -994,6 +1010,7 @@ LayoutUnit GridTrackSizingAlgorithm::InitialGrowthLimit(
 
   const Length& track_length = grid_length.length();
   if (track_length.IsSpecified()) {
+    DCHECK(!grid_length.HasPercentage() || AvailableSpace());
     return ValueForLength(track_length,
                           AvailableSpace().value_or(LayoutUnit()));
   }
@@ -1242,9 +1259,9 @@ LayoutUnit GridTrackSizingAlgorithm::ItemSizeForTrackSizeComputationPhase(
     LayoutBox& grid_item) const {
   switch (phase) {
     case kResolveIntrinsicMinimums:
-    case kResolveIntrinsicMaximums:
       return strategy_->MinSizeForChild(grid_item);
     case kResolveContentBasedMinimums:
+    case kResolveIntrinsicMaximums:
       return strategy_->MinContentForChild(grid_item);
     case kResolveMaxContentMinimums:
     case kResolveMaxContentMaximums:

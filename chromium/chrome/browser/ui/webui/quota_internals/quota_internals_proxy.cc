@@ -8,11 +8,10 @@
 #include <string>
 
 #include "base/bind.h"
-#include "base/task/post_task.h"
 #include "chrome/browser/ui/webui/quota_internals/quota_internals_handler.h"
 #include "chrome/browser/ui/webui/quota_internals/quota_internals_types.h"
 #include "content/public/browser/browser_task_traits.h"
-#include "net/base/url_util.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom-forward.h"
 #include "url/origin.h"
 
 using blink::mojom::StorageType;
@@ -27,41 +26,40 @@ void QuotaInternalsProxy::RequestInfo(
     scoped_refptr<storage::QuotaManager> quota_manager) {
   DCHECK(quota_manager.get());
   if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
-    base::PostTask(
-        FROM_HERE, {BrowserThread::IO},
+    content::GetIOThreadTaskRunner({})->PostTask(
+        FROM_HERE,
         base::BindOnce(&QuotaInternalsProxy::RequestInfo, this, quota_manager));
     return;
   }
   quota_manager_ = quota_manager;
 
-  quota_manager_->GetQuotaSettings(base::Bind(
+  quota_manager_->GetQuotaSettings(base::BindOnce(
       &QuotaInternalsProxy::DidGetSettings, weak_factory_.GetWeakPtr()));
 
-  quota_manager_->GetStorageCapacity(base::Bind(
+  quota_manager_->GetStorageCapacity(base::BindOnce(
       &QuotaInternalsProxy::DidGetCapacity, weak_factory_.GetWeakPtr()));
 
   quota_manager_->GetGlobalUsage(
       StorageType::kTemporary,
-      base::Bind(&QuotaInternalsProxy::DidGetGlobalUsage,
-                 weak_factory_.GetWeakPtr(), StorageType::kTemporary));
+      base::BindOnce(&QuotaInternalsProxy::DidGetGlobalUsage,
+                     weak_factory_.GetWeakPtr(), StorageType::kTemporary));
 
   quota_manager_->GetGlobalUsage(
       StorageType::kPersistent,
-      base::Bind(&QuotaInternalsProxy::DidGetGlobalUsage,
-                 weak_factory_.GetWeakPtr(), StorageType::kPersistent));
+      base::BindOnce(&QuotaInternalsProxy::DidGetGlobalUsage,
+                     weak_factory_.GetWeakPtr(), StorageType::kPersistent));
 
   quota_manager_->GetGlobalUsage(
       StorageType::kSyncable,
-      base::Bind(&QuotaInternalsProxy::DidGetGlobalUsage,
-                 weak_factory_.GetWeakPtr(), StorageType::kSyncable));
+      base::BindOnce(&QuotaInternalsProxy::DidGetGlobalUsage,
+                     weak_factory_.GetWeakPtr(), StorageType::kSyncable));
 
-  quota_manager_->DumpQuotaTable(
-      base::Bind(&QuotaInternalsProxy::DidDumpQuotaTable,
-                 weak_factory_.GetWeakPtr()));
+  quota_manager_->DumpQuotaTable(base::BindOnce(
+      &QuotaInternalsProxy::DidDumpQuotaTable, weak_factory_.GetWeakPtr()));
 
   quota_manager_->DumpOriginInfoTable(
-      base::Bind(&QuotaInternalsProxy::DidDumpOriginInfoTable,
-                 weak_factory_.GetWeakPtr()));
+      base::BindOnce(&QuotaInternalsProxy::DidDumpOriginInfoTable,
+                     weak_factory_.GetWeakPtr()));
 
   std::map<std::string, std::string> stats = quota_manager_->GetStatistics();
   ReportStatistics(stats);
@@ -72,8 +70,8 @@ void QuotaInternalsProxy::TriggerStoragePressure(
     scoped_refptr<storage::QuotaManager> quota_manager) {
   DCHECK(quota_manager.get());
   if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
-    base::PostTask(FROM_HERE, {BrowserThread::IO},
-                   base::BindOnce(&QuotaInternalsProxy::TriggerStoragePressure,
+    content::GetIOThreadTaskRunner({})->PostTask(
+        FROM_HERE, base::BindOnce(&QuotaInternalsProxy::TriggerStoragePressure,
                                   this, origin, quota_manager));
     return;
   }
@@ -87,8 +85,8 @@ QuotaInternalsProxy::~QuotaInternalsProxy() = default;
     if (!handler_)                                                           \
       return;                                                                \
     if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {                    \
-      base::PostTask(FROM_HERE, {BrowserThread::UI},                         \
-                     base::BindOnce(&QuotaInternalsProxy::func, this, arg)); \
+      content::GetUIThreadTaskRunner({})->PostTask(                          \
+          FROM_HERE, base::BindOnce(&QuotaInternalsProxy::func, this, arg)); \
       return;                                                                \
     }                                                                        \
                                                                              \
@@ -158,9 +156,11 @@ void QuotaInternalsProxy::DidDumpOriginInfoTable(
   ReportPerOriginInfo(origin_info);
 }
 
-void QuotaInternalsProxy::DidGetHostUsage(const std::string& host,
-                                          StorageType type,
-                                          int64_t usage) {
+void QuotaInternalsProxy::DidGetHostUsage(
+    const std::string& host,
+    StorageType type,
+    int64_t usage,
+    blink::mojom::UsageBreakdownPtr usage_breakdown) {
   DCHECK(type == StorageType::kTemporary || type == StorageType::kPersistent ||
          type == StorageType::kSyncable);
 
@@ -195,7 +195,7 @@ void QuotaInternalsProxy::RequestPerOriginInfo(StorageType type) {
     info.set_in_use(quota_manager_->IsOriginInUse(origin));
     origin_info.push_back(info);
 
-    std::string host(net::GetHostOrSpecFromURL(origin.GetURL()));
+    const std::string& host = origin.host();
     if (hosts.insert(host).second) {
       PerHostStorageInfo info(host, type);
       host_info.push_back(info);
@@ -218,12 +218,10 @@ void QuotaInternalsProxy::VisitHost(const std::string& host, StorageType type) {
 void QuotaInternalsProxy::GetHostUsage(const std::string& host,
                                        StorageType type) {
   DCHECK(quota_manager_.get());
-  quota_manager_->GetHostUsage(host,
-                               type,
-                               base::Bind(&QuotaInternalsProxy::DidGetHostUsage,
-                                          weak_factory_.GetWeakPtr(),
-                                          host,
-                                          type));
+  quota_manager_->GetHostUsageWithBreakdown(
+      host, type,
+      base::BindOnce(&QuotaInternalsProxy::DidGetHostUsage,
+                     weak_factory_.GetWeakPtr(), host, type));
 }
 
 }  // namespace quota_internals

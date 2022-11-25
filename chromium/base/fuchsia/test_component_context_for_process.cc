@@ -9,14 +9,16 @@
 #include <lib/fidl/cpp/interface_handle.h>
 #include <lib/sys/cpp/component_context.h>
 
-#include "base/fuchsia/default_context.h"
+#include "base/files/file_enumerator.h"
 #include "base/fuchsia/filtered_service_directory.h"
 #include "base/fuchsia/fuchsia_logging.h"
+#include "base/fuchsia/process_context.h"
 #include "base/run_loop.h"
 
 namespace base {
 
-TestComponentContextForProcess::TestComponentContextForProcess() {
+TestComponentContextForProcess::TestComponentContextForProcess(
+    InitialState initial_state) {
   // TODO(https://crbug.com/1038786): Migrate to sys::ComponentContextProvider
   // once it provides access to an sys::OutgoingDirectory or PseudoDir through
   // which to publish additional_services().
@@ -24,7 +26,16 @@ TestComponentContextForProcess::TestComponentContextForProcess() {
   // Set up |incoming_services_| to use the ServiceDirectory from the current
   // default ComponentContext to fetch services from.
   context_services_ = std::make_unique<fuchsia::FilteredServiceDirectory>(
-      base::fuchsia::ComponentContextForCurrentProcess()->svc().get());
+      base::ComponentContextForProcess()->svc().get());
+
+  // Push all services from /svc to the test context if requested.
+  if (initial_state == InitialState::kCloneAll) {
+    base::FileEnumerator file_enum(base::FilePath("/svc"), false,
+                                   base::FileEnumerator::FILES);
+    for (auto file = file_enum.Next(); !file.empty(); file = file_enum.Next()) {
+      AddService(file.BaseName().value());
+    }
+  }
 
   // Create a ServiceDirectory backed by the contents of |incoming_directory|.
   fidl::InterfaceHandle<::fuchsia::io::Directory> incoming_directory;
@@ -36,7 +47,7 @@ TestComponentContextForProcess::TestComponentContextForProcess() {
   // directory of |context_services_| published by the test, and with a request
   // for the process' root outgoing directory.
   fidl::InterfaceHandle<::fuchsia::io::Directory> published_root_directory;
-  old_context_ = ReplaceComponentContextForCurrentProcessForTest(
+  old_context_ = ReplaceComponentContextForProcessForTest(
       std::make_unique<sys::ComponentContext>(
           std::move(incoming_services),
           published_root_directory.NewRequest().TakeChannel()));
@@ -53,17 +64,22 @@ TestComponentContextForProcess::TestComponentContextForProcess() {
 }
 
 TestComponentContextForProcess::~TestComponentContextForProcess() {
-  ReplaceComponentContextForCurrentProcessForTest(std::move(old_context_));
+  ReplaceComponentContextForProcessForTest(std::move(old_context_));
 }
 
 sys::OutgoingDirectory* TestComponentContextForProcess::additional_services() {
   return context_services_->outgoing_directory();
 }
 
+void TestComponentContextForProcess::AddService(
+    const base::StringPiece service) {
+  context_services_->AddService(service);
+}
+
 void TestComponentContextForProcess::AddServices(
     base::span<const base::StringPiece> services) {
   for (auto service : services)
-    context_services_->AddService(service);
+    AddService(service);
 }
 
 }  // namespace base

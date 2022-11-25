@@ -54,6 +54,7 @@ if (skia_enable_skottie) {
         ]
         sources = [
           "src/SkottieTest.cpp",
+          "tests/AudioLayer.cpp",
           "tests/Keyframe.cpp",
         ]
 
@@ -101,11 +102,8 @@ if (skia_enable_skottie) {
         deps = [
           "../..:flags",
           "../..:skia",
+          "../../experimental/ffmpeg:video_encoder",
         ]
-        if (skia_use_ffmpeg) {
-          defines = [ "HAVE_VIDEO_ENCODER" ]
-          deps += [ "../..:video_decoder" ]
-        }
 
         public_deps = [
           ":skottie",

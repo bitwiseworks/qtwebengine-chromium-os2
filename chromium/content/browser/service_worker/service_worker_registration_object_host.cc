@@ -12,8 +12,8 @@
 #include "content/browser/service_worker/service_worker_container_host.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
+#include "content/browser/service_worker/service_worker_host.h"
 #include "content/browser/service_worker/service_worker_object_host.h"
-#include "content/browser/service_worker/service_worker_provider_host.h"
 #include "content/common/service_worker/service_worker_utils.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -125,8 +125,7 @@ ServiceWorkerRegistrationObjectHost::CreateObjectInfo() {
 
 void ServiceWorkerRegistrationObjectHost::OnVersionAttributesChanged(
     ServiceWorkerRegistration* registration,
-    blink::mojom::ChangedServiceWorkerObjectsMaskPtr changed_mask,
-    const ServiceWorkerRegistrationInfo& info) {
+    blink::mojom::ChangedServiceWorkerObjectsMaskPtr changed_mask) {
   DCHECK_EQ(registration->id(), registration_->id());
   SetServiceWorkerObjects(
       std::move(changed_mask), registration->installing_version(),
@@ -188,7 +187,7 @@ void ServiceWorkerRegistrationObjectHost::Update(
   // with an "InvalidStateError" DOMException and abort these steps.
   ServiceWorkerVersion* version = nullptr;
   if (container_host_->IsContainerForServiceWorker()) {
-    version = container_host_->service_worker_host()->running_hosted_version();
+    version = container_host_->service_worker_host()->version();
     DCHECK(version);
     if (ServiceWorkerVersion::Status::INSTALLING == version->status()) {
       // This can happen if update() is called during execution of the
@@ -202,7 +201,7 @@ void ServiceWorkerRegistrationObjectHost::Update(
   }
 
   DelayUpdate(
-      container_host_->type(), registration, version,
+      container_host_->IsContainerForClient(), registration, version,
       base::BindOnce(
           &ExecuteUpdate, context_, registration->id(),
           false /* force_bypass_cache */, false /* skip_script_comparison */,
@@ -212,15 +211,13 @@ void ServiceWorkerRegistrationObjectHost::Update(
 }
 
 void ServiceWorkerRegistrationObjectHost::DelayUpdate(
-    blink::mojom::ServiceWorkerContainerType container_type,
+    bool is_container_for_client,
     ServiceWorkerRegistration* registration,
     ServiceWorkerVersion* version,
     StatusCallback update_function) {
   DCHECK(registration);
 
-  if (container_type !=
-          blink::mojom::ServiceWorkerContainerType::kForServiceWorker ||
-      (version && version->HasControllee())) {
+  if (is_container_for_client || (version && version->HasControllee())) {
     // Don't delay update() if called by non-workers or by workers with
     // controllees.
     std::move(update_function).Run(blink::ServiceWorkerStatusCode::kOk);

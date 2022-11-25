@@ -12,10 +12,14 @@
 
 #include "base/callback_forward.h"
 #include "base/files/scoped_file.h"
+#include "base/optional.h"
 #include "base/threading/thread_checker.h"
 #include "components/arc/mojom/video_decode_accelerator.mojom.h"
+#include "gpu/config/gpu_driver_bug_workarounds.h"
 #include "gpu/config/gpu_preferences.h"
 #include "media/video/video_decode_accelerator.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/remote.h"
 
 namespace arc {
 
@@ -37,10 +41,12 @@ class GpuArcVideoDecodeAccelerator
  public:
   GpuArcVideoDecodeAccelerator(
       const gpu::GpuPreferences& gpu_preferences,
+      const gpu::GpuDriverBugWorkarounds& gpu_workarounds,
       scoped_refptr<ProtectedBufferManager> protected_buffer_manager);
   ~GpuArcVideoDecodeAccelerator() override;
 
   // Implementation of media::VideoDecodeAccelerator::Client interface.
+  void NotifyInitializationComplete(media::Status status) override;
   void ProvidePictureBuffers(uint32_t requested_num_of_buffers,
                              media::VideoPixelFormat format,
                              uint32_t textures_per_buffer,
@@ -61,7 +67,7 @@ class GpuArcVideoDecodeAccelerator
 
   // mojom::VideoDecodeAccelerator implementation.
   void Initialize(mojom::VideoDecodeAcceleratorConfigPtr config,
-                  mojom::VideoDecodeClientPtr client,
+                  mojo::PendingRemote<mojom::VideoDecodeClient> client,
                   InitializeCallback callback) override;
   void Decode(mojom::BitstreamBufferPtr bitstream_buffer) override;
   void AssignPictureBuffers(uint32_t count) override;
@@ -72,7 +78,6 @@ class GpuArcVideoDecodeAccelerator
   void ReusePictureBuffer(int32_t picture_buffer_id) override;
   void Flush(FlushCallback callback) override;
   void Reset(ResetCallback callback) override;
-
  private:
   using PendingCallback =
       base::OnceCallback<void(mojom::VideoDecodeAccelerator::Result)>;
@@ -83,10 +88,11 @@ class GpuArcVideoDecodeAccelerator
   using PendingRequest =
       base::OnceCallback<void(PendingCallback, media::VideoDecodeAccelerator*)>;
 
-  // Initialize GpuArcVDA and create VDA. It returns SUCCESS if they are
-  // successful. Otherwise, returns an error status.
-  mojom::VideoDecodeAccelerator::Result InitializeTask(
-      mojom::VideoDecodeAcceleratorConfigPtr config);
+  // Initialize GpuArcVDA and create VDA. OnInitializeDone() will be called with
+  // the result of the initialization.
+  void InitializeTask(mojom::VideoDecodeAcceleratorConfigPtr config);
+  // Called when initialization is done.
+  void OnInitializeDone(mojom::VideoDecodeAccelerator::Result result);
 
   // Execute all pending requests until a VDA::Reset() request is encountered.
   // When that happens, we need to explicitly wait for NotifyResetDone().
@@ -134,13 +140,15 @@ class GpuArcVideoDecodeAccelerator
   // In |pending_requests_|, PendingRequest is Reset/Flush/DecodeRequest().
   // PendingCallback is null in the case of Decode().
   // Otherwise, it isn't nullptr and will have to be called eventually.
+  InitializeCallback pending_init_callback_;
   std::queue<std::pair<PendingRequest, PendingCallback>> pending_requests_;
   std::queue<FlushCallback> pending_flush_callbacks_;
   ResetCallback pending_reset_callback_;
 
   gpu::GpuPreferences gpu_preferences_;
+  gpu::GpuDriverBugWorkarounds gpu_workarounds_;
   std::unique_ptr<media::VideoDecodeAccelerator> vda_;
-  mojom::VideoDecodeClientPtr client_;
+  mojo::Remote<mojom::VideoDecodeClient> client_;
 
   gfx::Size coded_size_;
   gfx::Size pending_coded_size_;
@@ -149,7 +157,7 @@ class GpuArcVideoDecodeAccelerator
 
   size_t protected_input_buffer_count_ = 0;
 
-  bool secure_mode_ = false;
+  base::Optional<bool> secure_mode_ = base::nullopt;
   size_t output_buffer_count_ = 0;
   bool assign_picture_buffers_called_ = false;
 

@@ -29,7 +29,6 @@
 #include "perfetto/ext/tracing/core/basic_types.h"
 #include "perfetto/ext/tracing/core/shared_memory_abi.h"
 #include "perfetto/ext/tracing/core/shared_memory_arbiter.h"
-#include "perfetto/ext/tracing/core/startup_trace_writer_registry.h"
 #include "perfetto/tracing/core/forward_decls.h"
 #include "src/tracing/core/id_allocator.h"
 
@@ -127,10 +126,6 @@ class SharedMemoryArbiterImpl : public SharedMemoryArbiter {
                    MaybeUnboundBufferID target_buffer,
                    PatchList* patch_list);
 
-  // Forces a synchronous commit of the completed packets without waiting for
-  // the next task.
-  void FlushPendingCommitDataRequests(std::function<void()> callback = {});
-
   SharedMemoryABI* shmem_abi_for_testing() { return &shmem_abi_; }
 
   static void set_default_layout_for_testing(SharedMemoryABI::PageLayout l) {
@@ -148,12 +143,14 @@ class SharedMemoryArbiterImpl : public SharedMemoryArbiter {
                               base::TaskRunner*) override;
   void BindStartupTargetBuffer(uint16_t target_buffer_reservation_id,
                                BufferID target_buffer_id) override;
-  void BindStartupTraceWriterRegistry(
-      std::unique_ptr<StartupTraceWriterRegistry>,
-      BufferID target_buffer) override;
   void AbortStartupTracingForReservation(
       uint16_t target_buffer_reservation_id) override;
   void NotifyFlushComplete(FlushRequestID) override;
+
+  void SetBatchCommitsDuration(uint32_t batch_commits_duration_ms) override;
+
+  void FlushPendingCommitDataRequests(
+      std::function<void()> callback = {}) override;
 
   base::TaskRunner* task_runner() const { return task_runner_; }
   size_t page_size() const { return shmem_abi_.page_size(); }
@@ -213,6 +210,7 @@ class SharedMemoryArbiterImpl : public SharedMemoryArbiter {
   bool UpdateFullyBoundLocked();
 
   const bool initially_bound_;
+
   // Only accessed on |task_runner_| after the producer endpoint was bound.
   TracingService::ProducerEndpoint* producer_endpoint_ = nullptr;
 
@@ -226,11 +224,6 @@ class SharedMemoryArbiterImpl : public SharedMemoryArbiter {
   std::unique_ptr<CommitDataRequest> commit_data_req_;
   size_t bytes_pending_commit_ = 0;  // SUM(chunk.size() : commit_data_req_).
   IdAllocator<WriterID> active_writer_ids_;
-
-  // Registries whose Bind() is in progress. We destroy each registry when their
-  // Bind() is complete or when the arbiter is destroyed itself.
-  std::vector<std::unique_ptr<StartupTraceWriterRegistry>>
-      startup_trace_writer_registries_;
 
   // Whether the arbiter itself and all startup target buffer reservations are
   // bound. Note that this can become false again later if a new target buffer
@@ -246,6 +239,18 @@ class SharedMemoryArbiterImpl : public SharedMemoryArbiter {
   // Callbacks for flush requests issued while the arbiter or a target buffer
   // reservation was unbound.
   std::vector<std::function<void()>> pending_flush_callbacks_;
+
+  // See SharedMemoryArbiter.SetBatchCommitsDuration.
+  uint32_t batch_commits_duration_ms_ = 0;
+
+  // Indicates whether we have already scheduled a delayed flush for the
+  // purposes of batching. Set to true at the beginning of a batching period and
+  // cleared at the end of the period. Immediate flushes that happen during a
+  // batching period will empty the |commit_data_req| (triggering an immediate
+  // IPC to the service), but will not clear this flag and the
+  // previously-scheduled delayed flush will still occur at the end of the
+  // batching period.
+  bool delayed_flush_scheduled_ = false;
 
   // Stores target buffer reservations for writers created via
   // CreateStartupTraceWriter(). A bound reservation sets

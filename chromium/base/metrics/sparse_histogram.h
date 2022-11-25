@@ -17,6 +17,7 @@
 #include "base/metrics/histogram_base.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/synchronization/lock.h"
+#include "base/values.h"
 
 namespace base {
 
@@ -54,8 +55,8 @@ class BASE_EXPORT SparseHistogram : public HistogramBase {
   std::unique_ptr<HistogramSamples> SnapshotSamples() const override;
   std::unique_ptr<HistogramSamples> SnapshotDelta() override;
   std::unique_ptr<HistogramSamples> SnapshotFinalDelta() const override;
-  void WriteHTMLGraph(std::string* output) const override;
   void WriteAscii(std::string* output) const override;
+  base::DictionaryValue ToGraphDict() const override;
 
  protected:
   // HistogramBase implementation:
@@ -74,10 +75,8 @@ class BASE_EXPORT SparseHistogram : public HistogramBase {
       base::PickleIterator* iter);
   static HistogramBase* DeserializeInfoImpl(base::PickleIterator* iter);
 
+  // Writes the type of the sparse histogram in the |params|.
   void GetParameters(DictionaryValue* params) const override;
-  void GetCountAndBucketData(Count* count,
-                             int64_t* sum,
-                             ListValue* buckets) const override;
 
   // Helpers for emitting Ascii graphic.  Each method appends data to output.
   void WriteAsciiBody(const HistogramSamples& snapshot,
@@ -89,7 +88,7 @@ class BASE_EXPORT SparseHistogram : public HistogramBase {
   void WriteAsciiHeader(const HistogramSamples& snapshot,
                         std::string* output) const;
 
-  // For constuctor calling.
+  // For constructor calling.
   friend class SparseHistogramTest;
 
   // Protects access to |samples_|.

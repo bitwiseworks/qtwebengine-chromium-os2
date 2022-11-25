@@ -29,7 +29,6 @@ class MODULES_EXPORT RTCQuicStream final : public EventTargetWithInlineData,
                                            public ExecutionContextClient,
                                            public QuicStreamProxy::Delegate {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(RTCQuicStream);
 
  public:
   // TODO(steveanton): These maybe should be adjustable.
@@ -83,7 +82,7 @@ class MODULES_EXPORT RTCQuicStream final : public EventTargetWithInlineData,
   ExecutionContext* GetExecutionContext() const override;
 
   // For garbage collection.
-  void Trace(Visitor* visitor) override;
+  void Trace(Visitor* visitor) const override;
 
  private:
   class PendingReadBufferedAmountPromise;

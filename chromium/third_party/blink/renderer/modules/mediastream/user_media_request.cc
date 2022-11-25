@@ -40,10 +40,10 @@
 #include "third_party/blink/renderer/bindings/core/v8/dictionary.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_media_stream_constraints.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_media_track_constraints.h"
-#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/dom/space_split_string.h"
 #include "third_party/blink/renderer/core/frame/deprecation.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/modules/mediastream/media_constraints_impl.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream.h"
 #include "third_party/blink/renderer/modules/mediastream/overconstrained_error.h"
@@ -304,7 +304,7 @@ class UserMediaRequest::V8Callbacks final : public UserMediaRequest::Callbacks {
       : success_callback_(success_callback), error_callback_(error_callback) {}
   ~V8Callbacks() override = default;
 
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     visitor->Trace(success_callback_);
     visitor->Trace(error_callback_);
     UserMediaRequest::Callbacks::Trace(visitor);
@@ -339,7 +339,21 @@ UserMediaRequest* UserMediaRequest::Create(
   if (error_state.HadException())
     return nullptr;
 
-  if (media_type == UserMediaRequest::MediaType::kDisplayMedia) {
+  if (media_type == UserMediaRequest::MediaType::kUserMedia &&
+      !video.IsNull()) {
+    if (video.Basic().pan.HasMandatory()) {
+      error_state.ThrowTypeError("Mandatory pan constraint is not supported");
+      return nullptr;
+    }
+    if (video.Basic().tilt.HasMandatory()) {
+      error_state.ThrowTypeError("Mandatory tilt constraint is not supported");
+      return nullptr;
+    }
+    if (video.Basic().zoom.HasMandatory()) {
+      error_state.ThrowTypeError("Mandatory zoom constraint is not supported");
+      return nullptr;
+    }
+  } else if (media_type == UserMediaRequest::MediaType::kDisplayMedia) {
     // https://w3c.github.io/mediacapture-screen-share/#mediadevices-additions
     // MediaDevices Additions
     // The user agent MUST reject audio-only requests.
@@ -467,27 +481,26 @@ bool UserMediaRequest::ShouldDisableHardwareNoiseSuppression() const {
 }
 
 bool UserMediaRequest::IsSecureContextUse(String& error_message) {
-  Document* document = OwnerDocument();
+  LocalDOMWindow* window = GetWindow();
 
-  if (document->IsSecureContext(error_message)) {
-    UseCounter::Count(document, WebFeature::kGetUserMediaSecureOrigin);
-    document->CountUseOnlyInCrossOriginIframe(
+  if (window->IsSecureContext(error_message)) {
+    UseCounter::Count(window, WebFeature::kGetUserMediaSecureOrigin);
+    window->CountUseOnlyInCrossOriginIframe(
         WebFeature::kGetUserMediaSecureOriginIframe);
 
     // Feature policy deprecation messages.
     if (Audio()) {
-      if (!document->IsFeatureEnabled(
+      if (!window->IsFeatureEnabled(
               mojom::blink::FeaturePolicyFeature::kMicrophone,
               ReportOptions::kReportOnFailure)) {
         UseCounter::Count(
-            document, WebFeature::kMicrophoneDisabledByFeaturePolicyEstimate);
+            window, WebFeature::kMicrophoneDisabledByFeaturePolicyEstimate);
       }
     }
     if (Video()) {
-      if (!document->IsFeatureEnabled(
-              mojom::blink::FeaturePolicyFeature::kCamera,
-              ReportOptions::kReportOnFailure)) {
-        UseCounter::Count(document,
+      if (!window->IsFeatureEnabled(mojom::blink::FeaturePolicyFeature::kCamera,
+                                    ReportOptions::kReportOnFailure)) {
+        UseCounter::Count(window,
                           WebFeature::kCameraDisabledByFeaturePolicyEstimate);
       }
     }
@@ -497,15 +510,15 @@ bool UserMediaRequest::IsSecureContextUse(String& error_message) {
 
   // While getUserMedia is blocked on insecure origins, we still want to
   // count attempts to use it.
-  Deprecation::CountDeprecation(document,
+  Deprecation::CountDeprecation(window,
                                 WebFeature::kGetUserMediaInsecureOrigin);
   Deprecation::CountDeprecationCrossOriginIframe(
-      *document, WebFeature::kGetUserMediaInsecureOriginIframe);
+      window, WebFeature::kGetUserMediaInsecureOriginIframe);
   return false;
 }
 
-Document* UserMediaRequest::OwnerDocument() {
-  return Document::From(GetExecutionContext());
+LocalDOMWindow* UserMediaRequest::GetWindow() {
+  return To<LocalDOMWindow>(GetExecutionContext());
 }
 
 void UserMediaRequest::Start() {
@@ -518,20 +531,21 @@ void UserMediaRequest::Succeed(MediaStreamDescriptor* stream_descriptor) {
   if (!GetExecutionContext())
     return;
 
-  MediaStream* stream =
-      MediaStream::Create(GetExecutionContext(), stream_descriptor);
+  MediaStream::Create(GetExecutionContext(), stream_descriptor,
+                      WTF::Bind(&UserMediaRequest::OnMediaStreamInitialized,
+                                WrapPersistent(this)));
+}
+
+void UserMediaRequest::OnMediaStreamInitialized(MediaStream* stream) {
+  DCHECK(!is_resolved_);
 
   MediaStreamTrackVector audio_tracks = stream->getAudioTracks();
-  for (MediaStreamTrackVector::iterator iter = audio_tracks.begin();
-       iter != audio_tracks.end(); ++iter) {
-    (*iter)->SetConstraints(audio_);
-  }
+  for (const auto& audio_track : audio_tracks)
+    audio_track->SetConstraints(audio_);
 
   MediaStreamTrackVector video_tracks = stream->getVideoTracks();
-  for (MediaStreamTrackVector::iterator iter = video_tracks.begin();
-       iter != video_tracks.end(); ++iter) {
-    (*iter)->SetConstraints(video_);
-  }
+  for (const auto& video_track : video_tracks)
+    video_track->SetConstraints(video_);
 
   callbacks_->OnSuccess(nullptr, stream);
   is_resolved_ = true;
@@ -612,7 +626,7 @@ void UserMediaRequest::ContextDestroyed() {
   }
 }
 
-void UserMediaRequest::Trace(Visitor* visitor) {
+void UserMediaRequest::Trace(Visitor* visitor) const {
   visitor->Trace(controller_);
   visitor->Trace(callbacks_);
   ExecutionContextLifecycleObserver::Trace(visitor);

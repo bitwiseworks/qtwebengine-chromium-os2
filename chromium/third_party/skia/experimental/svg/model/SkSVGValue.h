@@ -30,6 +30,7 @@ public:
         kPath,
         kPoints,
         kSpreadMethod,
+        kStopColor,
         kString,
         kTransform,
         kViewBox,
@@ -49,7 +50,7 @@ protected:
 private:
     Type fType;
 
-    typedef SkNoncopyable INHERITED;
+    using INHERITED = SkNoncopyable;
 };
 
 template <typename T, SkSVGValue::Type ValueType>
@@ -71,7 +72,7 @@ private:
 
     const T& fWrappedValue;
 
-    typedef SkSVGValue INHERITED;
+    using INHERITED = SkSVGValue;
 };
 
 using SkSVGClipValue         = SkSVGWrapperValue<SkSVGClip         , SkSVGValue::Type::kClip      >;
@@ -89,6 +90,7 @@ using SkSVGPointsValue       = SkSVGWrapperValue<SkSVGPointsType   , SkSVGValue:
 using SkSVGStringValue       = SkSVGWrapperValue<SkSVGStringType   , SkSVGValue::Type::kString    >;
 using SkSVGSpreadMethodValue = SkSVGWrapperValue<SkSVGSpreadMethod ,
                                                  SkSVGValue::Type::kSpreadMethod>;
+using SkSVGStopColorValue    = SkSVGWrapperValue<SkSVGStopColor    , SkSVGValue::Type::kStopColor >;
 using SkSVGVisibilityValue   = SkSVGWrapperValue<SkSVGVisibility   , SkSVGValue::Type::kVisibility>;
 using SkSVGDashArrayValue    = SkSVGWrapperValue<SkSVGDashArray    , SkSVGValue::Type::kDashArray >;
 

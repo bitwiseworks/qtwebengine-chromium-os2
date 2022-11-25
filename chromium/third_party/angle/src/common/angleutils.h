@@ -11,12 +11,17 @@
 
 #include "common/platform.h"
 
+#if defined(ANGLE_USE_ABSEIL)
+#    include "absl/container/flat_hash_map.h"
+#endif  // defined(ANGLE_USE_ABSEIL)
+
 #include <climits>
 #include <cstdarg>
 #include <cstddef>
 #include <set>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // A helper class to disallow copy and assignment operators
@@ -26,6 +31,14 @@ namespace angle
 #if defined(ANGLE_ENABLE_D3D9) || defined(ANGLE_ENABLE_D3D11)
 using Microsoft::WRL::ComPtr;
 #endif  // defined(ANGLE_ENABLE_D3D9) || defined(ANGLE_ENABLE_D3D11)
+
+#if defined(ANGLE_USE_ABSEIL)
+template <typename Key, typename T>
+using HashMap = absl::flat_hash_map<Key, T>;
+#else
+template <typename Key, typename T>
+using HashMap = std::unordered_map<Key, T>;
+#endif  // defined(ANGLE_USE_ABSEIL)
 
 class NonCopyable
 {
@@ -203,6 +216,7 @@ inline bool IsLittleEndian()
 #define GL_INT_64_ANGLEX 0x6ABE
 #define GL_UINT_64_ANGLEX 0x6ABF
 #define GL_BGRA8_SRGB_ANGLEX 0x6AC0
+#define GL_BGR10_A2_ANGLEX 0x6AF9
 
 // These are dummy formats used to fit typeless D3D textures that can be bound to EGL pbuffers into
 // the format system (for extension EGL_ANGLE_d3d_texture_client_buffer):

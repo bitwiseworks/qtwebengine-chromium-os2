@@ -27,6 +27,9 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as SDK from '../sdk/sdk.js';
 
@@ -151,6 +154,9 @@ export class DOMStorageModel extends SDK.SDKModel.SDKModel {
     for (const isLocal of [true, false]) {
       const key = this._storageKey(origin, isLocal);
       const storage = this._storages[key];
+      if (!storage) {
+        return;
+      }
       storage.clear();
     }
     this._removeOrigin(origin);

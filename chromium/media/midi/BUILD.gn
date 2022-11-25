@@ -15,6 +15,13 @@ if (is_android) {
   import("//build/config/android/rules.gni")
 }
 
+# This file depends on the legacy global sources assignment filter. It should
+# be converted to check target platform before assigning source files to the
+# sources variable. Remove this import and set_sources_assignment_filter call
+# when the file has been converted. See https://crbug.com/1018739 for details.
+import("//build/config/deprecated_default_sources_assignment_filter.gni")
+set_sources_assignment_filter(deprecated_default_sources_assignment_filter)
+
 # Common configuration for targets in the media/midi directory.
 config("midi_config") {
   if (use_alsa && use_udev) {
@@ -130,7 +137,7 @@ component("midi") {
   }
 
   if (is_mac) {
-    libs += [
+    frameworks = [
       "CoreAudio.framework",
       "CoreFoundation.framework",
       "CoreMIDI.framework",
@@ -178,6 +185,8 @@ mojom("mojo") {
 }
 
 test("midi_unittests") {
+  use_xvfb = use_xvfb_in_this_config
+
   sources = [
     "message_util_unittest.cc",
     "midi_manager_unittest.cc",
@@ -206,7 +215,7 @@ test("midi_unittests") {
 
   if (is_mac) {
     sources += [ "midi_manager_mac_unittest.cc" ]
-    libs = [ "CoreMIDI.framework" ]
+    frameworks = [ "CoreMIDI.framework" ]
   }
 
   if (use_alsa && use_udev) {

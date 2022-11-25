@@ -63,12 +63,20 @@ OPENSSL_EXPORT int FIPS_mode(void);
 // success and zero on error.
 OPENSSL_EXPORT int BORINGSSL_self_test(void);
 
+// CRYPTO_pre_sandbox_init initializes the crypto library, pre-acquiring some
+// unusual resources to aid running in sandboxed environments. It is safe to
+// call this function multiple times and concurrently from multiple threads.
+//
+// For more details on using BoringSSL in a sandboxed environment, see
+// SANDBOXING.md in the source tree.
+OPENSSL_EXPORT void CRYPTO_pre_sandbox_init(void);
+
 
 // Deprecated functions.
 
 // OPENSSL_VERSION_TEXT contains a string the identifies the version of
 // “OpenSSL”. node.js requires a version number in this text.
-#define OPENSSL_VERSION_TEXT "OpenSSL 1.1.0 (compatible; BoringSSL)"
+#define OPENSSL_VERSION_TEXT "OpenSSL 1.1.1 (compatible; BoringSSL)"
 
 #define OPENSSL_VERSION 0
 #define OPENSSL_CFLAGS 1

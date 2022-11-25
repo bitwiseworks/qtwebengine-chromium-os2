@@ -33,21 +33,12 @@
  * extensions but in the mean time if an old func in here depends on one
  * that has been migrated it will need to be imported
  */
-import {escapeCharacters, sprintf} from './string-utilities.js';
+import {escapeCharacters, regexSpecialCharacters, sprintf} from './string-utilities.js';
 
 // Still used in the test runners that can't use ES modules :(
 String.sprintf = sprintf;
 
-/**
- * @param {string} chars
- * @return {string}
- */
-/**
- * @return {string}
- */
-String.regexSpecialCharacters = function() {
-  return '^[]{}()\\.^$*+?|-,';
-};
+String.regexSpecialCharacters = regexSpecialCharacters;
 
 /**
  * @this {string}
@@ -55,26 +46,6 @@ String.regexSpecialCharacters = function() {
  */
 String.prototype.escapeForRegExp = function() {
   return escapeCharacters(this, String.regexSpecialCharacters());
-};
-
-/**
- * @param {string} query
- * @return {!RegExp}
- */
-String.filterRegex = function(query) {
-  const toEscape = String.regexSpecialCharacters();
-  let regexString = '';
-  for (let i = 0; i < query.length; ++i) {
-    let c = query.charAt(i);
-    if (toEscape.indexOf(c) !== -1) {
-      c = '\\' + c;
-    }
-    if (i) {
-      regexString += '[^\\0' + c + ']*';
-    }
-    regexString += c;
-  }
-  return new RegExp(regexString, 'i');
 };
 
 /**
@@ -109,13 +80,6 @@ String.prototype.trimEndWithMaxLength = function(maxLength) {
 };
 
 /**
- * @return {string}
- */
-String.prototype.toTitleCase = function() {
-  return this.substring(0, 1).toUpperCase() + this.substring(1);
-};
-
-/**
  * @param {string} other
  * @return {number}
  */
@@ -127,17 +91,6 @@ String.prototype.compareTo = function(other) {
     return -1;
   }
   return 0;
-};
-
-/**
- * @return {string}
- */
-String.prototype.removeURLFragment = function() {
-  let fragmentIndex = this.indexOf('#');
-  if (fragmentIndex === -1) {
-    fragmentIndex = this.length;
-  }
-  return this.substring(0, fragmentIndex);
 };
 
 /**
@@ -237,28 +190,6 @@ Number.toFixedIfFloating = function(value) {
   }
   const number = Number(value);
   return number % 1 ? number.toFixed(3) : String(number);
-};
-
-/**
- * @return {boolean}
- */
-Date.prototype.isValid = function() {
-  return !isNaN(this.getTime());
-};
-
-/**
- * @return {string}
- */
-Date.prototype.toISO8601Compact = function() {
-  /**
-   * @param {number} x
-   * @return {string}
-   */
-  function leadZero(x) {
-    return (x > 9 ? '' : '0') + x;
-  }
-  return this.getFullYear() + leadZero(this.getMonth() + 1) + leadZero(this.getDate()) + 'T' +
-      leadZero(this.getHours()) + leadZero(this.getMinutes()) + leadZero(this.getSeconds());
 };
 
 (function() {
@@ -509,31 +440,6 @@ Object.defineProperty(Array.prototype, 'peekLast', {
 
 /**
  * @param {string} query
- * @param {boolean} caseSensitive
- * @param {boolean} isRegex
- * @return {!RegExp}
- */
-self.createSearchRegex = function(query, caseSensitive, isRegex) {
-  const regexFlags = caseSensitive ? 'g' : 'gi';
-  let regexObject;
-
-  if (isRegex) {
-    try {
-      regexObject = new RegExp(query, regexFlags);
-    } catch (e) {
-      // Silent catch.
-    }
-  }
-
-  if (!regexObject) {
-    regexObject = self.createPlainTextSearchRegex(query, regexFlags);
-  }
-
-  return regexObject;
-};
-
-/**
- * @param {string} query
  * @param {string=} flags
  * @return {!RegExp}
  */
@@ -552,25 +458,6 @@ self.createPlainTextSearchRegex = function(query, flags) {
 };
 
 /**
- * @param {number} spacesCount
- * @return {string}
- */
-self.spacesPadding = function(spacesCount) {
-  return '\xA0'.repeat(spacesCount);
-};
-
-/**
- * @param {number} value
- * @param {number} symbolsCount
- * @return {string}
- */
-self.numberToStringWithSpacesPadding = function(value, symbolsCount) {
-  const numberString = value.toString();
-  const paddingLength = Math.max(0, symbolsCount - numberString.length);
-  return self.spacesPadding(paddingLength) + numberString;
-};
-
-/**
  * @return {?T}
  * @template T
  */
@@ -579,16 +466,6 @@ Set.prototype.firstValue = function() {
     return null;
   }
   return this.values().next().value;
-};
-
-/**
- * @param {!Iterable<T>|!Array<!T>} iterable
- * @template T
- */
-Set.prototype.addAll = function(iterable) {
-  for (const e of iterable) {
-    this.add(e);
-  }
 };
 
 /**

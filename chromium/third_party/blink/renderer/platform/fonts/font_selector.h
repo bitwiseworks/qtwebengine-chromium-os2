@@ -28,6 +28,9 @@
 
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache_client.h"
+#include "third_party/blink/renderer/platform/fonts/font_fallback_priority.h"
+#include "third_party/blink/renderer/platform/fonts/font_invalidation_reason.h"
+#include "third_party/blink/renderer/platform/fonts/font_matching_metrics.h"
 #include "third_party/blink/renderer/platform/fonts/segmented_font_data.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
@@ -39,6 +42,7 @@ class ExecutionContext;
 class FontData;
 class FontDescription;
 class FontFaceCache;
+class FontFallbackMap;
 class FontSelectorClient;
 class GenericFontFamilySettings;
 
@@ -80,10 +84,40 @@ class PLATFORM_EXPORT FontSelector : public FontCacheClient {
   // rule, and the font is not available.
   virtual void ReportFailedLocalFontMatch(const AtomicString& font_name) = 0;
 
+  // Called whenever a page attempts to find a local font based on a name. This
+  // only includes lookups where the name is allowed to match family names,
+  // PostScript names and full font names.
+  virtual void ReportFontLookupByUniqueOrFamilyName(
+      const AtomicString& name,
+      const FontDescription& font_description,
+      SimpleFontData* resulting_font_data) = 0;
+
+  // Called whenever a page attempts to find a local font based on a name. This
+  // only includes lookups where the name is allowed to match PostScript names
+  // and full font names, but not family names.
+  virtual void ReportFontLookupByUniqueNameOnly(
+      const AtomicString& name,
+      const FontDescription& font_description,
+      SimpleFontData* resulting_font_data,
+      bool is_loading_fallback = false) = 0;
+
+  // Called whenever a page attempts to find a local font based on a fallback
+  // character.
+  virtual void ReportFontLookupByFallbackCharacter(
+      UChar32 fallback_character,
+      FontFallbackPriority fallback_priority,
+      const FontDescription& font_description,
+      SimpleFontData* resulting_font_data) = 0;
+
+  // Called whenever a page attempts to find a last-resort font.
+  virtual void ReportLastResortFallbackFontLookup(
+      const FontDescription& font_description,
+      SimpleFontData* resulting_font_data) = 0;
+
   virtual void RegisterForInvalidationCallbacks(FontSelectorClient*) = 0;
   virtual void UnregisterForInvalidationCallbacks(FontSelectorClient*) = 0;
 
-  virtual void FontFaceInvalidated() {}
+  virtual void FontFaceInvalidated(FontInvalidationReason) {}
 
   virtual ExecutionContext* GetExecutionContext() const = 0;
 
@@ -93,11 +127,18 @@ class PLATFORM_EXPORT FontSelector : public FontCacheClient {
       const FontDescription&,
       const AtomicString& passed_family) = 0;
 
+  FontFallbackMap& GetFontFallbackMap();
+
+  void Trace(Visitor* visitor) const override;
+
  protected:
   static AtomicString FamilyNameFromSettings(
       const GenericFontFamilySettings&,
       const FontDescription&,
       const AtomicString& generic_family_name);
+
+ private:
+  Member<FontFallbackMap> font_fallback_map_;
 };
 
 }  // namespace blink

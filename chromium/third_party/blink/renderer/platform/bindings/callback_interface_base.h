@@ -34,7 +34,7 @@ class PLATFORM_EXPORT CallbackInterfaceBase
 
   virtual ~CallbackInterfaceBase() = default;
 
-  virtual void Trace(Visitor*);
+  virtual void Trace(Visitor*) const;
 
   // Check the identity of |callback_object_|. There can be multiple
   // CallbackInterfaceBase objects that have the same |callback_object_| but
@@ -46,6 +46,10 @@ class PLATFORM_EXPORT CallbackInterfaceBase
   v8::Local<v8::Object> CallbackObject() {
     return callback_object_.NewLocal(GetIsolate());
   }
+
+  // Returns true iff the callback interface is a single operation callback
+  // interface and the callback interface type value is callable.
+  bool IsCallbackObjectCallable() const { return is_callback_object_callable_; }
 
   v8::Isolate* GetIsolate() { return incumbent_script_state_->GetIsolate(); }
 
@@ -63,33 +67,24 @@ class PLATFORM_EXPORT CallbackInterfaceBase
   // Returns the ScriptState of the relevant realm of the callback object iff
   // the callback is the same origin-domain. Otherwise, reports an error and
   // returns nullptr.
-  ScriptState* CallbackRelevantScriptStateOrReportError(const char* interface,
-                                                        const char* operation);
+  ScriptState* CallbackRelevantScriptStateOrReportError(
+      const char* interface_name,
+      const char* operation_name);
 
   // Returns the ScriptState of the relevant realm of the callback object iff
   // the callback is the same origin-domain. Otherwise, throws an exception and
   // returns nullptr.
   ScriptState* CallbackRelevantScriptStateOrThrowException(
-      const char* interface,
-      const char* operation);
+      const char* interface_name,
+      const char* operation_name);
+
+  ScriptState* IncumbentScriptState() { return incumbent_script_state_; }
 
   DOMWrapperWorld& GetWorld() const { return incumbent_script_state_->World(); }
-
-  // NodeIteratorBase counts the invocation of those which are callable and
-  // those which are not.
-  bool IsCallbackObjectCallableForNodeIteratorBase() const {
-    return IsCallbackObjectCallable();
-  }
 
  protected:
   explicit CallbackInterfaceBase(v8::Local<v8::Object> callback_object,
                                  SingleOperationOrNot);
-
-  // Returns true iff the callback interface is a single operation callback
-  // interface and the callback interface type value is callable.
-  bool IsCallbackObjectCallable() const { return is_callback_object_callable_; }
-
-  ScriptState* IncumbentScriptState() { return incumbent_script_state_; }
 
  private:
   // The "callback interface type" value.

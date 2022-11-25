@@ -2,8 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/jumbo.gni")
 import("//build/config/linux/pkg_config.gni")
+import("//build/config/jumbo.gni")
 import("//build/config/ui.gni")
 import("//ui/base/ui_features.gni")
 import("//ui/ozone/ozone.gni")
@@ -22,7 +22,10 @@ jumbo_source_set("xkb") {
     "xkb_keysym.h",
   ]
 
-  public_deps = [ "//ui/base:buildflags" ]
+  public_deps = [
+    "//ui/base:buildflags",
+    "//ui/gfx/x/keysyms",
+  ]
 
   if (use_xkbcommon) {
     public_configs = [ ":xkbcommon" ]
@@ -54,7 +57,5 @@ if (use_x11 || ozone_platform_x11) {
       "//ui/events:dom_keycode_converter",
       "//ui/gfx/x",
     ]
-
-    configs += [ "//build/config/linux:x11" ]
   }
 }

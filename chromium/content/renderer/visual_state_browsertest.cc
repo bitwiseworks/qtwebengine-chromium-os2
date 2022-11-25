@@ -5,14 +5,15 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/containers/flat_map.h"
-#include "base/message_loop/message_loop_current.h"
 #include "base/run_loop.h"
+#include "base/task/current_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/renderer/render_view.h"
 #include "content/public/renderer/render_view_observer.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -74,7 +75,7 @@ class VisualStateTest : public ContentBrowserTest {
   }
 
   void AssertIsIdle() {
-    ASSERT_TRUE(base::MessageLoopCurrent::Get()->IsIdleForTesting());
+    ASSERT_TRUE(base::CurrentThread::Get()->IsIdleForTesting());
   }
 
   void InvokeVisualStateCallback(bool result) {

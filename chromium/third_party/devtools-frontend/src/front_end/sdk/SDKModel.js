@@ -10,9 +10,7 @@ import * as ProtocolClient from '../protocol_client/protocol_client.js';
 /** @type {!Map<function(new:SDKModel, !Target), !{capabilities: number, autostart: boolean}>} */
 const _registeredModels = new Map();
 
-/**
- * @unrestricted
- */
+
 export class SDKModel extends Common.ObjectWrapper.ObjectWrapper {
   /**
    * @param {!Target} target
@@ -106,7 +104,7 @@ export class Target extends ProtocolClient.InspectorBackend.TargetBase {
       case Type.Frame:
         this._capabilitiesMask = Capability.Browser | Capability.Storage | Capability.DOM | Capability.JS |
             Capability.Log | Capability.Network | Capability.Target | Capability.Tracing | Capability.Emulation |
-            Capability.Input | Capability.Inspector | Capability.Audits;
+            Capability.Input | Capability.Inspector | Capability.Audits | Capability.WebAuthn | Capability.IO;
         if (!parentTarget) {
           // This matches backend exposing certain capabilities only for the main frame.
           this._capabilitiesMask |=
@@ -116,20 +114,21 @@ export class Target extends ProtocolClient.InspectorBackend.TargetBase {
         }
         break;
       case Type.ServiceWorker:
-        this._capabilitiesMask =
-            Capability.JS | Capability.Log | Capability.Network | Capability.Target | Capability.Inspector;
+        this._capabilitiesMask = Capability.JS | Capability.Log | Capability.Network | Capability.Target |
+            Capability.Inspector | Capability.IO;
         if (!parentTarget) {
           this._capabilitiesMask |= Capability.Browser;
         }
         break;
       case Type.Worker:
-        this._capabilitiesMask = Capability.JS | Capability.Log | Capability.Network | Capability.Target;
+        this._capabilitiesMask =
+            Capability.JS | Capability.Log | Capability.Network | Capability.Target | Capability.IO;
         break;
       case Type.Node:
         this._capabilitiesMask = Capability.JS;
         break;
       case Type.Browser:
-        this._capabilitiesMask = Capability.Target;
+        this._capabilitiesMask = Capability.Target | Capability.IO;
         break;
     }
     this._type = type;
@@ -339,6 +338,8 @@ export const Capability = {
   Storage: 1 << 13,
   ServiceWorker: 1 << 14,
   Audits: 1 << 15,
+  WebAuthn: 1 << 16,
+  IO: 1 << 17,
 
   None: 0,
 };

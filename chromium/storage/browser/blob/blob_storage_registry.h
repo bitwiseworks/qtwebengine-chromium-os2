@@ -18,8 +18,6 @@
 #include "base/macros.h"
 #include "storage/browser/blob/blob_storage_constants.h"
 
-class GURL;
-
 namespace storage {
 class BlobEntry;
 

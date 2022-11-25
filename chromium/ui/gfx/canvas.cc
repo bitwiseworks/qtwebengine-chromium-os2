@@ -9,6 +9,7 @@
 
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
+#include "base/numerics/safe_conversions.h"
 #include "cc/paint/paint_flags.h"
 #include "cc/paint/paint_shader.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -21,7 +22,6 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/rect_f.h"
-#include "ui/gfx/geometry/safe_integer_conversions.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/scoped_canvas.h"
 #include "ui/gfx/skia_paint_util.h"
@@ -73,8 +73,8 @@ void Canvas::SizeStringInt(const base::string16& text,
   float factional_height = static_cast<float>(*height);
   SizeStringFloat(text, font_list, &fractional_width, &factional_height,
                   line_height, flags);
-  *width = ToCeiledInt(fractional_width);
-  *height = ToCeiledInt(factional_height);
+  *width = base::ClampCeil(fractional_width);
+  *height = base::ClampCeil(factional_height);
 }
 
 // static
@@ -96,34 +96,6 @@ float Canvas::GetStringWidthF(const base::string16& text,
 // static
 int Canvas::DefaultCanvasTextAlignment() {
   return base::i18n::IsRTL() ? TEXT_ALIGN_RIGHT : TEXT_ALIGN_LEFT;
-}
-
-void Canvas::DrawDashedRect(const RectF& inrect, SkColor color) {
-  if (inrect.IsEmpty())
-    return;
-  RectF rect = inrect;
-
-  cc::PaintFlags flags;
-  flags.setColor(color);
-  SkScalar intervals[] = {1.f, 1.f};
-  flags.setStrokeWidth(1.f);
-  flags.setStyle(cc::PaintFlags::kStroke_Style);
-  rect.Inset(gfx::InsetsF(0.5f));
-
-  flags.setPathEffect(SkDashPathEffect::Make(intervals, 2, 0));
-
-  // Top-left to top-right.
-  canvas_->drawLine(rect.x() - 0.5f, rect.y(), rect.right() + 0.5f, rect.y(),
-                    flags);
-  // Top-left to bottom-left.
-  canvas_->drawLine(rect.right() + 0.5f, rect.bottom(), rect.x() - 0.5f,
-                    rect.bottom(), flags);
-  // Bottom-right to bottom-left.
-  canvas_->drawLine(rect.x(), rect.y() - 0.5f, rect.x(), rect.bottom() + 0.5f,
-                    flags);
-  // Bottom-right to top-right.
-  canvas_->drawLine(rect.right(), rect.bottom() + 0.5f, rect.right(),
-                    rect.y() - 0.5f, flags);
 }
 
 float Canvas::UndoDeviceScaleFactor() {
@@ -309,14 +281,6 @@ void Canvas::DrawPath(const SkPath& path, const cc::PaintFlags& flags) {
   canvas_->drawPath(path, flags);
 }
 
-void Canvas::DrawFocusRect(const Rect& rect) {
-  DrawFocusRect(RectF(rect));
-}
-
-void Canvas::DrawFocusRect(const RectF& rect) {
-  DrawDashedRect(rect, SK_ColorGRAY);
-}
-
 void Canvas::DrawSolidFocusRect(RectF rect, SkColor color, int thickness) {
   cc::PaintFlags flags;
   flags.setColor(color);
@@ -351,8 +315,8 @@ void Canvas::DrawImageInt(const ImageSkia& image,
   ScopedCanvas scoper(this);
   canvas_->scale(SkFloatToScalar(1.0f / bitmap_scale),
                  SkFloatToScalar(1.0f / bitmap_scale));
-  canvas_->translate(std::round(x * bitmap_scale),
-                     std::round(y * bitmap_scale));
+  canvas_->translate(SkFloatToScalar(std::round(x * bitmap_scale)),
+                     SkFloatToScalar(std::round(y * bitmap_scale)));
   canvas_->saveLayer(nullptr, &flags);
   canvas_->drawPicture(image_rep.GetPaintRecord());
   canvas_->restore();

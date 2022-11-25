@@ -32,7 +32,7 @@
 
 #include "third_party/blink/renderer/core/css/css_numeric_literal_value.h"
 #include "third_party/blink/renderer/core/css/css_primitive_value_mappings.h"
-#include "third_party/blink/renderer/core/css/parser/css_property_parser_helpers.h"
+#include "third_party/blink/renderer/core/css/properties/css_parsing_utils.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/platform/geometry/calculation_expression_node.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
@@ -229,10 +229,7 @@ double CSSMathExpressionNumericLiteral::ComputeLengthPx(
     case kCalcAngle:
     case kCalcFrequency:
     case kCalcPercentLength:
-    case kCalcPercentNumber:
     case kCalcTime:
-    case kCalcLengthNumber:
-    case kCalcPercentLengthNumber:
     case kCalcOther:
       NOTREACHED();
       break;
@@ -271,7 +268,7 @@ bool CSSMathExpressionNumericLiteral::IsComputationallyIndependent() const {
   return value_->IsComputationallyIndependent();
 }
 
-void CSSMathExpressionNumericLiteral::Trace(Visitor* visitor) {
+void CSSMathExpressionNumericLiteral::Trace(Visitor* visitor) const {
   visitor->Trace(value_);
   CSSMathExpressionNode::Trace(visitor);
 }
@@ -285,43 +282,26 @@ bool CSSMathExpressionNumericLiteral::InvolvesPercentageComparisons() const {
 // ------ End of CSSMathExpressionNumericLiteral member functions
 
 static const CalculationCategory kAddSubtractResult[kCalcOther][kCalcOther] = {
-    /* CalcNumber */ {kCalcNumber, kCalcLengthNumber, kCalcPercentNumber,
-                      kCalcPercentNumber, kCalcOther, kCalcOther, kCalcOther,
-                      kCalcOther, kCalcLengthNumber, kCalcPercentLengthNumber},
+    /* CalcNumber */ {kCalcNumber, kCalcOther, kCalcOther, kCalcOther,
+                      kCalcOther, kCalcOther, kCalcOther},
     /* CalcLength */
-    {kCalcLengthNumber, kCalcLength, kCalcPercentLength, kCalcOther,
-     kCalcPercentLength, kCalcOther, kCalcOther, kCalcOther, kCalcLengthNumber,
-     kCalcPercentLengthNumber},
+    {kCalcOther, kCalcLength, kCalcPercentLength, kCalcPercentLength,
+     kCalcOther, kCalcOther, kCalcOther},
     /* CalcPercent */
-    {kCalcPercentNumber, kCalcPercentLength, kCalcPercent, kCalcPercentNumber,
-     kCalcPercentLength, kCalcOther, kCalcOther, kCalcOther,
-     kCalcPercentLengthNumber, kCalcPercentLengthNumber},
-    /* CalcPercentNumber */
-    {kCalcPercentNumber, kCalcPercentLengthNumber, kCalcPercentNumber,
-     kCalcPercentNumber, kCalcPercentLengthNumber, kCalcOther, kCalcOther,
-     kCalcOther, kCalcOther, kCalcPercentLengthNumber},
+    {kCalcOther, kCalcPercentLength, kCalcPercent, kCalcPercentLength,
+     kCalcOther, kCalcOther, kCalcOther},
     /* CalcPercentLength */
-    {kCalcPercentLengthNumber, kCalcPercentLength, kCalcPercentLength,
-     kCalcPercentLengthNumber, kCalcPercentLength, kCalcOther, kCalcOther,
-     kCalcOther, kCalcOther, kCalcPercentLengthNumber},
+    {kCalcOther, kCalcPercentLength, kCalcPercentLength, kCalcPercentLength,
+     kCalcOther, kCalcOther, kCalcOther},
     /* CalcAngle  */
-    {kCalcOther, kCalcOther, kCalcOther, kCalcOther, kCalcOther, kCalcAngle,
-     kCalcOther, kCalcOther, kCalcOther, kCalcOther},
+    {kCalcOther, kCalcOther, kCalcOther, kCalcOther, kCalcAngle, kCalcOther,
+     kCalcOther},
     /* CalcTime */
-    {kCalcOther, kCalcOther, kCalcOther, kCalcOther, kCalcOther, kCalcOther,
-     kCalcTime, kCalcOther, kCalcOther, kCalcOther},
+    {kCalcOther, kCalcOther, kCalcOther, kCalcOther, kCalcOther, kCalcTime,
+     kCalcOther},
     /* CalcFrequency */
     {kCalcOther, kCalcOther, kCalcOther, kCalcOther, kCalcOther, kCalcOther,
-     kCalcOther, kCalcFrequency, kCalcOther, kCalcOther},
-    /* CalcLengthNumber */
-    {kCalcLengthNumber, kCalcLengthNumber, kCalcPercentLengthNumber,
-     kCalcPercentLengthNumber, kCalcPercentLengthNumber, kCalcOther, kCalcOther,
-     kCalcOther, kCalcLengthNumber, kCalcPercentLengthNumber},
-    /* CalcPercentLengthNumber */
-    {kCalcPercentLengthNumber, kCalcPercentLengthNumber,
-     kCalcPercentLengthNumber, kCalcPercentLengthNumber,
-     kCalcPercentLengthNumber, kCalcOther, kCalcOther, kCalcOther,
-     kCalcPercentLengthNumber, kCalcPercentLengthNumber}};
+     kCalcFrequency}};
 
 static CalculationCategory DetermineCategory(
     const CSSMathExpressionNode& left_side,
@@ -729,9 +709,6 @@ CSSPrimitiveValue::UnitType CSSMathExpressionBinaryOperation::ResolvedUnitType()
     case kCalcFrequency:
       return CSSPrimitiveValue::UnitType::kHertz;
     case kCalcPercentLength:
-    case kCalcPercentNumber:
-    case kCalcLengthNumber:
-    case kCalcPercentLengthNumber:
     case kCalcOther:
       return CSSPrimitiveValue::UnitType::kUnknown;
   }
@@ -739,7 +716,7 @@ CSSPrimitiveValue::UnitType CSSMathExpressionBinaryOperation::ResolvedUnitType()
   return CSSPrimitiveValue::UnitType::kUnknown;
 }
 
-void CSSMathExpressionBinaryOperation::Trace(Visitor* visitor) {
+void CSSMathExpressionBinaryOperation::Trace(Visitor* visitor) const {
   visitor->Trace(left_side_);
   visitor->Trace(right_side_);
   CSSMathExpressionNode::Trace(visitor);
@@ -826,7 +803,7 @@ CSSMathExpressionVariadicOperation::CSSMathExpressionVariadicOperation(
       operands_(std::move(operands)),
       operator_(op) {}
 
-void CSSMathExpressionVariadicOperation::Trace(Visitor* visitor) {
+void CSSMathExpressionVariadicOperation::Trace(Visitor* visitor) const {
   visitor->Trace(operands_);
   CSSMathExpressionNode::Trace(visitor);
 }
@@ -1052,7 +1029,7 @@ class CSSMathExpressionNodeParser {
       last_token_is_comma = false;
       operands.push_back(operand);
 
-      if (!css_property_parser_helpers::ConsumeCommaIncludingWhitespace(tokens))
+      if (!css_parsing_utils::ConsumeCommaIncludingWhitespace(tokens))
         break;
       last_token_is_comma = true;
     }
@@ -1071,14 +1048,14 @@ class CSSMathExpressionNodeParser {
     if (!min_operand)
       return nullptr;
 
-    if (!css_property_parser_helpers::ConsumeCommaIncludingWhitespace(tokens))
+    if (!css_parsing_utils::ConsumeCommaIncludingWhitespace(tokens))
       return nullptr;
 
     CSSMathExpressionNode* val_operand = ParseValueExpression(tokens, depth);
     if (!val_operand)
       return nullptr;
 
-    if (!css_property_parser_helpers::ConsumeCommaIncludingWhitespace(tokens))
+    if (!css_parsing_utils::ConsumeCommaIncludingWhitespace(tokens))
       return nullptr;
 
     CSSMathExpressionNode* max_operand = ParseValueExpression(tokens, depth);

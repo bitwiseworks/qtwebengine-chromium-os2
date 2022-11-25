@@ -28,6 +28,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Bindings from '../bindings/bindings.js';
 import * as Common from '../common/common.js';
 import * as Components from '../components/components.js';
@@ -36,6 +39,7 @@ import * as HeapSnapshotModel from '../heap_snapshot_model/heap_snapshot_model.j
 import * as Host from '../host/host.js';
 import * as ObjectUI from '../object_ui/object_ui.js';
 import * as PerfUI from '../perf_ui/perf_ui.js';
+import * as Platform from '../platform/platform.js';
 import * as SDK from '../sdk/sdk.js';
 import * as UI from '../ui/ui.js';
 
@@ -76,6 +80,7 @@ export class HeapSnapshotView extends UI.View.SimpleView {
     this._parentDataDisplayDelegate = dataDisplayDelegate;
 
     this._searchableView = new UI.SearchableView.SearchableView(this);
+    this._searchableView.setPlaceholder(ls`Find`, ls`Find`);
     this._searchableView.show(this.element);
 
     this._splitWidget = new UI.SplitWidget.SplitWidget(false, true, 'heapSnapshotSplitViewState', 200, 200);
@@ -129,7 +134,8 @@ export class HeapSnapshotView extends UI.View.SimpleView {
       splitWidgetResizer = this._tabbedPane.headerElement();
       this._objectDetailsView = this._tabbedPane;
     } else {
-      const retainmentViewHeader = createElementWithClass('div', 'heap-snapshot-view-resizer');
+      const retainmentViewHeader = document.createElement('div');
+      retainmentViewHeader.classList.add('heap-snapshot-view-resizer');
       const retainingPathsTitleDiv = retainmentViewHeader.createChild('div', 'title');
       const retainingPathsTitle = retainingPathsTitleDiv.createChild('span');
       retainingPathsTitle.textContent = Common.UIString.UIString('Retainers');
@@ -314,12 +320,15 @@ export class HeapSnapshotView extends UI.View.SimpleView {
    */
   async _retrieveStatistics(heapSnapshotProxy) {
     const statistics = await heapSnapshotProxy.getStatistics();
-    this._statisticsView.setTotal(statistics.total);
-    this._statisticsView.addRecord(statistics.code, Common.UIString.UIString('Code'), '#f77');
-    this._statisticsView.addRecord(statistics.strings, Common.UIString.UIString('Strings'), '#5e5');
-    this._statisticsView.addRecord(statistics.jsArrays, Common.UIString.UIString('JS Arrays'), '#7af');
-    this._statisticsView.addRecord(statistics.native, Common.UIString.UIString('Typed Arrays'), '#fc5');
-    this._statisticsView.addRecord(statistics.system, Common.UIString.UIString('System Objects'), '#98f');
+
+    const records = [
+      {value: statistics.code, color: '#f77', title: ls`Code`},
+      {value: statistics.strings, color: '#5e5', title: ls`Strings`},
+      {value: statistics.jsArrays, color: '#7af', title: ls`JS arrays`},
+      {value: statistics.native, color: '#fc5', title: ls`Typed arrays`},
+      {value: statistics.system, color: '#98f', title: ls`System objects`},
+    ];
+    this._statisticsView.setTotalAndRecords(statistics.total, records);
     return statistics;
   }
 
@@ -330,7 +339,7 @@ export class HeapSnapshotView extends UI.View.SimpleView {
     const minId = event.data.minId;
     const maxId = event.data.maxId;
     this._selectedSizeText.setText(
-        Common.UIString.UIString('Selected size: %s', Number.bytesToString(event.data.size)));
+        Common.UIString.UIString('Selected size: %s', Platform.NumberUtilities.bytesToString(event.data.size)));
     if (this._constructorsDataGrid.snapshot) {
       this._constructorsDataGrid.setSelectionRange(minId, maxId);
     }
@@ -1001,7 +1010,8 @@ export class AllocationPerspective extends Perspective {
     heapSnapshotView._splitWidget.setSidebarWidget(heapSnapshotView._objectDetailsView);
 
     const allocatedObjectsView = new UI.Widget.VBox();
-    const resizer = createElementWithClass('div', 'heap-snapshot-view-resizer');
+    const resizer = document.createElement('div');
+    resizer.classList.add('heap-snapshot-view-resizer');
     const title = resizer.createChild('div', 'title').createChild('span');
     title.textContent = Common.UIString.UIString('Live objects');
     this._allocationSplitWidget.hideDefaultResizer();
@@ -1197,7 +1207,7 @@ export class HeapSnapshotProfileType extends ProfileType {
     if (this.profileBeingRecorded()) {
       return;
     }
-    const heapProfilerModel = self.UI.context.flavor(SDK.HeapProfilerModel.HeapProfilerModel);
+    const heapProfilerModel = UI.Context.Context.instance().flavor(SDK.HeapProfilerModel.HeapProfilerModel);
     if (!heapProfilerModel) {
       return;
     }
@@ -1404,7 +1414,7 @@ export class TrackingHeapSnapshotProfileType extends HeapSnapshotProfileType {
    * @return {?SDK.HeapProfilerModel.HeapProfilerModel}
    */
   _addNewProfile() {
-    const heapProfilerModel = self.UI.context.flavor(SDK.HeapProfilerModel.HeapProfilerModel);
+    const heapProfilerModel = UI.Context.Context.instance().flavor(SDK.HeapProfilerModel.HeapProfilerModel);
     if (!heapProfilerModel) {
       return null;
     }
@@ -1521,7 +1531,9 @@ export class HeapProfileHeader extends ProfileHeader {
     /** @type {?HeapSnapshotProxy} */
     this._snapshotProxy = null;
     /** @type {!Promise<!HeapSnapshotProxy>} */
-    this._loadPromise = new Promise(resolve => this._fulfillLoad = resolve);
+    this._loadPromise = new Promise(resolve => {
+      this._fulfillLoad = resolve;
+    });
     this._totalNumberOfChunks = 0;
     this._bufferedWriter = null;
     /** @type {?Bindings.TempFile.TempFile} */
@@ -1644,7 +1656,7 @@ export class HeapProfileHeader extends ProfileHeader {
     if (!this._snapshotProxy) {
       return;
     }
-    this.updateStatus(Number.bytesToString(this._snapshotProxy.totalSize), false);
+    this.updateStatus(Platform.NumberUtilities.bytesToString(this._snapshotProxy.totalSize), false);
   }
 
   /**
@@ -1693,7 +1705,8 @@ export class HeapProfileHeader extends ProfileHeader {
    */
   saveToFile() {
     const fileOutputStream = new Bindings.FileUtils.FileOutputStream();
-    this._fileName = this._fileName || 'Heap-' + new Date().toISO8601Compact() + this.profileType().fileExtension();
+    this._fileName = this._fileName ||
+        'Heap-' + Platform.DateUtilities.toISO8601Compact(new Date()) + this.profileType().fileExtension();
     fileOutputStream.open(this._fileName).then(onOpen.bind(this));
 
     /**
@@ -1762,14 +1775,10 @@ export class HeapSnapshotStatisticsView extends UI.Widget.VBox {
   constructor() {
     super();
     this.element.classList.add('heap-snapshot-statistics-view');
-    this._pieChart = new PerfUI.PieChart.PieChart({
-      chartName: ls`Heap memory usage`,
-      size: 150,
-      formatter: HeapSnapshotStatisticsView._valueFormatter,
-      showLegend: true
-    });
-    this._pieChart.element.classList.add('heap-snapshot-stats-pie-chart');
-    this.element.appendChild(this._pieChart.element);
+    this._pieChart = PerfUI.PieChart.createPieChart();
+    this.setTotalAndRecords(0, []);
+    this._pieChart.classList.add('heap-snapshot-stats-pie-chart');
+    this.element.appendChild(this._pieChart);
   }
 
   /**
@@ -1781,19 +1790,18 @@ export class HeapSnapshotStatisticsView extends UI.Widget.VBox {
   }
 
   /**
-   * @param {number} value
+   * @param {number} total
+   * @param {!Array<!PerfUI.PieChart.Slice>} records
    */
-  setTotal(value) {
-    this._pieChart.initializeWithTotal(value);
-  }
-
-  /**
-   * @param {number} value
-   * @param {string} name
-   * @param {string} color
-   */
-  addRecord(value, name, color) {
-    this._pieChart.addSlice(value, color, name);
+  setTotalAndRecords(total, records) {
+    this._pieChart.data = {
+      chartName: ls`Heap memory usage`,
+      size: 150,
+      formatter: HeapSnapshotStatisticsView._valueFormatter,
+      showLegend: true,
+      total,
+      slices: records
+    };
   }
 }
 

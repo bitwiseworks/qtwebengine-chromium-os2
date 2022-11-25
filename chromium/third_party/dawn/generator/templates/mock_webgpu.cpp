@@ -76,35 +76,17 @@ bool ProcTableAsClass::DevicePopErrorScope(WGPUDevice self,
     return OnDevicePopErrorScopeCallback(self, callback, userdata);
 }
 
-void ProcTableAsClass::DeviceCreateBufferMappedAsync(WGPUDevice self,
-                                                     const WGPUBufferDescriptor* descriptor,
-                                                     WGPUBufferCreateMappedCallback callback,
-                                                     void* userdata) {
+void ProcTableAsClass::BufferMapAsync(WGPUBuffer self,
+                                      WGPUMapModeFlags mode,
+                                      size_t offset,
+                                      size_t size,
+                                      WGPUBufferMapCallback callback,
+                                      void* userdata) {
     auto object = reinterpret_cast<ProcTableAsClass::Object*>(self);
-    object->createBufferMappedCallback = callback;
+    object->mapAsyncCallback = callback;
     object->userdata = userdata;
 
-    OnDeviceCreateBufferMappedAsyncCallback(self, descriptor, callback, userdata);
-}
-
-void ProcTableAsClass::BufferMapReadAsync(WGPUBuffer self,
-                                          WGPUBufferMapReadCallback callback,
-                                          void* userdata) {
-    auto object = reinterpret_cast<ProcTableAsClass::Object*>(self);
-    object->mapReadCallback = callback;
-    object->userdata = userdata;
-
-    OnBufferMapReadAsyncCallback(self, callback, userdata);
-}
-
-void ProcTableAsClass::BufferMapWriteAsync(WGPUBuffer self,
-                                           WGPUBufferMapWriteCallback callback,
-                                           void* userdata) {
-    auto object = reinterpret_cast<ProcTableAsClass::Object*>(self);
-    object->mapWriteCallback = callback;
-    object->userdata = userdata;
-
-    OnBufferMapWriteAsyncCallback(self, callback, userdata);
+    OnBufferMapAsyncCallback(self, callback, userdata);
 }
 
 void ProcTableAsClass::FenceOnCompletion(WGPUFence self,
@@ -130,26 +112,9 @@ void ProcTableAsClass::CallDeviceLostCallback(WGPUDevice device, const char* mes
     object->deviceLostCallback(message, object->userdata);
 }
 
-void ProcTableAsClass::CallCreateBufferMappedCallback(WGPUDevice device,
-                                                      WGPUBufferMapAsyncStatus status,
-                                                      WGPUCreateBufferMappedResult result) {
-    auto object = reinterpret_cast<ProcTableAsClass::Object*>(device);
-    object->createBufferMappedCallback(status, result, object->userdata);
-}
-void ProcTableAsClass::CallMapReadCallback(WGPUBuffer buffer,
-                                           WGPUBufferMapAsyncStatus status,
-                                           const void* data,
-                                           uint64_t dataLength) {
+void ProcTableAsClass::CallMapAsyncCallback(WGPUBuffer buffer, WGPUBufferMapAsyncStatus status) {
     auto object = reinterpret_cast<ProcTableAsClass::Object*>(buffer);
-    object->mapReadCallback(status, data, dataLength, object->userdata);
-}
-
-void ProcTableAsClass::CallMapWriteCallback(WGPUBuffer buffer,
-                                            WGPUBufferMapAsyncStatus status,
-                                            void* data,
-                                            uint64_t dataLength) {
-    auto object = reinterpret_cast<ProcTableAsClass::Object*>(buffer);
-    object->mapWriteCallback(status, data, dataLength, object->userdata);
+    object->mapAsyncCallback(status, object->userdata);
 }
 
 void ProcTableAsClass::CallFenceOnCompletionCallback(WGPUFence fence,
@@ -166,8 +131,9 @@ void ProcTableAsClass::CallFenceOnCompletionCallback(WGPUFence fence,
     }
 {% endfor %}
 
-MockProcTable::MockProcTable() {
-}
+MockProcTable::MockProcTable() = default;
+
+MockProcTable::~MockProcTable() = default;
 
 void MockProcTable::IgnoreAllReleaseCalls() {
     {% for type in by_category["object"] %}

@@ -8,7 +8,7 @@
 #include "src/gpu/GrAuditTrail.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrRenderTargetContext.h"
-#include "src/gpu/geometry/GrShape.h"
+#include "src/gpu/geometry/GrStyledShape.h"
 #include "src/gpu/ops/GrDashLinePathRenderer.h"
 #include "src/gpu/ops/GrDashOp.h"
 #include "src/gpu/ops/GrMeshDrawOp.h"
@@ -53,6 +53,6 @@ bool GrDashLinePathRenderer::onDrawPath(const DrawPathArgs& args) {
     if (!op) {
         return false;
     }
-    args.fRenderTargetContext->addDrawOp(*args.fClip, std::move(op));
+    args.fRenderTargetContext->addDrawOp(args.fClip, std::move(op));
     return true;
 }

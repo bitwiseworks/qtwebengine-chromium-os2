@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
-import io, os, re, sys
+"usage: gen-def.py harfbuzz.def hb.h [hb-blob.h hb-buffer.h ...]"
+
+import os, re, sys
 
 if len (sys.argv) < 3:
-	sys.exit("usage: gen-def.py harfbuzz.def hb.h [hb-blob.h hb-buffer.h ...]")
+	sys.exit(__doc__)
 
 output_file = sys.argv[1]
 header_paths = sys.argv[2:]
@@ -11,10 +13,10 @@ header_paths = sys.argv[2:]
 headers_content = []
 for h in header_paths:
 	if h.endswith (".h"):
-		with io.open (h, encoding='utf-8') as f: headers_content.append (f.read ())
+		with open (h, encoding='utf-8') as f: headers_content.append (f.read ())
 
 symbols = sorted (re.findall (r"^hb_\w+(?= \()", "\n".join (headers_content), re.M))
-if not os.environ.get('HB_EXPERIMENTAL_API', ''):
+if '--experimental-api' not in sys.argv:
 	# Move these to harfbuzz-sections.txt when got stable
 	experimental_symbols = \
 """hb_font_draw_glyph
@@ -33,11 +35,13 @@ hb_draw_funcs_set_close_path_func
 hb_draw_funcs_set_cubic_to_func
 hb_draw_funcs_set_line_to_func
 hb_draw_funcs_set_move_to_func
-hb_draw_funcs_set_quadratic_to_func""".splitlines ()
+hb_draw_funcs_set_quadratic_to_func
+hb_style_get_value
+hb_font_get_var_coords_design""".splitlines ()
 	symbols = [x for x in symbols if x not in experimental_symbols]
 symbols = "\n".join (symbols)
 
-result = symbols if os.environ.get('PLAIN_LIST', '') else """EXPORTS
+result = symbols if os.getenv ('PLAIN_LIST', '') else """EXPORTS
 %s
 LIBRARY lib%s-0.dll""" % (symbols, output_file.replace ('src/', '').replace ('.def', ''))
 

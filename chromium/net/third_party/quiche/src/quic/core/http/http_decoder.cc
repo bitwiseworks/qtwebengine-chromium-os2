@@ -11,6 +11,7 @@
 #include "net/third_party/quiche/src/quic/core/quic_types.h"
 #include "net/third_party/quiche/src/quic/platform/api/quic_bug_tracker.h"
 #include "net/third_party/quiche/src/quic/platform/api/quic_fallthrough.h"
+#include "net/third_party/quiche/src/quic/platform/api/quic_logging.h"
 #include "net/third_party/quiche/src/common/platform/api/quiche_string_piece.h"
 
 namespace quic {
@@ -33,6 +34,50 @@ HttpDecoder::HttpDecoder(Visitor* visitor)
 }
 
 HttpDecoder::~HttpDecoder() {}
+
+// static
+bool HttpDecoder::DecodeSettings(const char* data,
+                                 QuicByteCount len,
+                                 SettingsFrame* frame) {
+  QuicDataReader reader(data, len);
+  uint64_t frame_type;
+  if (!reader.ReadVarInt62(&frame_type)) {
+    QUIC_DLOG(ERROR) << "Unable to read frame type.";
+    return false;
+  }
+
+  if (frame_type != static_cast<uint64_t>(HttpFrameType::SETTINGS)) {
+    QUIC_DLOG(ERROR) << "Invalid frame type " << frame_type;
+    return false;
+  }
+
+  quiche::QuicheStringPiece frame_contents;
+  if (!reader.ReadStringPieceVarInt62(&frame_contents)) {
+    QUIC_DLOG(ERROR) << "Failed to read SETTINGS frame contents";
+    return false;
+  }
+
+  QuicDataReader frame_reader(frame_contents);
+
+  while (!frame_reader.IsDoneReading()) {
+    uint64_t id;
+    if (!frame_reader.ReadVarInt62(&id)) {
+      QUIC_DLOG(ERROR) << "Unable to read setting identifier.";
+      return false;
+    }
+    uint64_t content;
+    if (!frame_reader.ReadVarInt62(&content)) {
+      QUIC_DLOG(ERROR) << "Unable to read setting value.";
+      return false;
+    }
+    auto result = frame->values.insert({id, content});
+    if (!result.second) {
+      QUIC_DLOG(ERROR) << "Duplicate setting identifier.";
+      return false;
+    }
+  }
+  return true;
+}
 
 QuicByteCount HttpDecoder::ProcessInput(const char* data, QuicByteCount len) {
   DCHECK_EQ(QUIC_NO_ERROR, error_);
@@ -363,20 +408,14 @@ bool HttpDecoder::FinishParsing() {
     case static_cast<uint64_t>(HttpFrameType::GOAWAY): {
       QuicDataReader reader(buffer_.data(), current_frame_length_);
       GoAwayFrame frame;
-      static_assert(!std::is_same<decltype(frame.stream_id), uint64_t>::value,
-                    "Please remove local |stream_id| variable and pass "
-                    "&frame.stream_id directly to ReadVarInt62() when changing "
-                    "QuicStreamId from uint32_t to uint64_t.");
-      uint64_t stream_id;
-      if (!reader.ReadVarInt62(&stream_id)) {
-        RaiseError(QUIC_HTTP_FRAME_ERROR, "Unable to read GOAWAY stream_id.");
+      if (!reader.ReadVarInt62(&frame.id)) {
+        RaiseError(QUIC_HTTP_FRAME_ERROR, "Unable to read GOAWAY ID.");
         return false;
       }
       if (!reader.IsDoneReading()) {
         RaiseError(QUIC_HTTP_FRAME_ERROR, "Superfluous data in GOAWAY frame.");
         return false;
       }
-      frame.stream_id = static_cast<QuicStreamId>(stream_id);
       continue_processing = visitor_->OnGoAwayFrame(frame);
       break;
     }

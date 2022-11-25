@@ -42,33 +42,27 @@ class DialogExample::Delegate : public virtual DialogType {
   explicit Delegate(DialogExample* parent) : parent_(parent) {
     DialogDelegate::SetButtons(parent_->GetDialogButtons());
     DialogDelegate::SetButtonLabel(ui::DIALOG_BUTTON_OK,
-                                     parent_->ok_button_label_->GetText());
+                                   parent_->ok_button_label_->GetText());
     DialogDelegate::SetButtonLabel(ui::DIALOG_BUTTON_CANCEL,
-                                     parent_->cancel_button_label_->GetText());
+                                   parent_->cancel_button_label_->GetText());
+    WidgetDelegate::SetModalType(parent_->GetModalType());
   }
 
   void InitDelegate() {
     this->SetLayoutManager(std::make_unique<FillLayout>());
-    Label* body = new Label(parent_->body_->GetText());
+    auto body = std::make_unique<Label>(parent_->body_->GetText());
     body->SetMultiLine(true);
     body->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-    this->AddChildView(body);
+    // Give the example code a way to change the body text.
+    parent_->last_body_label_ = this->AddChildView(std::move(body));
 
     if (parent_->has_extra_button_->GetChecked()) {
-      DialogDelegate::SetExtraView(MdTextButton::CreateSecondaryUiButton(
+      DialogDelegate::SetExtraView(std::make_unique<views::MdTextButton>(
           nullptr, parent_->extra_button_label_->GetText()));
     }
-
-    // Give the example code a way to change the body text.
-    parent_->last_body_label_ = body;
   }
 
  protected:
-  // WidgetDelegate:
-  ui::ModalType GetModalType() const override {
-    return parent_->GetModalType();
-  }
-
   base::string16 GetWindowTitle() const override {
     return parent_->title_->GetText();
   }
@@ -137,13 +131,13 @@ void DialogExample::CreateExampleView(View* container) {
       container->SetLayoutManager(std::make_unique<views::GridLayout>());
   ColumnSet* column_set = layout->AddColumnSet(kFieldsColumnId);
   column_set->AddColumn(GridLayout::LEADING, GridLayout::FILL, kFixed,
-                        GridLayout::USE_PREF, 0, 0);
+                        GridLayout::ColumnSize::kUsePreferred, 0, 0);
   column_set->AddPaddingColumn(kFixed, horizontal_spacing);
   column_set->AddColumn(GridLayout::FILL, GridLayout::FILL, kStretchy,
-                        GridLayout::USE_PREF, 0, 0);
+                        GridLayout::ColumnSize::kUsePreferred, 0, 0);
   column_set->AddPaddingColumn(kFixed, horizontal_spacing);
   column_set->AddColumn(GridLayout::FILL, GridLayout::FILL, kFixed,
-                        GridLayout::USE_PREF, 0, 0);
+                        GridLayout::ColumnSize::kUsePreferred, 0, 0);
   StartTextfieldRow(layout, &title_, "Dialog Title", "Title");
   StartTextfieldRow(layout, &body_, "Dialog Body Text", "Body Text");
 
@@ -159,7 +153,8 @@ void DialogExample::CreateExampleView(View* container) {
 
   StartRowWithLabel(layout, "Modal Type");
   mode_ = layout->AddView(std::make_unique<Combobox>(&mode_model_));
-  mode_->set_listener(this);
+  mode_->set_callback(base::BindRepeating(&DialogExample::OnPerformAction,
+                                          base::Unretained(this)));
   mode_->SetSelectedIndex(ui::MODAL_TYPE_CHILD);
 
   StartRowWithLabel(layout, "Bubble");
@@ -169,13 +164,13 @@ void DialogExample::CreateExampleView(View* container) {
 
   column_set = layout->AddColumnSet(kButtonsColumnId);
   column_set->AddColumn(GridLayout::CENTER, GridLayout::CENTER, kStretchy,
-                        GridLayout::USE_PREF, 0, 0);
+                        GridLayout::ColumnSize::kUsePreferred, 0, 0);
   layout->StartRowWithPadding(
       kFixed, kButtonsColumnId, kFixed,
       provider->GetDistanceMetric(views::DISTANCE_UNRELATED_CONTROL_VERTICAL));
 
   show_ = layout->AddView(
-      MdTextButton::CreateSecondaryUiButton(this, base::ASCIIToUTF16("Show")));
+      std::make_unique<views::MdTextButton>(this, base::ASCIIToUTF16("Show")));
 }
 
 void DialogExample::StartRowWithLabel(GridLayout* layout, const char* label) {
@@ -207,6 +202,10 @@ void DialogExample::AddCheckbox(GridLayout* layout, Checkbox** member) {
 ui::ModalType DialogExample::GetModalType() const {
   // "Fake" modeless happens when a DialogDelegate specifies window-modal, but
   // doesn't provide a parent window.
+  // TODO(ellyjones): This doesn't work on Mac at all - something should happen
+  // other than changing modality on the fly like this. In fact, it should be
+  // impossible to change modality in a live dialog at all, and this example
+  // should stop doing it.
   if (mode_->GetSelectedIndex() == kFakeModeless)
     return ui::MODAL_TYPE_WINDOW;
 
@@ -247,10 +246,12 @@ void DialogExample::ResizeDialog() {
 void DialogExample::ButtonPressed(Button* sender, const ui::Event& event) {
   if (sender == show_) {
     if (bubble_->GetChecked()) {
+      // |bubble| will be destroyed by its widget when the widget is destroyed.
       Bubble* bubble = new Bubble(this, sender);
       last_dialog_ = bubble;
       BubbleDialogDelegateView::CreateBubble(bubble);
     } else {
+      // |dialog| will be destroyed by its widget when the widget is destroyed.
       Dialog* dialog = new Dialog(this);
       last_dialog_ = dialog;
       dialog->InitDelegate();
@@ -274,12 +275,12 @@ void DialogExample::ButtonPressed(Button* sender, const ui::Event& event) {
       LogStatus("You nearly always want Child Modal for bubbles.");
     }
     persistent_bubble_->SetEnabled(bubble_->GetChecked());
-    OnPerformAction(mode_);  // Validate the modal type.
+    OnPerformAction();  // Validate the modal type.
 
     if (!bubble_->GetChecked() && GetModalType() == ui::MODAL_TYPE_CHILD) {
       // Do something reasonable when simply unchecking bubble and re-enable.
       mode_->SetSelectedIndex(ui::MODAL_TYPE_WINDOW);
-      OnPerformAction(mode_);
+      OnPerformAction();
     }
     return;
   }
@@ -310,9 +311,9 @@ void DialogExample::ContentsChanged(Textfield* sender,
   ResizeDialog();
 }
 
-void DialogExample::OnPerformAction(Combobox* combobox) {
+void DialogExample::OnPerformAction() {
   bool enable = bubble_->GetChecked() || GetModalType() != ui::MODAL_TYPE_CHILD;
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
   enable = enable && GetModalType() != ui::MODAL_TYPE_SYSTEM;
 #endif
   show_->SetEnabled(enable);

@@ -55,8 +55,6 @@ enum { ANDROID_VIEW_ACCESSIBILITY_RANGE_TYPE_FLOAT = 1 };
 
 namespace content {
 
-const float kContentInvalidTimeoutMillisecs = 6000.0;
-
 // static
 BrowserAccessibility* BrowserAccessibility::Create() {
   return new BrowserAccessibilityAndroid();
@@ -85,10 +83,6 @@ BrowserAccessibilityAndroid::BrowserAccessibilityAndroid() {
 BrowserAccessibilityAndroid::~BrowserAccessibilityAndroid() {
   if (unique_id())
     g_unique_id_map.Get().erase(unique_id());
-}
-
-bool BrowserAccessibilityAndroid::IsNative() const {
-  return true;
 }
 
 void BrowserAccessibilityAndroid::OnLocationChanged() {
@@ -120,61 +114,8 @@ base::string16 BrowserAccessibilityAndroid::GetValue() const {
   return value;
 }
 
-bool BrowserAccessibilityAndroid::PlatformIsLeafIncludingIgnored() const {
-  if (BrowserAccessibility::PlatformIsLeafIncludingIgnored())
-    return true;
-
-  // Iframes are always allowed to contain children.
-  if (IsIframe() || GetRole() == ax::mojom::Role::kRootWebArea ||
-      GetRole() == ax::mojom::Role::kWebArea) {
-    return false;
-  }
-
-  // Button, date and time controls should drop their children.
-  switch (GetRole()) {
-    case ax::mojom::Role::kButton:
-    case ax::mojom::Role::kDate:
-    case ax::mojom::Role::kDateTime:
-    case ax::mojom::Role::kInputTime:
-      return true;
-    default:
-      break;
-  }
-
-  // Links are never a leaf
-  if (IsLink())
-    return false;
-
-  // If it has a focusable child, we definitely can't leave out children.
-  if (HasFocusableNonOptionChild())
-    return false;
-
-  BrowserAccessibilityManagerAndroid* manager_android =
-      static_cast<BrowserAccessibilityManagerAndroid*>(manager());
-  if (manager_android->prune_tree_for_screen_reader()) {
-    // Headings with text can drop their children.
-    base::string16 name = GetInnerText();
-    if (GetRole() == ax::mojom::Role::kHeading && !name.empty())
-      return true;
-
-    // Focusable nodes with text can drop their children.
-    if (HasState(ax::mojom::State::kFocusable) && !name.empty())
-      return true;
-
-    // Nodes with only static text as children can drop their children.
-    if (HasOnlyTextChildren())
-      return true;
-  }
-
-  return false;
-}
-
-bool BrowserAccessibilityAndroid::CanFireEvents() const {
-  return true;
-}
-
 bool BrowserAccessibilityAndroid::IsCheckable() const {
-  return HasIntAttribute(ax::mojom::IntAttribute::kCheckedState);
+  return GetData().HasCheckedState();
 }
 
 bool BrowserAccessibilityAndroid::IsChecked() const {
@@ -233,20 +174,6 @@ bool BrowserAccessibilityAndroid::IsCollectionItem() const {
 }
 
 bool BrowserAccessibilityAndroid::IsContentInvalid() const {
-  if (IsFocused()) {
-    // When a node has focus, only report that it's invalid for a short period
-    // of time. Otherwise it's annoying to hear the invalid message every time
-    // a character is entered.
-    if (content_invalid_timer_.Elapsed().InMillisecondsF() <
-        kContentInvalidTimeoutMillisecs) {
-      bool invalid_state =
-          HasIntAttribute(ax::mojom::IntAttribute::kInvalidState) &&
-          GetData().GetInvalidState() != ax::mojom::InvalidState::kFalse;
-      if (invalid_state)
-        return true;
-    }
-    return false;
-  }
   return HasIntAttribute(ax::mojom::IntAttribute::kInvalidState) &&
          GetData().GetInvalidState() != ax::mojom::InvalidState::kFalse;
 }
@@ -326,6 +253,10 @@ bool BrowserAccessibilityAndroid::IsMultiLine() const {
   return HasState(ax::mojom::State::kMultiline);
 }
 
+bool BrowserAccessibilityAndroid::IsMultiselectable() const {
+  return HasState(ax::mojom::State::kMultiselectable);
+}
+
 bool BrowserAccessibilityAndroid::IsRangeType() const {
   return (GetRole() == ax::mojom::Role::kProgressIndicator ||
           GetRole() == ax::mojom::Role::kMeter ||
@@ -334,8 +265,20 @@ bool BrowserAccessibilityAndroid::IsRangeType() const {
           (GetRole() == ax::mojom::Role::kSplitter && IsFocusable()));
 }
 
+bool BrowserAccessibilityAndroid::IsReportingCheckable() const {
+  // To communicate kMixed state Checkboxes, we will rely on state description,
+  // so we will not report node as checkable to avoid duplicate utterances.
+  return IsCheckable() &&
+         GetData().GetCheckedState() != ax::mojom::CheckedState::kMixed;
+}
+
 bool BrowserAccessibilityAndroid::IsScrollable() const {
   return GetBoolAttribute(ax::mojom::BoolAttribute::kScrollable);
+}
+
+bool BrowserAccessibilityAndroid::IsSeekControl() const {
+  // Range types should have seek control options, except progress bars.
+  return IsRangeType() && (GetRole() != ax::mojom::Role::kProgressIndicator);
 }
 
 bool BrowserAccessibilityAndroid::IsSelected() const {
@@ -390,6 +333,11 @@ bool BrowserAccessibilityAndroid::IsInterestingOnAndroid() const {
   if (ui::IsControl(GetRole()))
     return true;
 
+  // Mark progress indicators as interesting, since they are not focusable and
+  // not a control, but users should be able to swipe/navigate to them.
+  if (GetRole() == ax::mojom::Role::kProgressIndicator)
+    return true;
+
   // If we are the direct descendant of a link and have no siblings/children,
   // then we are not interesting, return false
   parent = PlatformGetParent();
@@ -399,7 +347,7 @@ bool BrowserAccessibilityAndroid::IsInterestingOnAndroid() const {
   }
 
   // Otherwise, the interesting nodes are leaf nodes with non-whitespace text.
-  return PlatformIsLeaf() &&
+  return IsLeaf() &&
          !base::ContainsOnlyChars(GetInnerText(), base::kWhitespaceUTF16);
 }
 
@@ -435,7 +383,7 @@ BrowserAccessibilityAndroid::GetSoleInterestingNodeFromSubtree() const {
 }
 
 bool BrowserAccessibilityAndroid::AreInlineTextBoxesLoaded() const {
-  if (GetRole() == ax::mojom::Role::kStaticText)
+  if (IsText())
     return InternalChildCount() > 0;
 
   // Return false if any descendant needs to load inline text boxes.
@@ -464,6 +412,67 @@ const char* BrowserAccessibilityAndroid::GetClassName() const {
     role = ax::mojom::Role::kTextField;
 
   return ui::AXRoleToAndroidClassName(role, PlatformGetParent() != nullptr);
+}
+
+bool BrowserAccessibilityAndroid::IsChildOfLeaf() const {
+  BrowserAccessibility* ancestor = InternalGetParent();
+
+  while (ancestor) {
+    if (ancestor->IsLeaf())
+      return true;
+    ancestor = ancestor->InternalGetParent();
+  }
+
+  return false;
+}
+
+bool BrowserAccessibilityAndroid::IsLeaf() const {
+  if (BrowserAccessibility::IsLeaf())
+    return true;
+
+  // Iframes are always allowed to contain children.
+  if (IsIframe() || GetRole() == ax::mojom::Role::kRootWebArea ||
+      GetRole() == ax::mojom::Role::kWebArea) {
+    return false;
+  }
+
+  // Button, date and time controls should drop their children.
+  switch (GetRole()) {
+    case ax::mojom::Role::kButton:
+    case ax::mojom::Role::kDate:
+    case ax::mojom::Role::kDateTime:
+    case ax::mojom::Role::kInputTime:
+      return true;
+    default:
+      break;
+  }
+
+  // Links are never leaves.
+  if (IsLink())
+    return false;
+
+  // If it has a focusable child, we definitely can't leave out children.
+  if (HasFocusableNonOptionChild())
+    return false;
+
+  BrowserAccessibilityManagerAndroid* manager_android =
+      static_cast<BrowserAccessibilityManagerAndroid*>(manager());
+  if (manager_android->prune_tree_for_screen_reader()) {
+    // Headings with text can drop their children.
+    base::string16 name = GetInnerText();
+    if (GetRole() == ax::mojom::Role::kHeading && !name.empty())
+      return true;
+
+    // Focusable nodes with text can drop their children.
+    if (HasState(ax::mojom::State::kFocusable) && !name.empty())
+      return true;
+
+    // Nodes with only static text as children can drop their children.
+    if (HasOnlyTextChildren())
+      return true;
+  }
+
+  return false;
 }
 
 base::string16 BrowserAccessibilityAndroid::GetInnerText() const {
@@ -500,7 +509,7 @@ base::string16 BrowserAccessibilityAndroid::GetInnerText() const {
   if (GetRole() == ax::mojom::Role::kRootWebArea)
     return text;
 
-  // This is called from PlatformIsLeaf, so don't call PlatformChildCount
+  // This is called from IsLeaf, so don't call PlatformChildCount
   // from within this!
   if (text.empty() && (HasOnlyTextChildren() ||
                        (IsFocusable() && HasOnlyTextAndImageChildren()))) {
@@ -544,6 +553,119 @@ base::string16 BrowserAccessibilityAndroid::GetHint() const {
     strings.push_back(description);
 
   return base::JoinString(strings, base::ASCIIToUTF16(" "));
+}
+
+base::string16 BrowserAccessibilityAndroid::GetStateDescription() const {
+  // For multiselectable state, generate a state description
+  if (IsMultiselectable())
+    return GetMultiselectableStateDescription();
+
+  // For Toggle buttons, we will append "on"/"off" in the state description.
+  if (GetRole() == ax::mojom::Role::kToggleButton)
+    return GetToggleButtonStateDescription();
+
+  // For Checkboxes, if we are in a kMixed state, we will communicate
+  // "partially checked" through the state description.
+  if (IsCheckable() && !IsReportingCheckable())
+    return GetCheckboxStateDescription();
+
+  // For list boxes, use state description to communicate child item count.
+  if (GetRole() == ax::mojom::Role::kListBox)
+    return GetListBoxStateDescription();
+
+  // For list box items, use state description to communicate index of item.
+  if (GetRole() == ax::mojom::Role::kListBoxOption)
+    return GetListBoxItemStateDescription();
+
+  // Otherwise we will not use state description
+  return base::string16();
+}
+
+base::string16 BrowserAccessibilityAndroid::GetMultiselectableStateDescription()
+    const {
+  content::ContentClient* content_client = content::GetContentClient();
+
+  // Count the number of children and selected children.
+  int child_count = 0;
+  int selected_count = 0;
+  for (PlatformChildIterator it = PlatformChildrenBegin();
+       it != PlatformChildrenEnd(); ++it) {
+    child_count++;
+    BrowserAccessibilityAndroid* child =
+        static_cast<BrowserAccessibilityAndroid*>(it.get());
+    if (child->IsSelected())
+      selected_count++;
+  }
+
+  // If none are selected, return special case.
+  if (!selected_count)
+    return content_client->GetLocalizedString(
+        IDS_AX_MULTISELECTABLE_STATE_DESCRIPTION_NONE);
+
+  // Generate a state description of the form: "multiselectable, x of y
+  // selected.".
+  std::vector<base::string16> values;
+  values.push_back(base::NumberToString16(selected_count));
+  values.push_back(base::NumberToString16(child_count));
+  return base::ReplaceStringPlaceholders(
+      content_client->GetLocalizedString(
+          IDS_AX_MULTISELECTABLE_STATE_DESCRIPTION),
+      values, nullptr);
+}
+
+base::string16 BrowserAccessibilityAndroid::GetToggleButtonStateDescription()
+    const {
+  content::ContentClient* content_client = content::GetContentClient();
+
+  // For checked Toggle buttons, we will return "on", otherwise "off".
+  if (IsChecked())
+    return content_client->GetLocalizedString(IDS_AX_TOGGLE_BUTTON_ON);
+
+  return content_client->GetLocalizedString(IDS_AX_TOGGLE_BUTTON_OFF);
+}
+
+base::string16 BrowserAccessibilityAndroid::GetCheckboxStateDescription()
+    const {
+  content::ContentClient* content_client = content::GetContentClient();
+
+  return content_client->GetLocalizedString(IDS_AX_CHECKBOX_PARTIALLY_CHECKED);
+}
+
+base::string16 BrowserAccessibilityAndroid::GetListBoxStateDescription() const {
+  content::ContentClient* content_client = content::GetContentClient();
+
+  // For empty list boxes, we will return an empty string.
+  int item_count = GetItemCount();
+  if (!item_count)
+    return base::string16();
+
+  // Otherwise, we will communicate "x items" as the state description.
+  return content_client->GetLocalizedString(IDS_AX_LIST_BOX_STATE_DESCRIPTION,
+                                            base::NumberToString16(item_count));
+}
+
+base::string16 BrowserAccessibilityAndroid::GetListBoxItemStateDescription()
+    const {
+  content::ContentClient* content_client = content::GetContentClient();
+
+  BrowserAccessibilityAndroid* parent =
+      static_cast<BrowserAccessibilityAndroid*>(PlatformGetParent());
+
+  // If we cannot find the parent collection, escape with an empty string.
+  if (!parent)
+    return base::string16();
+
+  // For list box items, we will communicate "in list, item x of y". We add
+  // one (1) to our index to offset from counting at 0.
+  int item_index = GetItemIndex() + 1;
+  int item_count = parent->GetItemCount();
+
+  return base::ReplaceStringPlaceholders(
+      content_client->GetLocalizedString(
+          IDS_AX_LIST_BOX_ITEM_STATE_DESCRIPTION),
+      std::vector<base::string16>({base::NumberToString16(item_index),
+                                   base::NumberToString16(item_count)}),
+      nullptr);
 }
 
 std::string BrowserAccessibilityAndroid::GetRoleString() const {
@@ -891,6 +1013,9 @@ base::string16 BrowserAccessibilityAndroid::GetRoleDescription() const {
     case ax::mojom::Role::kImage:
       message_id = IDS_AX_ROLE_GRAPHIC;
       break;
+    case ax::mojom::Role::kImeCandidate:
+      // No role description.
+      break;
     case ax::mojom::Role::kInlineTextBox:
       // No role description.
       break;
@@ -955,9 +1080,6 @@ base::string16 BrowserAccessibilityAndroid::GetRoleDescription() const {
       break;
     case ax::mojom::Role::kMenuBar:
       message_id = IDS_AX_ROLE_MENU_BAR;
-      break;
-    case ax::mojom::Role::kMenuButton:
-      message_id = IDS_AX_ROLE_MENU_BUTTON;
       break;
     case ax::mojom::Role::kMenuItem:
       message_id = IDS_AX_ROLE_MENU_ITEM;
@@ -1679,7 +1801,7 @@ void BrowserAccessibilityAndroid::GetWordBoundaries(
 }
 
 bool BrowserAccessibilityAndroid::HasFocusableNonOptionChild() const {
-  // This is called from PlatformIsLeaf, so don't call PlatformChildCount
+  // This is called from IsLeaf, so don't call PlatformChildCount
   // from within this!
   for (auto it = InternalChildrenBegin(); it != InternalChildrenEnd(); ++it) {
     BrowserAccessibility* child = it.get();
@@ -1710,14 +1832,14 @@ void BrowserAccessibilityAndroid::GetSuggestions(
     return;
 
   // TODO(accessibility): using FindTextOnlyObjectsInRange or NextInTreeOrder
-  // doesn't work because Android's PlatformIsLeafIncludingIgnored
+  // doesn't work because Android's IsLeaf
   // implementation deliberately excludes a lot of nodes. We need a version of
   // FindTextOnlyObjectsInRange and/or NextInTreeOrder that only walk
   // the internal tree.
   BrowserAccessibility* node = InternalGetFirstChild();
   int start_offset = 0;
   while (node && node != this) {
-    if (node->IsTextOnlyObject()) {
+    if (node->IsText()) {
       const std::vector<int32_t>& marker_types =
           node->GetData().GetIntListAttribute(
               ax::mojom::IntListAttribute::kMarkerTypes);
@@ -1791,22 +1913,21 @@ bool BrowserAccessibilityAndroid::HasImage() const {
 }
 
 bool BrowserAccessibilityAndroid::HasOnlyTextChildren() const {
-  // This is called from PlatformIsLeaf, so don't call PlatformChildCount
+  // This is called from IsLeaf, so don't call PlatformChildCount
   // from within this!
   for (auto it = InternalChildrenBegin(); it != InternalChildrenEnd(); ++it) {
-    if (!it->IsTextOnlyObject())
+    if (!it->IsText())
       return false;
   }
   return true;
 }
 
 bool BrowserAccessibilityAndroid::HasOnlyTextAndImageChildren() const {
-  // This is called from PlatformIsLeaf, so don't call PlatformChildCount
+  // This is called from IsLeaf, so don't call PlatformChildCount
   // from within this!
   for (auto it = InternalChildrenBegin(); it != InternalChildrenEnd(); ++it) {
     BrowserAccessibility* child = it.get();
-    if (child->GetRole() != ax::mojom::Role::kStaticText &&
-        !ui::IsImageOrVideo(child->GetRole())) {
+    if (!child->IsText() && !ui::IsImageOrVideo(child->GetRole())) {
       return false;
     }
   }
@@ -1899,10 +2020,6 @@ base::string16 BrowserAccessibilityAndroid::GetContentInvalidErrorMessage()
     return content_client->GetLocalizedString(message_id);
 
   return base::string16();
-}
-
-void BrowserAccessibilityAndroid::ResetContentInvalidTimer() {
-  content_invalid_timer_ = base::ElapsedTimer();
 }
 
 }  // namespace content

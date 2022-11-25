@@ -20,7 +20,6 @@
 #include "content/public/browser/browser_child_process_host_iterator.h"
 #include "content/public/common/process_type.h"
 #include "net/url_request/url_fetcher.h"
-#include "net/url_request/url_request.h"
 
 #if defined(OS_ANDROID)
 #include "base/android/jni_android.h"
@@ -125,23 +124,26 @@ void BrowserProcessSubThread::CompleteInitializationOnBrowserThread() {
 // them together.
 
 NOINLINE void BrowserProcessSubThread::UIThreadRun(base::RunLoop* run_loop) {
-  const int line_number = __LINE__;
   Thread::Run(run_loop);
+
+  // Inhibit tail calls of Run and inhibit code folding.
+  const int line_number = __LINE__;
   base::debug::Alias(&line_number);
 }
 
 NOINLINE void BrowserProcessSubThread::IOThreadRun(base::RunLoop* run_loop) {
-  const int line_number = __LINE__;
-
   // Register the IO thread for hang watching before it starts running and set
   // up a closure to automatically unregister it when Run() returns.
   base::ScopedClosureRunner unregister_thread_closure;
-  if (base::FeatureList::IsEnabled(base::HangWatcher::kEnableHangWatcher)) {
+  if (base::HangWatcher::IsIOThreadHangWatchingEnabled()) {
     unregister_thread_closure =
         base::HangWatcher::GetInstance()->RegisterThread();
   }
 
   Thread::Run(run_loop);
+
+  // Inhibit tail calls of Run and inhibit code folding.
+  const int line_number = __LINE__;
   base::debug::Alias(&line_number);
 }
 
@@ -159,7 +161,7 @@ void BrowserProcessSubThread::IOThreadCleanUp() {
     UtilityProcessHost* utility_process =
         static_cast<UtilityProcessHost*>(it.GetDelegate());
     if (utility_process->sandbox_type() ==
-        service_manager::SandboxType::kNetwork) {
+        sandbox::policy::SandboxType::kNetwork) {
       // This ensures that cookies and cache are flushed to disk on shutdown.
       // https://crbug.com/841001
 #if BUILDFLAG(CLANG_PROFILING)

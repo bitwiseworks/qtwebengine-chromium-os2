@@ -7,11 +7,13 @@
 #include "core/fxge/win32/cfx_psrenderer.h"
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <sstream>
 #include <utility>
 
 #include "core/fxcrt/maybe_owned.h"
+#include "core/fxge/cfx_fillrenderoptions.h"
 #include "core/fxge/cfx_fontcache.h"
 #include "core/fxge/cfx_gemodule.h"
 #include "core/fxge/cfx_glyphcache.h"
@@ -22,7 +24,6 @@
 #include "core/fxge/fx_dib.h"
 #include "core/fxge/text_char_pos.h"
 #include "core/fxge/win32/cpsoutput.h"
-#include "third_party/base/ptr_util.h"
 
 struct PSGlyph {
   UnownedPtr<CFX_Font> m_pFont;
@@ -151,9 +152,10 @@ void CFX_PSRenderer::OutputPath(const CFX_PathData* pPathData,
   WriteToStream(&buf);
 }
 
-void CFX_PSRenderer::SetClip_PathFill(const CFX_PathData* pPathData,
-                                      const CFX_Matrix* pObject2Device,
-                                      int fill_mode) {
+void CFX_PSRenderer::SetClip_PathFill(
+    const CFX_PathData* pPathData,
+    const CFX_Matrix* pObject2Device,
+    const CFX_FillRenderOptions& fill_options) {
   StartRendering();
   OutputPath(pPathData, pObject2Device);
   CFX_FloatRect rect = pPathData->GetBoundingBox();
@@ -166,7 +168,7 @@ void CFX_PSRenderer::SetClip_PathFill(const CFX_PathData* pPathData,
   m_ClipBox.bottom = static_cast<int>(rect.bottom);
 
   m_pStream->WriteString("W");
-  if ((fill_mode & 3) != FXFILL_WINDING)
+  if (fill_options.fill_type != CFX_FillRenderOptions::FillType::kWinding)
     m_pStream->WriteString("*");
   m_pStream->WriteString(" n\n");
 }
@@ -196,7 +198,7 @@ bool CFX_PSRenderer::DrawPath(const CFX_PathData* pPathData,
                               const CFX_GraphStateData* pGraphState,
                               uint32_t fill_color,
                               uint32_t stroke_color,
-                              int fill_mode) {
+                              const CFX_FillRenderOptions& fill_options) {
   StartRendering();
   int fill_alpha = FXARGB_A(fill_color);
   int stroke_alpha = FXARGB_A(stroke_color);
@@ -219,14 +221,16 @@ bool CFX_PSRenderer::DrawPath(const CFX_PathData* pPathData,
   }
 
   OutputPath(pPathData, stroke_alpha ? nullptr : pObject2Device);
-  if (fill_mode && fill_alpha) {
+  if (fill_options.fill_type != CFX_FillRenderOptions::FillType::kNoFill &&
+      fill_alpha) {
     SetColor(fill_color);
-    if ((fill_mode & 3) == FXFILL_WINDING) {
+    if (fill_options.fill_type == CFX_FillRenderOptions::FillType::kWinding) {
       if (stroke_alpha)
         m_pStream->WriteString("q f Q ");
       else
         m_pStream->WriteString("f");
-    } else if ((fill_mode & 3) == FXFILL_ALTERNATE) {
+    } else if (fill_options.fill_type ==
+               CFX_FillRenderOptions::FillType::kEvenOdd) {
       if (stroke_alpha)
         m_pStream->WriteString("q F Q ");
       else
@@ -493,7 +497,7 @@ void CFX_PSRenderer::FindPSFontGlyph(CFX_GlyphCache* pGlyphCache,
   }
 
   if (m_PSFontList.empty() || m_PSFontList.back()->m_nGlyphs == 256) {
-    m_PSFontList.push_back(pdfium::MakeUnique<CPSFont>());
+    m_PSFontList.push_back(std::make_unique<CPSFont>());
     m_PSFontList.back()->m_nGlyphs = 0;
     std::ostringstream buf;
     buf << "8 dict begin/FontType 3 def/FontMatrix[1 0 0 1 0 0]def\n"

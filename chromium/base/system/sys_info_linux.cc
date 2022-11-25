@@ -8,16 +8,19 @@
 #include <stdint.h>
 
 #include <limits>
+#include <sstream>
 
+#include "base/check.h"
 #include "base/files/file_util.h"
 #include "base/lazy_instance.h"
-#include "base/logging.h"
+#include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/process/process_metrics.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/system/sys_info_internal.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 
 namespace {
 
@@ -71,7 +74,7 @@ int64_t SysInfo::AmountOfAvailablePhysicalMemory(
 
 // static
 std::string SysInfo::CPUModelName() {
-#if defined(OS_CHROMEOS) && defined(ARCH_CPU_ARMEL)
+#if (defined(OS_CHROMEOS) || BUILDFLAG(IS_LACROS)) && defined(ARCH_CPU_ARMEL)
   const char kCpuModelPrefix[] = "Hardware";
 #else
   const char kCpuModelPrefix[] = "model name";

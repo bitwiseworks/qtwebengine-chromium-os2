@@ -44,7 +44,7 @@ LDFLAGS    := $(ALLFFLIBS:%=$(LD_PATH)lib%) $(LDFLAGS)
 
 define COMPILE
        $(call $(1)DEP,$(1))
-       $($(1)) $($(1)FLAGS) $($(1)_DEPFLAGS) $($(1)_C) $($(1)_O) $(patsubst $(SRC_PATH)/%,$(SRC_LINK)/%,$<)
+       $($(1)) $($(1)FLAGS) $($(2)) $($(1)_DEPFLAGS) $($(1)_C) $($(1)_O) $(patsubst $(SRC_PATH)/%,$(SRC_LINK)/%,$<)
 endef
 
 COMPILE_C = $(call COMPILE,CC)
@@ -54,6 +54,14 @@ COMPILE_M = $(call COMPILE,OBJCC)
 COMPILE_X86ASM = $(call COMPILE,X86ASM)
 COMPILE_HOSTC = $(call COMPILE,HOSTCC)
 COMPILE_NVCC = $(call COMPILE,NVCC)
+COMPILE_MMI = $(call COMPILE,CC,MMIFLAGS)
+COMPILE_MSA = $(call COMPILE,CC,MSAFLAGS)
+
+%_mmi.o: %_mmi.c
+	$(COMPILE_MMI)
+
+%_msa.o: %_msa.c
+	$(COMPILE_MSA)
 
 %.o: %.c
 	$(COMPILE_C)
@@ -162,7 +170,7 @@ $(TOOLOBJS): | tools
 
 OUTDIRS := $(OUTDIRS) $(dir $(OBJS) $(HOBJS) $(HOSTOBJS) $(SLIBOBJS) $(TESTOBJS))
 
-CLEANSUFFIXES     = *.d *.gcda *.gcno *.h.c *.ho *.map *.o *.pc *.ptx *.ptx.c *.ver *.version *$(DEFAULT_X86ASMD).asm *~
+CLEANSUFFIXES     = *.d *.gcda *.gcno *.h.c *.ho *.map *.o *.pc *.ptx *.ptx.c *.ver *.version *$(DEFAULT_X86ASMD).asm *~ *.ilk *.pdb
 LIBSUFFIXES       = *.a *.lib *.so *.so.* *.dylib *.dll *.def *.dll.a
 
 define RULES

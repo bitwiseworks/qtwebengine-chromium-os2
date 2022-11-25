@@ -7,7 +7,7 @@
 
 #include "src/gpu/d3d/GrD3DTexture.h"
 
-#include "src/gpu/GrTexturePriv.h"
+#include "src/gpu/GrTexture.h"
 #include "src/gpu/d3d/GrD3DGpu.h"
 #include "src/gpu/d3d/GrD3DUtil.h"
 
@@ -19,11 +19,13 @@ GrD3DTexture::GrD3DTexture(GrD3DGpu* gpu,
                            SkISize dimensions,
                            const GrD3DTextureResourceInfo& info,
                            sk_sp<GrD3DResourceState> state,
-                           GrMipMapsStatus mipMapsStatus)
+                           const GrD3DDescriptorHeap::CPUHandle& shaderResourceView,
+                           GrMipmapStatus mipmapStatus)
         : GrSurface(gpu, dimensions, info.fProtected)
         , GrD3DTextureResource(info, std::move(state))
-        , INHERITED(gpu, dimensions, info.fProtected, GrTextureType::k2D, mipMapsStatus) {
-    SkASSERT((GrMipMapsStatus::kNotAllocated == mipMapsStatus) == (1 == info.fLevelCount));
+        , INHERITED(gpu, dimensions, info.fProtected, GrTextureType::k2D, mipmapStatus)
+        , fShaderResourceView(shaderResourceView) {
+    SkASSERT((GrMipmapStatus::kNotAllocated == mipmapStatus) == (1 == info.fLevelCount));
     this->registerWithCache(budgeted);
     if (GrDxgiFormatIsCompressed(info.fFormat)) {
         this->setReadOnly();
@@ -31,12 +33,15 @@ GrD3DTexture::GrD3DTexture(GrD3DGpu* gpu,
 }
 
 GrD3DTexture::GrD3DTexture(GrD3DGpu* gpu, SkISize dimensions, const GrD3DTextureResourceInfo& info,
-                           sk_sp<GrD3DResourceState> state, GrMipMapsStatus mipMapsStatus,
-                           GrWrapCacheable cacheable, GrIOType ioType)
+                           sk_sp<GrD3DResourceState> state,
+                           const GrD3DDescriptorHeap::CPUHandle& shaderResourceView,
+                           GrMipmapStatus mipmapStatus, GrWrapCacheable cacheable,
+                           GrIOType ioType)
         : GrSurface(gpu, dimensions, info.fProtected)
         , GrD3DTextureResource(info, std::move(state))
-        , INHERITED(gpu, dimensions, info.fProtected, GrTextureType::k2D, mipMapsStatus) {
-    SkASSERT((GrMipMapsStatus::kNotAllocated == mipMapsStatus) == (1 == info.fLevelCount));
+        , INHERITED(gpu, dimensions, info.fProtected, GrTextureType::k2D, mipmapStatus)
+        , fShaderResourceView(shaderResourceView) {
+    SkASSERT((GrMipmapStatus::kNotAllocated == mipmapStatus) == (1 == info.fLevelCount));
     if (ioType == kRead_GrIOType) {
         this->setReadOnly();
     }
@@ -48,31 +53,35 @@ GrD3DTexture::GrD3DTexture(GrD3DGpu* gpu,
                            SkISize dimensions,
                            const GrD3DTextureResourceInfo& info,
                            sk_sp<GrD3DResourceState> state,
-                           GrMipMapsStatus mipMapsStatus)
+                           const GrD3DDescriptorHeap::CPUHandle& shaderResourceView,
+                           GrMipmapStatus mipmapStatus)
         : GrSurface(gpu, dimensions, info.fProtected)
         , GrD3DTextureResource(info, state)
-        , INHERITED(gpu, dimensions, info.fProtected, GrTextureType::k2D, mipMapsStatus) {
-    SkASSERT((GrMipMapsStatus::kNotAllocated == mipMapsStatus) == (1 == info.fLevelCount));
+        , INHERITED(gpu, dimensions, info.fProtected, GrTextureType::k2D, mipmapStatus)
+        , fShaderResourceView(shaderResourceView) {
+    SkASSERT((GrMipmapStatus::kNotAllocated == mipmapStatus) == (1 == info.fLevelCount));
 }
 
 sk_sp<GrD3DTexture> GrD3DTexture::MakeNewTexture(GrD3DGpu* gpu, SkBudgeted budgeted,
                                                  SkISize dimensions,
                                                  const D3D12_RESOURCE_DESC& desc,
                                                  GrProtected isProtected,
-                                                 GrMipMapsStatus mipMapsStatus) {
+                                                 GrMipmapStatus mipmapStatus) {
     GrD3DTextureResourceInfo info;
-    if (!GrD3DTextureResource::InitTextureResourceInfo(gpu, desc, isProtected, &info)) {
+    if (!GrD3DTextureResource::InitTextureResourceInfo(gpu, desc,
+                                                       D3D12_RESOURCE_STATE_COPY_DEST,
+                                                       isProtected, nullptr, &info)) {
         return nullptr;
     }
 
     sk_sp<GrD3DResourceState> state(
             new GrD3DResourceState(static_cast<D3D12_RESOURCE_STATES>(info.fResourceState)));
 
-    GrD3DTexture* tex = new GrD3DTexture(gpu, budgeted, dimensions, info, std::move(state),
-                                         mipMapsStatus);
+    GrD3DDescriptorHeap::CPUHandle shaderResourceView =
+            gpu->resourceProvider().createShaderResourceView(info.fResource.get());
 
-    // The GrD3DTexture takes a ref on the texture so we need to release ours
-    GrD3DTextureResource::ReleaseTextureResourceInfo(&info);
+    GrD3DTexture* tex = new GrD3DTexture(gpu, budgeted, dimensions, info, std::move(state),
+                                         shaderResourceView, mipmapStatus);
 
     return sk_sp<GrD3DTexture>(tex);
 }
@@ -88,11 +97,15 @@ sk_sp<GrD3DTexture> GrD3DTexture::MakeWrappedTexture(GrD3DGpu* gpu,
     //SkASSERT(info.fTexture &&
     //         (kBorrow_GrWrapOwnership == wrapOwnership || VK_NULL_HANDLE != info.fAlloc.fMemory));
 
-    GrMipMapsStatus mipMapsStatus = info.fLevelCount > 1 ? GrMipMapsStatus::kValid
-                                                         : GrMipMapsStatus::kNotAllocated;
+    GrMipmapStatus mipmapStatus = info.fLevelCount > 1 ? GrMipmapStatus::kValid
+                                                       : GrMipmapStatus::kNotAllocated;
+
+    GrD3DDescriptorHeap::CPUHandle shaderResourceView =
+            gpu->resourceProvider().createShaderResourceView(info.fResource.get());
 
     return sk_sp<GrD3DTexture>(new GrD3DTexture(gpu, dimensions, info, std::move(state),
-                                                mipMapsStatus, cacheable, ioType));
+                                                shaderResourceView, mipmapStatus, cacheable,
+                                                ioType));
 }
 
 void GrD3DTexture::onRelease() {
@@ -104,7 +117,9 @@ void GrD3DTexture::onRelease() {
         this->removeFinishIdleProcs();
     }
 
-    this->releaseResource(this->getD3DGpu());
+    GrD3DGpu* gpu = this->getD3DGpu();
+    gpu->resourceProvider().recycleConstantOrShaderView(fShaderResourceView);
+    this->releaseResource(gpu);
 
     INHERITED::onRelease();
 }
@@ -118,7 +133,9 @@ void GrD3DTexture::onAbandon() {
         this->removeFinishIdleProcs();
     }
 
-    this->releaseResource(this->getD3DGpu());
+    GrD3DGpu* gpu = this->getD3DGpu();
+    gpu->resourceProvider().recycleConstantOrShaderView(fShaderResourceView);
+    this->releaseResource(gpu);
     INHERITED::onAbandon();
 }
 
@@ -134,9 +151,7 @@ GrD3DGpu* GrD3DTexture::getD3DGpu() const {
 void GrD3DTexture::addIdleProc(sk_sp<GrRefCntedCallback> idleProc, IdleState type) {
     INHERITED::addIdleProc(idleProc, type);
     if (type == IdleState::kFinished) {
-        if (auto* resource = this->resource()) {
-            resource->addIdleProc(this, std::move(idleProc));
-        }
+        this->addResourceIdleProc(this, std::move(idleProc));
     }
 }
 
@@ -144,15 +159,14 @@ void GrD3DTexture::callIdleProcsOnBehalfOfResource() {
     // If we got here then the resource is being removed from its last command buffer and the
     // texture is idle in the cache. Any kFlush idle procs should already have been called. So
     // the texture and resource should have the same set of procs.
-    SkASSERT(this->resource());
-    SkASSERT(this->resource()->idleProcCnt() == fIdleProcs.count());
+    SkASSERT(this->resourceIdleProcCnt() == fIdleProcs.count());
 #ifdef SK_DEBUG
     for (int i = 0; i < fIdleProcs.count(); ++i) {
-        SkASSERT(fIdleProcs[i] == this->resource()->idleProc(i));
+        SkASSERT(fIdleProcs[i] == this->resourceIdleProc(i));
     }
 #endif
     fIdleProcs.reset();
-    this->resource()->resetIdleProcs();
+    this->resetResourceIdleProcs();
 }
 
 void GrD3DTexture::willRemoveLastRef() {
@@ -161,19 +175,17 @@ void GrD3DTexture::willRemoveLastRef() {
     }
     // This is called when the GrTexture is purgeable. However, we need to check whether the
     // Resource is still owned by any command buffers. If it is then it will call the proc.
-    auto* resource = this->resource();
-    SkASSERT(resource);
-    if (!resource->isQueuedForWorkOnGpu()) {
+    if (!this->resourceIsQueuedForWorkOnGpu()) {
         // Everything must go!
         fIdleProcs.reset();
-        resource->resetIdleProcs();
+        this->resetResourceIdleProcs();
     } else {
         // The procs that should be called on flush but not finish are those that are owned
         // by the GrD3DTexture and not the Resource. We do this by copying the resource's array
         // and thereby dropping refs to procs we own but the resource does not.
-        fIdleProcs.reset(resource->idleProcCnt());
+        fIdleProcs.reset(this->resourceIdleProcCnt());
         for (int i = 0; i < fIdleProcs.count(); ++i) {
-            fIdleProcs[i] = resource->idleProc(i);
+            fIdleProcs[i] = this->resourceIdleProc(i);
         }
     }
 }
@@ -181,19 +193,17 @@ void GrD3DTexture::willRemoveLastRef() {
 void GrD3DTexture::removeFinishIdleProcs() {
     // This should only be called by onRelease/onAbandon when we have already checked for a
     // resource.
-    const auto* resource = this->resource();
-    SkASSERT(resource);
     SkSTArray<4, sk_sp<GrRefCntedCallback>> procsToKeep;
     int resourceIdx = 0;
     // The idle procs that are common between the GrD3DTexture and its Resource should be found in
     // the same order.
     for (int i = 0; i < fIdleProcs.count(); ++i) {
-        if (fIdleProcs[i] == resource->idleProc(resourceIdx)) {
+        if (fIdleProcs[i] == this->resourceIdleProc(resourceIdx)) {
             ++resourceIdx;
         } else {
             procsToKeep.push_back(fIdleProcs[i]);
         }
     }
-    SkASSERT(resourceIdx == resource->idleProcCnt());
+    SkASSERT(resourceIdx == this->resourceIdleProcCnt());
     fIdleProcs = procsToKeep;
 }

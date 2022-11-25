@@ -148,7 +148,7 @@ IDBTransaction::~IDBTransaction() {
   DCHECK(request_list_.IsEmpty() || !GetExecutionContext());
 }
 
-void IDBTransaction::Trace(Visitor* visitor) {
+void IDBTransaction::Trace(Visitor* visitor) const {
   visitor->Trace(database_);
   visitor->Trace(open_db_request_);
   visitor->Trace(error_);

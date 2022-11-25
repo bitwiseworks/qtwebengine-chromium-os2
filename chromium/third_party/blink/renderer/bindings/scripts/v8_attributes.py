@@ -132,8 +132,8 @@ def attribute_context(interface, attribute, interfaces, component_info):
     # [CachedAccessor]
     is_cached_accessor = 'CachedAccessor' in extended_attributes
 
-    # [LenientSetter]
-    is_lenient_setter = 'LenientSetter' in extended_attributes
+    # [LegacyLenientSetter]
+    is_lenient_setter = 'LegacyLenientSetter' in extended_attributes
 
     # [CachedAttribute]
     cached_attribute_validation_method = extended_attributes.get(
@@ -196,7 +196,7 @@ def attribute_context(interface, attribute, interfaces, component_info):
         'activity_logging_world_check':
         v8_utilities.activity_logging_world_check(attribute),
         'cached_accessor_name':
-        '%s%sCachedAccessor' % (interface.name, attribute.name.capitalize()),
+        'k%s%s' % (interface.name, attribute.name.capitalize()),
         'cached_attribute_validation_method':
         cached_attribute_validation_method,
         'camel_case_name':
@@ -247,7 +247,7 @@ def attribute_context(interface, attribute, interfaces, component_info):
         'is_keep_alive_for_gc': keep_alive_for_gc,
         'is_lazy_data_attribute': is_lazy_data_attribute,
         'is_lenient_setter': is_lenient_setter,
-        'is_lenient_this': 'LenientThis' in extended_attributes,
+        'is_lenient_this': 'LegacyLenientThis' in extended_attributes,
         'is_nullable': idl_type.is_nullable,
         'is_explicit_nullable': idl_type.is_explicit_nullable,
         'is_named_constructor': is_named_constructor_attribute(attribute),
@@ -408,7 +408,8 @@ def getter_context(interface, attribute, context):
             or 'CachedAttribute' in extended_attributes
             or 'ReflectOnly' in extended_attributes
             or context['is_keep_alive_for_gc']
-            or context['is_getter_raises_exception']):
+            or context['is_getter_raises_exception']
+            or context['high_entropy'] == 'Direct'):
         context['cpp_value_original'] = cpp_value
         cpp_value = 'cpp_value'
 
@@ -442,6 +443,9 @@ def getter_context(interface, attribute, context):
             cpp_value=cpp_value,
             creation_context='holder',
             extended_attributes=extended_attributes),
+        'is_getter_call_with_script_state':
+        has_extended_attribute_value(attribute, 'GetterCallWith',
+                                     'ScriptState'),
         'v8_set_return_value_for_main_world':
         v8_set_return_value_statement(for_main_world=True),
         'v8_set_return_value':
@@ -455,10 +459,9 @@ def getter_expression(interface, attribute, context):
                                              extra_arguments)
     getter_name = scoped_name(interface, attribute, this_getter_base_name)
 
-    arguments = []
-    arguments.extend(
-        v8_utilities.call_with_arguments(
-            attribute.extended_attributes.get('CallWith')))
+    arguments = v8_utilities.call_with_arguments(
+        attribute.extended_attributes.get('GetterCallWith')
+        or attribute.extended_attributes.get('CallWith'))
     # Members of IDL partial interface definitions are implemented in C++ as
     # static member functions, which for instance members (non-static members)
     # take *impl as their first argument
@@ -644,12 +647,14 @@ def setter_expression(interface, attribute, context):
         arguments.append('*impl')
     arguments.extend(extra_arguments)
     idl_type = attribute.idl_type
-    if idl_type.base_type == 'EventHandler':
-        handler_type = 'kEventHandler'
-        if attribute.name == 'onerror':
-            handler_type = 'kOnErrorEventHandler'
-        elif attribute.name == 'onbeforeunload':
+    if idl_type.base_type in ('EventHandler', 'OnBeforeUnloadEventHandler',
+                              'OnErrorEventHandler'):
+        if idl_type.base_type == 'EventHandler':
+            handler_type = 'kEventHandler'
+        elif idl_type.base_type == 'OnBeforeUnloadEventHandler':
             handler_type = 'kOnBeforeUnloadEventHandler'
+        elif idl_type.base_type == 'OnErrorEventHandler':
+            handler_type = 'kOnErrorEventHandler'
         arguments.append('JSEventHandler::CreateOrNull(' + 'v8_value, ' +
                          'JSEventHandler::HandlerType::' + handler_type + ')')
     else:
@@ -729,17 +734,15 @@ def cpp_content_attribute_value_name(interface, value):
 def is_writable(attribute):
     return (not attribute.is_read_only or any(
         keyword in attribute.extended_attributes
-        for keyword in ['PutForwards', 'Replaceable', 'LenientSetter']))
+        for keyword in ['PutForwards', 'Replaceable', 'LegacyLenientSetter']))
 
 
 def is_data_type_property(interface, attribute):
-    if 'CachedAccessor' in attribute.extended_attributes:
-        return False
     return (is_constructor_attribute(attribute)
             or 'CrossOrigin' in attribute.extended_attributes)
 
 
-# [PutForwards], [Replaceable], [LenientSetter]
+# [PutForwards], [Replaceable], [LegacyLenientSetter]
 def has_setter(interface, attribute):
     if (is_data_type_property(interface, attribute)
             and (is_constructor_attribute(attribute)
@@ -749,7 +752,7 @@ def has_setter(interface, attribute):
     return is_writable(attribute)
 
 
-# [NotEnumerable], [Unforgeable]
+# [NotEnumerable], [LegacyUnforgeable]
 def property_attributes(interface, attribute):
     extended_attributes = attribute.extended_attributes
     property_attributes_list = []

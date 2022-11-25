@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "base/component_export.h"
 #include "base/files/file_path.h"
 #include "base/files/memory_mapped_file.h"
 #include "base/gtest_prod_util.h"
@@ -21,7 +22,6 @@
 #include "base/strings/string16.h"
 #include "base/strings/string_piece.h"
 #include "ui/base/layout.h"
-#include "ui/base/ui_base_export.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/native_widget_types.h"
@@ -41,7 +41,7 @@ class ResourceHandle;
 
 // ResourceBundle is a central facility to load images and other resources,
 // such as theme graphics. Every resource is loaded only once.
-class UI_BASE_EXPORT ResourceBundle {
+class COMPONENT_EXPORT(UI_BASE) ResourceBundle {
  public:
   // Legacy font size deltas. Consider these to be magic numbers. New code
   // should declare their own size delta constant using an identifier that
@@ -109,20 +109,23 @@ class UI_BASE_EXPORT ResourceBundle {
     // false to attempt retrieval of the default resource.
     virtual bool GetRawDataResource(int resource_id,
                                     ScaleFactor scale_factor,
-                                    base::StringPiece* value) = 0;
+                                    base::StringPiece* value) const = 0;
 
     // Retrieve a localized string. Return true if a string was provided or
     // false to attempt retrieval of the default string.
-    virtual bool GetLocalizedString(int message_id, base::string16* value) = 0;
+    virtual bool GetLocalizedString(int message_id,
+                                    base::string16* value) const = 0;
 
    protected:
     virtual ~Delegate() {}
   };
 
   // Initialize the ResourceBundle for this process. Does not take ownership of
-  // the |delegate| value. Returns the language selected.
-  // NOTE: Mac ignores this and always loads up resources for the language
-  // defined by the Cocoa UI (i.e., NSBundle does the language work).
+  // the |delegate| value. Returns the language selected or an empty string if
+  // no candidate bundle file could be determined, or crashes the process if a
+  // candidate could not be loaded (e.g., file not found or corrupted).  NOTE:
+  // Mac ignores this and always loads up resources for the language defined by
+  // the Cocoa UI (i.e., NSBundle does the language work).
   //
   // TODO(sergeyu): This method also loads common resources (i.e. chrome.pak).
   // There is no way to specify which resource files are loaded, i.e. names of
@@ -194,11 +197,12 @@ class UI_BASE_EXPORT ResourceBundle {
                                    ScaleFactor scale_factor);
 
   // Changes the locale for an already-initialized ResourceBundle, returning the
-  // name of the newly-loaded locale.  Future calls to get strings will return
-  // the strings for this new locale.  This has no effect on existing or future
-  // image resources.  |locale_resources_data_| is protected by a lock for the
-  // duration of the swap, as GetLocalizedString() may be concurrently invoked
-  // on another thread.
+  // name of the newly-loaded locale, or an empty string if initialization
+  // failed (e.g. resource bundle not found or corrupted). Future calls to get
+  // strings will return the strings for this new locale. This has no effect on
+  // existing or future image resources. |locale_resources_data_| is protected
+  // by a lock for the duration of the swap, as GetLocalizedString() may be
+  // concurrently invoked on another thread.
   std::string ReloadLocaleResources(const std::string& pref_locale);
 
   // Gets image with the specified resource_id from the current module data.
@@ -274,7 +278,7 @@ class UI_BASE_EXPORT ResourceBundle {
 
   // Get a localized resource (for example, localized image logo) given a
   // resource id.
-  base::RefCountedMemory* LoadLocalizedResourceBytes(int resource_id);
+  base::RefCountedMemory* LoadLocalizedResourceBytes(int resource_id) const;
 
   // Returns a font list derived from the platform-specific "Base" font list.
   // The result is always cached and exists for the lifetime of the process.
@@ -321,8 +325,10 @@ class UI_BASE_EXPORT ResourceBundle {
                                     const base::string16& string);
 
   // Returns the full pathname of the locale file to load, which may be a
-  // compressed locale file ending in .gz. Returns an empty string if no locale
-  // data files are found.
+  // compressed locale file ending in .gz. Returns an empty path if |app_locale|
+  // is empty, the directory of locale files cannot be determined, or if the
+  // path to the directory of locale files is relative. If not empty, the
+  // returned path is not guaranteed to reference an existing file.
   // Used on Android to load the local file in the browser process and pass it
   // to the sandboxed renderer process.
   static base::FilePath GetLocaleFilePath(const std::string& app_locale);
@@ -394,8 +400,11 @@ class UI_BASE_EXPORT ResourceBundle {
   void AddDataPack(std::unique_ptr<DataPack> data_pack);
 
   // Try to load the locale specific strings from an external data module.
-  // Returns the locale that is loaded.
-  std::string LoadLocaleResources(const std::string& pref_locale);
+  // Returns the locale that is loaded or an empty string if no resources were
+  // loaded. If |crash_on_failure| is true on non-Android platforms, the process
+  // is terminated if a candidate locale file could not be loaded.
+  std::string LoadLocaleResources(const std::string& pref_locale,
+                                  bool crash_on_failure);
 
   // Load test resources in given paths. If either path is empty an empty
   // resource pack is loaded.
@@ -449,19 +458,19 @@ class UI_BASE_EXPORT ResourceBundle {
   // bright red bitmap.
   gfx::Image& GetEmptyImage();
 
-  const base::FilePath& GetOverriddenPakPath();
+  const base::FilePath& GetOverriddenPakPath() const;
 
   // If mangling of localized strings is enabled, mangles |str| to make it
   // longer and to add begin and end markers so that any truncation of it is
   // visible and returns the mangled string. If not, returns |str|.
-  base::string16 MaybeMangleLocalizedString(const base::string16& str);
+  base::string16 MaybeMangleLocalizedString(const base::string16& str) const;
 
   // An internal implementation of |GetLocalizedString()| without setting the
   // flag of whether overriding locale strings is supported to false. We don't
   // update this flag only in |InitDefaultFontList()| which is called earlier
   // than the overriding. This is okay, because the font list doesn't need to be
   // overridden by variations.
-  base::string16 GetLocalizedStringImpl(int resource_id);
+  base::string16 GetLocalizedStringImpl(int resource_id) const;
 
   // This pointer is guaranteed to outlive the ResourceBundle instance and may
   // be null.

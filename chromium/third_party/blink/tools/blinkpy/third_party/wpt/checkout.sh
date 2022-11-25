@@ -1,15 +1,15 @@
 #!/bin/bash
 #
 # Removes ./wpt/ directory containing the reduced web-platform-tests tree and
-# starts a new checkout. Only files in WPTWhiteList are retained. The revisions
-# getting checked out are defined in WPTHeads.
+# starts a new checkout. Only files in WPTIncludeList are retained. The
+# revisions getting checked out are defined in WPTHeads.
 
 DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 cd $DIR
 
 TARGET_DIR=$DIR/wpt
 REMOTE_REPO="https://github.com/web-platform-tests/wpt.git"
-WPT_HEAD=3061f228d3d8b900b3aec8c7642ff58fc04ea011
+WPT_HEAD=9f6a7e3cfdae54795a0ca58e194b828537f9659e
 
 function clone {
   # Remove existing repo if already exists.
@@ -19,10 +19,6 @@ function clone {
   git clone $REMOTE_REPO $TARGET_DIR
   cd $TARGET_DIR && git checkout $WPT_HEAD
   echo "WPTHead: " `git rev-parse HEAD`
-
-  # Apply local changes.
-  git cherry-pick 644a206e8ace488eac7e2b2a58a4b5354b02363a
-  git cherry-pick 7e52ecb9b61b73425093d39dbadceb9c6e10b754
 }
 
 function reduce {
@@ -31,7 +27,7 @@ function reduce {
   # xargs on some platforms, so we remove those directories first.
   rm -fr html css
   # Remove all except white-listed.
-  comm -23 <(find . -type f | sort) <(cat ../WPTWhiteList | sort) | xargs -n 1 rm
+  comm -23 <(find . -type f | sort) <(cat ../WPTIncludeList | sort) | xargs -d '\n' -n 1 rm
   find . -empty -type d -delete
 }
 

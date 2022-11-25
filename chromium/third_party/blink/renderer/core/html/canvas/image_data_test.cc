@@ -133,7 +133,6 @@ TEST_F(ImageDataTest, TestGetImageDataInCanvasColorSettings) {
   unsigned num_image_data_color_spaces = 3;
   CanvasColorSpace image_data_color_spaces[] = {
       CanvasColorSpace::kSRGB,
-      CanvasColorSpace::kLinearRGB,
       CanvasColorSpace::kRec2020,
       CanvasColorSpace::kP3,
   };
@@ -144,17 +143,17 @@ TEST_F(ImageDataTest, TestGetImageDataInCanvasColorSettings) {
       kFloat32ArrayStorageFormat,
   };
 
-  unsigned num_canvas_color_settings = 4;
+  unsigned num_canvas_color_settings = 3;
   CanvasColorSpace canvas_color_spaces[] = {
-      CanvasColorSpace::kSRGB,      CanvasColorSpace::kSRGB,
-      CanvasColorSpace::kLinearRGB, CanvasColorSpace::kRec2020,
+      CanvasColorSpace::kSRGB,
+      CanvasColorSpace::kSRGB,
+      CanvasColorSpace::kRec2020,
       CanvasColorSpace::kP3,
   };
 
   CanvasPixelFormat canvas_pixel_formats[] = {
       CanvasPixelFormat::kRGBA8, CanvasPixelFormat::kF16,
       CanvasPixelFormat::kF16,   CanvasPixelFormat::kF16,
-      CanvasPixelFormat::kF16,
   };
 
   // As cross checking the output of Skia color space covnersion API is not in
@@ -489,13 +488,15 @@ TEST_F(ImageDataTest, TestCropRect) {
 
             if (image_data_storage_formats[i] ==
                 kUint8ClampedArrayStorageFormat) {
-              if (cropped_image_data->data()->Data()[index] != expected_value) {
+              if (cropped_image_data->data()
+                      .GetAsUint8ClampedArray()
+                      ->Data()[index] != expected_value) {
                 test_passed = false;
                 break;
               }
             } else if (image_data_storage_formats[i] ==
                        kUint16ArrayStorageFormat) {
-              if (cropped_image_data->dataUnion()
+              if (cropped_image_data->data()
                       .GetAsUint16Array()
                       .View()
                       ->Data()[index] != expected_value) {
@@ -503,7 +504,7 @@ TEST_F(ImageDataTest, TestCropRect) {
                 break;
               }
             } else {
-              if (cropped_image_data->dataUnion()
+              if (cropped_image_data->data()
                       .GetAsFloat32Array()
                       .View()
                       ->Data()[index] != fexpected_value) {

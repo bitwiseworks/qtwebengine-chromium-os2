@@ -209,11 +209,13 @@ class QUIC_EXPORT_PRIVATE QuicSpdyStream
 
   // Called when owning session is getting deleted to avoid subsequent
   // use of the spdy_session_ member.
+  // TODO(b/136274541): Remove this method once
+  // flag_quic_clean_up_spdy_session_destructor is deprecated.
   void ClearSession();
 
   // Returns true if the sequencer has delivered the FIN, and no more body bytes
   // will be available.
-  bool IsClosed() { return sequencer()->IsClosed(); }
+  bool IsSequencerClosed() { return sequencer()->IsClosed(); }
 
   // QpackDecodedHeadersAccumulator::Visitor implementation.
   void OnHeadersDecoded(QuicHeaderList headers,
@@ -300,10 +302,8 @@ class QUIC_EXPORT_PRIVATE QuicSpdyStream
   // Contains a copy of the decompressed header (name, value) pairs until they
   // are consumed via Readv.
   QuicHeaderList header_list_;
-  // Length of HEADERS frame payload.
+  // Length of most recently received HEADERS frame payload.
   QuicByteCount headers_payload_length_;
-  // Length of TRAILERS frame payload.
-  QuicByteCount trailers_payload_length_;
 
   // True if the trailers have been completely decompressed.
   bool trailers_decompressed_;

@@ -27,9 +27,9 @@ class NGPaintFragment;
 struct MinMaxSizes;
 struct PhysicalSize;
 
-// Input to the min/max inline size calculation algorithm for child nodes. Child
-// nodes within the same formatting context need to know which floats are beside
-// them.
+// The input to the min/max inline size calculation algorithm for child nodes.
+// Child nodes within the same formatting context need to know which floats are
+// beside them.
 struct MinMaxSizesInput {
   // The min-max size calculation (un-intuitively) requires a percentage
   // resolution size!
@@ -41,11 +41,23 @@ struct MinMaxSizesInput {
   //
   // As we don't perform any tree walking, we need to pass the percentage
   // resolution block-size for min/max down the min/max size calculation.
-  explicit MinMaxSizesInput(LayoutUnit percentage_resolution_block_size)
-      : percentage_resolution_block_size(percentage_resolution_block_size) {}
+  MinMaxSizesInput(LayoutUnit percentage_resolution_block_size,
+                   MinMaxSizesType type)
+      : percentage_resolution_block_size(percentage_resolution_block_size),
+        type(type) {}
   LayoutUnit float_left_inline_size;
   LayoutUnit float_right_inline_size;
   LayoutUnit percentage_resolution_block_size;
+
+  MinMaxSizesType type;
+};
+
+// The output of the min/max inline size calculation algorithm. Contains the
+// min/max sizes, and if this calculation will change if the
+// |MinMaxSizesInput::percentage_resolution_block_size| value changes.
+struct MinMaxSizesResult {
+  MinMaxSizes sizes;
+  bool depends_on_percentage_block_size = false;
 };
 
 // Represents the input to a layout algorithm for a given node. The layout
@@ -84,6 +96,9 @@ class CORE_EXPORT NGLayoutInputNode {
   bool IsOutOfFlowPositioned() const {
     return IsBlock() && box_->IsOutOfFlowPositioned();
   }
+  bool IsFloatingOrOutOfFlowPositioned() const {
+    return IsFloating() || IsOutOfFlowPositioned();
+  }
   bool IsReplaced() const { return box_->IsLayoutReplaced(); }
   bool IsAbsoluteContainer() const {
     return box_->CanContainAbsolutePositionObjects();
@@ -108,18 +123,45 @@ class CORE_EXPORT NGLayoutInputNode {
     DCHECK(IsListMarker());
     return ToLayoutNGOutsideListMarker(box_)->NeedsOccupyWholeLine();
   }
+  bool IsButton() const { return IsBlock() && box_->IsLayoutNGButton(); }
   bool IsFieldsetContainer() const {
     return IsBlock() && box_->IsLayoutNGFieldset();
   }
+  bool IsRubyRun() const { return IsBlock() && box_->IsRubyRun(); }
+  bool IsRubyText() const { return box_->IsRubyText(); }
 
   // Return true if this is the legend child of a fieldset that gets special
   // treatment (i.e. placed over the block-start border).
   bool IsRenderedLegend() const {
     return IsBlock() && box_->IsRenderedLegend();
   }
+  // Return true if this node is for <input type=range>.
+  bool IsSlider() const;
+  // Return true if this node is for a slider thumb in <input type=range>.
+  bool IsSliderThumb() const;
   bool IsTable() const { return IsBlock() && box_->IsTable(); }
 
+  bool IsTableCaption() const { return IsBlock() && box_->IsTableCaption(); }
+
+  // Section with empty rows is considered empty.
+  bool IsEmptyTableSection() const;
+
+  bool IsTableCol() const {
+    return Style().Display() == EDisplay::kTableColumn;
+  }
+
+  bool IsTableColgroup() const {
+    return Style().Display() == EDisplay::kTableColumnGroup;
+  }
+
+  wtf_size_t TableColumnSpan() const;
+
+  wtf_size_t TableCellColspan() const;
+
+  wtf_size_t TableCellRowspan() const;
+
   bool IsMathRoot() const { return box_->IsMathMLRoot(); }
+  bool IsMathML() const { return box_->IsMathML(); }
 
   bool IsAnonymousBlock() const { return box_->IsAnonymousBlock(); }
 
@@ -136,7 +178,11 @@ class CORE_EXPORT NGLayoutInputNode {
     // Lines are always monolithic. We cannot block-fragment inside them.
     if (IsInline())
       return true;
-    return box_->GetPaginationBreakability() == LayoutBox::kForbidBreaks;
+    return box_->GetNGPaginationBreakability() == LayoutBox::kForbidBreaks;
+  }
+
+  bool IsScrollContainer() const {
+    return IsBlock() && box_->IsScrollContainer();
   }
 
   bool CreatesNewFormattingContext() const {
@@ -155,10 +201,11 @@ class CORE_EXPORT NGLayoutInputNode {
     return false;
   }
 
-  // Returns border box.
-  MinMaxSizes ComputeMinMaxSizes(WritingMode,
-                                 const MinMaxSizesInput&,
-                                 const NGConstraintSpace* = nullptr);
+  // Returns the border-box min/max content sizes for the node.
+  MinMaxSizesResult ComputeMinMaxSizes(
+      WritingMode,
+      const MinMaxSizesInput&,
+      const NGConstraintSpace* = nullptr) const;
 
   // Returns intrinsic sizing information for replaced elements.
   // ComputeReplacedSize can use it to compute actual replaced size.
@@ -168,9 +215,11 @@ class CORE_EXPORT NGLayoutInputNode {
                      base::Optional<LayoutUnit>* computed_block_size) const;
 
   // Returns the next sibling.
-  NGLayoutInputNode NextSibling();
+  NGLayoutInputNode NextSibling() const;
 
   Document& GetDocument() const { return box_->GetDocument(); }
+
+  Node* GetDOMNode() const { return box_->GetNode(); }
 
   PhysicalSize InitialContainingBlockSize() const;
 
@@ -181,6 +230,14 @@ class CORE_EXPORT NGLayoutInputNode {
 
   bool ShouldApplySizeContainment() const {
     return box_->ShouldApplySizeContainment();
+  }
+
+  // CSS defines certain cases to synthesize inline block baselines from box.
+  // See comments in UseLogicalBottomMarginEdgeForInlineBlockBaseline().
+  bool UseBlockEndMarginEdgeForInlineBlockBaseline() const {
+    if (auto* layout_box = DynamicTo<LayoutBlock>(GetLayoutBox()))
+      return layout_box->UseLogicalBottomMarginEdgeForInlineBlockBaseline();
+    return false;
   }
 
   // CSS intrinsic sizing getters.
@@ -210,8 +267,8 @@ class CORE_EXPORT NGLayoutInputNode {
     DCHECK(box_->GetDisplayLockContext());
     return *box_->GetDisplayLockContext();
   }
-  bool LayoutBlockedByDisplayLock(DisplayLockLifecycleTarget target) const {
-    return box_->LayoutBlockedByDisplayLock(target);
+  bool ChildLayoutBlockedByDisplayLock() const {
+    return box_->ChildLayoutBlockedByDisplayLock();
   }
 
   // Returns the first NGPaintFragment for this node. When block fragmentation

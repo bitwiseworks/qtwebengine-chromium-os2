@@ -133,7 +133,7 @@ void WebSettingsImpl::SetMinimumLogicalFontSize(int size) {
   settings_->SetMinimumLogicalFontSize(size);
 }
 
-void WebSettingsImpl::SetAutoplayPolicy(AutoplayPolicy policy) {
+void WebSettingsImpl::SetAutoplayPolicy(web_pref::AutoplayPolicy policy) {
   settings_->SetAutoplayPolicy(
       static_cast<blink::AutoplayPolicy::Type>(policy));
 }
@@ -150,6 +150,10 @@ void WebSettingsImpl::SetTextAutosizingEnabled(bool enabled) {
 
 void WebSettingsImpl::SetAccessibilityFontScaleFactor(float font_scale_factor) {
   settings_->SetAccessibilityFontScaleFactor(font_scale_factor);
+}
+
+void WebSettingsImpl::SetAccessibilityAlwaysShowFocus(bool always_show_focus) {
+  settings_->SetAccessibilityAlwaysShowFocus(always_show_focus);
 }
 
 void WebSettingsImpl::SetAccessibilityPasswordValuesEnabled(bool enabled) {
@@ -230,9 +234,9 @@ void WebSettingsImpl::SetLoadsImagesAutomatically(
   settings_->SetLoadsImagesAutomatically(loads_images_automatically);
 }
 
-void WebSettingsImpl::SetImageAnimationPolicy(ImageAnimationPolicy policy) {
-  settings_->SetImageAnimationPolicy(
-      static_cast<blink::ImageAnimationPolicy>(policy));
+void WebSettingsImpl::SetImageAnimationPolicy(
+    web_pref::ImageAnimationPolicy policy) {
+  settings_->SetImageAnimationPolicy(policy);
 }
 
 void WebSettingsImpl::SetImagesEnabled(bool enabled) {
@@ -255,17 +259,16 @@ void WebSettingsImpl::SetAvailablePointerTypes(int pointers) {
   dev_tools_emulator_->SetAvailablePointerTypes(pointers);
 }
 
-void WebSettingsImpl::SetPrimaryPointerType(PointerType pointer) {
-  dev_tools_emulator_->SetPrimaryPointerType(
-      static_cast<blink::PointerType>(pointer));
+void WebSettingsImpl::SetPrimaryPointerType(ui::PointerType pointer) {
+  dev_tools_emulator_->SetPrimaryPointerType(pointer);
 }
 
 void WebSettingsImpl::SetAvailableHoverTypes(int types) {
   dev_tools_emulator_->SetAvailableHoverTypes(types);
 }
 
-void WebSettingsImpl::SetPrimaryHoverType(HoverType type) {
-  dev_tools_emulator_->SetPrimaryHoverType(static_cast<blink::HoverType>(type));
+void WebSettingsImpl::SetPrimaryHoverType(ui::HoverType type) {
+  dev_tools_emulator_->SetPrimaryHoverType(type);
 }
 
 void WebSettingsImpl::SetPreferHiddenVolumeControls(bool enabled) {
@@ -421,6 +424,10 @@ void WebSettingsImpl::SetTouchDragDropEnabled(bool enabled) {
   settings_->SetTouchDragDropEnabled(enabled);
 }
 
+void WebSettingsImpl::SetTouchDragEndContextMenu(bool enabled) {
+  settings_->SetTouchDragEndContextMenu(enabled);
+}
+
 void WebSettingsImpl::SetBarrelButtonForDragEnabled(bool enabled) {
   settings_->SetBarrelButtonForDragEnabled(enabled);
 }
@@ -457,8 +464,9 @@ void WebSettingsImpl::SetShowContextMenuOnMouseUp(bool enabled) {
   settings_->SetShowContextMenuOnMouseUp(enabled);
 }
 
-void WebSettingsImpl::SetEditingBehavior(EditingBehavior behavior) {
-  settings_->SetEditingBehaviorType(static_cast<EditingBehaviorType>(behavior));
+void WebSettingsImpl::SetEditingBehavior(
+    web_pref::EditingBehaviorType behavior) {
+  settings_->SetEditingBehaviorType(behavior);
 }
 
 void WebSettingsImpl::SetHideScrollbars(bool enabled) {
@@ -560,10 +568,6 @@ void WebSettingsImpl::SetPrefersReducedMotion(bool enabled) {
   settings_->SetPrefersReducedMotion(enabled);
 }
 
-void WebSettingsImpl::SetEnableTouchAdjustment(bool enabled) {
-  settings_->SetTouchAdjustmentEnabled(enabled);
-}
-
 bool WebSettingsImpl::ViewportEnabled() const {
   return settings_->GetViewportEnabled();
 }
@@ -582,10 +586,6 @@ bool WebSettingsImpl::MockGestureTapHighlightsEnabled() const {
 
 bool WebSettingsImpl::ShrinksViewportContentToFit() const {
   return settings_->GetShrinksViewportContentToFit();
-}
-
-void WebSettingsImpl::SetShouldRespectImageOrientation(bool enabled) {
-  settings_->SetShouldRespectImageOrientation(enabled);
 }
 
 void WebSettingsImpl::SetPictureInPictureEnabled(bool enabled) {
@@ -660,11 +660,11 @@ void WebSettingsImpl::SetMainFrameResizesAreOrientationChanges(bool enabled) {
   dev_tools_emulator_->SetMainFrameResizesAreOrientationChanges(enabled);
 }
 
-void WebSettingsImpl::SetV8CacheOptions(V8CacheOptions options) {
-  settings_->SetV8CacheOptions(static_cast<blink::V8CacheOptions>(options));
+void WebSettingsImpl::SetV8CacheOptions(mojom::blink::V8CacheOptions options) {
+  settings_->SetV8CacheOptions(options);
 }
 
-void WebSettingsImpl::SetViewportStyle(WebViewportStyle style) {
+void WebSettingsImpl::SetViewportStyle(web_pref::ViewportStyle style) {
   dev_tools_emulator_->SetViewportStyle(style);
 }
 
@@ -780,11 +780,20 @@ void WebSettingsImpl::SetNavigationControls(
   settings_->SetNavigationControls(navigation_controls);
 }
 
-STATIC_ASSERT_ENUM(WebSettings::ImageAnimationPolicy::kAllowed,
-                   kImageAnimationPolicyAllowed);
-STATIC_ASSERT_ENUM(WebSettings::ImageAnimationPolicy::kAnimateOnce,
-                   kImageAnimationPolicyAnimateOnce);
-STATIC_ASSERT_ENUM(WebSettings::ImageAnimationPolicy::kNoAnimation,
-                   kImageAnimationPolicyNoAnimation);
+void WebSettingsImpl::SetAriaModalPrunesAXTree(bool enabled) {
+  settings_->SetAriaModalPrunesAXTree(enabled);
+}
+
+void WebSettingsImpl::SetUseAXMenuList(bool enabled) {
+  settings_->SetUseAXMenuList(enabled);
+}
+
+void WebSettingsImpl::SetSelectionClipboardBufferAvailable(bool available) {
+  settings_->SetSelectionClipboardBufferAvailable(available);
+}
+
+void WebSettingsImpl::SetAccessibilityIncludeSvgGElement(bool include) {
+  settings_->SetAccessibilityIncludeSvgGElement(include);
+}
 
 }  // namespace blink

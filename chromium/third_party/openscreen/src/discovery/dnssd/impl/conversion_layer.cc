@@ -4,6 +4,8 @@
 
 #include "discovery/dnssd/impl/conversion_layer.h"
 
+#include <utility>
+
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "absl/types/optional.h"
@@ -11,7 +13,7 @@
 #include "discovery/dnssd/impl/constants.h"
 #include "discovery/dnssd/impl/instance_key.h"
 #include "discovery/dnssd/impl/service_key.h"
-#include "discovery/dnssd/public/dns_sd_instance_record.h"
+#include "discovery/dnssd/public/dns_sd_instance.h"
 #include "discovery/mdns/mdns_records.h"
 #include "discovery/mdns/public/mdns_constants.h"
 
@@ -50,47 +52,55 @@ inline DomainName GetInstanceDomainName(const InstanceKey& key) {
                                key.domain_id());
 }
 
-MdnsRecord CreatePtrRecord(const DnsSdInstanceRecord& record,
+MdnsRecord CreatePtrRecord(const DnsSdInstance& instance,
                            const DomainName& domain) {
   PtrRecordRdata data(domain);
-  auto outer_domain = GetPtrDomainName(record.service_id(), record.domain_id());
+  auto outer_domain =
+      GetPtrDomainName(instance.service_id(), instance.domain_id());
   return MdnsRecord(std::move(outer_domain), DnsType::kPTR, DnsClass::kIN,
                     RecordType::kShared, kPtrRecordTtl, std::move(data));
 }
 
-MdnsRecord CreateSrvRecord(const DnsSdInstanceRecord& record,
+MdnsRecord CreateSrvRecord(const DnsSdInstance& instance,
                            const DomainName& domain) {
-  uint16_t port = record.port();
+  uint16_t port = instance.port();
   SrvRecordRdata data(0, 0, port, domain);
   return MdnsRecord(domain, DnsType::kSRV, DnsClass::kIN, RecordType::kUnique,
                     kSrvRecordTtl, std::move(data));
 }
 
-absl::optional<MdnsRecord> CreateARecord(const DnsSdInstanceRecord& record,
-                                         const DomainName& domain) {
-  if (!record.address_v4()) {
-    return absl::nullopt;
+std::vector<MdnsRecord> CreateARecords(const DnsSdInstanceEndpoint& endpoint,
+                                       const DomainName& domain) {
+  std::vector<MdnsRecord> records;
+  for (const IPAddress& address : endpoint.addresses()) {
+    if (address.IsV4()) {
+      ARecordRdata data(address);
+      records.emplace_back(domain, DnsType::kA, DnsClass::kIN,
+                           RecordType::kUnique, kARecordTtl, std::move(data));
+    }
   }
 
-  ARecordRdata data(record.address_v4().address);
-  return MdnsRecord(domain, DnsType::kA, DnsClass::kIN, RecordType::kUnique,
-                    kARecordTtl, std::move(data));
+  return records;
 }
 
-absl::optional<MdnsRecord> CreateAAAARecord(const DnsSdInstanceRecord& record,
-                                            const DomainName& domain) {
-  if (!record.address_v6()) {
-    return absl::nullopt;
+std::vector<MdnsRecord> CreateAAAARecords(const DnsSdInstanceEndpoint& endpoint,
+                                          const DomainName& domain) {
+  std::vector<MdnsRecord> records;
+  for (const IPAddress& address : endpoint.addresses()) {
+    if (address.IsV6()) {
+      AAAARecordRdata data(address);
+      records.emplace_back(domain, DnsType::kAAAA, DnsClass::kIN,
+                           RecordType::kUnique, kAAAARecordTtl,
+                           std::move(data));
+    }
   }
 
-  AAAARecordRdata data(record.address_v6().address);
-  return MdnsRecord(domain, DnsType::kAAAA, DnsClass::kIN, RecordType::kUnique,
-                    kAAAARecordTtl, std::move(data));
+  return records;
 }
 
-MdnsRecord CreateTxtRecord(const DnsSdInstanceRecord& record,
+MdnsRecord CreateTxtRecord(const DnsSdInstance& endpoint,
                            const DomainName& domain) {
-  TxtRecordRdata data(record.txt().GetData());
+  TxtRecordRdata data(endpoint.txt().GetData());
   return MdnsRecord(domain, DnsType::kTXT, DnsClass::kIN, RecordType::kUnique,
                     kTXTRecordTtl, std::move(data));
 }
@@ -166,22 +176,24 @@ bool IsPtrRecord(const MdnsRecord& record) {
   return record.dns_type() == DnsType::kPTR;
 }
 
-std::vector<MdnsRecord> GetDnsRecords(const DnsSdInstanceRecord& record) {
-  auto domain = GetInstanceDomainName(InstanceKey(record));
+std::vector<MdnsRecord> GetDnsRecords(const DnsSdInstance& instance) {
+  auto domain = GetInstanceDomainName(InstanceKey(instance));
 
-  std::vector<MdnsRecord> records{CreatePtrRecord(record, domain),
-                                  CreateSrvRecord(record, domain),
-                                  CreateTxtRecord(record, domain)};
+  return {CreatePtrRecord(instance, domain), CreateSrvRecord(instance, domain),
+          CreateTxtRecord(instance, domain)};
+}
 
-  auto v4 = CreateARecord(record, domain);
-  if (v4.has_value()) {
-    records.push_back(std::move(v4.value()));
-  }
+std::vector<MdnsRecord> GetDnsRecords(const DnsSdInstanceEndpoint& endpoint) {
+  auto domain = GetInstanceDomainName(InstanceKey(endpoint));
 
-  auto v6 = CreateAAAARecord(record, domain);
-  if (v6.has_value()) {
-    records.push_back(std::move(v6.value()));
-  }
+  std::vector<MdnsRecord> records =
+      GetDnsRecords(static_cast<DnsSdInstance>(endpoint));
+
+  std::vector<MdnsRecord> v4 = CreateARecords(endpoint, domain);
+  std::vector<MdnsRecord> v6 = CreateAAAARecords(endpoint, domain);
+
+  records.insert(records.end(), v4.begin(), v4.end());
+  records.insert(records.end(), v6.begin(), v6.end());
 
   return records;
 }

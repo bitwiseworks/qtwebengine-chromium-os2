@@ -58,7 +58,6 @@ class MODULES_EXPORT RTCQuicTransport final
       public ExecutionContextClient,
       public QuicTransportProxy::Delegate {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(RTCQuicTransport);
 
  public:
   enum class CloseReason {
@@ -119,11 +118,6 @@ class MODULES_EXPORT RTCQuicTransport final
   // Before the transport has become connected this will be 0.
   base::Optional<uint16_t> maxDatagramLength() const {
     return max_datagram_length_;
-  }
-  // TODO(crbug.com/1060971): Remove |is_null| version.
-  uint16_t maxDatagramLength(bool& is_null) const {  // DEPRECATED
-    is_null = !max_datagram_length_.has_value();
-    return max_datagram_length_.value_or(0);
   }
 
   String state() const;
@@ -192,7 +186,7 @@ class MODULES_EXPORT RTCQuicTransport final
   ExecutionContext* GetExecutionContext() const override;
 
   // For garbage collection.
-  void Trace(Visitor* visitor) override;
+  void Trace(Visitor* visitor) const override;
 
  private:
   enum class StartReason {

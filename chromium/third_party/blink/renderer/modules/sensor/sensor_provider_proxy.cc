@@ -12,13 +12,13 @@
 namespace blink {
 
 // SensorProviderProxy
-SensorProviderProxy::SensorProviderProxy(Document& document)
-    : Supplement<Document>(document),
-      sensor_provider_(document.ToExecutionContext()),
+SensorProviderProxy::SensorProviderProxy(LocalDOMWindow& window)
+    : Supplement<LocalDOMWindow>(window),
+      sensor_provider_(&window),
       inspector_mode_(false) {}
 
 void SensorProviderProxy::InitializeIfNeeded() {
-  if (IsInitialized())
+  if (sensor_provider_.is_bound())
     return;
 
   GetSupplementable()->GetBrowserInterfaceBroker().GetInterface(
@@ -33,24 +33,23 @@ void SensorProviderProxy::InitializeIfNeeded() {
 const char SensorProviderProxy::kSupplementName[] = "SensorProvider";
 
 // static
-SensorProviderProxy* SensorProviderProxy::From(Document* document) {
-  DCHECK(document);
+SensorProviderProxy* SensorProviderProxy::From(LocalDOMWindow* window) {
+  DCHECK(window);
   SensorProviderProxy* provider_proxy =
-      Supplement<Document>::From<SensorProviderProxy>(*document);
+      Supplement<LocalDOMWindow>::From<SensorProviderProxy>(*window);
   if (!provider_proxy) {
-    provider_proxy = MakeGarbageCollected<SensorProviderProxy>(*document);
-    Supplement<Document>::ProvideTo(*document, provider_proxy);
+    provider_proxy = MakeGarbageCollected<SensorProviderProxy>(*window);
+    Supplement<LocalDOMWindow>::ProvideTo(*window, provider_proxy);
   }
-  provider_proxy->InitializeIfNeeded();
   return provider_proxy;
 }
 
 SensorProviderProxy::~SensorProviderProxy() = default;
 
-void SensorProviderProxy::Trace(Visitor* visitor) {
+void SensorProviderProxy::Trace(Visitor* visitor) const {
   visitor->Trace(sensor_proxies_);
   visitor->Trace(sensor_provider_);
-  Supplement<Document>::Trace(visitor);
+  Supplement<LocalDOMWindow>::Trace(visitor);
 }
 
 SensorProxy* SensorProviderProxy::CreateSensorProxy(
@@ -92,6 +91,13 @@ void SensorProviderProxy::OnSensorProviderConnectionError() {
 void SensorProviderProxy::RemoveSensorProxy(SensorProxy* proxy) {
   DCHECK(sensor_proxies_.Contains(proxy));
   sensor_proxies_.erase(proxy);
+}
+
+void SensorProviderProxy::GetSensor(
+    device::mojom::blink::SensorType type,
+    device::mojom::blink::SensorProviderProxy::GetSensorCallback callback) {
+  InitializeIfNeeded();
+  sensor_provider_->GetSensor(type, std::move(callback));
 }
 
 }  // namespace blink

@@ -91,11 +91,10 @@ String EmptyChromeClient::AcceptLanguages() {
 void EmptyLocalFrameClient::BeginNavigation(
     const ResourceRequest&,
     mojom::RequestContextFrameType,
-    Document* origin_document,
+    LocalDOMWindow*,
     DocumentLoader*,
     WebNavigationType,
     NavigationPolicy,
-    bool,
     WebFrameLoadType,
     bool,
     TriggeringEventInfo,
@@ -104,6 +103,7 @@ void EmptyLocalFrameClient::BeginNavigation(
     mojo::PendingRemote<mojom::blink::BlobURLToken>,
     base::TimeTicks,
     const String&,
+    const base::Optional<WebImpression>&,
     WTF::Vector<network::mojom::blink::ContentSecurityPolicyPtr> initiator_csp,
     network::mojom::blink::CSPSourcePtr initiator_csp_self,
     network::mojom::IPAddressSpace,
@@ -128,13 +128,11 @@ LocalFrame* EmptyLocalFrameClient::CreateFrame(const AtomicString&,
   return nullptr;
 }
 
-std::pair<RemoteFrame*, base::UnguessableToken>
-EmptyLocalFrameClient::CreatePortal(
+std::pair<RemoteFrame*, PortalToken> EmptyLocalFrameClient::CreatePortal(
     HTMLPortalElement*,
     mojo::PendingAssociatedReceiver<mojom::blink::Portal>,
     mojo::PendingAssociatedRemote<mojom::blink::PortalClient>) {
-  return std::pair<RemoteFrame*, base::UnguessableToken>(
-      nullptr, base::UnguessableToken());
+  return std::pair<RemoteFrame*, PortalToken>(nullptr, PortalToken());
 }
 
 RemoteFrame* EmptyLocalFrameClient::AdoptPortal(HTMLPortalElement*) {

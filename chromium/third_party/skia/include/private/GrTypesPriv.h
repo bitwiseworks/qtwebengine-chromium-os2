@@ -16,7 +16,6 @@
 #include "include/gpu/GrTypes.h"
 #include "include/private/GrSharedEnums.h"
 #include "include/private/SkImageInfoPriv.h"
-#include "include/private/SkWeakRefCnt.h"
 
 class GrBackendFormat;
 class GrCaps;
@@ -71,10 +70,37 @@ enum class GrPrimitiveRestart : bool {
     kYes = true
 };
 
+struct GrDrawIndirectCommand {
+    uint32_t fVertexCount;
+    uint32_t fInstanceCount;
+    uint32_t fBaseVertex;
+    uint32_t fBaseInstance;
+};
+
+static_assert(sizeof(GrDrawIndirectCommand) == 16, "GrDrawIndirectCommand must be tightly packed");
+
+struct GrDrawIndexedIndirectCommand {
+    uint32_t fIndexCount;
+    uint32_t fInstanceCount;
+    uint32_t fBaseIndex;
+    int32_t fBaseVertex;
+    uint32_t fBaseInstance;
+};
+
+static_assert(sizeof(GrDrawIndexedIndirectCommand) == 20,
+              "GrDrawIndexedIndirectCommand must be tightly packed");
+
 /**
  * Should a created surface be texturable?
  */
 enum class GrTexturable : bool {
+    kNo = false,
+    kYes = true
+};
+
+// A DDL recorder has its own proxy provider and proxy cache. This enum indicates if
+// a given proxy provider is one of these special ones.
+enum class GrDDLProvider : bool {
     kNo = false,
     kYes = true
 };
@@ -94,18 +120,16 @@ static const int kMaskFormatCount = kLast_GrMaskFormat + 1;
 /**
  *  Return the number of bytes-per-pixel for the specified mask format.
  */
-static inline int GrMaskFormatBytesPerPixel(GrMaskFormat format) {
+inline constexpr int GrMaskFormatBytesPerPixel(GrMaskFormat format) {
     SkASSERT(format < kMaskFormatCount);
     // kA8   (0) -> 1
     // kA565 (1) -> 2
     // kARGB (2) -> 4
-    static const int sBytesPerPixel[] = {1, 2, 4};
-    static_assert(SK_ARRAY_COUNT(sBytesPerPixel) == kMaskFormatCount, "array_size_mismatch");
     static_assert(kA8_GrMaskFormat == 0, "enum_order_dependency");
     static_assert(kA565_GrMaskFormat == 1, "enum_order_dependency");
     static_assert(kARGB_GrMaskFormat == 2, "enum_order_dependency");
 
-    return sBytesPerPixel[(int)format];
+    return SkTo<int>(1u << format);
 }
 
 /** Ownership rules for external GPU resources imported into Skia. */
@@ -325,8 +349,9 @@ enum GrSLType {
     kTexture2DRectSampler_GrSLType,
     kTexture2D_GrSLType,
     kSampler_GrSLType,
+    kInput_GrSLType,
 
-    kLast_GrSLType = kSampler_GrSLType
+    kLast_GrSLType = kInput_GrSLType
 };
 static const int kGrSLTypeCount = kLast_GrSLType + 1;
 
@@ -410,6 +435,7 @@ static constexpr bool GrSLTypeIsFloatType(GrSLType type) {
         case kUint2_GrSLType:
         case kTexture2D_GrSLType:
         case kSampler_GrSLType:
+        case kInput_GrSLType:
             return false;
     }
     SkUNREACHABLE;
@@ -469,6 +495,7 @@ static constexpr int GrSLTypeVecLength(GrSLType type) {
         case kTexture2DRectSampler_GrSLType:
         case kTexture2D_GrSLType:
         case kSampler_GrSLType:
+        case kInput_GrSLType:
             return -1;
     }
     SkUNREACHABLE;
@@ -550,6 +577,7 @@ static constexpr bool GrSLTypeIsCombinedSamplerType(GrSLType type) {
         case kUShort4_GrSLType:
         case kTexture2D_GrSLType:
         case kSampler_GrSLType:
+        case kInput_GrSLType:
             return false;
     }
     SkUNREACHABLE;
@@ -630,10 +658,8 @@ static inline GrClipEdgeType GrInvertProcessorEdgeType(const GrClipEdgeType edge
             return GrClipEdgeType::kFillBW;
         case GrClipEdgeType::kInverseFillAA:
             return GrClipEdgeType::kFillAA;
-        case GrClipEdgeType::kHairlineAA:
-            SK_ABORT("Hairline fill isn't invertible.");
     }
-    return GrClipEdgeType::kFillAA;  // suppress warning.
+    SkUNREACHABLE;
 }
 
 /**
@@ -651,6 +677,7 @@ enum GrIOType {
 enum class GrGpuBufferType {
     kVertex,
     kIndex,
+    kDrawIndirect,
     kXferCpuToGpu,
     kXferGpuToCpu,
 };
@@ -693,6 +720,11 @@ enum class GrInternalSurfaceFlags {
     // This means the pixels in the render target are write-only. This is used for Dawn and Metal
     // swap chain targets which can be rendered to, but not read or copied.
     kFramebufferOnly                = 1 << 3,
+
+    // This is a Vulkan only flag. If set the surface can be used as an input attachment in a
+    // shader. This is used for doing in shader blending where we want to sample from the same
+    // image we are drawing to.
+    kVkRTSupportsInputAttachment    = 1 << 4,
 };
 
 GR_MAKE_BITFIELD_CLASS_OPS(GrInternalSurfaceFlags)
@@ -702,8 +734,16 @@ GR_MAKE_BITFIELD_CLASS_OPS(GrInternalSurfaceFlags)
 constexpr static int kGrInternalTextureFlagsMask = static_cast<int>(
         GrInternalSurfaceFlags::kReadOnly);
 
+// We don't include kVkRTSupportsInputAttachment in this mask since we check it manually. We don't
+// require that both the surface and proxy have matching values for this flag. Instead we require
+// if the proxy has it set then the surface must also have it set. All other flags listed here must
+// match on the proxy and surface.
+// TODO: Add back kFramebufferOnly flag here once we update SkSurfaceCharacterization to take it
+// as a flag. skbug.com/10672
 constexpr static int kGrInternalRenderTargetFlagsMask = static_cast<int>(
-        GrInternalSurfaceFlags::kGLRTFBOIDIs0 | GrInternalSurfaceFlags::kRequiresManualMSAAResolve);
+        GrInternalSurfaceFlags::kGLRTFBOIDIs0 |
+        GrInternalSurfaceFlags::kRequiresManualMSAAResolve/* |
+        GrInternalSurfaceFlags::kFramebufferOnly*/);
 
 constexpr static int kGrInternalTextureRenderTargetFlagsMask =
         kGrInternalTextureFlagsMask | kGrInternalRenderTargetFlagsMask;
@@ -750,7 +790,7 @@ enum class GpuPathRenderers {
 /**
  * Used to describe the current state of Mips on a GrTexture
  */
-enum class  GrMipMapsStatus {
+enum class GrMipmapStatus {
     kNotAllocated, // Mips have not been allocated
     kDirty,        // Mips are allocated but the full mip tree does not have valid data
     kValid,        // All levels fully allocated and have valid data in them
@@ -804,6 +844,8 @@ enum class GrColorType {
     kR_16,
     kR_F16,
     kGray_F16,
+    kBGRA_4444,
+    kARGB_4444,
 
     kLast = kGray_F16
 };
@@ -841,6 +883,8 @@ static constexpr SkColorType GrColorTypeToSkColorType(GrColorType ct) {
         case GrColorType::kR_16:             return kUnknown_SkColorType;
         case GrColorType::kR_F16:            return kUnknown_SkColorType;
         case GrColorType::kGray_F16:         return kUnknown_SkColorType;
+        case GrColorType::kARGB_4444:        return kUnknown_SkColorType;
+        case GrColorType::kBGRA_4444:        return kUnknown_SkColorType;
     }
     SkUNREACHABLE;
 }
@@ -908,6 +952,8 @@ static constexpr uint32_t GrColorTypeChannelFlags(GrColorType ct) {
         case GrColorType::kR_16:             return kRed_SkColorChannelFlag;
         case GrColorType::kR_F16:            return kRed_SkColorChannelFlag;
         case GrColorType::kGray_F16:         return kGray_SkColorChannelFlag;
+        case GrColorType::kARGB_4444:        return kRGBA_SkColorChannelFlags;
+        case GrColorType::kBGRA_4444:        return kRGBA_SkColorChannelFlags;
     }
     SkUNREACHABLE;
 }
@@ -1059,6 +1105,10 @@ static constexpr GrColorTypeDesc GrGetColorTypeDesc(GrColorType ct) {
             return GrColorTypeDesc::MakeR(16, GrColorTypeEncoding::kFloat);
         case GrColorType::kGray_F16:
             return GrColorTypeDesc::MakeGray(16, GrColorTypeEncoding::kFloat);
+        case GrColorType::kARGB_4444:
+            return GrColorTypeDesc::MakeRGBA(4, GrColorTypeEncoding::kUnorm);
+        case GrColorType::kBGRA_4444:
+            return GrColorTypeDesc::MakeRGBA(4, GrColorTypeEncoding::kUnorm);
     }
     SkUNREACHABLE;
 }
@@ -1121,6 +1171,8 @@ static constexpr size_t GrColorTypeBytesPerPixel(GrColorType ct) {
         case GrColorType::kR_16:             return 2;
         case GrColorType::kR_F16:            return 2;
         case GrColorType::kGray_F16:         return 2;
+        case GrColorType::kARGB_4444:        return 2;
+        case GrColorType::kBGRA_4444:        return 2;
     }
     SkUNREACHABLE;
 }
@@ -1170,7 +1222,41 @@ private:
     Context fReleaseCtx;
 };
 
-#if GR_TEST_UTILS || defined(SK_ENABLE_DUMP_GPU)
+enum class GrDstSampleType {
+    kNone, // The dst value will not be sampled in the shader
+    kAsTextureCopy, // The dst value will be sampled from a copy of the dst
+    // The types below require a texture barrier
+    kAsSelfTexture, // The dst value is sampled directly from the dst itself as a texture.
+    kAsInputAttachment, // The dst value is sampled directly from the dst as an input attachment.
+};
+
+// Returns true if the sampling of the dst color in the shader is done by reading the dst directly.
+// Anything that directly reads the dst will need a barrier between draws.
+static constexpr bool GrDstSampleTypeDirectlySamplesDst(GrDstSampleType type) {
+    switch (type) {
+        case GrDstSampleType::kAsSelfTexture:  // fall through
+        case GrDstSampleType::kAsInputAttachment:
+            return true;
+        case GrDstSampleType::kNone:  // fall through
+        case GrDstSampleType::kAsTextureCopy:
+            return false;
+    }
+    SkUNREACHABLE;
+}
+
+static constexpr bool GrDstSampleTypeUsesTexture(GrDstSampleType type) {
+    switch (type) {
+        case GrDstSampleType::kAsSelfTexture:  // fall through
+        case GrDstSampleType::kAsTextureCopy:
+            return true;
+        case GrDstSampleType::kNone:  // fall through
+        case GrDstSampleType::kAsInputAttachment:
+            return false;
+    }
+    SkUNREACHABLE;
+}
+
+#if defined(SK_DEBUG) || GR_TEST_UTILS || defined(SK_ENABLE_DUMP_GPU)
 static constexpr const char* GrBackendApiToStr(GrBackendApi api) {
     switch (api) {
         case GrBackendApi::kOpenGL:   return "OpenGL";
@@ -1213,6 +1299,8 @@ static constexpr const char* GrColorTypeToStr(GrColorType ct) {
         case GrColorType::kR_16:             return "kR_16";
         case GrColorType::kR_F16:            return "kR_F16";
         case GrColorType::kGray_F16:         return "kGray_F16";
+        case GrColorType::kARGB_4444:        return "kARGB_4444";
+        case GrColorType::kBGRA_4444:        return "kBGRA_4444";
     }
     SkUNREACHABLE;
 }

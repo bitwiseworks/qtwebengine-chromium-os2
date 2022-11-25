@@ -9,12 +9,14 @@
 #include <stdint.h>
 #include <unistd.h>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/notreached.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 
 #if defined(OS_ANDROID)
 #include "base/os_compat_android.h"
@@ -127,7 +129,7 @@ void File::Info::FromStat(const stat_wrapper_t& stat_info) {
   // creation time. However, other than on Mac & iOS where the actual file
   // creation time is included as st_birthtime, the rest of POSIX platforms have
   // no portable way to get the creation time.
-#if defined(OS_LINUX) || defined(OS_FUCHSIA)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_FUCHSIA)
   time_t last_modified_sec = stat_info.st_mtim.tv_sec;
   int64_t last_modified_nsec = stat_info.st_mtim.tv_nsec;
   time_t last_accessed_sec = stat_info.st_atim.tv_sec;
@@ -141,7 +143,7 @@ void File::Info::FromStat(const stat_wrapper_t& stat_info) {
   int64_t last_accessed_nsec = stat_info.st_atime_nsec;
   time_t creation_time_sec = stat_info.st_ctime;
   int64_t creation_time_nsec = stat_info.st_ctime_nsec;
-#elif defined(OS_MACOSX) || defined(OS_IOS)
+#elif defined(OS_APPLE)
   time_t last_modified_sec = stat_info.st_mtimespec.tv_sec;
   int64_t last_modified_nsec = stat_info.st_mtimespec.tv_nsec;
   time_t last_accessed_sec = stat_info.st_atimespec.tv_sec;
@@ -510,7 +512,7 @@ void File::DoInitialize(const FilePath& path, uint32_t flags) {
   open_flags |= O_BINARY;
 
   int mode = S_IRUSR | S_IWUSR;
-#if defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS) || BUILDFLAG(IS_LACROS)
   mode |= S_IRGRP | S_IROTH;
 #endif
 
@@ -553,9 +555,9 @@ bool File::Flush() {
 #if defined(OS_NACL)
   NOTIMPLEMENTED();  // NaCl doesn't implement fsync.
   return true;
-#elif defined(OS_LINUX) || defined(OS_ANDROID)
+#elif defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_ANDROID)
   return !HANDLE_EINTR(fdatasync(file_.get()));
-#elif defined(OS_MACOSX) || defined(OS_IOS)
+#elif defined(OS_APPLE)
   // On macOS and iOS, fsync() is guaranteed to send the file's data to the
   // underlying storage device, but may return before the device actually writes
   // the data to the medium. When used by database systems, this may result in
@@ -587,7 +589,7 @@ File::Error File::GetLastFileError() {
   return base::File::OSErrorToFileError(errno);
 }
 
-#if defined(OS_BSD) || defined(OS_MACOSX) || defined(OS_NACL) || \
+#if defined(OS_BSD) || defined(OS_APPLE) || defined(OS_NACL) || \
     defined(OS_FUCHSIA) || (defined(OS_ANDROID) && __ANDROID_API__ < 21) || \
     defined(OS_OS2)
 int File::Stat(const char* path, stat_wrapper_t* sb) {

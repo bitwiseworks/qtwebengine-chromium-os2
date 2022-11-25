@@ -4,17 +4,19 @@
 
 #include "third_party/blink/renderer/modules/xr/xr_webgl_layer.h"
 
+#include "base/numerics/ranges.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/imagebitmap/image_bitmap.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
-#include "third_party/blink/renderer/modules/webgl/webgl2_rendering_context.h"
 #include "third_party/blink/renderer/modules/webgl/webgl_framebuffer.h"
-#include "third_party/blink/renderer/modules/webgl/webgl_rendering_context.h"
+#include "third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.h"
 #include "third_party/blink/renderer/modules/xr/xr_frame_provider.h"
 #include "third_party/blink/renderer/modules/xr/xr_session.h"
 #include "third_party/blink/renderer/modules/xr/xr_system.h"
+#include "third_party/blink/renderer/modules/xr/xr_utils.h"
 #include "third_party/blink/renderer/modules/xr/xr_view.h"
 #include "third_party/blink/renderer/modules/xr/xr_viewport.h"
+#include "third_party/blink/renderer/modules/xr/xr_webgl_rendering_context.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/geometry/double_size.h"
 #include "third_party/blink/renderer/platform/geometry/float_point.h"
@@ -32,18 +34,12 @@ const char kCleanFrameWarning[] =
     "drawing anything to the baseLayer's framebuffer, resulting in no visible "
     "output.";
 
-// Because including base::ClampToRange would be a dependency violation
-double ClampToRange(const double value, const double min, const double max) {
-  return std::min(std::max(value, min), max);
-}
-
 }  // namespace
 
-XRWebGLLayer* XRWebGLLayer::Create(
-    XRSession* session,
-    const WebGLRenderingContextOrWebGL2RenderingContext& context,
-    const XRWebGLLayerInit* initializer,
-    ExceptionState& exception_state) {
+XRWebGLLayer* XRWebGLLayer::Create(XRSession* session,
+                                   const XRWebGLRenderingContext& context,
+                                   const XRWebGLLayerInit* initializer,
+                                   ExceptionState& exception_state) {
   if (session->ended()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Cannot create an XRWebGLLayer for an "
@@ -51,12 +47,8 @@ XRWebGLLayer* XRWebGLLayer::Create(
     return nullptr;
   }
 
-  WebGLRenderingContextBase* webgl_context;
-  if (context.IsWebGL2RenderingContext()) {
-    webgl_context = context.GetAsWebGL2RenderingContext();
-  } else {
-    webgl_context = context.GetAsWebGLRenderingContext();
-  }
+  WebGLRenderingContextBase* webgl_context =
+      webglRenderingContextBaseFromUnion(context);
 
   if (webgl_context->isContextLost()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
@@ -119,8 +111,8 @@ XRWebGLLayer* XRWebGLLayer::Create(
     // small to see or unreasonably large.
     // TODO: Would be best to have the max value communicated from the service
     // rather than limited to the native res.
-    framebuffer_scale = ClampToRange(initializer->framebufferScaleFactor(),
-                                     kFramebufferMinScale, max_scale);
+    framebuffer_scale = base::ClampToRange(
+        initializer->framebufferScaleFactor(), kFramebufferMinScale, max_scale);
   }
 
   DoubleSize framebuffers_size = session->DefaultFramebufferSize();
@@ -155,7 +147,7 @@ XRWebGLLayer::XRWebGLLayer(XRSession* session,
                            WebGLFramebuffer* framebuffer,
                            double framebuffer_scale,
                            bool ignore_depth_values)
-    : session_(session),
+    : XRLayer(session),
       webgl_context_(webgl_context),
       framebuffer_(framebuffer),
       framebuffer_scale_(framebuffer_scale),
@@ -258,17 +250,61 @@ HTMLCanvasElement* XRWebGLLayer::output_canvas() const {
   return nullptr;
 }
 
+uint32_t XRWebGLLayer::CameraImageTextureId() const {
+  return camera_image_texture_id_;
+}
+
+base::Optional<gpu::MailboxHolder> XRWebGLLayer::CameraImageMailboxHolder()
+    const {
+  return camera_image_mailbox_holder_;
+}
+
 void XRWebGLLayer::OnFrameStart(
-    const base::Optional<gpu::MailboxHolder>& buffer_mailbox_holder) {
+    const base::Optional<gpu::MailboxHolder>& buffer_mailbox_holder,
+    const base::Optional<gpu::MailboxHolder>& camera_image_mailbox_holder) {
   if (framebuffer_) {
     framebuffer_->MarkOpaqueBufferComplete(true);
     framebuffer_->SetContentsChanged(false);
     if (buffer_mailbox_holder) {
       drawing_buffer_->UseSharedBuffer(buffer_mailbox_holder.value());
+      DVLOG(3) << __func__ << ": buffer_mailbox_holder->mailbox="
+               << buffer_mailbox_holder->mailbox.ToDebugString();
       is_direct_draw_frame = true;
     } else {
       is_direct_draw_frame = false;
     }
+
+    if (camera_image_mailbox_holder) {
+      DVLOG(3) << __func__ << ":camera_image_mailbox_holder->mailbox="
+               << camera_image_mailbox_holder->mailbox.ToDebugString();
+      camera_image_mailbox_holder_ = camera_image_mailbox_holder;
+      camera_image_texture_id_ =
+          GetBufferTextureId(camera_image_mailbox_holder_);
+      BindBufferTexture(camera_image_mailbox_holder_);
+    }
+  }
+}
+
+uint32_t XRWebGLLayer::GetBufferTextureId(
+    const base::Optional<gpu::MailboxHolder>& buffer_mailbox_holder) {
+  gpu::gles2::GLES2Interface* gl = drawing_buffer_->ContextGL();
+  gl->WaitSyncTokenCHROMIUM(buffer_mailbox_holder->sync_token.GetConstData());
+  DVLOG(3) << __func__ << ": buffer_mailbox_holder->sync_token="
+           << buffer_mailbox_holder->sync_token.ToDebugString();
+  GLuint texture_id = gl->CreateAndTexStorage2DSharedImageCHROMIUM(
+      buffer_mailbox_holder->mailbox.name);
+  return texture_id;
+}
+
+void XRWebGLLayer::BindBufferTexture(
+    const base::Optional<gpu::MailboxHolder>& buffer_mailbox_holder) {
+  gpu::gles2::GLES2Interface* gl = drawing_buffer_->ContextGL();
+
+  if (buffer_mailbox_holder) {
+    uint32_t texture_target = buffer_mailbox_holder->texture_target;
+    gl->BindTexture(texture_target, camera_image_texture_id_);
+    gl->BeginSharedImageAccessDirectCHROMIUM(
+        camera_image_texture_id_, GL_SHARED_IMAGE_ACCESS_MODE_READ_CHROMIUM);
   }
 }
 
@@ -291,7 +327,8 @@ void XRWebGLLayer::OnFrameEnd() {
       if (!framebuffer_dirty) {
         // If the session doesn't have a pose then the framebuffer being clean
         // may be expected, so we won't count those frames.
-        bool frame_had_pose = !!session()->MojoFromViewer();
+        bool frame_had_pose = !!session()->GetMojoFrom(
+            device::mojom::blink::XRReferenceSpaceType::kViewer);
         if (frame_had_pose) {
           clean_frame_count++;
           if (clean_frame_count == kCleanFrameWarningLimit) {
@@ -307,6 +344,14 @@ void XRWebGLLayer::OnFrameEnd() {
       // Always call submit, but notify if the contents were changed or not.
       session()->xr()->frameProvider()->SubmitWebGLLayer(this,
                                                          framebuffer_dirty);
+      if (camera_image_mailbox_holder_ && camera_image_texture_id_) {
+        DVLOG(3) << __func__ << "Deleting camera image texture";
+        gpu::gles2::GLES2Interface* gl = drawing_buffer_->ContextGL();
+        gl->EndSharedImageAccessDirectCHROMIUM(camera_image_texture_id_);
+        gl->DeleteTextures(1, &camera_image_texture_id_);
+        camera_image_texture_id_ = 0;
+        camera_image_mailbox_holder_ = base::nullopt;
+      }
     }
   }
 }
@@ -334,13 +379,12 @@ scoped_refptr<StaticBitmapImage> XRWebGLLayer::TransferToStaticBitmapImage() {
   return nullptr;
 }
 
-void XRWebGLLayer::Trace(Visitor* visitor) {
-  visitor->Trace(session_);
+void XRWebGLLayer::Trace(Visitor* visitor) const {
   visitor->Trace(left_viewport_);
   visitor->Trace(right_viewport_);
   visitor->Trace(webgl_context_);
   visitor->Trace(framebuffer_);
-  ScriptWrappable::Trace(visitor);
+  XRLayer::Trace(visitor);
 }
 
 }  // namespace blink

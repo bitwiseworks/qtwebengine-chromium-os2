@@ -4,6 +4,13 @@
 
 import("//testing/libfuzzer/fuzzer_test.gni")
 
+# This file depends on the legacy global sources assignment filter. It should
+# be converted to check target platform before assigning source files to the
+# sources variable. Remove this import and set_sources_assignment_filter call
+# when the file has been converted. See https://crbug.com/1018739 for details.
+import("//build/config/deprecated_default_sources_assignment_filter.gni")
+set_sources_assignment_filter(deprecated_default_sources_assignment_filter)
+
 config("grpc_config") {
   include_dirs = [ "src/include" ]
   defines = [
@@ -25,7 +32,7 @@ config("grpc_internal_config") {
 config("nanopb_config") {
   include_dirs = [ "src/third_party/nanopb" ]
   defines = [ "PB_FIELD_32BIT=1" ]
-  if (is_mac || is_ios) {
+  if (is_apple) {
     defines += [ "PB_NO_PACKED_STRUCTS=1" ]
   }
 }
@@ -33,15 +40,14 @@ config("nanopb_config") {
 # The gRPC library. Note that server side code will not be built. You probably
 # want to use cc_grpc_library() from grpc_library.gni directly.
 static_library("grpcpp") {
-  # This is currently only used by remoting and chromecast.
-  # NOTE: Using gRPC outside remoting may have security concerns and other
+  # This is currently only used by chromecast and libassistant.
+  # NOTE: Using gRPC in Chrome may have security concerns and other
   # complications when building the binary. Please contact
   # chrome-security-reviews@ first before you decide to use gRPC.
   visibility = [
     "//chromecast/*",
     "//chromeos/assistant/internal/*",
     "//chromeos/services/assistant/*",
-    "//remoting/*",
   ]
   sources = [
     "src/src/cpp/client/channel_cc.cc",
@@ -498,7 +504,7 @@ static_library("grpc_core") {
     "src/src/core/tsi/transport_security.cc",
     "src/src/core/tsi/transport_security_grpc.cc",
   ]
-  set_sources_assignment_filter(sources_assignment_filter)
+  set_sources_assignment_filter(deprecated_default_sources_assignment_filter)
   configs -= [ "//build/config/compiler:chromium_code" ]
   configs += [
     ":grpc_config",

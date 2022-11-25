@@ -9,24 +9,28 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/check_op.h"
 #include "base/debug/alias.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/files/file_path.h"
 #include "base/location.h"
-#include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram.h"
+#include "base/notreached.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/util/values/values_util.h"
-#include "base/value_conversions.h"
 #include "build/build_config.h"
 #include "components/prefs/default_pref_store.h"
 #include "components/prefs/pref_notifier_impl.h"
 #include "components/prefs/pref_registry.h"
+
+#if defined(OS_ANDROID)
+#include "components/prefs/android/pref_service_android.h"
+#endif
 
 namespace {
 
@@ -205,14 +209,12 @@ std::string PrefService::GetString(const std::string& path) const {
 base::FilePath PrefService::GetFilePath(const std::string& path) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  base::FilePath result;
-
   const base::Value* value = GetPreferenceValueChecked(path);
   if (!value)
-    return base::FilePath(result);
-  bool rv = base::GetValueAsFilePath(*value, &result);
-  DCHECK(rv);
-  return result;
+    return base::FilePath();
+  base::Optional<base::FilePath> result = util::ValueToFilePath(*value);
+  DCHECK(result);
+  return *result;
 }
 
 bool PrefService::HasPrefPath(const std::string& path) const {
@@ -409,6 +411,11 @@ void PrefService::ClearPref(const std::string& path) {
   user_pref_store_->RemoveValue(path, GetWriteFlags(pref));
 }
 
+void PrefService::ClearPrefsWithPrefixSilently(const std::string& prefix) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  user_pref_store_->RemoveValuesByPrefixSilently(prefix);
+}
+
 void PrefService::ClearMutableValues() {
   user_pref_store_->ClearMutableValues();
 }
@@ -464,6 +471,15 @@ void PrefService::RemovePrefObserverAllPrefs(PrefObserver* obs) {
   pref_notifier_->RemovePrefObserverAllPrefs(obs);
 }
 
+#if defined(OS_ANDROID)
+base::android::ScopedJavaLocalRef<jobject> PrefService::GetJavaObject() {
+  if (!pref_service_android_) {
+    pref_service_android_ = std::make_unique<PrefServiceAndroid>(this);
+  }
+  return pref_service_android_->GetJavaObject();
+}
+#endif
+
 void PrefService::Set(const std::string& path, const base::Value& value) {
   SetUserPrefValue(path, value.Clone());
 }
@@ -486,7 +502,7 @@ void PrefService::SetString(const std::string& path, const std::string& value) {
 
 void PrefService::SetFilePath(const std::string& path,
                               const base::FilePath& value) {
-  SetUserPrefValue(path, base::CreateFilePathValue(value));
+  SetUserPrefValue(path, util::FilePathToValue(value));
 }
 
 void PrefService::SetInt64(const std::string& path, int64_t value) {

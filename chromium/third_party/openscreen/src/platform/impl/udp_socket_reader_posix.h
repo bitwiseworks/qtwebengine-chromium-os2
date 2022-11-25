@@ -6,7 +6,7 @@
 #define PLATFORM_IMPL_UDP_SOCKET_READER_POSIX_H_
 
 #include <map>
-#include <mutex>  // NOLINT
+#include <mutex>
 #include <vector>
 
 #include "platform/api/task_runner.h"
@@ -28,7 +28,7 @@ class UdpSocketReaderPosix : public SocketHandleWaiter::Subscriber {
   // Creates a new instance of this object.
   // NOTE: The provided NetworkWaiter must outlive this object.
   explicit UdpSocketReaderPosix(SocketHandleWaiter* waiter);
-  virtual ~UdpSocketReaderPosix() override;
+  ~UdpSocketReaderPosix() override;
 
   // Waits for |socket| to be readable and then calls the socket's
   // RecieveMessage(...) method to process the available packet.
@@ -46,7 +46,7 @@ class UdpSocketReaderPosix : public SocketHandleWaiter::Subscriber {
   virtual void OnDestroy(UdpSocket* socket);
 
   // SocketHandleWaiter::Subscriber overrides.
-  void ProcessReadyHandle(SocketHandleRef handle) override;
+  void ProcessReadyHandle(SocketHandleRef handle, uint32_t flags) override;
 
   OSP_DISALLOW_COPY_AND_ASSIGN(UdpSocketReaderPosix);
 

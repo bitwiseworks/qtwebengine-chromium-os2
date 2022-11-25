@@ -16,6 +16,7 @@
 #include "build/build_config.h"
 #include "gpu/command_buffer/service/scheduler.h"
 
+#include "components/viz/service/display_embedder/output_presenter_gl.h"
 #include "components/viz/service/display_embedder/skia_output_surface_dependency_impl.h"
 #include "components/viz/service/gl/gpu_service_impl.h"
 #include "components/viz/test/test_gpu_service_holder.h"
@@ -157,7 +158,8 @@ class MockGLSurfaceAsync : public gl::GLSurfaceStub {
 
   void SwapComplete() {
     DCHECK(!callbacks_.empty());
-    std::move(callbacks_.front()).Run(gfx::SwapResult::SWAP_ACK, nullptr);
+    std::move(callbacks_.front())
+        .Run(gfx::SwapCompletionResult(gfx::SwapResult::SWAP_ACK));
     callbacks_.pop_front();
   }
 
@@ -211,6 +213,16 @@ class SkiaOutputDeviceBufferQueueTest : public TestOnGpu {
   void SetUpOnGpu() override {
     gl_surface_ = base::MakeRefCounted<MockGLSurfaceAsync>();
     memory_tracker_ = std::make_unique<MemoryTrackerStub>();
+    shared_image_factory_ = std::make_unique<gpu::SharedImageFactory>(
+        dependency_->GetGpuPreferences(),
+        dependency_->GetGpuDriverBugWorkarounds(),
+        dependency_->GetGpuFeatureInfo(),
+        dependency_->GetSharedContextState().get(),
+        dependency_->GetMailboxManager(), dependency_->GetSharedImageManager(),
+        dependency_->GetGpuImageFactory(), memory_tracker_.get(), true),
+    shared_image_representation_factory_ =
+        std::make_unique<gpu::SharedImageRepresentationFactory>(
+            dependency_->GetSharedImageManager(), memory_tracker_.get());
 
     auto present_callback =
         base::DoNothing::Repeatedly<gpu::SwapBuffersCompleteParams,
@@ -220,17 +232,25 @@ class SkiaOutputDeviceBufferQueueTest : public TestOnGpu {
         gpu::SHARED_IMAGE_USAGE_DISPLAY |
         gpu::SHARED_IMAGE_USAGE_GLES2_FRAMEBUFFER_HINT;
 
-    std::unique_ptr<SkiaOutputDeviceBufferQueue> onscreen_device =
-        std::make_unique<SkiaOutputDeviceBufferQueue>(
-            gl_surface_, dependency_.get(), memory_tracker_.get(),
-            present_callback, shared_image_usage);
+    auto onscreen_device = std::make_unique<SkiaOutputDeviceBufferQueue>(
+        std::make_unique<OutputPresenterGL>(
+            gl_surface_, dependency_.get(), shared_image_factory_.get(),
+            shared_image_representation_factory_.get(), shared_image_usage),
+        dependency_.get(), shared_image_representation_factory_.get(),
+        memory_tracker_.get(), present_callback);
 
     output_device_ = std::move(onscreen_device);
   }
 
-  void TearDownOnGpu() override { output_device_.reset(); }
+  void TearDownOnGpu() override {
+    output_device_.reset();
+    shared_image_representation_factory_.reset();
+    shared_image_factory_.reset();
+    memory_tracker_.reset();
+    gl_surface_.reset();
+  }
 
-  using Image = SkiaOutputDeviceBufferQueue::Image;
+  using Image = OutputPresenter::Image;
 
   const std::vector<std::unique_ptr<Image>>& images() {
     return output_device_->images_;
@@ -279,11 +299,15 @@ class SkiaOutputDeviceBufferQueueTest : public TestOnGpu {
               (size_t)CountBuffers());
   }
 
-  Image* PaintAndSchedulePrimaryPlane() {
-    // Call Begin/EndPaint to ensusre the image is initialized before use.
+  Image* PaintPrimaryPlane() {
     std::vector<GrBackendSemaphore> end_semaphores;
     output_device_->BeginPaint(&end_semaphores);
     output_device_->EndPaint();
+    return current_image();
+  }
+
+  Image* PaintAndSchedulePrimaryPlane() {
+    PaintPrimaryPlane();
     SchedulePrimaryPlane();
     return current_image();
   }
@@ -291,6 +315,12 @@ class SkiaOutputDeviceBufferQueueTest : public TestOnGpu {
   void SchedulePrimaryPlane() {
     output_device_->SchedulePrimaryPlane(
         OverlayProcessorInterface::OutputSurfaceOverlayPlane());
+  }
+
+  void ScheduleNoPrimaryPlane() {
+    base::Optional<OverlayProcessorInterface::OutputSurfaceOverlayPlane>
+        no_plane;
+    output_device_->SchedulePrimaryPlane(no_plane);
   }
 
   void SwapBuffers() {
@@ -315,6 +345,9 @@ class SkiaOutputDeviceBufferQueueTest : public TestOnGpu {
   std::unique_ptr<SkiaOutputSurfaceDependency> dependency_;
   scoped_refptr<MockGLSurfaceAsync> gl_surface_;
   std::unique_ptr<MemoryTrackerStub> memory_tracker_;
+  std::unique_ptr<gpu::SharedImageFactory> shared_image_factory_;
+  std::unique_ptr<gpu::SharedImageRepresentationFactory>
+      shared_image_representation_factory_;
   std::unique_ptr<SkiaOutputDeviceBufferQueue> output_device_;
 };
 
@@ -330,7 +363,7 @@ TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, MultipleGetCurrentBufferCalls) {
   output_device_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), kDefaultFormat,
                           gfx::OVERLAY_TRANSFORM_NONE);
   EXPECT_NE(0U, memory_tracker().GetSize());
-  EXPECT_NE(PaintAndSchedulePrimaryPlane(), nullptr);
+  EXPECT_NE(PaintPrimaryPlane(), nullptr);
   EXPECT_NE(0U, memory_tracker().GetSize());
   EXPECT_EQ(3, CountBuffers());
   auto* fb = current_image();
@@ -456,6 +489,55 @@ TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, CheckEmptySwap) {
   EXPECT_EQ(1U, swap_completion_callbacks().size());
   PageFlipComplete();
   EXPECT_EQ(0U, swap_completion_callbacks().size());
+}
+
+TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, NoPrimaryPlane) {
+  // Check empty swap flow, in which the damage is empty and BindFramebuffer
+  // might not be called.
+  output_device_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), kDefaultFormat,
+                          gfx::OVERLAY_TRANSFORM_NONE);
+
+  // Do a swap and commit overlay planes with no primary plane.
+  for (size_t i = 0; i < 2; ++i) {
+    ScheduleNoPrimaryPlane();
+    EXPECT_EQ(current_image(), nullptr);
+    EXPECT_FALSE(displayed_image());
+    if (i == 0)
+      SwapBuffers();
+    else if (i == 1)
+      CommitOverlayPlanes();
+    EXPECT_FALSE(displayed_image());
+    PageFlipComplete();
+  }
+
+  // Do it again with a paint in between.
+  for (size_t i = 0; i < 2; ++i) {
+    PaintAndSchedulePrimaryPlane();
+    EXPECT_NE(current_image(), nullptr);
+    EXPECT_FALSE(displayed_image());
+    SwapBuffers();
+    PageFlipComplete();
+    EXPECT_TRUE(displayed_image());
+
+    ScheduleNoPrimaryPlane();
+    EXPECT_EQ(current_image(), nullptr);
+    if (i == 0)
+      SwapBuffers();
+    else if (i == 1)
+      CommitOverlayPlanes();
+    EXPECT_TRUE(displayed_image());
+    PageFlipComplete();
+    EXPECT_FALSE(displayed_image());
+  }
+
+  // Do a final commit with no primary.
+  {
+    ScheduleNoPrimaryPlane();
+    EXPECT_EQ(current_image(), nullptr);
+    CommitOverlayPlanes();
+    PageFlipComplete();
+    EXPECT_FALSE(displayed_image());
+  }
 }
 
 TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, CheckCorrectBufferOrdering) {

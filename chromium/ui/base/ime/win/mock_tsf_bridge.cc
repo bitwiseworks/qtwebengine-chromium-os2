@@ -4,7 +4,7 @@
 
 #include "ui/base/ime/win/mock_tsf_bridge.h"
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "ui/base/ime/text_input_client.h"
 
 namespace ui {
@@ -40,7 +40,6 @@ void MockTSFBridge::SetFocusedClient(HWND focused_window,
 
 void MockTSFBridge::RemoveFocusedClient(TextInputClient* client) {
   ++remove_focused_client_call_count_;
-  DCHECK_EQ(client, text_input_client_);
   text_input_client_ = nullptr;
   focused_window_ = nullptr;
 }

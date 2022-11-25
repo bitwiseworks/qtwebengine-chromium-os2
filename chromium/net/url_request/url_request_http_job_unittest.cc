@@ -20,8 +20,10 @@
 #include "base/strings/string_split.h"
 #include "base/test/bind_test_util.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/task_environment.h"
 #include "net/base/auth.h"
 #include "net/base/isolation_info.h"
+#include "net/base/network_isolation_key.h"
 #include "net/base/request_priority.h"
 #include "net/cert/ct_policy_status.h"
 #include "net/cookies/cookie_monster.h"
@@ -43,8 +45,6 @@
 #include "net/test/test_with_task_environment.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request.h"
-#include "net/url_request/url_request_job_factory_impl.h"
-#include "net/url_request/url_request_status.h"
 #include "net/url_request/url_request_test_util.h"
 #include "net/url_request/websocket_handshake_userdata_key.h"
 #include "net/websockets/websocket_test_util.h"
@@ -97,7 +97,6 @@ class TestURLRequestHttpJob : public URLRequestHttpJob {
  public:
   explicit TestURLRequestHttpJob(URLRequest* request)
       : URLRequestHttpJob(request,
-                          request->context()->network_delegate(),
                           request->context()->http_user_agent_settings()),
         use_null_source_stream_(false) {}
 
@@ -128,19 +127,12 @@ class TestURLRequestHttpJob : public URLRequestHttpJob {
 class URLRequestHttpJobSetUpSourceTest : public TestWithTaskEnvironment {
  public:
   URLRequestHttpJobSetUpSourceTest() : context_(true) {
-    test_job_interceptor_ = new TestJobInterceptor();
-    EXPECT_TRUE(test_job_factory_.SetProtocolHandler(
-        url::kHttpScheme, base::WrapUnique(test_job_interceptor_)));
-    context_.set_job_factory(&test_job_factory_);
     context_.set_client_socket_factory(&socket_factory_);
     context_.Init();
   }
 
  protected:
   MockClientSocketFactory socket_factory_;
-  // |test_job_interceptor_| is owned by |test_job_factory_|.
-  TestJobInterceptor* test_job_interceptor_;
-  URLRequestJobFactoryImpl test_job_factory_;
 
   TestURLRequestContext context_;
   TestDelegate delegate_;
@@ -161,7 +153,7 @@ TEST_F(URLRequestHttpJobSetUpSourceTest, SetUpSourceFails) {
                              &delegate_, TRAFFIC_ANNOTATION_FOR_TESTS);
   auto job = std::make_unique<TestURLRequestHttpJob>(request.get());
   job->set_use_null_source_stream(true);
-  test_job_interceptor_->set_main_intercept_job(std::move(job));
+  TestScopedURLInterceptor interceptor(request->url(), std::move(job));
   request->Start();
 
   delegate_.RunUntilComplete();
@@ -184,7 +176,7 @@ TEST_F(URLRequestHttpJobSetUpSourceTest, UnknownEncoding) {
       context_.CreateRequest(GURL("http://www.example.com"), DEFAULT_PRIORITY,
                              &delegate_, TRAFFIC_ANNOTATION_FOR_TESTS);
   auto job = std::make_unique<TestURLRequestHttpJob>(request.get());
-  test_job_interceptor_->set_main_intercept_job(std::move(job));
+  TestScopedURLInterceptor interceptor(request->url(), std::move(job));
   request->Start();
 
   delegate_.RunUntilComplete();
@@ -192,7 +184,12 @@ TEST_F(URLRequestHttpJobSetUpSourceTest, UnknownEncoding) {
   EXPECT_EQ("Test Content", delegate_.data_received());
 }
 
-class URLRequestHttpJobWithProxy : public WithTaskEnvironment {
+// TaskEnvironment is required to instantiate a
+// net::ConfiguredProxyResolutionService, which registers itself as an IP
+// Address Observer with the NetworkChangeNotifier.
+using URLRequestHttpJobWithProxyTest = TestWithTaskEnvironment;
+
+class URLRequestHttpJobWithProxy {
  public:
   explicit URLRequestHttpJobWithProxy(
       std::unique_ptr<ProxyResolutionService> proxy_resolution_service)
@@ -215,7 +212,7 @@ class URLRequestHttpJobWithProxy : public WithTaskEnvironment {
 
 // Tests that when proxy is not used, the proxy server is set correctly on the
 // URLRequest.
-TEST(URLRequestHttpJobWithProxy, TestFailureWithoutProxy) {
+TEST_F(URLRequestHttpJobWithProxyTest, TestFailureWithoutProxy) {
   URLRequestHttpJobWithProxy http_job_with_proxy(nullptr);
 
   MockWrite writes[] = {MockWrite(kSimpleGetMockWrite)};
@@ -243,7 +240,7 @@ TEST(URLRequestHttpJobWithProxy, TestFailureWithoutProxy) {
 
 // Tests that when one proxy is in use and the connection to the proxy server
 // fails, the proxy server is still set correctly on the URLRequest.
-TEST(URLRequestHttpJobWithProxy, TestSuccessfulWithOneProxy) {
+TEST_F(URLRequestHttpJobWithProxyTest, TestSuccessfulWithOneProxy) {
   const char kSimpleProxyGetMockWrite[] =
       "GET http://www.example.com/ HTTP/1.1\r\n"
       "Host: www.example.com\r\n"
@@ -289,8 +286,8 @@ TEST(URLRequestHttpJobWithProxy, TestSuccessfulWithOneProxy) {
 
 // Tests that when two proxies are in use and the connection to the first proxy
 // server fails, the proxy server is set correctly on the URLRequest.
-TEST(URLRequestHttpJobWithProxy,
-     TestContentLengthSuccessfulRequestWithTwoProxies) {
+TEST_F(URLRequestHttpJobWithProxyTest,
+       TestContentLengthSuccessfulRequestWithTwoProxies) {
   const ProxyServer proxy_server =
       ProxyServer::FromURI("http://origin.net:80", ProxyServer::SCHEME_HTTP);
 
@@ -339,12 +336,6 @@ class URLRequestHttpJobTest : public TestWithTaskEnvironment {
  protected:
   URLRequestHttpJobTest() : context_(true) {
     context_.set_http_transaction_factory(&network_layer_);
-
-    // The |test_job_factory_| takes ownership of the interceptor.
-    test_job_interceptor_ = new TestJobInterceptor();
-    EXPECT_TRUE(test_job_factory_.SetProtocolHandler(
-        url::kHttpScheme, base::WrapUnique(test_job_interceptor_)));
-    context_.set_job_factory(&test_job_factory_);
     context_.set_net_log(&net_log_);
     context_.Init();
 
@@ -354,10 +345,6 @@ class URLRequestHttpJobTest : public TestWithTaskEnvironment {
   }
 
   MockNetworkLayer network_layer_;
-
-  // |test_job_interceptor_| is owned by |test_job_factory_|.
-  TestJobInterceptor* test_job_interceptor_;
-  URLRequestJobFactoryImpl test_job_factory_;
 
   TestURLRequestContext context_;
   TestDelegate delegate_;
@@ -1013,6 +1000,84 @@ TEST_F(URLRequestHttpJobWithMockSocketsTest,
                                 kGTSRootR3HistogramID, 1);
 }
 
+namespace {
+
+// An ExpectCTReporter that records the number of times OnExpectCTFailed() was
+// called.
+class MockExpectCTReporter : public TransportSecurityState::ExpectCTReporter {
+ public:
+  MockExpectCTReporter() = default;
+  ~MockExpectCTReporter() override = default;
+
+  void OnExpectCTFailed(
+      const HostPortPair& host_port_pair,
+      const GURL& report_uri,
+      base::Time expiration,
+      const X509Certificate* validated_certificate_chain,
+      const X509Certificate* served_certificate_chain,
+      const SignedCertificateTimestampAndStatusList&
+          signed_certificate_timestamps,
+      const NetworkIsolationKey& network_isolation_key) override {
+    num_failures_++;
+    network_isolation_key_ = network_isolation_key;
+  }
+
+  int num_failures() const { return num_failures_; }
+  const NetworkIsolationKey& network_isolation_key() const {
+    return network_isolation_key_;
+  }
+
+ private:
+  int num_failures_ = 0;
+  NetworkIsolationKey network_isolation_key_;
+};
+
+}  // namespace
+
+TEST_F(URLRequestHttpJobWithMockSocketsTest,
+       TestHttpJobSendsNetworkIsolationKeyWhenProcessingExpectCTHeader) {
+  SSLSocketDataProvider ssl_socket_data(net::ASYNC, net::OK);
+  ssl_socket_data.ssl_info.cert =
+      ImportCertFromFile(GetTestCertsDirectory(), "ok_cert.pem");
+  ssl_socket_data.ssl_info.is_issued_by_known_root = true;
+  ssl_socket_data.ssl_info.ct_policy_compliance_required = false;
+  ssl_socket_data.ssl_info.ct_policy_compliance =
+      ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS;
+
+  socket_factory_.AddSSLSocketDataProvider(&ssl_socket_data);
+
+  MockWrite writes[] = {MockWrite(kSimpleGetMockWrite)};
+  MockRead reads[] = {
+      MockRead(
+          "HTTP/1.1 200 OK\r\n"
+          "Expect-CT: max-age=100, enforce, report-uri=https://example.test\r\n"
+          "Content-Length: 12\r\n\r\n"),
+      MockRead("Test Content")};
+  StaticSocketDataProvider socket_data(reads, writes);
+  socket_factory_.AddSocketDataProvider(&socket_data);
+
+  base::HistogramTester histograms;
+
+  MockExpectCTReporter reporter;
+  TransportSecurityState transport_security_state;
+  transport_security_state.SetExpectCTReporter(&reporter);
+  context_->set_transport_security_state(&transport_security_state);
+
+  TestDelegate delegate;
+  std::unique_ptr<URLRequest> request = context_->CreateRequest(
+      GURL("https://www.example.com/"), DEFAULT_PRIORITY, &delegate,
+      TRAFFIC_ANNOTATION_FOR_TESTS);
+  IsolationInfo isolation_info = IsolationInfo::CreateTransient();
+  request->set_isolation_info(isolation_info);
+  request->Start();
+  delegate.RunUntilComplete();
+  EXPECT_THAT(delegate.request_status(), IsOk());
+
+  ASSERT_EQ(1, reporter.num_failures());
+  EXPECT_EQ(isolation_info.network_isolation_key(),
+            reporter.network_isolation_key());
+}
+
 // Tests that the CT compliance histogram is recorded, even if CT is not
 // required.
 TEST_F(URLRequestHttpJobWithMockSocketsTest,
@@ -1275,8 +1340,8 @@ TEST_F(URLRequestHttpJobTest, SetPriorityBasic) {
 // Make sure that URLRequestHttpJob passes on its priority to its
 // transaction on start.
 TEST_F(URLRequestHttpJobTest, SetTransactionPriorityOnStart) {
-  test_job_interceptor_->set_main_intercept_job(
-      std::make_unique<TestURLRequestHttpJob>(req_.get()));
+  TestScopedURLInterceptor interceptor(
+      req_->url(), std::make_unique<TestURLRequestHttpJob>(req_.get()));
   req_->SetPriority(LOW);
 
   EXPECT_FALSE(network_layer_.last_transaction());
@@ -1290,8 +1355,8 @@ TEST_F(URLRequestHttpJobTest, SetTransactionPriorityOnStart) {
 // Make sure that URLRequestHttpJob passes on its priority updates to
 // its transaction.
 TEST_F(URLRequestHttpJobTest, SetTransactionPriority) {
-  test_job_interceptor_->set_main_intercept_job(
-      std::make_unique<TestURLRequestHttpJob>(req_.get()));
+  TestScopedURLInterceptor interceptor(
+      req_->url(), std::make_unique<TestURLRequestHttpJob>(req_.get()));
   req_->SetPriority(LOW);
   req_->Start();
   ASSERT_TRUE(network_layer_.last_transaction());
@@ -1647,10 +1712,10 @@ TEST_F(URLRequestHttpJobWebSocketTest, CreateHelperPassedThrough) {
 
 bool SetAllCookies(CookieMonster* cm, const CookieList& list) {
   DCHECK(cm);
-  ResultSavingCookieCallback<CanonicalCookie::CookieInclusionStatus> callback;
+  ResultSavingCookieCallback<CookieAccessResult> callback;
   cm->SetAllCookiesAsync(list, callback.MakeCallback());
   callback.WaitUntilDone();
-  return callback.result().IsInclude();
+  return callback.result().status.IsInclude();
 }
 
 bool CreateAndSetCookie(CookieStore* cs,
@@ -1661,12 +1726,12 @@ bool CreateAndSetCookie(CookieStore* cs,
   if (!cookie)
     return false;
   DCHECK(cs);
-  ResultSavingCookieCallback<CanonicalCookie::CookieInclusionStatus> callback;
-  cs->SetCanonicalCookieAsync(std::move(cookie), url.scheme(),
+  ResultSavingCookieCallback<CookieAccessResult> callback;
+  cs->SetCanonicalCookieAsync(std::move(cookie), url,
                               CookieOptions::MakeAllInclusive(),
                               callback.MakeCallback());
   callback.WaitUntilDone();
-  return callback.result().IsInclude();
+  return callback.result().status.IsInclude();
 }
 
 void RunRequest(TestURLRequestContext* context, const GURL& url) {

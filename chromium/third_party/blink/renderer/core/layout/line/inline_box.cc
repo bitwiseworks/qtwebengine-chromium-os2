@@ -31,6 +31,7 @@
 #include "third_party/blink/renderer/core/paint/paint_info.h"
 #include "third_party/blink/renderer/platform/fonts/font_metrics.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/partitions.h"
+#include "third_party/blink/renderer/platform/wtf/size_assertions.h"
 
 namespace blink {
 
@@ -47,8 +48,7 @@ struct SameSizeAsInlineBox : DisplayItemClient {
 #endif
 };
 
-static_assert(sizeof(InlineBox) == sizeof(SameSizeAsInlineBox),
-              "InlineBox should stay small");
+ASSERT_SIZE(InlineBox, SameSizeAsInlineBox);
 
 #if DCHECK_IS_ON()
 InlineBox::~InlineBox() {
@@ -82,7 +82,7 @@ void* InlineBox::operator new(size_t sz) {
 }
 
 void InlineBox::operator delete(void* ptr) {
-  base::PartitionFree(ptr);
+  WTF::Partitions::LayoutPartition()->Free(ptr);
 }
 
 const char* InlineBox::BoxName() const {
@@ -93,17 +93,10 @@ String InlineBox::DebugName() const {
   return BoxName();
 }
 
-IntRect InlineBox::VisualRect() const {
-  return GetLineLayoutItem().VisualRectForInlineBox();
-}
-
-IntRect InlineBox::PartialInvalidationVisualRect() const {
-  return GetLineLayoutItem().PartialInvalidationVisualRectForInlineBox();
-}
-
 DOMNodeId InlineBox::OwnerNodeId() const {
-  return GetLineLayoutItem().GetNode()
-             ? DOMNodeIds::IdForNode(GetLineLayoutItem().GetNode())
+  return GetLineLayoutItem().GetNodeForOwnerNodeId()
+             ? DOMNodeIds::IdForNode(
+                   GetLineLayoutItem().GetNodeForOwnerNodeId())
              : kInvalidDOMNodeId;
 }
 
@@ -240,7 +233,7 @@ void InlineBox::Move(const LayoutSize& delta) {
 }
 
 void InlineBox::Paint(const PaintInfo& paint_info,
-                      const LayoutPoint&,
+                      const PhysicalOffset&,
                       LayoutUnit,
                       LayoutUnit) const {
   BlockPainter::PaintInlineBox(*this, paint_info);

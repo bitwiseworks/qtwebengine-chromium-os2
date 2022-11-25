@@ -8,6 +8,8 @@
 #include <windows.h>
 #elif defined(__OS2__)
 #include <unistd.h>
+#elif defined(V8_OS_STARBOARD)
+#include "starboard/thread.h"
 #else
 #include <sched.h>
 #endif
@@ -45,6 +47,8 @@ void CallOnceImpl(OnceType* once, std::function<void()> init_func) {
 #elif defined(__OS2__)
       // This will effectively call DosSleep(0).
       sleep(0);
+#elif defined(V8_OS_STARBOARD)
+      SbThreadYield();
 #else
       sched_yield();
 #endif

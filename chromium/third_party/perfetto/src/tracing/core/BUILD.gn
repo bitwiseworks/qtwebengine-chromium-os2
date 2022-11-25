@@ -38,8 +38,6 @@ source_set("core") {
     "shared_memory_abi.cc",
     "shared_memory_arbiter_impl.cc",
     "shared_memory_arbiter_impl.h",
-    "startup_trace_writer.cc",
-    "startup_trace_writer_registry.cc",
     "trace_packet.cc",
     "trace_writer_impl.cc",
     "trace_writer_impl.h",
@@ -85,6 +83,7 @@ perfetto_unittest_source_set("unittests") {
     "../../../protos/perfetto/trace:cpp",
     "../../../protos/perfetto/trace:zero",
     "../../../protos/perfetto/trace/ftrace:cpp",
+    "../../../protos/perfetto/trace/perfetto:cpp",
     "../../base",
     "../../base:test_support",
     "../test:test_support",
@@ -104,7 +103,6 @@ perfetto_unittest_source_set("unittests") {
   if (!is_win) {
     sources += [
       "shared_memory_arbiter_impl_unittest.cc",
-      "startup_trace_writer_unittest.cc",
       "trace_writer_impl_unittest.cc",
       "tracing_service_impl_unittest.cc",
     ]
@@ -131,8 +129,8 @@ if (enable_perfetto_benchmarks) {
     deps = [
       ":core",
       ":service",
-      "../../../../../gn:benchmark",
-      "../../../../../gn:default_deps",
+      "../../../gn:benchmark",
+      "../../../gn:default_deps",
       "../../../protos/perfetto/trace:zero",
       "../../../protos/perfetto/trace/ftrace:zero",
       "../../protozero",
@@ -145,6 +143,6 @@ perfetto_fuzzer_test("packet_stream_validator_fuzzer") {
   sources = [ "packet_stream_validator_fuzzer.cc" ]
   deps = [
     ":service",
-    "../../../../../gn:default_deps",
+    "../../../gn:default_deps",
   ]
 }

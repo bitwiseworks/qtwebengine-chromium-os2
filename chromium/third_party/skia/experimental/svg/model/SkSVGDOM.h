@@ -21,7 +21,6 @@ class SkSVGNode;
 class SkSVGDOM : public SkRefCnt {
 public:
     SkSVGDOM();
-    ~SkSVGDOM() = default;
 
     static sk_sp<SkSVGDOM> MakeFromDOM(const SkDOM&);
     static sk_sp<SkSVGDOM> MakeFromStream(SkStream&);
@@ -30,6 +29,9 @@ public:
     void setContainerSize(const SkSize&);
 
     void setRoot(sk_sp<SkSVGNode>);
+
+    // Returns the node with the given id, or nullptr if not found.
+    sk_sp<SkSVGNode>* findNodeById(const char* id);
 
     void render(SkCanvas*) const;
 
@@ -40,7 +42,7 @@ private:
     sk_sp<SkSVGNode> fRoot;
     SkSVGIDMapper    fIDMapper;
 
-    typedef SkRefCnt INHERITED;
+    using INHERITED = SkRefCnt;
 };
 
 #endif // SkSVGDOM_DEFINED

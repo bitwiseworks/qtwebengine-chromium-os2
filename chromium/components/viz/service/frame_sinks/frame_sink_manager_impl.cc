@@ -8,8 +8,9 @@
 #include <stdint.h>
 
 #include "base/bind.h"
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/trace_event/trace_event.h"
 #include "components/viz/service/display/shared_bitmap_manager.h"
 #include "components/viz/service/display_embedder/output_surface_provider.h"
 #include "components/viz/service/frame_sinks/compositor_frame_sink_support.h"
@@ -59,7 +60,8 @@ FrameSinkManagerImpl::FrameSinkManagerImpl(const InitParams& params)
       restart_id_(params.restart_id),
       run_all_compositor_stages_before_draw_(
           params.run_all_compositor_stages_before_draw),
-      log_capture_pipeline_in_webrtc_(params.log_capture_pipeline_in_webrtc) {
+      log_capture_pipeline_in_webrtc_(params.log_capture_pipeline_in_webrtc),
+      debug_settings_(params.debug_renderer_settings) {
   surface_manager_.AddObserver(&hit_test_manager_);
   surface_manager_.AddObserver(this);
 }
@@ -169,7 +171,8 @@ void FrameSinkManagerImpl::CreateRootCompositorFrameSink(
   // Creating RootCompositorFrameSinkImpl can fail and return null.
   auto root_compositor_frame_sink = RootCompositorFrameSinkImpl::Create(
       std::move(params), this, output_surface_provider_, restart_id_,
-      run_all_compositor_stages_before_draw_);
+      run_all_compositor_stages_before_draw_, &debug_settings_);
+
   if (root_compositor_frame_sink)
     root_sink_map_[frame_sink_id] = std::move(root_compositor_frame_sink);
 }
@@ -291,6 +294,7 @@ void FrameSinkManagerImpl::EvictSurfaces(
 void FrameSinkManagerImpl::RequestCopyOfOutput(
     const SurfaceId& surface_id,
     std::unique_ptr<CopyOutputRequest> request) {
+  TRACE_EVENT0("viz", "FrameSinkManagerImpl::RequestCopyOfOutput");
   auto it = support_map_.find(surface_id.frame_sink_id());
   if (it == support_map_.end()) {
     // |request| will send an empty result when it goes out of scope.
@@ -569,21 +573,16 @@ const CompositorFrameSinkSupport* FrameSinkManagerImpl::GetFrameSinkForId(
   return nullptr;
 }
 
-void FrameSinkManagerImpl::SetPreferredFrameIntervalForFrameSinkId(
-    const FrameSinkId& id,
-    base::TimeDelta interval) {
-  auto it = frame_sink_data_.find(id);
-  DCHECK(it != frame_sink_data_.end());
-  it->second.preferred_frame_interval = interval;
-}
-
 base::TimeDelta FrameSinkManagerImpl::GetPreferredFrameIntervalForFrameSinkId(
-    const FrameSinkId& id) const {
-  auto it = frame_sink_data_.find(id);
-  if (it == frame_sink_data_.end())
-    return BeginFrameArgs::MinInterval();
+    const FrameSinkId& id,
+    mojom::CompositorFrameSinkType* type) const {
+  auto it = support_map_.find(id);
+  if (it != support_map_.end())
+    return it->second->GetPreferredFrameInterval(type);
 
-  return it->second.preferred_frame_interval;
+  if (type)
+    *type = mojom::CompositorFrameSinkType::kUnspecified;
+  return BeginFrameArgs::MinInterval();
 }
 
 void FrameSinkManagerImpl::DiscardPendingCopyOfOutputRequests(
@@ -622,4 +621,39 @@ void FrameSinkManagerImpl::EvictBackBuffer(uint32_t cache_id,
   std::move(callback).Run();
 }
 
+void FrameSinkManagerImpl::UpdateDebugRendererSettings(
+    const DebugRendererSettings& debug_settings) {
+  debug_settings_ = debug_settings;
+}
+
+void FrameSinkManagerImpl::UpdateThrottlingRecursively(
+    const FrameSinkId& frame_sink_id,
+    base::TimeDelta interval) {
+  auto it = support_map_.find(frame_sink_id);
+  if (it != support_map_.end()) {
+    it->second->ThrottleBeginFrame(interval);
+  }
+  auto children = GetChildrenByParent(frame_sink_id);
+  for (auto& id : children)
+    UpdateThrottlingRecursively(id, interval);
+}
+
+void FrameSinkManagerImpl::StartThrottling(
+    const std::vector<FrameSinkId>& frame_sink_ids,
+    base::TimeDelta interval) {
+  DCHECK_GT(interval, base::TimeDelta());
+  DCHECK(!frame_sinks_throttled_);
+
+  frame_sinks_throttled_ = true;
+  for (auto& frame_sink_id : frame_sink_ids) {
+    UpdateThrottlingRecursively(frame_sink_id, interval);
+  }
+}
+
+void FrameSinkManagerImpl::EndThrottling() {
+  for (auto& support_map_item : support_map_) {
+    support_map_item.second->ThrottleBeginFrame(base::TimeDelta());
+  }
+  frame_sinks_throttled_ = false;
+}
 }  // namespace viz

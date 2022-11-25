@@ -17,7 +17,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/task/post_task.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -172,7 +171,7 @@ class HttpRequest {
 
       result = socket_->Write(
           request_.get(), request_->BytesRemaining(),
-          base::Bind(&HttpRequest::DoSendRequest, base::Unretained(this)),
+          base::BindOnce(&HttpRequest::DoSendRequest, base::Unretained(this)),
           kAndroidDeviceManagerTrafficAnnotation);
     }
   }
@@ -212,9 +211,8 @@ class HttpRequest {
     response_buffer_ = base::MakeRefCounted<net::IOBuffer>(kBufferSize);
 
     result = socket_->Read(
-        response_buffer_.get(),
-        kBufferSize,
-        base::Bind(&HttpRequest::OnResponseData, base::Unretained(this)));
+        response_buffer_.get(), kBufferSize,
+        base::BindOnce(&HttpRequest::OnResponseData, base::Unretained(this)));
     if (result != net::ERR_IO_PENDING)
       OnResponseData(result);
   }
@@ -275,7 +273,7 @@ class HttpRequest {
 
       result = socket_->Read(
           response_buffer_.get(), kBufferSize,
-          base::Bind(&HttpRequest::OnResponseData, base::Unretained(this)));
+          base::BindOnce(&HttpRequest::OnResponseData, base::Unretained(this)));
     } while (result != net::ERR_IO_PENDING);
   }
 
@@ -383,8 +381,8 @@ class DevicesRequest : public base::RefCountedThreadSafe<DevicesRequest> {
 
 void OnCountDevices(const base::Callback<void(int)>& callback,
                     int device_count) {
-  base::PostTask(FROM_HERE, {BrowserThread::UI},
-                 base::BindOnce(callback, device_count));
+  content::GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindOnce(callback, device_count));
 }
 
 }  // namespace

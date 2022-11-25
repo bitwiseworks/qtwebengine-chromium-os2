@@ -6,6 +6,7 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/logging.h"
 #include "base/task/post_task.h"
 #include "base/task/thread_pool.h"
 #include "base/win/message_window.h"
@@ -48,7 +49,7 @@ bool ScreenlockMonitorDeviceSource::SessionMessageWindow::OnWndProc(
   if (message == WM_WTSSESSION_CHANGE) {
     ProcessWTSSessionLockMessage(wparam);
   }
-  return true;
+  return false;
 }
 
 void ScreenlockMonitorDeviceSource::SessionMessageWindow::

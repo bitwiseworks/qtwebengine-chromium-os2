@@ -11,7 +11,6 @@
 #include "base/memory/ptr_util.h"
 #include "base/optional.h"
 #include "base/stl_util.h"
-#include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "content/browser/background_fetch/storage/image_helpers.h"
 #include "content/browser/content_index/content_index.pb.h"
@@ -145,8 +144,8 @@ void ContentIndexDatabase::AddEntry(
   auto wrapped_callback = base::BindOnce(
       [](blink::mojom::ContentIndexService::AddCallback callback,
          blink::mojom::ContentIndexError error) {
-        base::PostTask(FROM_HERE, {BrowserThread::UI},
-                       base::BindOnce(std::move(callback), error));
+        GetUIThreadTaskRunner({})->PostTask(
+            FROM_HERE, base::BindOnce(std::move(callback), error));
       },
       std::move(callback));
 
@@ -181,6 +180,11 @@ void ContentIndexDatabase::AddEntryOnCoreThread(
   if (!service_worker_registration ||
       !service_worker_registration->active_version()) {
     std::move(callback).Run(blink::mojom::ContentIndexError::NO_SERVICE_WORKER);
+    return;
+  }
+
+  if (!service_worker_registration->origin().IsSameOriginWith(origin)) {
+    std::move(callback).Run(blink::mojom::ContentIndexError::STORAGE_ERROR);
     return;
   }
 
@@ -226,7 +230,7 @@ void ContentIndexDatabase::DidSerializeIcons(
                           std::move(description), launch_url, entry_time);
 
   service_worker_context_->StoreRegistrationUserData(
-      service_worker_registration_id, origin.GetURL(),
+      service_worker_registration_id, origin,
       {{std::move(entry_key), std::move(entry_value)},
        {std::move(icon_key), std::move(icons_value)}},
       base::BindOnce(&ContentIndexDatabase::DidAddEntry,
@@ -249,8 +253,8 @@ void ContentIndexDatabase::DidAddEntry(
 
   std::vector<ContentIndexEntry> entries;
   entries.push_back(std::move(entry));
-  base::PostTask(
-      FROM_HERE, {BrowserThread::UI},
+  GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce(&ContentIndexDatabase::NotifyProviderContentAdded,
                      weak_ptr_factory_ui_.GetWeakPtr(), std::move(entries)));
 }
@@ -265,8 +269,8 @@ void ContentIndexDatabase::DeleteEntry(
   auto wrapped_callback = base::BindOnce(
       [](blink::mojom::ContentIndexService::DeleteCallback callback,
          blink::mojom::ContentIndexError error) {
-        base::PostTask(FROM_HERE, {BrowserThread::UI},
-                       base::BindOnce(std::move(callback), error));
+        GetUIThreadTaskRunner({})->PostTask(
+            FROM_HERE, base::BindOnce(std::move(callback), error));
       },
       std::move(callback));
 
@@ -284,6 +288,15 @@ void ContentIndexDatabase::DeleteEntryOnCoreThread(
     const std::string& entry_id,
     blink::mojom::ContentIndexService::DeleteCallback callback) {
   DCHECK_CURRENTLY_ON(ServiceWorkerContext::GetCoreThreadId());
+
+  scoped_refptr<ServiceWorkerRegistration> service_worker_registration =
+      service_worker_context_->GetLiveRegistration(
+          service_worker_registration_id);
+  if (!service_worker_registration ||
+      !service_worker_registration->origin().IsSameOriginWith(origin)) {
+    std::move(callback).Run(blink::mojom::ContentIndexError::STORAGE_ERROR);
+    return;
+  }
 
   service_worker_context_->ClearRegistrationUserData(
       service_worker_registration_id, {EntryKey(entry_id), IconsKey(entry_id)},
@@ -308,8 +321,8 @@ void ContentIndexDatabase::DidDeleteEntry(
 
   std::move(callback).Run(blink::mojom::ContentIndexError::NONE);
 
-  base::PostTask(
-      FROM_HERE, {BrowserThread::UI},
+  GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce(&ContentIndexDatabase::NotifyProviderContentDeleted,
                      weak_ptr_factory_ui_.GetWeakPtr(),
                      service_worker_registration_id, origin, entry_id));
@@ -317,6 +330,7 @@ void ContentIndexDatabase::DidDeleteEntry(
 
 void ContentIndexDatabase::GetDescriptions(
     int64_t service_worker_registration_id,
+    const url::Origin& origin,
     blink::mojom::ContentIndexService::GetDescriptionsCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
@@ -324,8 +338,8 @@ void ContentIndexDatabase::GetDescriptions(
       [](blink::mojom::ContentIndexService::GetDescriptionsCallback callback,
          blink::mojom::ContentIndexError error,
          std::vector<blink::mojom::ContentDescriptionPtr> descriptions) {
-        base::PostTask(FROM_HERE, {BrowserThread::UI},
-                       base::BindOnce(std::move(callback), error,
+        GetUIThreadTaskRunner({})->PostTask(
+            FROM_HERE, base::BindOnce(std::move(callback), error,
                                       std::move(descriptions)));
       },
       std::move(callback));
@@ -334,14 +348,25 @@ void ContentIndexDatabase::GetDescriptions(
       FROM_HERE, ServiceWorkerContext::GetCoreThreadId(),
       base::BindOnce(&ContentIndexDatabase::GetDescriptionsOnCoreThread,
                      weak_ptr_factory_core_.GetWeakPtr(),
-                     service_worker_registration_id,
+                     service_worker_registration_id, origin,
                      std::move(wrapped_callback)));
 }
 
 void ContentIndexDatabase::GetDescriptionsOnCoreThread(
     int64_t service_worker_registration_id,
+    const url::Origin& origin,
     blink::mojom::ContentIndexService::GetDescriptionsCallback callback) {
   DCHECK_CURRENTLY_ON(ServiceWorkerContext::GetCoreThreadId());
+
+  scoped_refptr<ServiceWorkerRegistration> service_worker_registration =
+      service_worker_context_->GetLiveRegistration(
+          service_worker_registration_id);
+  if (!service_worker_registration ||
+      !service_worker_registration->origin().IsSameOriginWith(origin)) {
+    std::move(callback).Run(blink::mojom::ContentIndexError::STORAGE_ERROR,
+                            /* descriptions= */ {});
+    return;
+  }
 
   service_worker_context_->GetRegistrationUserDataByKeyPrefix(
       service_worker_registration_id, kEntryPrefix,
@@ -407,8 +432,8 @@ void ContentIndexDatabase::GetIcons(
   auto wrapped_callback = base::BindOnce(
       [](ContentIndexContext::GetIconsCallback callback,
          std::vector<SkBitmap> icons) {
-        base::PostTask(FROM_HERE, {BrowserThread::UI},
-                       base::BindOnce(std::move(callback), std::move(icons)));
+        GetUIThreadTaskRunner({})->PostTask(
+            FROM_HERE, base::BindOnce(std::move(callback), std::move(icons)));
       },
       std::move(callback));
 
@@ -499,8 +524,8 @@ void ContentIndexDatabase::GetAllEntries(
       [](ContentIndexContext::GetAllEntriesCallback callback,
          blink::mojom::ContentIndexError error,
          std::vector<ContentIndexEntry> entries) {
-        base::PostTask(
-            FROM_HERE, {BrowserThread::UI},
+        GetUIThreadTaskRunner({})->PostTask(
+            FROM_HERE,
             base::BindOnce(std::move(callback), error, std::move(entries)));
       },
       std::move(callback));
@@ -577,8 +602,8 @@ void ContentIndexDatabase::GetEntry(
   auto wrapped_callback = base::BindOnce(
       [](ContentIndexContext::GetEntryCallback callback,
          base::Optional<ContentIndexEntry> entry) {
-        base::PostTask(FROM_HERE, {BrowserThread::UI},
-                       base::BindOnce(std::move(callback), std::move(entry)));
+        GetUIThreadTaskRunner({})->PostTask(
+            FROM_HERE, base::BindOnce(std::move(callback), std::move(entry)));
       },
       std::move(callback));
 
@@ -657,7 +682,7 @@ void ContentIndexDatabase::DidDeleteItem(
     return;
 
   service_worker_context_->FindReadyRegistrationForId(
-      service_worker_registration_id, origin.GetURL(),
+      service_worker_registration_id, origin,
       base::BindOnce(&ContentIndexDatabase::StartActiveWorkerForDispatch,
                      weak_ptr_factory_core_.GetWeakPtr(), description_id));
 }
@@ -698,13 +723,13 @@ void ContentIndexDatabase::DeliverMessageToWorker(
 
   // Don't allow DB operations while the `contentdelete` event is firing.
   // This is to prevent re-registering the deleted content within the event.
-  BlockOrigin(service_worker->script_origin());
+  BlockOrigin(service_worker->origin());
 
   int request_id = service_worker->StartRequest(
       ServiceWorkerMetrics::EventType::CONTENT_DELETE,
       base::BindOnce(&ContentIndexDatabase::DidDispatchEvent,
                      weak_ptr_factory_core_.GetWeakPtr(),
-                     service_worker->script_origin()));
+                     service_worker->origin()));
 
   service_worker->endpoint()->DispatchContentDeleteEvent(
       description_id, service_worker->CreateSimpleEventCallback(request_id));

@@ -22,7 +22,6 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "content/browser/blob_storage/chrome_blob_storage_context.h"
-#include "content/browser/resource_context_impl.h"
 #include "content/browser/webui/shared_resources_data_source.h"
 #include "content/browser/webui/url_data_source_impl.h"
 #include "content/browser/webui/web_ui_data_source_impl.h"
@@ -32,17 +31,14 @@
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/content_client.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/url_constants.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/filter/source_stream.h"
 #include "net/http/http_status_code.h"
 #include "net/log/net_log_util.h"
-#include "net/url_request/url_request.h"
-#include "net/url_request/url_request_context.h"
-#include "net/url_request/url_request_error_job.h"
-#include "net/url_request/url_request_job.h"
-#include "net/url_request/url_request_job_factory.h"
+#include "services/network/public/mojom/content_security_policy.mojom.h"
 #include "ui/base/template_expressions.h"
 #include "ui/base/webui/i18n_source_stream.h"
 #include "url/url_util.h"
@@ -51,11 +47,17 @@ namespace content {
 
 namespace {
 
-const char kChromeURLContentSecurityPolicyHeaderBase[] =
-    "Content-Security-Policy: ";
+const char kChromeURLContentSecurityPolicyHeaderName[] =
+    "Content-Security-Policy";
+const char kChromeURLContentSecurityPolicyReportOnlyHeaderName[] =
+    "Content-Security-Policy-Report-Only";
+const char kChromeURLContentSecurityPolicyReportOnlyHeaderValue[] =
+    "require-trusted-types-for 'script'";
 
-const char kChromeURLXFrameOptionsHeader[] = "X-Frame-Options: DENY";
+const char kChromeURLXFrameOptionsHeaderName[] = "X-Frame-Options";
+const char kChromeURLXFrameOptionsHeaderValue[] = "DENY";
 const char kNetworkErrorKey[] = "netError";
+const char kURLDataManagerBackendKeyName[] = "url_data_manager_backend";
 
 bool SchemeIsInSchemes(const std::string& scheme,
                        const std::vector<std::string>& schemes) {
@@ -65,16 +67,34 @@ bool SchemeIsInSchemes(const std::string& scheme,
 }  // namespace
 
 URLDataManagerBackend::URLDataManagerBackend() : next_request_id_(0) {
-  URLDataSource* shared_source = new SharedResourcesDataSource();
-  AddDataSource(new URLDataSourceImpl(shared_source->GetSource(),
-                                      base::WrapUnique(shared_source)));
+  // Add a shared data source for chrome://resources. For chrome:// data sources
+  // we use the host name as the source name.
+  AddDataSource(new URLDataSourceImpl(
+      kChromeUIResourcesHost,
+      SharedResourcesDataSource::CreateForChromeScheme()));
+
+  // Add a shared data source for chrome-untrusted://resources. For
+  // chrome-untrusted:// data sources we use the full origin as the source name.
+  AddDataSource(new URLDataSourceImpl(
+      kChromeUIUntrustedResourcesURL,
+      SharedResourcesDataSource::CreateForChromeUntrustedScheme()));
 }
 
 URLDataManagerBackend::~URLDataManagerBackend() = default;
 
-void URLDataManagerBackend::AddDataSource(
-    URLDataSourceImpl* source) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+URLDataManagerBackend* URLDataManagerBackend::GetForBrowserContext(
+    BrowserContext* context) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (!context->GetUserData(kURLDataManagerBackendKeyName)) {
+    context->SetUserData(kURLDataManagerBackendKeyName,
+                         std::make_unique<URLDataManagerBackend>());
+  }
+  return static_cast<URLDataManagerBackend*>(
+      context->GetUserData(kURLDataManagerBackendKeyName));
+}
+
+void URLDataManagerBackend::AddDataSource(URLDataSourceImpl* source) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!source->source()->ShouldReplaceExistingSource()) {
     auto i = data_sources_.find(source->source_name());
     if (i != data_sources_.end())
@@ -139,42 +159,62 @@ scoped_refptr<net::HttpResponseHeaders> URLDataManagerBackend::GetHeaders(
   // that is compatible with a given WebUI URL, and append it to the existing
   // response headers.
   if (source->ShouldAddContentSecurityPolicy()) {
-    std::string base = kChromeURLContentSecurityPolicyHeaderBase;
-    base.append(source->GetContentSecurityPolicyScriptSrc());
-    base.append(source->GetContentSecurityPolicyObjectSrc());
-    base.append(source->GetContentSecurityPolicyChildSrc());
-    base.append(source->GetContentSecurityPolicyStyleSrc());
-    base.append(source->GetContentSecurityPolicyImgSrc());
-    base.append(source->GetContentSecurityPolicyWorkerSrc());
+    std::string csp_header;
+
+    const network::mojom::CSPDirectiveName kAllDirectives[] = {
+        network::mojom::CSPDirectiveName::ChildSrc,
+        network::mojom::CSPDirectiveName::ConnectSrc,
+        network::mojom::CSPDirectiveName::DefaultSrc,
+        network::mojom::CSPDirectiveName::FrameSrc,
+        network::mojom::CSPDirectiveName::ImgSrc,
+        network::mojom::CSPDirectiveName::MediaSrc,
+        network::mojom::CSPDirectiveName::ObjectSrc,
+        network::mojom::CSPDirectiveName::RequireTrustedTypesFor,
+        network::mojom::CSPDirectiveName::ScriptSrc,
+        network::mojom::CSPDirectiveName::StyleSrc,
+        network::mojom::CSPDirectiveName::TrustedTypes,
+        network::mojom::CSPDirectiveName::WorkerSrc};
+
+    for (auto& directive : kAllDirectives) {
+      csp_header.append(source->GetContentSecurityPolicy(directive));
+    }
+
     // TODO(crbug.com/1051745): Both CSP frame ancestors and XFO headers may be
     // added to the response but frame ancestors would take precedence. In the
     // future, XFO will be removed so when that happens remove the check and
     // always add frame ancestors.
-    if (source->ShouldDenyXFrameOptions())
-      base.append(source->GetContentSecurityPolicyFrameAncestors());
-    headers->AddHeader(base);
+    if (source->ShouldDenyXFrameOptions()) {
+      csp_header.append(source->GetContentSecurityPolicy(
+          network::mojom::CSPDirectiveName::FrameAncestors));
+    }
+
+    headers->SetHeader(kChromeURLContentSecurityPolicyHeaderName, csp_header);
   }
 
-  if (source->ShouldDenyXFrameOptions())
-    headers->AddHeader(kChromeURLXFrameOptionsHeader);
+  if (source->ShouldDenyXFrameOptions()) {
+    headers->SetHeader(kChromeURLXFrameOptionsHeaderName,
+                       kChromeURLXFrameOptionsHeaderValue);
+  }
+
+  if (base::FeatureList::IsEnabled(features::kWebUIReportOnlyTrustedTypes)) {
+    headers->SetHeader(kChromeURLContentSecurityPolicyReportOnlyHeaderName,
+                       kChromeURLContentSecurityPolicyReportOnlyHeaderValue);
+  }
 
   if (!source->AllowCaching())
-    headers->AddHeader("Cache-Control: no-cache");
+    headers->SetHeader("Cache-Control", "no-cache");
 
   std::string mime_type = source->GetMimeType(path);
-  if (source->ShouldServeMimeTypeAsContentTypeHeader() && !mime_type.empty()) {
-    std::string content_type = base::StringPrintf(
-        "%s:%s", net::HttpRequestHeaders::kContentType, mime_type.c_str());
-    headers->AddHeader(content_type);
-  }
+  if (source->ShouldServeMimeTypeAsContentTypeHeader() && !mime_type.empty())
+    headers->SetHeader(net::HttpRequestHeaders::kContentType, mime_type);
 
   if (!origin.empty()) {
     std::string header = source->GetAccessControlAllowOriginForOrigin(origin);
     DCHECK(header.empty() || header == origin || header == "*" ||
            header == "null");
     if (!header.empty()) {
-      headers->AddHeader("Access-Control-Allow-Origin: " + header);
-      headers->AddHeader("Vary: Origin");
+      headers->SetHeader("Access-Control-Allow-Origin", header);
+      headers->SetHeader("Vary", "Origin");
     }
   }
 
@@ -198,13 +238,12 @@ bool URLDataManagerBackend::CheckURLIsValid(const GURL& url) {
 }
 
 bool URLDataManagerBackend::IsValidNetworkErrorCode(int error_code) {
-  std::unique_ptr<base::DictionaryValue> error_codes = net::GetNetConstants();
+  base::Value error_codes = net::GetNetConstants();
   const base::DictionaryValue* net_error_codes_dict = nullptr;
 
-  for (base::DictionaryValue::Iterator itr(*error_codes); !itr.IsAtEnd();
-       itr.Advance()) {
-    if (itr.key() == kNetworkErrorKey) {
-      itr.value().GetAsDictionary(&net_error_codes_dict);
+  for (const auto& item : error_codes.DictItems()) {
+    if (item.first == kNetworkErrorKey) {
+      item.second.GetAsDictionary(&net_error_codes_dict);
       break;
     }
   }

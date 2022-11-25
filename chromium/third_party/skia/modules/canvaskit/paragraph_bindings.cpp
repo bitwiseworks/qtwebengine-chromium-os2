@@ -13,6 +13,7 @@
 #include "modules/skparagraph/include/Paragraph.h"
 #include "modules/skparagraph/include/ParagraphBuilder.h"
 #include "modules/skparagraph/include/TextStyle.h"
+#include "modules/skparagraph/include/TypefaceFontProvider.h"
 #include "modules/skparagraph/src/ParagraphBuilderImpl.h"
 #include "modules/skparagraph/src/ParagraphImpl.h"
 
@@ -27,6 +28,12 @@ using namespace emscripten;
 
 namespace para = skia::textlayout;
 
+SkColor4f toSkColor4f(uintptr_t /* float* */ cPtr) {
+    float* fourFloats = reinterpret_cast<float*>(cPtr);
+    SkColor4f color = { fourFloats[0], fourFloats[1], fourFloats[2], fourFloats[3] };
+    return color;
+}
+
 struct SimpleFontStyle {
     SkFontStyle::Slant  slant;
     SkFontStyle::Weight weight;
@@ -34,36 +41,34 @@ struct SimpleFontStyle {
 };
 
 struct SimpleTextStyle {
-    SimpleColor4f color;
-    SimpleColor4f foregroundColor;
-    SimpleColor4f backgroundColor;
+    uintptr_t /* float* */ colorPtr;
+    uintptr_t /* float* */ foregroundColorPtr;
+    uintptr_t /* float* */ backgroundColorPtr;
     uint8_t decoration;
     SkScalar decorationThickness;
     SkScalar fontSize;
     SimpleFontStyle fontStyle;
 
-    uintptr_t /* const char** */ fontFamilies;
-    int numFontFamilies;
+    uintptr_t /* const char** */ fontFamiliesPtr;
+    int fontFamiliesLen;
 };
 
 para::TextStyle toTextStyle(const SimpleTextStyle& s) {
     para::TextStyle ts;
 
     // textstyle.color doesn't support a 4f color, however the foreground and background fields below do.
-    ts.setColor(s.color.toSkColor());
+    ts.setColor(toSkColor4f(s.colorPtr).toSkColor());
 
-    // Emscripten will not allow a value_object to have an unset field, however
     // It is functionally important that these paints be unset when no value was provided.
-    // paragraph.js defaults these colors to transparent in that case and we use that signal here.
-    if (s.foregroundColor.a > 0) {
+    if (s.foregroundColorPtr) {
         SkPaint p1;
-        p1.setColor4f(s.foregroundColor.toSkColor4f());
+        p1.setColor4f(toSkColor4f(s.foregroundColorPtr));
         ts.setForegroundColor(p1);
     }
 
-    if (s.backgroundColor.a > 0) {
+    if (s.backgroundColorPtr) {
         SkPaint p2;
-        p2.setColor4f(s.backgroundColor.toSkColor4f());
+        p2.setColor4f(toSkColor4f(s.backgroundColorPtr));
         ts.setBackgroundColor(p2);
     }
 
@@ -76,10 +81,10 @@ para::TextStyle toTextStyle(const SimpleTextStyle& s) {
         ts.setDecorationThicknessMultiplier(s.decorationThickness);
     }
 
-    const char** fontFamilies = reinterpret_cast<const char**>(s.fontFamilies);
-    if (s.numFontFamilies > 0 && fontFamilies != nullptr) {
+    const char** fontFamilies = reinterpret_cast<const char**>(s.fontFamiliesPtr);
+    if (s.fontFamiliesLen > 0 && fontFamilies != nullptr) {
         std::vector<SkString> ff;
-        for (int i = 0; i< s.numFontFamilies; i++) {
+        for (int i = 0; i < s.fontFamiliesLen; i++) {
             ff.emplace_back(fontFamilies[i]);
         }
         ts.setFontFamilies(ff);
@@ -178,24 +183,54 @@ EMSCRIPTEN_BINDINGS(Paragraph) {
         .function("layout", &para::ParagraphImpl::layout);
 
     class_<para::ParagraphBuilderImpl>("ParagraphBuilder")
-        .class_function("Make", optional_override([](SimpleParagraphStyle style,
-                                                     sk_sp<SkFontMgr> fontMgr)-> para::ParagraphBuilderImpl {
+        .class_function("_Make", optional_override([](SimpleParagraphStyle style, sk_sp<SkFontMgr> fontMgr)
+                        -> std::unique_ptr<para::ParagraphBuilderImpl> {
             auto fc = sk_make_sp<para::FontCollection>();
             fc->setDefaultFontManager(fontMgr);
             auto ps = toParagraphStyle(style);
-            para::ParagraphBuilderImpl pbi(ps, fc);
-            return pbi;
+            auto pb = para::ParagraphBuilderImpl::make(ps, fc);
+            return std::unique_ptr<para::ParagraphBuilderImpl>(static_cast<para::ParagraphBuilderImpl*>(pb.release()));
         }), allow_raw_pointers())
+      .class_function("_MakeFromFontProvider", optional_override([](SimpleParagraphStyle style,
+                      sk_sp<para::TypefaceFontProvider> fontProvider)-> std::unique_ptr<para::ParagraphBuilderImpl> {
+            auto fc = sk_make_sp<para::FontCollection>();
+            fc->setDefaultFontManager(fontProvider);
+            auto ps = toParagraphStyle(style);
+            auto pb = para::ParagraphBuilderImpl::make(ps, fc);
+            return std::unique_ptr<para::ParagraphBuilderImpl>(static_cast<para::ParagraphBuilderImpl*>(pb.release()));
+      }), allow_raw_pointers())
         .function("addText", optional_override([](para::ParagraphBuilderImpl& self, std::string text) {
             return self.addText(text.c_str(), text.length());
         }))
         .function("build", &para::ParagraphBuilderImpl::Build, allow_raw_pointers())
         .function("pop", &para::ParagraphBuilderImpl::pop)
-        .function("pushStyle",  optional_override([](para::ParagraphBuilderImpl& self,
+        .function("_pushStyle",  optional_override([](para::ParagraphBuilderImpl& self,
                                                      SimpleTextStyle textStyle) {
             auto ts = toTextStyle(textStyle);
             self.pushStyle(ts);
+        }))
+        // A method of pushing a textStyle with paints instead of colors for foreground and
+        // background. Since SimpleTextStyle is a value object, it cannot contain paints, which are not primitives. This binding is here to accept them. Any color that is specified in the textStyle is overridden.
+        .function("_pushPaintStyle",  optional_override([](para::ParagraphBuilderImpl& self,
+                SimpleTextStyle textStyle, SkPaint foreground, SkPaint background) {
+            auto ts = toTextStyle(textStyle);
+            ts.setForegroundColor(foreground);
+            ts.setBackgroundColor(background);
+            self.pushStyle(ts);
         }));
+
+    class_<para::TypefaceFontProvider, base<SkFontMgr>>("TypefaceFontProvider")
+      .smart_ptr<sk_sp<para::TypefaceFontProvider>>("sk_sp<TypefaceFontProvider>")
+      .class_function("Make", optional_override([]()-> sk_sp<para::TypefaceFontProvider> {
+          return sk_make_sp<para::TypefaceFontProvider>();
+      }))
+      .function("_registerFont", optional_override([](para::TypefaceFontProvider& self,
+                                                      sk_sp<SkTypeface> typeface,
+                                                      uintptr_t familyPtr) {
+          const char* fPtr = reinterpret_cast<const char*>(familyPtr);
+          SkString fStr(fPtr);
+          self.registerTypeface(typeface, fStr);
+      }), allow_raw_pointers());
 
 
     enum_<para::Affinity>("Affinity")
@@ -275,15 +310,15 @@ EMSCRIPTEN_BINDINGS(Paragraph) {
         .field("textStyle",         &SimpleParagraphStyle::textStyle);
 
     value_object<SimpleTextStyle>("TextStyle")
-        .field("color",               &SimpleTextStyle::color)
-        .field("foregroundColor",     &SimpleTextStyle::foregroundColor)
-        .field("backgroundColor",     &SimpleTextStyle::backgroundColor)
+        .field("_colorPtr",           &SimpleTextStyle::colorPtr)
+        .field("_foregroundColorPtr", &SimpleTextStyle::foregroundColorPtr)
+        .field("_backgroundColorPtr", &SimpleTextStyle::backgroundColorPtr)
         .field("decoration",          &SimpleTextStyle::decoration)
         .field("decorationThickness", &SimpleTextStyle::decorationThickness)
-        .field("_fontFamilies",       &SimpleTextStyle::fontFamilies)
+        .field("_fontFamiliesPtr",    &SimpleTextStyle::fontFamiliesPtr)
+        .field("_fontFamiliesLen",    &SimpleTextStyle::fontFamiliesLen)
         .field("fontSize",            &SimpleTextStyle::fontSize)
-        .field("fontStyle",           &SimpleTextStyle::fontStyle)
-        .field("_numFontFamilies",    &SimpleTextStyle::numFontFamilies);
+        .field("fontStyle",           &SimpleTextStyle::fontStyle);
 
     // The U stands for unsigned - we can't bind a generic/template object, so we have to specify it
     // with the type we are using.

@@ -52,7 +52,6 @@ struct SameSizeAsLayer : public base::RefCounted<SameSizeAsLayer> {
     Region non_fast_scrollable_region;
     TouchActionRegion touch_action_region;
     ElementId element_id;
-    ElementId frame_element_id;
   } inputs;
   void* layer_tree_inputs;
   int int_fields[6];
@@ -78,10 +77,9 @@ Layer::Inputs::Inputs(int layer_id)
     : layer_id(layer_id),
       hit_testable(false),
       contents_opaque(false),
+      contents_opaque_for_text(false),
       is_drawable(false),
       double_sided(true),
-      is_scrollbar(false),
-      has_will_change_transform_hint(false),
       background_color(0) {}
 
 Layer::Inputs::~Inputs() = default;
@@ -224,13 +222,6 @@ void Layer::SetNeedsFullTreeSync() {
   layer_tree_host_->SetNeedsFullTreeSync();
 }
 
-void Layer::SetNextCommitWaitsForActivation() {
-  if (!layer_tree_host_)
-    return;
-
-  layer_tree_host_->SetNextCommitWaitsForActivation();
-}
-
 void Layer::SetNeedsPushProperties() {
   if (layer_tree_host_)
     layer_tree_host_->AddLayerShouldPushProperties(this);
@@ -244,7 +235,7 @@ bool Layer::IsPropertyChangeAllowed() const {
 }
 
 void Layer::CaptureContent(const gfx::Rect& rect,
-                           std::vector<NodeId>* content) {}
+                           std::vector<NodeInfo>* content) {}
 
 sk_sp<SkPicture> Layer::GetPicture() const {
   return nullptr;
@@ -805,9 +796,19 @@ void Layer::SetContentsOpaque(bool opaque) {
   if (inputs_.contents_opaque == opaque)
     return;
   inputs_.contents_opaque = opaque;
+  inputs_.contents_opaque_for_text = opaque;
   SetNeedsCommit();
   SetSubtreePropertyChanged();
   SetPropertyTreesNeedRebuild();
+}
+
+void Layer::SetContentsOpaqueForText(bool opaque) {
+  DCHECK(IsPropertyChangeAllowed());
+  if (inputs_.contents_opaque_for_text == opaque)
+    return;
+  DCHECK(!contents_opaque() || opaque);
+  inputs_.contents_opaque_for_text = opaque;
+  SetNeedsCommit();
 }
 
 void Layer::SetPosition(const gfx::PointF& position) {
@@ -952,7 +953,6 @@ void Layer::SetScrollOffsetFromImplSide(
   if (inputs.scroll_offset == scroll_offset)
     return;
   inputs.scroll_offset = scroll_offset;
-  SetNeedsPushProperties();
 
   UpdatePropertyTreeScrollOffset();
 
@@ -1015,12 +1015,8 @@ void Layer::SetScrollable(const gfx::Size& bounds) {
   SetNeedsCommit();
 }
 
-void Layer::SetIsScrollbar(bool is_scrollbar) {
-  if (inputs_.is_scrollbar == is_scrollbar)
-    return;
-
-  inputs_.is_scrollbar = is_scrollbar;
-  SetNeedsCommit();
+bool Layer::IsScrollbarLayerForTesting() const {
+  return false;
 }
 
 void Layer::SetUserScrollable(bool horizontal, bool vertical) {
@@ -1110,16 +1106,6 @@ void Layer::SetForceRenderSurfaceForTesting(bool force) {
   force_render_surface_for_testing_ = force;
   SetPropertyTreesNeedRebuild();
   SetNeedsCommit();
-}
-
-void Layer::SetDoubleSided(bool double_sided) {
-  DCHECK(IsPropertyChangeAllowed());
-  if (inputs_.double_sided == double_sided)
-    return;
-  inputs_.double_sided = double_sided;
-  SetNeedsCommit();
-  SetPropertyTreesNeedRebuild();
-  SetSubtreePropertyChanged();
 }
 
 void Layer::SetTransformTreeIndex(int index) {
@@ -1241,13 +1227,14 @@ std::string Layer::ToString() const {
       "  name: %s\n"
       "  Bounds: %s\n"
       "  ElementId: %s\n"
+      "  HitTestable: %d\n"
       "  OffsetToTransformParent: %s\n"
       "  clip_tree_index: %d\n"
       "  effect_tree_index: %d\n"
       "  scroll_tree_index: %d\n"
       "  transform_tree_index: %d\n",
       id(), DebugName().c_str(), bounds().ToString().c_str(),
-      element_id().ToString().c_str(),
+      element_id().ToString().c_str(), HitTestable(),
       offset_to_transform_parent().ToString().c_str(), clip_tree_index(),
       effect_tree_index(), scroll_tree_index(), transform_tree_index());
 }
@@ -1335,11 +1322,10 @@ void Layer::PushPropertiesTo(LayerImpl* layer) {
     layer->SetWheelEventHandlerRegion(Region());
   }
   layer->SetContentsOpaque(inputs_.contents_opaque);
+  layer->SetContentsOpaqueForText(inputs_.contents_opaque_for_text);
   layer->SetShouldCheckBackfaceVisibility(should_check_backface_visibility_);
 
   layer->UpdateScrollable();
-
-  layer->set_is_scrollbar(inputs_.is_scrollbar);
 
   // The property trees must be safe to access because they will be used below
   // to call |SetScrollOffsetClobberActiveValue|.
@@ -1359,8 +1345,6 @@ void Layer::PushPropertiesTo(LayerImpl* layer) {
     layer->set_needs_show_scrollbars(true);
 
   layer->UnionUpdateRect(inputs_.update_rect);
-  layer->SetHasWillChangeTransformHint(has_will_change_transform_hint());
-  layer->SetFrameElementId(inputs_.frame_element_id);
   layer->SetNeedsPushProperties();
 
   // debug_info_->invalidations, if exist, will be cleared in the function.
@@ -1461,20 +1445,6 @@ void Layer::OnOpacityAnimated(float opacity) {
 
 void Layer::OnTransformAnimated(const gfx::Transform& transform) {
   EnsureLayerTreeInputs().transform = transform;
-}
-
-void Layer::SetHasWillChangeTransformHint(bool has_will_change) {
-  if (inputs_.has_will_change_transform_hint == has_will_change)
-    return;
-  inputs_.has_will_change_transform_hint = has_will_change;
-  SetNeedsCommit();
-}
-
-void Layer::SetFrameElementId(ElementId frame_element_id) {
-  if (inputs_.frame_element_id == frame_element_id)
-    return;
-  inputs_.frame_element_id = frame_element_id;
-  SetNeedsCommit();
 }
 
 void Layer::SetTrilinearFiltering(bool trilinear_filtering) {

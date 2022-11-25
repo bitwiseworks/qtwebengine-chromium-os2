@@ -17,7 +17,6 @@
 #include "ui/web_dialogs/web_dialog_ui.h"
 
 class Profile;
-class SigninViewController;
 
 namespace content {
 class WebContents;
@@ -47,7 +46,6 @@ class SigninEmailConfirmationDialog : public ui::WebDialogDelegate,
   // Create and show the dialog, which owns itself.
   // Ask the user for confirmation before starting to sync.
   static SigninEmailConfirmationDialog* AskForConfirmation(
-      SigninViewController* signin_view_controller,
       content::WebContents* contents,
       Profile* profile,
       const std::string& last_email,
@@ -59,8 +57,7 @@ class SigninEmailConfirmationDialog : public ui::WebDialogDelegate,
  private:
   class DialogWebContentsObserver;
 
-  SigninEmailConfirmationDialog(SigninViewController* signin_view_controller,
-                                content::WebContents* contents,
+  SigninEmailConfirmationDialog(content::WebContents* contents,
                                 Profile* profile,
                                 const std::string& last_email,
                                 const std::string& new_email,
@@ -83,6 +80,7 @@ class SigninEmailConfirmationDialog : public ui::WebDialogDelegate,
   void CloseModalSignin() override;
   void ResizeNativeView(int height) override;
   content::WebContents* GetWebContents() override;
+  void SetWebContents(content::WebContents* web_contents) override;
 
   // Shows the dialog and releases ownership of this object. Another object will
   // take ownership and delete this object.
@@ -97,8 +95,6 @@ class SigninEmailConfirmationDialog : public ui::WebDialogDelegate,
   // Returns the media router dialog WebContents.
   // Returns nullptr if there is no dialog.
   content::WebContents* GetDialogWebContents() const;
-
-  SigninViewController* signin_view_controller_;
 
   // Web contents from which the "Learn more" link should be opened.
   content::WebContents* const web_contents_;

@@ -23,7 +23,6 @@
 #include "ui/views/background.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/button/image_button.h"
-#include "ui/views/controls/highlight_path_generator.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/focus/focus_manager.h"
@@ -45,9 +44,17 @@ base::string16 CreateAccessibleName(const Notification& notification) {
     return notification.accessible_name();
 
   // Fall back to a text constructed from the notification.
-  std::vector<base::string16> accessible_lines = {
-      notification.title(), notification.message(),
-      notification.context_message()};
+  // Add non-empty elements.
+
+  std::vector<base::string16> accessible_lines;
+  if (!notification.title().empty())
+    accessible_lines.push_back(notification.title());
+
+  if (!notification.message().empty())
+    accessible_lines.push_back(notification.message());
+
+  if (!notification.context_message().empty())
+    accessible_lines.push_back(notification.context_message());
   std::vector<NotificationItem> items = notification.items();
   for (size_t i = 0; i < items.size() && i < kNotificationMaximumItems; ++i) {
     accessible_lines.push_back(items[i].title + base::ASCIIToUTF16(" ") +
@@ -69,19 +76,12 @@ bool ShouldShowAeroShadowBorder() {
 // static
 const char MessageView::kViewClassName[] = "MessageView";
 
-class MessageView::HighlightPathGenerator
-    : public views::HighlightPathGenerator {
- public:
-  HighlightPathGenerator() = default;
+MessageView::HighlightPathGenerator::HighlightPathGenerator() = default;
 
-  // views::HighlightPathGenerator:
-  SkPath GetHighlightPath(const views::View* view) override {
-    return static_cast<const MessageView*>(view)->GetHighlightPath();
-  }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(HighlightPathGenerator);
-};
+SkPath MessageView::HighlightPathGenerator::GetHighlightPath(
+    const views::View* view) {
+  return static_cast<const MessageView*>(view)->GetHighlightPath();
+}
 
 MessageView::MessageView(const Notification& notification)
     : notification_id_(notification.id()), slide_out_controller_(this, this) {
@@ -89,9 +89,6 @@ MessageView::MessageView(const Notification& notification)
   focus_ring_ = views::FocusRing::Install(this);
   views::HighlightPathGenerator::Install(
       this, std::make_unique<HighlightPathGenerator>());
-
-  // TODO(amehfooz): Remove explicit color setting after native theme changes.
-  focus_ring_->SetColor(gfx::kGoogleBlue500);
 
   // Paint to a dedicated layer to make the layer non-opaque.
   SetPaintToLayer();
@@ -176,9 +173,7 @@ void MessageView::SetManuallyExpandedOrCollapsed(bool value) {
 
 void MessageView::UpdateCornerRadius(int top_radius, int bottom_radius) {
   SetCornerRadius(top_radius, bottom_radius);
-  SetBackground(views::CreateBackgroundFromPainter(
-      std::make_unique<NotificationBackgroundPainter>(top_radius,
-                                                      bottom_radius)));
+  UpdateBackgroundPainter();
   SchedulePaint();
 }
 
@@ -214,6 +209,10 @@ void MessageView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   node_data->AddStringAttribute(
       ax::mojom::StringAttribute::kRoleDescription,
       l10n_util::GetStringUTF8(IDS_MESSAGE_NOTIFICATION_ACCESSIBLE_NAME));
+
+  if (accessible_name_.empty())
+    node_data->SetNameFrom(ax::mojom::NameFrom::kAttributeExplicitlyEmpty);
+
   node_data->SetName(accessible_name_);
 }
 
@@ -250,7 +249,7 @@ bool MessageView::OnKeyPressed(const ui::KeyEvent& event) {
 }
 
 bool MessageView::OnKeyReleased(const ui::KeyEvent& event) {
-  // Space key handling is triggerred at key-release timing. See
+  // Space key handling is triggered at key-release timing. See
   // ui/views/controls/buttons/button.cc for why.
   if (event.flags() != ui::EF_NONE || event.key_code() != ui::VKEY_SPACE)
     return false;
@@ -326,6 +325,7 @@ void MessageView::AddedToWidget() {
 
 void MessageView::OnThemeChanged() {
   InkDropHostView::OnThemeChanged();
+  UpdateBackgroundPainter();
   SetNestedBorderIfNecessary();
 }
 
@@ -469,6 +469,14 @@ void MessageView::SetNestedBorderIfNecessary() {
     SetBorder(views::CreateRoundedRectBorder(
         kNotificationBorderThickness, kNotificationCornerRadius, border_color));
   }
+}
+
+void MessageView::UpdateBackgroundPainter() {
+  SkColor background_color = GetNativeTheme()->GetSystemColor(
+      ui::NativeTheme::kColorId_NotificationDefaultBackground);
+  SetBackground(views::CreateBackgroundFromPainter(
+      std::make_unique<NotificationBackgroundPainter>(
+          top_radius_, bottom_radius_, background_color)));
 }
 
 void MessageView::UpdateControlButtonsVisibility() {

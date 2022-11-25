@@ -11,6 +11,8 @@
 #include "base/process/process.h"
 #include "base/task/task_traits.h"
 #include "components/performance_manager/public/graph/node.h"
+#include "components/performance_manager/public/render_process_host_id.h"
+#include "content/public/common/process_type.h"
 
 namespace base {
 class Process;
@@ -44,6 +46,9 @@ class ProcessNode : public Node {
   ProcessNode();
   ~ProcessNode() override;
 
+  // Returns the type of this process.
+  virtual content::ProcessType GetProcessType() const = 0;
+
   // Returns the process ID associated with this process. Use this in preference
   // to querying GetProcess.Pid(). It's always valid to access, but will return
   // kNullProcessId if the process has yet started. It will also retain the
@@ -66,17 +71,13 @@ class ProcessNode : public Node {
   virtual base::Optional<int32_t> GetExitStatus() const = 0;
 
   // Visits the frame nodes that are hosted in this process. The iteration is
-  // halted if the visitor returns false.
-  virtual void VisitFrameNodes(const FrameNodeVisitor& visitor) const = 0;
+  // halted if the visitor returns false. Returns true if every call to the
+  // visitor returned true, false otherwise.
+  virtual bool VisitFrameNodes(const FrameNodeVisitor& visitor) const = 0;
 
   // Returns the set of frame nodes that are hosted in this process. Note that
   // calling this causes the set of nodes to be generated.
   virtual base::flat_set<const FrameNode*> GetFrameNodes() const = 0;
-
-  // Returns the current expected task queuing duration in the process. This is
-  // measure of main thread latency. See
-  // ProcessNodeObserver::OnExpectedTaskQueueingDurationSample.
-  virtual base::TimeDelta GetExpectedTaskQueueingDuration() const = 0;
 
   // Returns true if the main thread task load is low (below some threshold
   // of usage). See ProcessNodeObserver::OnMainThreadTaskLoadIsLow.
@@ -90,6 +91,10 @@ class ProcessNode : public Node {
   // Returns the most recently measured resident set of the process, in
   // kilobytes.
   virtual uint64_t GetResidentSetKb() const = 0;
+
+  // Returns the render process id (equivalent to RenderProcessHost::GetID()),
+  // or ChildProcessHost::kInvalidUniqueID if this is not a renderer.
+  virtual RenderProcessHostId GetRenderProcessHostId() const = 0;
 
   // Returns a proxy to the RenderProcessHost associated with this node. The
   // proxy may only be dereferenced on the UI thread.
@@ -123,11 +128,6 @@ class ProcessNodeObserver {
   virtual void OnBeforeProcessNodeRemoved(const ProcessNode* process_node) = 0;
 
   // Notifications of property changes.
-
-  // Invoked when a new |expected_task_queueing_duration| sample is available.
-  virtual void OnExpectedTaskQueueingDurationSample(
-      const ProcessNode* process_node) = 0;
-
   // Invoked when the |main_thread_task_load_is_low| property changes.
   virtual void OnMainThreadTaskLoadIsLow(const ProcessNode* process_node) = 0;
 
@@ -156,8 +156,6 @@ class ProcessNode::ObserverDefaultImpl : public ProcessNodeObserver {
   void OnProcessNodeAdded(const ProcessNode* process_node) override {}
   void OnProcessLifetimeChange(const ProcessNode* process_node) override {}
   void OnBeforeProcessNodeRemoved(const ProcessNode* process_node) override {}
-  void OnExpectedTaskQueueingDurationSample(
-      const ProcessNode* process_node) override {}
   void OnMainThreadTaskLoadIsLow(const ProcessNode* process_node) override {}
   void OnPriorityChanged(const ProcessNode* process_node,
                          base::TaskPriority previous_value) override {}

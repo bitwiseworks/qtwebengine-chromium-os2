@@ -20,7 +20,8 @@ base::Optional<Fourcc> FindImageProcessorInputFormat(V4L2Device* vda_device) {
   std::vector<uint32_t> processor_input_formats =
       V4L2ImageProcessorBackend::GetSupportedInputFormats();
 
-  struct v4l2_fmtdesc fmtdesc = {};
+  struct v4l2_fmtdesc fmtdesc;
+  memset(&fmtdesc, 0, sizeof(fmtdesc));
   fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
   while (vda_device->Ioctl(VIDIOC_ENUM_FMT, &fmtdesc) == 0) {
     if (std::find(processor_input_formats.begin(),
@@ -71,6 +72,7 @@ std::unique_ptr<ImageProcessor> CreateImageProcessor(
     const gfx::Size& vda_output_coded_size,
     const gfx::Size& ip_output_coded_size,
     const gfx::Size& visible_size,
+    VideoFrame::StorageType output_storage_type,
     size_t nb_buffers,
     scoped_refptr<V4L2Device> image_processor_device,
     ImageProcessor::OutputMode image_processor_output_mode,
@@ -86,8 +88,8 @@ std::unique_ptr<ImageProcessor> CreateImageProcessor(
                                  {VideoFrame::STORAGE_DMABUFS}),
       ImageProcessor::PortConfig(ip_output_format, ip_output_coded_size, {},
                                  gfx::Rect(visible_size),
-                                 {VideoFrame::STORAGE_DMABUFS}),
-      {image_processor_output_mode}, std::move(error_cb),
+                                 {output_storage_type}),
+      {image_processor_output_mode}, VIDEO_ROTATION_0, std::move(error_cb),
       std::move(client_task_runner));
   if (!image_processor)
     return nullptr;
@@ -174,6 +176,8 @@ bool InputBufferFragmentSplitter::IsPartialFramePending() const {
 H264InputBufferFragmentSplitter::H264InputBufferFragmentSplitter()
     : h264_parser_(new H264Parser()) {}
 
+H264InputBufferFragmentSplitter::~H264InputBufferFragmentSplitter() = default;
+
 bool H264InputBufferFragmentSplitter::AdvanceFrameFragment(const uint8_t* data,
                                                            size_t size,
                                                            size_t* endpos) {
@@ -184,6 +188,7 @@ bool H264InputBufferFragmentSplitter::AdvanceFrameFragment(const uint8_t* data,
   h264_parser_->SetStream(data, size);
   H264NALU nalu;
   H264Parser::Result result;
+  bool has_frame_data = false;
   *endpos = 0;
 
   // Keep on peeking the next NALs while they don't indicate a frame
@@ -197,7 +202,8 @@ bool H264InputBufferFragmentSplitter::AdvanceFrameFragment(const uint8_t* data,
     }
     if (result == H264Parser::kEOStream) {
       // We've reached the end of the buffer before finding a frame boundary.
-      partial_frame_pending_ = true;
+      if (has_frame_data)
+        partial_frame_pending_ = true;
       *endpos = size;
       return true;
     }
@@ -206,6 +212,8 @@ bool H264InputBufferFragmentSplitter::AdvanceFrameFragment(const uint8_t* data,
       case H264NALU::kIDRSlice:
         if (nalu.size < 1)
           return false;
+
+        has_frame_data = true;
 
         // For these two, if the "first_mb_in_slice" field is zero, start a
         // new frame and return.  This field is Exp-Golomb coded starting on

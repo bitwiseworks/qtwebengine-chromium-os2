@@ -8,7 +8,8 @@
 
 #include <memory>
 
-#include "base/logging.h"
+#include "base/check.h"
+#include "base/notreached.h"
 #include "base/optional.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_restrictions.h"
@@ -164,8 +165,7 @@ bool DeserializeNotificationDatabaseData(const std::string& input,
     action.title = base::UTF8ToUTF16(payload_action.title());
     action.icon = GURL(payload_action.icon());
     if (payload_action.has_placeholder()) {
-      action.placeholder = base::NullableString16(
-          base::UTF8ToUTF16(payload_action.placeholder()), false);
+      action.placeholder = base::UTF8ToUTF16(payload_action.placeholder());
     }
     notification_data->actions.push_back(action);
   }
@@ -256,9 +256,8 @@ bool SerializeNotificationDatabaseData(const NotificationDatabaseData& input,
     payload_action->set_title(base::UTF16ToUTF8(action.title));
     payload_action->set_icon(action.icon.spec());
 
-    if (!action.placeholder.is_null()) {
-      payload_action->set_placeholder(
-          base::UTF16ToUTF8(action.placeholder.string()));
+    if (action.placeholder) {
+      payload_action->set_placeholder(base::UTF16ToUTF8(*action.placeholder));
     }
   }
 

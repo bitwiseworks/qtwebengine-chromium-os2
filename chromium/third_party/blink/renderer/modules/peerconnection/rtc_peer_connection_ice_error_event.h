@@ -40,15 +40,13 @@ class MODULES_EXPORT RTCPeerConnectionIceErrorEvent final : public Event {
 
   String address() const;
   base::Optional<uint16_t> port() const;
-  // TODO(crbug.com/1060971): Remove |is_null| version.
-  uint16_t port(bool& is_null) const;  // DEPRECATED
   String hostCandidate() const;
   String url() const;
   uint16_t errorCode() const;
   String errorText() const;
   const AtomicString& InterfaceName() const override;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   String address_;

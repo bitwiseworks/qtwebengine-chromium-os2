@@ -50,8 +50,7 @@ QuicSpdyClientBase::QuicSpdyClientBase(
                      std::move(session_cache)),
       store_response_(false),
       latest_response_code_(-1),
-      max_allowed_push_id_(0),
-      disable_qpack_dynamic_table_(false) {}
+      max_allowed_push_id_(0) {}
 
 QuicSpdyClientBase::~QuicSpdyClientBase() {
   // We own the push promise index. We need to explicitly kill
@@ -63,11 +62,11 @@ QuicSpdyClientSession* QuicSpdyClientBase::client_session() {
   return static_cast<QuicSpdyClientSession*>(QuicClientBase::session());
 }
 
+const QuicSpdyClientSession* QuicSpdyClientBase::client_session() const {
+  return static_cast<const QuicSpdyClientSession*>(QuicClientBase::session());
+}
+
 void QuicSpdyClientBase::InitializeSession() {
-  if (disable_qpack_dynamic_table_) {
-    client_session()->set_qpack_maximum_dynamic_table_capacity(0);
-    client_session()->set_qpack_maximum_blocked_streams(0);
-  }
   client_session()->Initialize();
   client_session()->CryptoConnect();
   if (max_allowed_push_id_ > 0 &&
@@ -181,7 +180,7 @@ QuicSpdyClientStream* QuicSpdyClientBase::CreateClientStream() {
     return nullptr;
   }
   if (VersionHasIetfQuicFrames(client_session()->transport_version())) {
-    // Process MAX_STREAMS from peer.
+    // Process MAX_STREAMS from peer or wait for liveness testing succeeds.
     while (!client_session()->CanOpenNextOutgoingBidirectionalStream()) {
       network_helper()->RunEventLoop();
     }
@@ -189,11 +188,13 @@ QuicSpdyClientStream* QuicSpdyClientBase::CreateClientStream() {
   auto* stream = static_cast<QuicSpdyClientStream*>(
       client_session()->CreateOutgoingBidirectionalStream());
   if (stream) {
-    stream->SetPriority(
-        spdy::SpdyStreamPrecedence(QuicStream::kDefaultPriority));
     stream->set_visitor(this);
   }
   return stream;
+}
+
+bool QuicSpdyClientBase::goaway_received() const {
+  return client_session() && client_session()->goaway_received();
 }
 
 bool QuicSpdyClientBase::EarlyDataAccepted() {

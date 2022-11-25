@@ -5,7 +5,8 @@
 #include "net/android/network_change_notifier_delegate_android.h"
 
 #include "base/android/jni_array.h"
-#include "base/logging.h"
+#include "base/check.h"
+#include "base/notreached.h"
 #include "net/android/network_change_notifier_android.h"
 #include "net/net_jni_headers/NetworkChangeNotifier_jni.h"
 
@@ -28,6 +29,7 @@ NetworkChangeNotifier::ConnectionType ConvertConnectionType(
     case NetworkChangeNotifier::CONNECTION_2G:
     case NetworkChangeNotifier::CONNECTION_3G:
     case NetworkChangeNotifier::CONNECTION_4G:
+    case NetworkChangeNotifier::CONNECTION_5G:
     case NetworkChangeNotifier::CONNECTION_NONE:
     case NetworkChangeNotifier::CONNECTION_BLUETOOTH:
       break;

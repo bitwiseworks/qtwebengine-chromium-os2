@@ -133,7 +133,8 @@ class PannerHandler final : public AudioHandler {
                 AudioParamHandler& orientation_z);
 
   // BaseAudioContext's listener
-  AudioListener* Listener();
+  // AudioListener* Listener();
+  CrossThreadPersistent<AudioListener> Listener() const;
 
   bool SetPanningModel(Panner::PanningModel);  // Returns true on success.
   bool SetDistanceModel(unsigned);  // Returns true on success.
@@ -176,17 +177,33 @@ class PannerHandler final : public AudioHandler {
   float cached_distance_cone_gain_;
 
   const FloatPoint3D GetPosition() const {
-    return FloatPoint3D(position_x_->Value(), position_y_->Value(),
-                        position_z_->Value());
+    auto x = position_x_->IsAudioRate() ? position_x_->FinalValue()
+                                        : position_x_->Value();
+    auto y = position_y_->IsAudioRate() ? position_y_->FinalValue()
+                                        : position_y_->Value();
+    auto z = position_z_->IsAudioRate() ? position_z_->FinalValue()
+                                        : position_z_->Value();
+
+    return FloatPoint3D(x, y, z);
   }
 
   const FloatPoint3D Orientation() const {
-    return FloatPoint3D(orientation_x_->Value(), orientation_y_->Value(),
-                        orientation_z_->Value());
+    auto x = orientation_x_->IsAudioRate() ? orientation_x_->FinalValue()
+                                           : orientation_x_->Value();
+    auto y = orientation_y_->IsAudioRate() ? orientation_y_->FinalValue()
+                                           : orientation_y_->Value();
+    auto z = orientation_z_->IsAudioRate() ? orientation_z_->FinalValue()
+                                           : orientation_z_->Value();
+
+    return FloatPoint3D(x, y, z);
   }
 
   // True if any of this panner's AudioParams have automations.
   bool HasSampleAccurateValues() const;
+
+  // True if any of the panner's AudioParams are set for a-rate
+  // automations (the default).
+  bool IsAudioRate() const;
 
   scoped_refptr<AudioParamHandler> position_x_;
   scoped_refptr<AudioParamHandler> position_y_;
@@ -216,7 +233,7 @@ class PannerNode final : public AudioNode {
 
   PannerNode(BaseAudioContext&);
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   // Uses a 3D cartesian coordinate system
   AudioParam* positionX() const { return position_x_; }

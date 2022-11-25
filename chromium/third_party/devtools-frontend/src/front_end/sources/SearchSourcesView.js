@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Search from '../search/search.js';
 import * as UI from '../ui/ui.js';  // eslint-disable-line no-unused-vars
 
@@ -57,7 +60,7 @@ export class ActionDelegate {
    * @return {!Promise}
    */
   _showSearch() {
-    const selection = self.UI.inspectorView.element.window().getSelection();
+    const selection = UI.InspectorView.InspectorView.instance().element.window().getSelection();
     let queryCandidate = '';
     if (selection.rangeCount) {
       queryCandidate = selection.toString().replace(/\r?\n.*/, '');

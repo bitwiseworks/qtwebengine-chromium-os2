@@ -8,14 +8,13 @@
 #define XFA_FWL_CFWL_PICTUREBOX_H_
 
 #include "xfa/fwl/cfwl_widget.h"
-#include "xfa/fwl/cfwl_widgetproperties.h"
 
 class CFX_DIBitmap;
 class CFWL_Widget;
 
 class CFWL_PictureBox final : public CFWL_Widget {
  public:
-  explicit CFWL_PictureBox(const CFWL_App* pApp);
+  CONSTRUCT_VIA_MAKE_GARBAGE_COLLECTED;
   ~CFWL_PictureBox() override;
 
   // CFWL_Widget
@@ -26,8 +25,10 @@ class CFWL_PictureBox final : public CFWL_Widget {
                     const CFX_Matrix& matrix) override;
 
  private:
-  CFX_RectF m_rtClient;
-  CFX_RectF m_rtImage;
+  explicit CFWL_PictureBox(CFWL_App* pApp);
+
+  CFX_RectF m_ClientRect;
+  CFX_RectF m_ImageRect;
   CFX_Matrix m_matrix;
 };
 

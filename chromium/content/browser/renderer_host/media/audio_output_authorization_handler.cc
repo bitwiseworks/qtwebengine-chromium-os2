@@ -6,7 +6,6 @@
 
 #include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/task/post_task.h"
 #include "base/task_runner_util.h"
 #include "base/trace_event/trace_event.h"
 #include "content/browser/media/media_devices_permission_checker.h"
@@ -170,8 +169,8 @@ void AudioOutputAuthorizationHandler::RequestDeviceAuthorization(
       trace_scope->UsingSessionId(session_id, device->id);
       // We don't need the origin for authorization in this case, but it's used
       // for hashing the device id before sending it back to the renderer.
-      base::PostTaskAndReplyWithResult(
-          FROM_HERE, {BrowserThread::UI},
+      GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+          FROM_HERE,
           base::BindOnce(&GetMediaDeviceSaltAndOrigin, render_process_id_,
                          render_frame_id),
           base::BindOnce(&AudioOutputAuthorizationHandler::HashDeviceId,
@@ -191,8 +190,8 @@ void AudioOutputAuthorizationHandler::RequestDeviceAuthorization(
 
   trace_scope->CheckAccessStart(device_id);
   // Check device permissions if nondefault device is requested.
-  base::PostTask(
-      FROM_HERE, {BrowserThread::UI},
+  GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce(&CheckAccessOnUIThread, render_process_id_,
                      render_frame_id, override_permissions_,
                      permissions_override_value_,
@@ -207,6 +206,11 @@ void AudioOutputAuthorizationHandler::OverridePermissionsForTesting(
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   override_permissions_ = true;
   permissions_override_value_ = override_value;
+}
+
+void AudioOutputAuthorizationHandler::
+    SetAuthorizedDeviceIdForGlobalMediaControls(std::string hashed_device_id) {
+  hashed_device_id_for_global_media_controls_ = std::move(hashed_device_id);
 }
 
 void AudioOutputAuthorizationHandler::UMALogDeviceAuthorizationTime(
@@ -243,6 +247,12 @@ void AudioOutputAuthorizationHandler::AccessChecked(
     bool has_access) const {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   trace_scope->AccessChecked(has_access);
+
+  // If this device has been explicitly allowed by the browser, overwrite the
+  // result of the permission check.
+  has_access = device_id == hashed_device_id_for_global_media_controls_
+                   ? true
+                   : has_access;
 
   if (!has_access) {
     std::move(cb).Run(media::OUTPUT_DEVICE_STATUS_ERROR_NOT_AUTHORIZED,

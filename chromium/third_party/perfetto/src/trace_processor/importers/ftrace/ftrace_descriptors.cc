@@ -24,7 +24,7 @@ namespace perfetto {
 namespace trace_processor {
 namespace {
 
-std::array<MessageDescriptor, 334> descriptors{{
+std::array<MessageDescriptor, 347> descriptors{{
     {nullptr, 0, {}},
     {nullptr, 0, {}},
     {nullptr, 0, {}},
@@ -3565,6 +3565,133 @@ std::array<MessageDescriptor, 334> descriptors{{
             {"trace_type", ProtoSchemaType::kUint32},
             {"value", ProtoSchemaType::kInt32},
             {"trace_begin", ProtoSchemaType::kUint32},
+        },
+    },
+    {
+        "mark_victim",
+        1,
+        {
+            {},
+            {"pid", ProtoSchemaType::kInt32},
+        },
+    },
+    {
+        "ion_stat",
+        3,
+        {
+            {},
+            {"buffer_id", ProtoSchemaType::kUint32},
+            {"len", ProtoSchemaType::kInt64},
+            {"total_allocated", ProtoSchemaType::kUint64},
+        },
+    },
+    {
+        "ion_buffer_create",
+        2,
+        {
+            {},
+            {"addr", ProtoSchemaType::kUint64},
+            {"len", ProtoSchemaType::kUint64},
+        },
+    },
+    {
+        "ion_buffer_destroy",
+        2,
+        {
+            {},
+            {"addr", ProtoSchemaType::kUint64},
+            {"len", ProtoSchemaType::kUint64},
+        },
+    },
+    {
+        "scm_call_start",
+        3,
+        {
+            {},
+            {"arginfo", ProtoSchemaType::kUint32},
+            {"x0", ProtoSchemaType::kUint64},
+            {"x5", ProtoSchemaType::kUint64},
+        },
+    },
+    {
+        "scm_call_end",
+        0,
+        {
+            {},
+        },
+    },
+    {
+        "gpu_mem_total",
+        3,
+        {
+            {},
+            {"gpu_id", ProtoSchemaType::kUint32},
+            {"pid", ProtoSchemaType::kUint32},
+            {"size", ProtoSchemaType::kUint64},
+        },
+    },
+    {
+        "thermal_temperature",
+        4,
+        {
+            {},
+            {"id", ProtoSchemaType::kInt32},
+            {"temp", ProtoSchemaType::kInt32},
+            {"temp_prev", ProtoSchemaType::kInt32},
+            {"thermal_zone", ProtoSchemaType::kString},
+        },
+    },
+    {
+        "cdev_update",
+        2,
+        {
+            {},
+            {"target", ProtoSchemaType::kUint64},
+            {"type", ProtoSchemaType::kString},
+        },
+    },
+    {
+        "cpuhp_exit",
+        4,
+        {
+            {},
+            {"cpu", ProtoSchemaType::kUint32},
+            {"idx", ProtoSchemaType::kInt32},
+            {"ret", ProtoSchemaType::kInt32},
+            {"state", ProtoSchemaType::kInt32},
+        },
+    },
+    {
+        "cpuhp_multi_enter",
+        4,
+        {
+            {},
+            {"cpu", ProtoSchemaType::kUint32},
+            {"fun", ProtoSchemaType::kUint64},
+            {"idx", ProtoSchemaType::kInt32},
+            {"target", ProtoSchemaType::kInt32},
+        },
+    },
+    {
+        "cpuhp_enter",
+        4,
+        {
+            {},
+            {"cpu", ProtoSchemaType::kUint32},
+            {"fun", ProtoSchemaType::kUint64},
+            {"idx", ProtoSchemaType::kInt32},
+            {"target", ProtoSchemaType::kInt32},
+        },
+    },
+    {
+        "cpuhp_latency",
+        4,
+        {
+            {},
+            {"cpu", ProtoSchemaType::kUint32},
+            {"ret", ProtoSchemaType::kInt32},
+            {"state", ProtoSchemaType::kUint32},
+            {"time", ProtoSchemaType::kUint64},
         },
     },
 }};

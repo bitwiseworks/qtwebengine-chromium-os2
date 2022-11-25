@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "content/browser/loader/url_loader_throttles.h"
+#include "content/public/browser/url_loader_throttles.h"
 
 #include "components/variations/net/omnibox_url_loader_throttle.h"
 #include "components/variations/net/variations_url_loader_throttle.h"
@@ -25,6 +25,9 @@ CreateContentBrowserURLLoaderThrottles(
           request, browser_context, wc_getter, navigation_ui_data,
           frame_tree_node_id);
   variations::OmniboxURLLoaderThrottle::AppendThrottleIfNeeded(&throttles);
+  // TODO(crbug.com/1094303): Consider whether we want to use the WebContents to
+  // determine the value for variations::Owner. Alternatively, this is the
+  // browser side, and we might be fine with Owner::kUnknown.
   variations::VariationsURLLoaderThrottle::AppendThrottleIfNeeded(
       browser_context->GetVariationsClient(), &throttles);
   return throttles;

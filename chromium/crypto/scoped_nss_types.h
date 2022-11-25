@@ -5,6 +5,7 @@
 #ifndef CRYPTO_SCOPED_NSS_TYPES_H_
 #define CRYPTO_SCOPED_NSS_TYPES_H_
 
+#include <certt.h>
 #include <keyhi.h>
 #include <nss.h>
 #include <pk11pub.h>
@@ -57,6 +58,10 @@ typedef std::unique_ptr<SECItem,
 typedef std::unique_ptr<PLArenaPool,
                         NSSDestroyer1<PLArenaPool, PORT_FreeArena, PR_FALSE>>
     ScopedPLArenaPool;
+typedef std::unique_ptr<
+    CERTSubjectPublicKeyInfo,
+    NSSDestroyer<CERTSubjectPublicKeyInfo, SECKEY_DestroySubjectPublicKeyInfo>>
+    ScopedCERTSubjectPublicKeyInfo;
 
 }  // namespace crypto
 

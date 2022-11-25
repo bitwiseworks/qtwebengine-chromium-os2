@@ -23,14 +23,15 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/optional.h"
 #include "build/build_config.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "ui/accessibility/ax_enums.mojom-forward.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/class_property.h"
 #include "ui/base/clipboard/clipboard_format_type.h"
-#include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/dragdrop/drop_target_event.h"
+#include "ui/base/dragdrop/mojom/drag_drop_types.mojom-forward.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/compositor/layer_delegate.h"
@@ -43,10 +44,12 @@
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/vector2d.h"
+#include "ui/gfx/geometry/vector2d_conversions.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/views/layout/layout_types.h"
 #include "ui/views/metadata/metadata_header_macros.h"
 #include "ui/views/metadata/metadata_impl_macros.h"
+#include "ui/views/metadata/view_factory.h"
 #include "ui/views/paint_info.h"
 #include "ui/views/view_targeter.h"
 #include "ui/views/views_export.h"
@@ -125,7 +128,7 @@ struct VIEWS_EXPORT ViewHierarchyChangedDetails {
 // Used to identify the CallbackList<> within the PropertyChangedVectors map.
 using PropertyKey = const void*;
 
-using PropertyChangedCallbacks = base::CallbackList<void()>;
+using PropertyChangedCallbacks = base::RepeatingClosureList;
 using PropertyChangedCallback = PropertyChangedCallbacks::CallbackType;
 using PropertyChangedSubscription =
     std::unique_ptr<PropertyChangedCallbacks::Subscription>;
@@ -251,20 +254,18 @@ enum PropertyEffects {
 //   In the implementing .cc file, add the following macros to the same
 //   namespace in which the class resides.
 //
-//   BEGIN_METADATA(View)
-//   ADD_PROPERTY_METADATA(View, bool, Frobble)
-//   END_METADATA()
+//   BEGIN_METADATA(View, ParentView)
+//   ADD_PROPERTY_METADATA(bool, Frobble)
+//   END_METADATA
 //
 //   For each property, add a definition using ADD_PROPERTY_METADATA() between
 //   the begin and end macros.
 //
-//   Descendant classes must add the METADATA_PARENT_CLASS() macro to the
-//   similar block in the respective implementing file.
+//   Descendant classes must specify the parent class as a macro parameter.
 //
-//   BEGIN_METADATA(MyView)
-//   METADATA_PARENT_CLASS(views::View);
-//   ADD_PROPERTY_METADATA(MyView, int, Bobble)
-//   END_METADATA()
+//   BEGIN_METADATA(MyView, views::View)
+//   ADD_PROPERTY_METADATA(int, Bobble)
+//   END_METADATA
 /////////////////////////////////////////////////////////////////////////////
 class VIEWS_EXPORT View : public ui::LayerDelegate,
                           public ui::LayerObserver,
@@ -358,9 +359,8 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
       // Since pixels cannot be fractional, we need to round the offset to get
       // the correct physical pixel coordinate.
-      gfx::Vector2dF integral_pixel_offset(
-          gfx::ToRoundedInt(fractional_pixel_offset.x()),
-          gfx::ToRoundedInt(fractional_pixel_offset.y()));
+      gfx::Vector2d integral_pixel_offset =
+          gfx::ToRoundedVector2d(fractional_pixel_offset);
 
       // |integral_pixel_offset - fractional_pixel_offset| gives the subpixel
       // offset amount for |offset_to_parent|. This is added to
@@ -907,7 +907,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Enables or disables flipping of the gfx::Canvas during Paint(). Note that
   // if canvas flipping is enabled, the canvas will be flipped only if the UI
   // layout is right-to-left; that is, the canvas will be flipped only if
-  // base::i18n::IsRTL() returns true.
+  // GetMirrored() is true.
   //
   // Enabling canvas flipping is useful for leaf views that draw an image that
   // needs to be flipped horizontally when the UI layout is right-to-left
@@ -915,6 +915,19 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // because their drawing logic stays the same and they can become agnostic to
   // the UI directionality.
   virtual void EnableCanvasFlippingForRTLUI(bool enable);
+
+  // When set, this view will ignore base::l18n::IsRTL() and instead be drawn
+  // according to |is_mirrored|.
+  //
+  // This is useful for views that should be displayed the same regardless of UI
+  // direction. Unlike EnableCanvasFlippingForRTLUI this setting has an effect
+  // on the visual order of child views.
+  //
+  // This setting does not propagate to child views. So while the visual order
+  // of this view's children may change, the visual order of this view's
+  // grandchildren in relation to their parents are unchanged.
+  void SetMirrored(bool is_mirrored) { is_mirrored_ = is_mirrored; }
+  bool GetMirrored() const;
 
   // Input ---------------------------------------------------------------------
   // The points, rects, mouse locations, and touch locations in the following
@@ -953,13 +966,11 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // Returns true if this view or any of its descendants are permitted to
   // be the target of an event.
-  virtual bool CanProcessEventsWithinSubtree() const;
+  virtual bool GetCanProcessEventsWithinSubtree() const;
 
   // Sets whether this view or any of its descendants are permitted to be the
   // target of an event.
-  void set_can_process_events_within_subtree(bool can_process) {
-    can_process_events_within_subtree_ = can_process;
-  }
+  void SetCanProcessEventsWithinSubtree(bool can_process);
 
   // Returns true if the mouse cursor is over |view| and mouse events are
   // enabled.
@@ -1057,12 +1068,8 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   virtual bool OnMouseWheel(const ui::MouseWheelEvent& event);
 
   // See field for description.
-  void set_notify_enter_exit_on_child(bool notify) {
-    notify_enter_exit_on_child_ = notify;
-  }
-  bool notify_enter_exit_on_child() const {
-    return notify_enter_exit_on_child_;
-  }
+  void SetNotifyEnterExitOnChild(bool notify);
+  bool GetNotifyEnterExitOnChild() const;
 
   // Convenience method to retrieve the InputMethod associated with the
   // Widget that contains this view.
@@ -1138,12 +1145,13 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Returns the view that should be selected next when pressing Shift-Tab.
   View* GetPreviousFocusableView();
 
-  // Sets the component that should be selected next when pressing Tab, and
-  // makes the current view the precedent view of the specified one.
-  // Note that by default views are linked in the order they have been added to
-  // their container. Use this method if you want to modify the order.
-  // IMPORTANT NOTE: loops in the focus hierarchy are not supported.
-  void SetNextFocusableView(View* view);
+  // Removes |this| from its focus list, updating the previous and next
+  // views' points accordingly.
+  void RemoveFromFocusList();
+
+  // Insert |this| before or after |view| in the focus list.
+  void InsertBeforeInFocusList(View* view);
+  void InsertAfterInFocusList(View* view);
 
   // Gets/sets |FocusBehavior|. SetFocusBehavior() advances focus if necessary.
   FocusBehavior GetFocusBehavior() const;
@@ -1221,10 +1229,6 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // as it is always equal to the current View.
   virtual void ShowContextMenu(const gfx::Point& p,
                                ui::MenuSourceType source_type);
-
-  // On some platforms, we show context menu on mouse press instead of release.
-  // This method returns true for those platforms.
-  static bool ShouldShowContextMenuOnMousePress();
 
   // Returns the location, in screen coordinates, to show the context menu at
   // when the context menu is shown from the keyboard. This implementation
@@ -1503,6 +1507,8 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // Overridden from ui::LayerDelegate:
   void OnPaintLayer(const ui::PaintContext& context) override;
+  void OnLayerTransformed(const gfx::Transform& old_transform,
+                          ui::PropertyChangeReason reason) override;
   void OnDeviceScaleFactorChanged(float old_device_scale_factor,
                                   float new_device_scale_factor) override;
 
@@ -1576,14 +1582,9 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   PropertyChangedSubscription AddPropertyChangedCallback(
       PropertyKey property,
-      PropertyChangedCallback callback);
+      PropertyChangedCallback callback) WARN_UNUSED_RESULT;
   void OnPropertyChanged(PropertyKey property,
                          PropertyEffects property_effects);
-
-  // Empty function called in HandlePropertyChangeEffects to be overridden in
-  // subclasses if they have custom functions for property changes.
-  virtual void OnHandlePropertyChangeEffects(PropertyEffects property_effects) {
-  }
 
  private:
   friend class internal::PreEventDispatchHandler;
@@ -1653,15 +1654,13 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Adds |view| as a child of this view at |index|.
   void AddChildViewAtImpl(View* view, int index);
 
-  // Removes |view| from the hierarchy tree.  If |update_focus_cycle| is true,
-  // the next and previous focusable views of views pointing to this view are
-  // updated.  If |update_tool_tip| is true, the tooltip is updated.  If
-  // |delete_removed_view| is true, the view is also deleted (if it is parent
-  // owned).  If |new_parent| is not null, the remove is the result of
-  // AddChildView() to a new parent.  For this case, |new_parent| is the View
-  // that |view| is going to be added to after the remove completes.
+  // Removes |view| from the hierarchy tree. If |update_tool_tip| is
+  // true, the tooltip is updated. If |delete_removed_view| is true, the
+  // view is also deleted (if it is parent owned). If |new_parent| is
+  // not null, the remove is the result of AddChildView() to a new
+  // parent. For this case, |new_parent| is the View that |view| is
+  // going to be added to after the remove completes.
   void DoRemoveChildView(View* view,
-                         bool update_focus_cycle,
                          bool update_tool_tip,
                          bool delete_removed_view,
                          View* new_parent);
@@ -1685,10 +1684,8 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // children.
   void PropagateNativeViewHierarchyChanged();
 
-  // Takes care of registering/unregistering accelerators if
-  // |register_accelerators| true and calls ViewHierarchyChanged().
-  void ViewHierarchyChangedImpl(bool register_accelerators,
-                                const ViewHierarchyChangedDetails& details);
+  // Calls ViewHierarchyChanged() and notifies observers.
+  void ViewHierarchyChangedImpl(const ViewHierarchyChangedDetails& details);
 
   // Size and disposition ------------------------------------------------------
 
@@ -1863,7 +1860,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Returns true if a drag was started.
   bool DoDrag(const ui::LocatedEvent& event,
               const gfx::Point& press_pt,
-              ui::DragDropTypes::DragEventSource source);
+              ui::mojom::DragEventSource source);
 
   // Property support ----------------------------------------------------------
 
@@ -1985,6 +1982,13 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // right-to-left locales for this View.
   bool flip_canvas_on_paint_for_rtl_ui_ = false;
 
+  // Controls whether GetTransform(), the mirroring functions, and the like
+  // horizontally mirror. This controls how child views are physically
+  // positioned onscreen. The default behavior should be correct in most cases,
+  // but can be overridden if a particular view must always be laid out in some
+  // direction regardless of the application's default UI direction.
+  base::Optional<bool> is_mirrored_;
+
   // Accelerated painting ------------------------------------------------------
 
   // Whether layer painting was explicitly set by a call to |SetPaintToLayer()|.
@@ -2057,6 +2061,28 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   DISALLOW_COPY_AND_ASSIGN(View);
 };
+
+BEGIN_VIEW_BUILDER(VIEWS_EXPORT, View, BaseView)
+VIEW_BUILDER_PROPERTY(std::unique_ptr<Background>, Background)
+VIEW_BUILDER_PROPERTY(std::unique_ptr<Border>, Border)
+VIEW_BUILDER_PROPERTY(gfx::Rect, BoundsRect)
+VIEW_BUILDER_PROPERTY(gfx::Size, Size)
+VIEW_BUILDER_PROPERTY(gfx::Point, Position)
+VIEW_BUILDER_PROPERTY(int, X)
+VIEW_BUILDER_PROPERTY(int, Y)
+VIEW_BUILDER_PROPERTY(gfx::Size, PreferredSize)
+VIEW_BUILDER_PROPERTY(SkPath, ClipPath)
+VIEW_BUILDER_PROPERTY_DEFAULT(ui::LayerType, PaintToLayer, ui::LAYER_TEXTURED)
+VIEW_BUILDER_PROPERTY(bool, Enabled)
+VIEW_BUILDER_PROPERTY(views::View::FocusBehavior, FocusBehavior)
+VIEW_BUILDER_PROPERTY(int, Group)
+VIEW_BUILDER_PROPERTY(int, ID)
+VIEW_BUILDER_PROPERTY(bool, Mirrored)
+VIEW_BUILDER_PROPERTY(bool, NotifyEnterExitOnChild)
+VIEW_BUILDER_PROPERTY(gfx::Transform, Transform)
+VIEW_BUILDER_PROPERTY(bool, Visible)
+VIEW_BUILDER_PROPERTY(bool, CanProcessEventsWithinSubtree)
+END_VIEW_BUILDER(VIEWS_EXPORT, View)
 
 }  // namespace views
 

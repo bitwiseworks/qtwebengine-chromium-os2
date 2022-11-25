@@ -24,7 +24,7 @@ class TabStrip;
 
 namespace test {
 class TabbedPaneAccessibilityMacTest;
-class TabbedPaneTest;
+class TabbedPaneWithWidgetTest;
 }  // namespace test
 
 // TabbedPane is a view that shows tabs. When the user clicks on a tab, the
@@ -100,7 +100,7 @@ class VIEWS_EXPORT TabbedPane : public View {
   friend class FocusTraversalTest;
   friend class Tab;
   friend class TabStrip;
-  friend class test::TabbedPaneTest;
+  friend class test::TabbedPaneWithWidgetTest;
   friend class test::TabbedPaneAccessibilityMacTest;
 
   // Adds a new tab at |index| with |title|. |contents| is the view displayed
@@ -123,8 +123,6 @@ class VIEWS_EXPORT TabbedPane : public View {
   bool MoveSelectionBy(int delta);
 
   // Overridden from View:
-  void ViewHierarchyChanged(
-      const ViewHierarchyChangedDetails& details) override;
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 

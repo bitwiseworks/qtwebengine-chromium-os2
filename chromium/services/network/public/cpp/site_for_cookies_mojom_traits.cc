@@ -4,19 +4,32 @@
 
 #include "services/network/public/cpp/site_for_cookies_mojom_traits.h"
 #include "net/base/features.h"
+#include "services/network/public/cpp/crash_keys.h"
 
 namespace mojo {
 
 bool StructTraits<network::mojom::SiteForCookiesDataView, net::SiteForCookies>::
     Read(network::mojom::SiteForCookiesDataView data,
          net::SiteForCookies* out) {
-  std::string scheme, registrable_domain;
-  if (!data.ReadScheme(&scheme))
+  std::string scheme, registrable_domain, first_party_url;
+  if (!data.ReadScheme(&scheme)) {
     return false;
-  if (!data.ReadRegistrableDomain(&registrable_domain))
+  }
+  if (!data.ReadRegistrableDomain(&registrable_domain)) {
     return false;
+  }
 
-  return net::SiteForCookies::FromWire(scheme, registrable_domain, out);
+  if (!data.ReadFirstPartyUrl(&first_party_url)) {
+    return false;
+  }
+
+  bool result = net::SiteForCookies::FromWire(scheme, registrable_domain,
+                                              data.schemefully_same(),
+                                              GURL(first_party_url), out);
+  if (!result) {
+    network::debug::SetDeserializationCrashKeyString("site_for_cookie");
+  }
+  return result;
 }
 
 }  // namespace mojo

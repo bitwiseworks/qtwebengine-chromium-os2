@@ -12,10 +12,10 @@
 #include <vector>
 
 #include "base/base_export.h"
+#include "base/check_op.h"
 #include "base/compiler_specific.h"
 #include "base/containers/stack.h"
 #include "base/gtest_prod_util.h"
-#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/optional.h"
@@ -72,14 +72,17 @@ class BASE_EXPORT ThreadGroupImpl : public ThreadGroup {
   // |worker_environment| specifies the environment in which tasks are executed.
   // |may_block_threshold| is the timeout after which a task in a MAY_BLOCK
   // ScopedBlockingCall is considered blocked (the thread group will choose an
-  // appropriate value if none is specified). Can only be called once. CHECKs on
-  // failure.
+  // appropriate value if none is specified).
+  // |synchronous_thread_start_for_testing| is true if this ThreadGroupImpl
+  // should synchronously wait for OnMainEntry() after starting each worker. Can
+  // only be called once. CHECKs on failure.
   void Start(int max_tasks,
              int max_best_effort_tasks,
              TimeDelta suggested_reclaim_time,
              scoped_refptr<SequencedTaskRunner> service_thread_task_runner,
              WorkerThreadObserver* worker_thread_observer,
              WorkerEnvironment worker_environment,
+             bool synchronous_thread_start_for_testing = false,
              Optional<TimeDelta> may_block_threshold = Optional<TimeDelta>());
 
   // Destroying a ThreadGroupImpl returned by Create() is not allowed in
@@ -90,7 +93,6 @@ class BASE_EXPORT ThreadGroupImpl : public ThreadGroup {
   // ThreadGroup:
   void JoinForTesting() override;
   size_t GetMaxConcurrentNonBlockedTasksDeprecated() const override;
-  void ReportHeartbeatMetrics() const override;
   void DidUpdateCanRunPolicy() override;
 
   const HistogramBase* num_tasks_before_detach_histogram() const {
@@ -120,8 +122,9 @@ class BASE_EXPORT ThreadGroupImpl : public ThreadGroup {
   // Returns the number of workers in this thread group.
   size_t NumberOfWorkersForTesting() const;
 
-  // Returns |max_tasks_|.
+  // Returns |max_tasks_|/|max_best_effort_tasks_|.
   size_t GetMaxTasksForTesting() const;
+  size_t GetMaxBestEffortTasksForTesting() const;
 
   // Returns the number of workers that are idle (i.e. not running tasks).
   size_t NumberOfIdleWorkersForTesting() const;
@@ -136,6 +139,8 @@ class BASE_EXPORT ThreadGroupImpl : public ThreadGroup {
   friend class ThreadGroupImplMayBlockTest;
   FRIEND_TEST_ALL_PREFIXES(ThreadGroupImplBlockingTest,
                            ThreadBlockUnblockPremature);
+  FRIEND_TEST_ALL_PREFIXES(ThreadGroupImplBlockingTest,
+                           ThreadBlockUnblockPrematureBestEffort);
 
   // ThreadGroup:
   void UpdateSortKey(TaskSource::Transaction transaction) override;
@@ -209,12 +214,13 @@ class BASE_EXPORT ThreadGroupImpl : public ThreadGroup {
   void IncrementTasksRunningLockRequired(TaskPriority priority)
       EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
-  // Increments/decrements the number of tasks that can run in this thread
-  // group.  May only be called in a scope where a task is running with
-  // |priority|.
-  void DecrementMaxTasksLockRequired(TaskPriority priority)
+  // Increments/decrements the number of [best effort] tasks that can run in
+  // this thread group.
+  void DecrementMaxTasksLockRequired() EXCLUSIVE_LOCKS_REQUIRED(lock_);
+  void IncrementMaxTasksLockRequired() EXCLUSIVE_LOCKS_REQUIRED(lock_);
+  void DecrementMaxBestEffortTasksLockRequired()
       EXCLUSIVE_LOCKS_REQUIRED(lock_);
-  void IncrementMaxTasksLockRequired(TaskPriority priority)
+  void IncrementMaxBestEffortTasksLockRequired()
       EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
   // Values set at Start() and never modified afterwards.
@@ -242,7 +248,6 @@ class BASE_EXPORT ThreadGroupImpl : public ThreadGroup {
     WorkerThreadObserver* worker_thread_observer = nullptr;
 
     bool may_block_without_delay;
-    bool fixed_max_best_effort_tasks;
 
     // Threshold after which the max tasks is increased to compensate for a
     // worker that is within a MAY_BLOCK ScopedBlockingCall.
@@ -330,6 +335,11 @@ class BASE_EXPORT ThreadGroupImpl : public ThreadGroup {
   // Set at the start of JoinForTesting().
   bool join_for_testing_started_ GUARDED_BY(lock_) = false;
 
+  // Null-opt unless |synchronous_thread_start_for_testing| was true at
+  // construction. In that case, it's signaled each time
+  // WorkerThreadDelegateImpl::OnMainEntry() completes.
+  Optional<WaitableEvent> worker_started_for_testing_;
+
   // Cached HistogramBase pointers, can be accessed without
   // holding |lock_|. If |lock_| is held, add new samples using
   // ThreadGroupImpl::ScopedCommandsExecutor (increase
@@ -343,14 +353,6 @@ class BASE_EXPORT ThreadGroupImpl : public ThreadGroup {
   // ThreadPool.NumTasksBeforeDetach.[thread group name] histogram.
   // Intentionally leaked.
   HistogramBase* const num_tasks_before_detach_histogram_;
-
-  // ThreadPool.NumWorkers.[thread group name] histogram.
-  // Intentionally leaked.
-  HistogramBase* const num_workers_histogram_;
-
-  // ThreadPool.NumActiveWorkers.[thread group name] histogram.
-  // Intentionally leaked.
-  HistogramBase* const num_active_workers_histogram_;
 
   // Ensures recently cleaned up workers (ref.
   // WorkerThreadDelegateImpl::CleanupLockRequired()) had time to exit as

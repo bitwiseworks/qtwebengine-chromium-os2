@@ -34,23 +34,28 @@ class LayoutSVGTransformableContainer final : public LayoutSVGContainer {
   bool IsChildAllowed(LayoutObject*, const ComputedStyle&) const override;
 
   bool IsOfType(LayoutObjectType type) const override {
+    NOT_DESTROYED();
     return type == kLayoutObjectSVGTransformableContainer ||
            LayoutSVGContainer::IsOfType(type);
   }
   const FloatSize& AdditionalTranslation() const {
+    NOT_DESTROYED();
     return additional_translation_;
   }
 
   void SetNeedsTransformUpdate() override;
 
  private:
-  SVGTransformChange CalculateLocalTransform() override;
+  void StyleDidChange(StyleDifference, const ComputedStyle* old_style) override;
+  SVGTransformChange CalculateLocalTransform(bool bounds_changed) override;
   AffineTransform LocalSVGTransform() const override {
+    NOT_DESTROYED();
     return local_transform_;
   }
   bool IsUseElement() const;
 
   bool needs_transform_update_ : 1;
+  bool transform_uses_reference_box_ : 1;
   AffineTransform local_transform_;
   FloatSize additional_translation_;
 };

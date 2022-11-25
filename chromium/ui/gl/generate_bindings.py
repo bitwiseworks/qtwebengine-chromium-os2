@@ -161,15 +161,48 @@ GL_FUNCTIONS = [
   'names': ['glBlendEquation'],
   'arguments': ' GLenum mode ', },
 { 'return_type': 'void',
+  'known_as': 'glBlendEquationiOES',
+  'versions': [
+    { 'name': 'glBlendEquationi' },
+    { 'name': 'glBlendEquationiOES', 'extensions':
+      ['GL_OES_draw_buffers_indexed'] }
+  ],
+  'arguments': ' GLuint buf, GLenum mode ', },
+{ 'return_type': 'void',
   'names': ['glBlendEquationSeparate'],
   'arguments': 'GLenum modeRGB, GLenum modeAlpha', },
+{ 'return_type': 'void',
+  'known_as': 'glBlendEquationSeparateiOES',
+  'versions': [
+    { 'name': 'glBlendEquationSeparatei' },
+    { 'name': 'glBlendEquationSeparateiOES', 'extensions':
+      ['GL_OES_draw_buffers_indexed'] }
+  ],
+  'arguments': 'GLuint buf, GLenum modeRGB, GLenum modeAlpha', },
 { 'return_type': 'void',
   'names': ['glBlendFunc'],
   'arguments': 'GLenum sfactor, GLenum dfactor', },
 { 'return_type': 'void',
+  'known_as': 'glBlendFunciOES',
+  'versions': [
+    { 'name': 'glBlendFunci' },
+    { 'name': 'glBlendFunciOES', 'extensions': ['GL_OES_draw_buffers_indexed'] }
+  ],
+  'arguments': 'GLuint buf, GLenum sfactor, GLenum dfactor', },
+{ 'return_type': 'void',
   'names': ['glBlendFuncSeparate'],
   'arguments':
       'GLenum srcRGB, GLenum dstRGB, GLenum srcAlpha, GLenum dstAlpha', },
+{ 'return_type': 'void',
+  'known_as': 'glBlendFuncSeparateiOES',
+  'versions': [
+    { 'name': 'glBlendFuncSeparatei' },
+    { 'name': 'glBlendFuncSeparateiOES', 'extensions':
+      ['GL_OES_draw_buffers_indexed'] }
+  ],
+  'arguments':
+      'GLuint buf, GLenum srcRGB, GLenum dstRGB, GLenum srcAlpha, '
+      'GLenum dstAlpha', },
 { 'return_type': 'void',
   'versions' : [{'name': 'glBlitFramebuffer',
                  'extensions': ['GL_ARB_framebuffer_object']},
@@ -251,6 +284,15 @@ GL_FUNCTIONS = [
   'names': ['glColorMask'],
   'arguments':
       'GLboolean red, GLboolean green, GLboolean blue, GLboolean alpha', },
+{ 'return_type': 'void',
+  'known_as': 'glColorMaskiOES',
+  'versions': [
+    { 'name': 'glColorMaski' },
+    { 'name': 'glColorMaskiOES', 'extensions': ['GL_OES_draw_buffers_indexed'] }
+  ],
+  'arguments':
+      'GLuint buf, GLboolean red, GLboolean green, GLboolean blue, '
+      'GLboolean alpha', },
 { 'return_type': 'void',
   'names': ['glCompileShader'],
   'arguments': 'GLuint shader', },
@@ -514,6 +556,13 @@ GL_FUNCTIONS = [
                  'extensions': ['GL_ANGLE_request_extension'] }],
   'arguments': 'const char* name', },
 { 'return_type': 'void',
+  'known_as': 'glDisableiOES',
+  'versions': [
+    { 'name': 'glDisablei' },
+    { 'name': 'glDisableiOES', 'extensions': ['GL_OES_draw_buffers_indexed'] }
+  ],
+  'arguments': 'GLenum target, GLuint index', },
+{ 'return_type': 'void',
   'names': ['glDisableVertexAttribArray'],
   'arguments': 'GLuint index', },
 { 'return_type': 'void',
@@ -541,7 +590,8 @@ GL_FUNCTIONS = [
 { 'return_type': 'void',
   'known_as': 'glDrawArraysInstancedBaseInstanceANGLE',
   #TODO(shrekshao): workaround when native support not available for cmd decoder
-  'versions' : [{ 'name': 'glDrawArraysInstancedBaseInstance' },
+  'versions' : [{ 'name': 'glDrawArraysInstancedBaseInstance',
+                 'extensions': ['GL_ARB_base_instance'] },
                 { 'name': 'glDrawArraysInstancedBaseInstanceEXT' },
                 { 'name': 'glDrawArraysInstancedBaseInstanceANGLE',
                  'extensions': ['GL_ANGLE_base_vertex_base_instance'] }],
@@ -570,7 +620,8 @@ GL_FUNCTIONS = [
 { 'return_type': 'void',
   'known_as': 'glDrawElementsInstancedBaseVertexBaseInstanceANGLE',
   #TODO(shrekshao): workaround when native support not available for cmd decoder
-  'versions' : [{ 'name': 'glDrawElementsInstancedBaseVertexBaseInstance' },
+  'versions' : [{ 'name': 'glDrawElementsInstancedBaseVertexBaseInstance',
+                 'extensions': ['GL_ARB_base_instance'] },
                 { 'name': 'glDrawElementsInstancedBaseVertexBaseInstanceEXT' },
                 { 'name': 'glDrawElementsInstancedBaseVertexBaseInstanceANGLE',
                  'extensions': ['GL_ANGLE_base_vertex_base_instance'] }],
@@ -590,6 +641,13 @@ GL_FUNCTIONS = [
 { 'return_type': 'void',
   'names': ['glEnable'],
   'arguments': 'GLenum cap', },
+{ 'return_type': 'void',
+  'known_as': 'glEnableiOES',
+  'versions': [
+    { 'name': 'glEnablei' },
+    { 'name': 'glEnableiOES', 'extensions': ['GL_OES_draw_buffers_indexed'] }
+  ],
+  'arguments': 'GLenum target, GLuint index', },
 { 'return_type': 'void',
   'names': ['glEnableVertexAttribArray'],
   'arguments': 'GLuint index', },
@@ -1294,12 +1352,19 @@ GL_FUNCTIONS = [
   'names': ['glImportMemoryFdEXT'],
   'arguments': 'GLuint memory, GLuint64 size, GLenum handleType, GLint fd', },
 { 'return_type': 'void',
+  'names': ['glImportMemoryWin32HandleEXT'],
+  'arguments': 'GLuint memory, GLuint64 size, GLenum handleType, void* handle',
+  },
+{ 'return_type': 'void',
   'arguments': 'GLuint memory, GLuint64 size, GLenum handleType, GLuint handle',
   'versions': [{'name': 'glImportMemoryZirconHandleANGLE',
                 'extensions': ['GL_ANGLE_memory_object_fuchsia']}]},
 { 'return_type': 'void',
   'names': ['glImportSemaphoreFdEXT'],
   'arguments': 'GLuint semaphore, GLenum handleType, GLint fd', },
+{ 'return_type': 'void',
+  'names': ['glImportSemaphoreWin32HandleEXT'],
+  'arguments': 'GLuint semaphore, GLenum handleType, void* handle', },
 { 'return_type': 'void',
   'arguments': 'GLuint semaphore, GLenum handleType, GLuint handle',
   'versions': [{'name': 'glImportSemaphoreZirconHandleANGLE',
@@ -1326,6 +1391,13 @@ GL_FUNCTIONS = [
 { 'return_type': 'GLboolean',
   'names': ['glIsEnabled'],
   'arguments': 'GLenum cap', },
+{ 'return_type': 'GLboolean',
+  'known_as': 'glIsEnablediOES',
+  'versions': [
+    { 'name': 'glIsEnabledi' },
+    { 'name': 'glIsEnablediOES', 'extensions': ['GL_OES_draw_buffers_indexed'] }
+  ],
+  'arguments': 'GLenum target, GLuint index', },
 { 'return_type': 'GLboolean',
   'known_as': 'glIsFenceAPPLE',
   'versions': [{ 'name': 'glIsFenceAPPLE',
@@ -1492,6 +1564,12 @@ GL_FUNCTIONS = [
                { 'name': 'glObjectPtrLabelKHR',
                  'extensions': ['GL_KHR_debug'] }],
   'arguments': 'void* ptr, GLsizei length, const char* label', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'glPatchParameteri',
+                 'extensions': ['GL_ARB_tessellation_shader'] },
+               { 'name': 'glPatchParameteriOES',
+                 'extensions': ['GL_OES_tessellation_shader'] }],
+  'arguments': 'GLenum pname, GLint value', },
 { 'return_type': 'void',
   'names': ['glPathCommandsNV'],
   'versions': [{ 'name': 'glPathCommandsNV',
@@ -2042,7 +2120,14 @@ GL_FUNCTIONS = [
 { 'return_type': 'void',
  'names': [ 'glTexStorageMem2DEXT'] ,
   'arguments': 'GLenum target, GLsizei levels, GLenum internalFormat, '
-  'GLsizei width, GLsizei height, GLuint memory, GLuint64 offset'},
+  'GLsizei width, GLsizei height, GLuint memory, GLuint64 offset', },
+{ 'return_type': 'void',
+ 'names': [ 'glTexStorageMemFlags2DANGLE'] ,
+  'versions': [{ 'name': 'glTexStorageMemFlags2DANGLE',
+                 'extensions': ['GL_ANGLE_memory_object_flags'] }],
+  'arguments': 'GLenum target, GLsizei levels, GLenum internalFormat, '
+  'GLsizei width, GLsizei height, GLuint memory, GLuint64 offset, '
+  'GLbitfield createFlags, GLbitfield usageFlags', },
 { 'return_type': 'void',
   'names': ['glTexSubImage2D'],
   'arguments':
@@ -2497,6 +2582,10 @@ EGL_FUNCTIONS = [
       'EGLDisplay dpy, EGLSurface surface, '
       'EGLuint64CHROMIUM* ust, EGLuint64CHROMIUM* msc, '
       'EGLuint64CHROMIUM* sbc', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'eglHandleGPUSwitchANGLE',
+                 'extensions': ['EGL_ANGLE_power_preference'] }],
+  'arguments': 'EGLDisplay dpy' },
 { 'return_type': 'EGLBoolean',
   'versions': [{ 'name': 'eglImageFlushExternalEXT',
                  'extensions': ['EGL_EXT_image_flush_external'] }],
@@ -2573,6 +2662,14 @@ EGL_FUNCTIONS = [
   'names': ['eglQuerySurfacePointerANGLE'],
   'arguments':
       'EGLDisplay dpy, EGLSurface surface, EGLint attribute, void** value', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'eglReacquireHighPowerGPUANGLE',
+                 'extensions': ['EGL_ANGLE_power_preference'] }],
+  'arguments': 'EGLDisplay dpy, EGLContext ctx' },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'eglReleaseHighPowerGPUANGLE',
+                 'extensions': ['EGL_ANGLE_power_preference'] }],
+  'arguments': 'EGLDisplay dpy, EGLContext ctx' },
 { 'return_type': 'EGLBoolean',
   'names': ['eglReleaseTexImage'],
   'arguments': 'EGLDisplay dpy, EGLSurface surface, EGLint buffer', },
@@ -2887,6 +2984,9 @@ FUNCTION_SETS = [
       'GLES2/gl2chromium.h',
       'GLES2/gl2extchromium.h'
     ], [
+      "GL_ARB_texture_swizzle",
+      "GL_EXT_texture_swizzle",
+      "GL_EXT_texture_format_BGRA8888",
       "GL_EXT_unpack_subimage",
     ]
   ],
@@ -3575,6 +3675,7 @@ def GenerateMockBindingsSource(file, functions, set_name):
 
 #include <string.h>
 
+#include "base/notreached.h"
 #include "ui/gl/%s_mock.h"
 
 namespace {

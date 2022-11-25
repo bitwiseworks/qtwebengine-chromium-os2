@@ -17,6 +17,9 @@
 #include "content/common/content_export.h"
 #include "content/public/browser/devtools_agent_host_client.h"
 #include "content/public/browser/devtools_agent_host_observer.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "services/network/public/mojom/network_context.mojom-forward.h"
+#include "services/network/public/mojom/url_loader_factory.mojom-forward.h"
 #include "url/gurl.h"
 
 namespace base {
@@ -35,6 +38,7 @@ class DevToolsExternalAgentProxyDelegate;
 class DevToolsSocketFactory;
 class RenderFrameHost;
 class WebContents;
+class RenderProcessHost;
 
 // Describes interface for managing devtools agents from browser process.
 class CONTENT_EXPORT DevToolsAgentHost
@@ -126,6 +130,9 @@ class CONTENT_EXPORT DevToolsAgentHost
   // embedder or |client| itself may prevent attaching.
   virtual bool AttachClient(DevToolsAgentHostClient* client) = 0;
 
+  // Same as the above, but does not acquire the WakeLock.
+  virtual bool AttachClientWithoutWakeLock(DevToolsAgentHostClient* client) = 0;
+
   // Already attached client detaches from this agent host to stop debugging it.
   // Returns true iff detach succeeded.
   virtual bool DetachClient(DevToolsAgentHostClient* client) = 0;
@@ -149,6 +156,14 @@ class CONTENT_EXPORT DevToolsAgentHost
 
   // Returns the id of the opener host, or empty string if no opener.
   virtual std::string GetOpenerId() = 0;
+
+  // Returns whether the opened window has access to its opener (can be false
+  // when using 'noopener' or with enabled COOP).
+  virtual bool CanAccessOpener() = 0;
+
+  // Returns the DevTools token of this window's opener, or empty string if no
+  // opener.
+  virtual std::string GetOpenerFrameId() = 0;
 
   // Returns web contents instance for this host if any.
   virtual WebContents* GetWebContents() = 0;
@@ -195,6 +210,8 @@ class CONTENT_EXPORT DevToolsAgentHost
 
   // Terminates all debugging sessions and detaches all clients.
   static void DetachAllClients();
+
+  virtual RenderProcessHost* GetProcessHost() = 0;
 
  protected:
   friend class base::RefCounted<DevToolsAgentHost>;

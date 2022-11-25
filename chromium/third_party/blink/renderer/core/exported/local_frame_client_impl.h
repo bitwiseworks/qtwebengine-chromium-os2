@@ -52,21 +52,20 @@ class BrowserInterfaceBrokerProxy;
 class WebDevToolsAgentImpl;
 class WebLocalFrameImpl;
 class WebSpellCheckPanelHostClient;
-enum class GlobalObjectReusePolicy;
 
-class LocalFrameClientImpl final : public LocalFrameClient {
+class CORE_EXPORT LocalFrameClientImpl final : public LocalFrameClient {
  public:
   explicit LocalFrameClientImpl(WebLocalFrameImpl*);
   ~LocalFrameClientImpl() override;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   WebLocalFrameImpl* GetWebFrame() const override;
 
   // LocalFrameClient ----------------------------------------------
   WebContentCaptureClient* GetWebContentCaptureClient() const override;
   void DidCreateInitialEmptyDocument() override;
-  void DidCommitJavascriptUrlNavigation(DocumentLoader*) override;
+  void DidCommitDocumentReplacementNavigation(DocumentLoader*) override;
   // Notifies the WebView delegate that the JS window object has been cleared,
   // giving it a chance to bind native objects to the window before script
   // parsing begins.
@@ -86,12 +85,6 @@ class LocalFrameClientImpl final : public LocalFrameClient {
 
   bool HasWebView() const override;
   bool InShadowTree() const override;
-  Frame* Opener() const override;
-  void SetOpener(Frame*) override;
-  Frame* Parent() const override;
-  Frame* Top() const override;
-  Frame* NextSibling() const override;
-  Frame* FirstChild() const override;
   void WillBeDetached() override;
   void Detached(FrameDetachType) override;
   void DispatchWillSendRequest(ResourceRequest&) override;
@@ -102,9 +95,10 @@ class LocalFrameClientImpl final : public LocalFrameClient {
                                        WebHistoryCommitType,
                                        bool content_initiated) override;
   void DispatchDidReceiveTitle(const String&) override;
-  void DispatchDidCommitLoad(HistoryItem*,
-                             WebHistoryCommitType,
-                             GlobalObjectReusePolicy) override;
+  void DispatchDidCommitLoad(
+      HistoryItem*,
+      WebHistoryCommitType,
+      bool should_reset_browser_interface_broker) override;
   void DispatchDidFailLoad(const ResourceError&, WebHistoryCommitType) override;
   void DispatchDidFinishDocumentLoad() override;
   void DispatchDidFinishLoad() override;
@@ -112,11 +106,10 @@ class LocalFrameClientImpl final : public LocalFrameClient {
   void BeginNavigation(
       const ResourceRequest&,
       mojom::RequestContextFrameType,
-      Document* origin_document,
+      LocalDOMWindow* origin_window,
       DocumentLoader*,
       WebNavigationType,
       NavigationPolicy,
-      bool has_transient_activation,
       WebFrameLoadType,
       bool is_client_redirect,
       TriggeringEventInfo,
@@ -125,6 +118,7 @@ class LocalFrameClientImpl final : public LocalFrameClient {
       mojo::PendingRemote<mojom::blink::BlobURLToken>,
       base::TimeTicks input_start_time,
       const String& href_translate,
+      const base::Optional<WebImpression>& impression,
       WTF::Vector<network::mojom::blink::ContentSecurityPolicyPtr>
           initiator_csp,
       network::mojom::blink::CSPSourcePtr initiator_self_source,
@@ -134,11 +128,7 @@ class LocalFrameClientImpl final : public LocalFrameClient {
   void DidStartLoading() override;
   void DidStopLoading() override;
   bool NavigateBackForward(int offset) const override;
-  void DidRunInsecureContent(const SecurityOrigin*,
-                             const KURL& insecure_url) override;
   void DidDispatchPingLoader(const KURL&) override;
-  void DidDisplayContentWithCertificateErrors() override;
-  void DidRunContentWithCertificateErrors() override;
   void DidChangePerformanceTiming() override;
   void DidObserveInputDelay(base::TimeDelta) override;
   void DidChangeCpuTiming(base::TimeDelta) override;
@@ -146,6 +136,10 @@ class LocalFrameClientImpl final : public LocalFrameClient {
   void DidObserveNewFeatureUsage(mojom::WebFeature) override;
   void DidObserveNewCssPropertyUsage(mojom::CSSSampleId, bool) override;
   void DidObserveLayoutShift(double score, bool after_input_or_scroll) override;
+  void DidObserveLayoutNg(uint32_t all_block_count,
+                          uint32_t ng_block_count,
+                          uint32_t all_call_count,
+                          uint32_t ng_call_count) override;
   void DidObserveLazyLoadBehavior(
       WebLocalFrameClient::LazyLoadBehavior lazy_load_behavior) override;
   bool ShouldTrackUseCounter(const KURL&) override;
@@ -174,7 +168,7 @@ class LocalFrameClientImpl final : public LocalFrameClient {
   void TransitionToCommittedForNewPage() override;
   LocalFrame* CreateFrame(const WTF::AtomicString& name,
                           HTMLFrameOwnerElement*) override;
-  std::pair<RemoteFrame*, base::UnguessableToken> CreatePortal(
+  std::pair<RemoteFrame*, PortalToken> CreatePortal(
       HTMLPortalElement*,
       mojo::PendingAssociatedReceiver<mojom::blink::Portal>,
       mojo::PendingAssociatedRemote<mojom::blink::PortalClient>) override;
@@ -197,12 +191,10 @@ class LocalFrameClientImpl final : public LocalFrameClient {
   bool AllowContentInitiatedDataUrlNavigations(const KURL&) override;
 
   void DidChangeName(const String&) override;
-  void DidChangeFramePolicy(Frame* child_frame, const FramePolicy&) override;
   void DidSetFramePolicyHeaders(
-      mojom::blink::WebSandboxFlags,
+      network::mojom::blink::WebSandboxFlags,
       const ParsedFeaturePolicy& fp_header,
-      const blink::DocumentPolicy::FeatureState& dp_header) override;
-  void DidChangeFrameOwnerProperties(HTMLFrameOwnerElement*) override;
+      const blink::DocumentPolicyFeatureState& dp_header) override;
 
   std::unique_ptr<WebServiceWorkerProvider> CreateServiceWorkerProvider()
       override;
@@ -249,7 +241,7 @@ class LocalFrameClientImpl final : public LocalFrameClient {
 
   void FocusedElementChanged(Element* element) override;
 
-  void OnMainFrameDocumentIntersectionChanged(
+  void OnMainFrameIntersectionChanged(
       const IntRect& intersection_rect) override;
 
   bool IsPluginHandledExternally(HTMLPlugInElement&,
@@ -265,11 +257,12 @@ class LocalFrameClientImpl final : public LocalFrameClient {
   std::unique_ptr<WebContentSettingsClient> CreateWorkerContentSettingsClient()
       override;
 
+  std::unique_ptr<media::SpeechRecognitionClient> CreateSpeechRecognitionClient(
+      media::SpeechRecognitionClient::OnReadyCallback callback) override;
+
   void SetMouseCapture(bool capture) override;
 
   bool UsePrintingLayout() const override;
-
-  void TransferUserActivationFrom(LocalFrame* source_frame) override;
 
   void UpdateSubresourceFactory(
       std::unique_ptr<blink::PendingURLLoaderFactoryBundle> pending_factory)
@@ -284,7 +277,6 @@ class LocalFrameClientImpl final : public LocalFrameClient {
   Member<WebLocalFrameImpl> web_frame_;
 
   String user_agent_;
-  blink::UserAgentMetadata user_agent_metadata_;
 };
 
 template <>

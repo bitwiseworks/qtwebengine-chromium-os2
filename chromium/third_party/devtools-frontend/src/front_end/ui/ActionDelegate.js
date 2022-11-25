@@ -14,5 +14,6 @@ export class ActionDelegate {
    * @return {boolean}
    */
   handleAction(context, actionId) {
+    throw new Error('not implemented');
   }
 }

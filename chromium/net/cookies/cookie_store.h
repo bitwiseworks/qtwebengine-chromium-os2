@@ -19,6 +19,7 @@
 #include "net/base/net_export.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_access_delegate.h"
+#include "net/cookies/cookie_access_result.h"
 #include "net/cookies/cookie_deletion_info.h"
 #include "net/cookies/cookie_options.h"
 
@@ -45,8 +46,8 @@ class NET_EXPORT CookieStore {
  public:
   // Callback definitions.
   using GetCookieListCallback =
-      base::OnceCallback<void(const CookieStatusList& included_cookies,
-                              const CookieStatusList& excluded_list)>;
+      base::OnceCallback<void(const CookieAccessResultList& included_cookies,
+                              const CookieAccessResultList& excluded_list)>;
   using GetAllCookiesCallback =
       base::OnceCallback<void(const CookieList& cookies)>;
   // |access_semantics_list| is guaranteed to the same length as |cookies|.
@@ -54,7 +55,7 @@ class NET_EXPORT CookieStore {
       const CookieList& cookies,
       const std::vector<CookieAccessSemantics>& access_semantics_list)>;
   using SetCookiesCallback =
-      base::OnceCallback<void(CanonicalCookie::CookieInclusionStatus status)>;
+      base::OnceCallback<void(CookieAccessResult access_result)>;
   using DeleteCallback = base::OnceCallback<void(uint32_t num_deleted)>;
   using SetCookieableSchemesCallback = base::OnceCallback<void(bool success)>;
 
@@ -62,14 +63,14 @@ class NET_EXPORT CookieStore {
   virtual ~CookieStore();
 
   // Set the cookie on the cookie store.  |cookie.IsCanonical()| must
-  // be true.  |source_scheme| denotes the scheme of the resource setting this.
+  // be true.  |source_url| denotes the url of the resource setting this.
   //
   // |options| is used to determine the context the operation is run in, and
   // which cookies it can alter (e.g. http only, or same site).
   //
   // The current time will be used in place of a null creation time.
   virtual void SetCanonicalCookieAsync(std::unique_ptr<CanonicalCookie> cookie,
-                                       std::string source_scheme,
+                                       const GURL& source_url,
                                        const CookieOptions& options,
                                        SetCookiesCallback callback) = 0;
 

@@ -30,10 +30,11 @@ EventModelImpl::EventModelImpl(
 
 EventModelImpl::~EventModelImpl() = default;
 
-void EventModelImpl::Initialize(const OnModelInitializationFinished& callback,
+void EventModelImpl::Initialize(OnModelInitializationFinished callback,
                                 uint32_t current_day) {
-  store_->Load(base::Bind(&EventModelImpl::OnStoreLoaded,
-                          weak_factory_.GetWeakPtr(), callback, current_day));
+  store_->Load(base::BindOnce(&EventModelImpl::OnStoreLoaded,
+                              weak_factory_.GetWeakPtr(), std::move(callback),
+                              current_day));
 }
 
 bool EventModelImpl::IsReady() const {
@@ -46,6 +47,39 @@ const Event* EventModelImpl::GetEvent(const std::string& event_name) const {
     return nullptr;
 
   return &search->second;
+}
+
+uint32_t EventModelImpl::GetEventCount(const std::string& event_name,
+                                       uint32_t current_day,
+                                       uint32_t window_size) const {
+  const Event* event = GetEvent(event_name);
+
+  // If the Event object is not found, or if the window is 0 days, there will
+  // never be any events.
+  if (event == nullptr || window_size == 0u)
+    return 0;
+
+  DCHECK(window_size >= 0);
+
+  // A window of N=0:  Nothing should be counted.
+  // A window of N=1:  |current_day| should be counted.
+  // A window of N=2+: |current_day| plus |N-1| more days should be counted.
+  uint32_t oldest_accepted_day = current_day - window_size + 1;
+
+  // Cap |oldest_accepted_day| to UNIX epoch.
+  if (window_size > current_day)
+    oldest_accepted_day = 0u;
+
+  // Calculate the number of events within the window.
+  uint32_t event_count = 0;
+  for (const auto& event_day : event->events()) {
+    if (event_day.day() < oldest_accepted_day)
+      continue;
+
+    event_count += event_day.count();
+  }
+
+  return event_count;
 }
 
 void EventModelImpl::IncrementEvent(const std::string& event_name,
@@ -78,13 +112,12 @@ void EventModelImpl::IncrementEvent(const std::string& event_name,
   store_->WriteEvent(event);
 }
 
-void EventModelImpl::OnStoreLoaded(
-    const OnModelInitializationFinished& callback,
-    uint32_t current_day,
-    bool success,
-    std::unique_ptr<std::vector<Event>> events) {
+void EventModelImpl::OnStoreLoaded(OnModelInitializationFinished callback,
+                                   uint32_t current_day,
+                                   bool success,
+                                   std::unique_ptr<std::vector<Event>> events) {
   if (!success) {
-    callback.Run(false);
+    std::move(callback).Run(false);
     return;
   }
 
@@ -118,7 +151,7 @@ void EventModelImpl::OnStoreLoaded(
   }
 
   ready_ = true;
-  callback.Run(true);
+  std::move(callback).Run(true);
 }
 
 Event& EventModelImpl::GetNonConstEvent(const std::string& event_name) {

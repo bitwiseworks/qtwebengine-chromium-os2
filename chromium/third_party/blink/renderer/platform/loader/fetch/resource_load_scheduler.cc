@@ -13,10 +13,12 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/default_clock.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/instrumentation/histogram.h"
 #include "third_party/blink/renderer/platform/loader/fetch/console_logger.h"
+#include "third_party/blink/renderer/platform/loader/fetch/loading_behavior_observer.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher_properties.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/aggregated_metric_reporter.h"
@@ -25,20 +27,6 @@
 namespace blink {
 
 namespace {
-
-// Field trial name for throttling.
-const char kResourceLoadThrottlingTrial[] = "ResourceLoadScheduler";
-
-// Field trial parameter names.
-// Note: bg_limit is supported on m61+, but bg_sub_limit is only on m63+.
-// If bg_sub_limit param is not found, we should use bg_limit to make the
-// study result statistically correct.
-const char kOutstandingLimitForBackgroundMainFrameName[] = "bg_limit";
-const char kOutstandingLimitForBackgroundSubFrameName[] = "bg_sub_limit";
-
-// Field trial default parameters.
-constexpr size_t kOutstandingLimitForBackgroundMainFrameDefault = 3u;
-constexpr size_t kOutstandingLimitForBackgroundSubFrameDefault = 2u;
 
 constexpr char kRendererSideResourceScheduler[] =
     "RendererSideResourceScheduler";
@@ -64,10 +52,6 @@ enum class ReportCircumstance {
   kNumOfCircumstances,
 };
 
-base::HistogramBase::Sample ToSample(ReportCircumstance circumstance) {
-  return static_cast<base::HistogramBase::Sample>(circumstance);
-}
-
 uint32_t GetFieldTrialUint32Param(const char* trial_name,
                                   const char* parameter_name,
                                   uint32_t default_param) {
@@ -87,137 +71,27 @@ uint32_t GetFieldTrialUint32Param(const char* trial_name,
   return param;
 }
 
-size_t GetOutstandingThrottledLimit(
-    const DetachableResourceFetcherProperties& properties) {
-  static const size_t main_frame_limit = GetFieldTrialUint32Param(
-      kResourceLoadThrottlingTrial, kOutstandingLimitForBackgroundMainFrameName,
-      kOutstandingLimitForBackgroundMainFrameDefault);
-  static const size_t sub_frame_limit = GetFieldTrialUint32Param(
-      kResourceLoadThrottlingTrial, kOutstandingLimitForBackgroundSubFrameName,
-      kOutstandingLimitForBackgroundSubFrameDefault);
-
-  return properties.IsMainFrame() ? main_frame_limit : sub_frame_limit;
-}
-
-int TakeWholeKilobytes(int64_t& bytes) {
-  int kilobytes = base::saturated_cast<int>(bytes / 1024);
-  bytes %= 1024;
-  return kilobytes;
-}
-
 }  // namespace
-
-// A class to gather throttling and traffic information to report histograms.
-class ResourceLoadScheduler::TrafficMonitor {
- public:
-  explicit TrafficMonitor(
-      const DetachableResourceFetcherProperties& resource_fetcher_properties);
-
-  // Notified when the ThrottlingState is changed.
-  void OnLifecycleStateChanged(scheduler::SchedulingLifecycleState);
-
-  // Reports resource request completion.
-  void Report(const ResourceLoadScheduler::TrafficReportHints&);
-
-  // Reports per-frame reports.
-  void ReportAll();
-
- private:
-  const Persistent<const DetachableResourceFetcherProperties>
-      resource_fetcher_properties_;
-
-  scheduler::SchedulingLifecycleState current_state_ =
-      scheduler::SchedulingLifecycleState::kStopped;
-
-  scheduler::AggregatedMetricReporter<scheduler::FrameStatus, int64_t>
-      traffic_kilobytes_per_frame_status_;
-  scheduler::AggregatedMetricReporter<scheduler::FrameStatus, int64_t>
-      decoded_kilobytes_per_frame_status_;
-};
-
-ResourceLoadScheduler::TrafficMonitor::TrafficMonitor(
-    const DetachableResourceFetcherProperties& resource_fetcher_properties)
-    : resource_fetcher_properties_(resource_fetcher_properties),
-      traffic_kilobytes_per_frame_status_(
-          "Blink.ResourceLoadScheduler.TrafficBytes.KBPerFrameStatus",
-          &TakeWholeKilobytes),
-      decoded_kilobytes_per_frame_status_(
-          "Blink.ResourceLoadScheduler.DecodedBytes.KBPerFrameStatus",
-          &TakeWholeKilobytes) {}
-
-void ResourceLoadScheduler::TrafficMonitor::OnLifecycleStateChanged(
-    scheduler::SchedulingLifecycleState state) {
-  current_state_ = state;
-}
-
-void ResourceLoadScheduler::TrafficMonitor::Report(
-    const ResourceLoadScheduler::TrafficReportHints& hints) {
-  // Currently we only care about stats from frames.
-  if (!IsMainThread())
-    return;
-  if (!hints.IsValid())
-    return;
-
-  DEFINE_STATIC_LOCAL(EnumerationHistogram, request_count_by_circumstance,
-                      ("Blink.ResourceLoadScheduler.RequestCount",
-                       ToSample(ReportCircumstance::kNumOfCircumstances)));
-
-  switch (current_state_) {
-    case scheduler::SchedulingLifecycleState::kThrottled:
-    case scheduler::SchedulingLifecycleState::kHidden:
-      if (resource_fetcher_properties_->IsMainFrame()) {
-        request_count_by_circumstance.Count(
-            ToSample(ReportCircumstance::kMainframeThrottled));
-      } else {
-        request_count_by_circumstance.Count(
-            ToSample(ReportCircumstance::kSubframeThrottled));
-      }
-      break;
-    case scheduler::SchedulingLifecycleState::kNotThrottled:
-      if (resource_fetcher_properties_->IsMainFrame()) {
-        request_count_by_circumstance.Count(
-            ToSample(ReportCircumstance::kMainframeNotThrottled));
-      } else {
-        request_count_by_circumstance.Count(
-            ToSample(ReportCircumstance::kSubframeNotThrottled));
-      }
-      break;
-    case scheduler::SchedulingLifecycleState::kStopped:
-      break;
-  }
-
-  // Report kilobytes instead of bytes to avoid overflows.
-  int64_t encoded_kilobytes = hints.encoded_data_length() / 1024;
-  int64_t decoded_kilobytes = hints.decoded_body_length() / 1024;
-
-  if (encoded_kilobytes) {
-    traffic_kilobytes_per_frame_status_.RecordTask(
-        resource_fetcher_properties_->GetFrameStatus(), encoded_kilobytes);
-  }
-  if (decoded_kilobytes) {
-    decoded_kilobytes_per_frame_status_.RecordTask(
-        resource_fetcher_properties_->GetFrameStatus(), decoded_kilobytes);
-  }
-}
 
 constexpr ResourceLoadScheduler::ClientId
     ResourceLoadScheduler::kInvalidClientId;
 
 ResourceLoadScheduler::ResourceLoadScheduler(
     ThrottlingPolicy initial_throttling_policy,
+    ThrottleOptionOverride throttle_option_override,
     const DetachableResourceFetcherProperties& resource_fetcher_properties,
-    FrameScheduler* frame_scheduler,
-    DetachableConsoleLogger& console_logger)
+    FrameOrWorkerScheduler* frame_or_worker_scheduler,
+    DetachableConsoleLogger& console_logger,
+    LoadingBehaviorObserver* loading_behavior_observer)
     : resource_fetcher_properties_(resource_fetcher_properties),
       policy_(initial_throttling_policy),
       outstanding_limit_for_throttled_frame_scheduler_(
-          GetOutstandingThrottledLimit(*resource_fetcher_properties_)),
+          resource_fetcher_properties_->GetOutstandingThrottledLimit()),
       console_logger_(console_logger),
-      clock_(base::DefaultClock::GetInstance()) {
-  traffic_monitor_ = std::make_unique<ResourceLoadScheduler::TrafficMonitor>(
-      resource_fetcher_properties);
-
-  if (!frame_scheduler)
+      clock_(base::DefaultClock::GetInstance()),
+      throttle_option_override_(throttle_option_override),
+      loading_behavior_observer_(loading_behavior_observer) {
+  if (!frame_or_worker_scheduler)
     return;
 
   normal_outstanding_limit_ =
@@ -229,16 +103,17 @@ ResourceLoadScheduler::ResourceLoadScheduler(
                                kTightLimitForRendererSideResourceSchedulerName,
                                kTightLimitForRendererSideResourceScheduler);
 
-  scheduler_observer_handle_ = frame_scheduler->AddLifecycleObserver(
+  scheduler_observer_handle_ = frame_or_worker_scheduler->AddLifecycleObserver(
       FrameScheduler::ObserverType::kLoader, this);
 }
 
 ResourceLoadScheduler::~ResourceLoadScheduler() = default;
 
-void ResourceLoadScheduler::Trace(Visitor* visitor) {
+void ResourceLoadScheduler::Trace(Visitor* visitor) const {
   visitor->Trace(pending_request_map_);
   visitor->Trace(resource_fetcher_properties_);
   visitor->Trace(console_logger_);
+  visitor->Trace(loading_behavior_observer_);
 }
 
 void ResourceLoadScheduler::LoosenThrottlingPolicy() {
@@ -258,9 +133,6 @@ void ResourceLoadScheduler::Shutdown() {
     return;
   is_shutdown_ = true;
 
-  if (traffic_monitor_)
-    traffic_monitor_.reset();
-
   scheduler_observer_handle_.reset();
 }
 
@@ -273,10 +145,16 @@ void ResourceLoadScheduler::Request(ResourceLoadSchedulerClient* client,
   if (is_shutdown_)
     return;
 
+  if (option == ThrottleOption::kStoppable &&
+      throttle_option_override_ ==
+          ThrottleOptionOverride::kStoppableAsThrottleable) {
+    option = ThrottleOption::kThrottleable;
+  }
+
   // Check if the request can be throttled.
   ClientIdWithPriority request_info(*id, priority, intra_priority);
   if (!IsClientDelayable(option)) {
-    Run(*id, client, false);
+    Run(*id, client, /*throttleable=*/false, priority);
     return;
   }
 
@@ -324,20 +202,27 @@ bool ResourceLoadScheduler::Release(
   if (id == kInvalidClientId)
     return false;
 
-  if (running_requests_.Contains(id)) {
+  auto running_request = running_requests_.find(id);
+  if (running_request != running_requests_.end()) {
+    if (running_request->value >= PriorityImportanceThreshold()) {
+      in_flight_important_requests_--;
+      DCHECK_GE(in_flight_important_requests_, 0);
+    }
+
     running_requests_.erase(id);
     running_throttleable_requests_.erase(id);
-
-    if (traffic_monitor_)
-      traffic_monitor_->Report(hints);
 
     if (option == ReleaseOption::kReleaseAndSchedule)
       MaybeRun();
     return true;
   }
-  auto found = pending_request_map_.find(id);
-  if (found != pending_request_map_.end()) {
-    pending_request_map_.erase(found);
+
+  // The client may not appear in the |pending_request_map_|. For example,
+  // non-delayable requests are immediately granted and skip being placed into
+  // this map.
+  auto pending_request = pending_request_map_.find(id);
+  if (pending_request != pending_request_map_.end()) {
+    pending_request_map_.erase(pending_request);
     // Intentionally does not remove it from |pending_requests_|.
 
     // Didn't release any running requests, but the outstanding limit might be
@@ -371,9 +256,6 @@ void ResourceLoadScheduler::OnLifecycleStateChanged(
     scheduler::SchedulingLifecycleState state) {
   if (frame_scheduler_lifecycle_state_ == state)
     return;
-
-  if (traffic_monitor_)
-    traffic_monitor_->OnLifecycleStateChanged(state);
 
   frame_scheduler_lifecycle_state_ = state;
 
@@ -439,11 +321,16 @@ bool ResourceLoadScheduler::GetNextPendingRequest(ClientId* id) {
   // corresponding |pending_queue_update_times_|.
   if (use_stoppable) {
     *id = stoppable_it->client_id;
+    if (ShouldDelay(pending_request_map_.find(*id)))
+      return false;
     stoppable_queue.erase(stoppable_it);
     pending_queue_update_times_[ThrottleOption::kStoppable] = clock_->Now();
     return true;
   }
+
   *id = throttleable_it->client_id;
+  if (ShouldDelay(pending_request_map_.find(*id)))
+    return false;
   throttleable_queue.erase(throttleable_it);
   pending_queue_update_times_[ThrottleOption::kThrottleable] = clock_->Now();
   return true;
@@ -460,17 +347,54 @@ void ResourceLoadScheduler::MaybeRun() {
     auto found = pending_request_map_.find(id);
     if (found == pending_request_map_.end())
       continue;  // Already released.
+
+    auto priority = found->value->priority;
     ResourceLoadSchedulerClient* client = found->value->client;
     ThrottleOption option = found->value->option;
     pending_request_map_.erase(found);
-    Run(id, client, option == ThrottleOption::kThrottleable);
+    Run(id, client, option == ThrottleOption::kThrottleable, priority);
+  }
+}
+
+void ResourceLoadScheduler::MarkFirstPaint() {
+  if (!base::FeatureList::IsEnabled(
+          features::kDelayCompetingLowPriorityRequests) ||
+      delay_milestone_reached_) {
+    return;
+  }
+
+  if (ComputeDelayMilestone() ==
+      mojom::blink::DelayCompetingLowPriorityRequestsDelayType::kFirstPaint) {
+    DCHECK(!delay_milestone_reached_);
+    delay_milestone_reached_ = true;
+    MaybeRun();
+  }
+}
+
+void ResourceLoadScheduler::MarkFirstContentfulPaint() {
+  if (!base::FeatureList::IsEnabled(
+          features::kDelayCompetingLowPriorityRequests) ||
+      delay_milestone_reached_) {
+    return;
+  }
+
+  if (ComputeDelayMilestone() ==
+      mojom::blink::DelayCompetingLowPriorityRequestsDelayType::
+          kFirstContentfulPaint) {
+    DCHECK(!delay_milestone_reached_);
+    delay_milestone_reached_ = true;
+    MaybeRun();
   }
 }
 
 void ResourceLoadScheduler::Run(ResourceLoadScheduler::ClientId id,
                                 ResourceLoadSchedulerClient* client,
-                                bool throttleable) {
-  running_requests_.insert(id);
+                                bool throttleable,
+                                ResourceLoadPriority priority) {
+  if (priority >= PriorityImportanceThreshold()) {
+    in_flight_important_requests_++;
+  }
+  running_requests_.insert(id, priority);
   if (throttleable)
     running_throttleable_requests_.insert(id);
   client->Run();
@@ -534,6 +458,129 @@ void ResourceLoadScheduler::ShowConsoleMessageIfNeeded() {
 
 void ResourceLoadScheduler::SetClockForTesting(const base::Clock* clock) {
   clock_ = clock;
+}
+
+bool ResourceLoadScheduler::ShouldDelay(
+    PendingRequestMap::iterator found) const {
+  if (!base::FeatureList::IsEnabled(
+          features::kDelayCompetingLowPriorityRequests)) {
+    return false;
+  }
+
+  // The milestone already passed. We no longer have to delay requests.
+  if (delay_milestone_reached_)
+    return false;
+
+  // There are no inflight important requests. We don't have to delay the
+  // pending request even if it has low priority.
+  if (in_flight_important_requests_ == 0)
+    return false;
+
+  // We didn't find the pending request for the id.
+  if (found == pending_request_map_.end())
+    return false;
+
+  // The pending request is not in low priority.
+  if (found->value->priority > ResourceLoadPriority::kLow)
+    return false;
+
+  if (features::kDelayCompetingLowPriorityRequestsDelayParam.Get() ==
+      features::DelayCompetingLowPriorityRequestsDelayType::
+          kUseOptimizationGuide) {
+    // The optimization guide is supposed to be used, but the hints are not
+    // available. Give up delaying requests.
+    if (!optimization_hints_)
+      return false;
+    // The optimization guide suggests the default behavior (no delay).
+    if (optimization_hints_->delay_type ==
+        mojom::blink::DelayCompetingLowPriorityRequestsDelayType::kUnknown) {
+      return false;
+    }
+  }
+
+  // We get a chance to delay competing low priority requests. Record the fact
+  // in UKM to measure the application ratio of the optimization.
+  if (loading_behavior_observer_) {
+    loading_behavior_observer_->DidObserveLoadingBehavior(
+        kLoadingBehaviorCompetingLowPriorityRequestsDelayed);
+  }
+
+  return true;
+}
+
+ResourceLoadPriority ResourceLoadScheduler::PriorityImportanceThreshold() {
+  // The default value defined by the field trial.
+  DCHECK_EQ(
+      features::DelayCompetingLowPriorityRequestsThreshold::kHigh,
+      features::kDelayCompetingLowPriorityRequestsThresholdParam.default_value);
+  const auto default_value = ResourceLoadPriority::kHigh;
+
+  using FeatureDelayType = features::DelayCompetingLowPriorityRequestsDelayType;
+  using FeaturePriorityThreshold =
+      features::DelayCompetingLowPriorityRequestsThreshold;
+  using MojomPriorityThreshold =
+      mojom::blink::DelayCompetingLowPriorityRequestsPriorityThreshold;
+
+  switch (features::kDelayCompetingLowPriorityRequestsDelayParam.Get()) {
+    // Use parameters provided by the field trial.
+    case FeatureDelayType::kFirstPaint:
+    case FeatureDelayType::kFirstContentfulPaint:
+    case FeatureDelayType::kAlways:
+      switch (
+          features::kDelayCompetingLowPriorityRequestsThresholdParam.Get()) {
+        case FeaturePriorityThreshold::kHigh:
+          return ResourceLoadPriority::kHigh;
+        case FeaturePriorityThreshold::kMedium:
+          return ResourceLoadPriority::kMedium;
+      }
+      NOTREACHED();
+    // Use hints provided by the optimization guide.
+    case FeatureDelayType::kUseOptimizationGuide:
+      if (!optimization_hints_) {
+        // The optimization guide service didn't provide the hints. Fallback to
+        // the default value.
+        return default_value;
+      }
+      switch (optimization_hints_->priority_threshold) {
+        case MojomPriorityThreshold::kHigh:
+          return ResourceLoadPriority::kHigh;
+        case MojomPriorityThreshold::kMedium:
+          return ResourceLoadPriority::kMedium;
+        case MojomPriorityThreshold::kUnknown:
+          // The optimization guide didn't decide the priority threshold.
+          // Fallback to the default value.
+          return default_value;
+      }
+      NOTREACHED();
+  }
+}
+
+mojom::blink::DelayCompetingLowPriorityRequestsDelayType
+ResourceLoadScheduler::ComputeDelayMilestone() {
+  DCHECK(base::FeatureList::IsEnabled(
+      features::kDelayCompetingLowPriorityRequests));
+
+  using FeatureDelayType = features::DelayCompetingLowPriorityRequestsDelayType;
+  using MojomDelayType =
+      mojom::blink::DelayCompetingLowPriorityRequestsDelayType;
+
+  switch (features::kDelayCompetingLowPriorityRequestsDelayParam.Get()) {
+    // Use parameters provided by the field trial.
+    case FeatureDelayType::kFirstPaint:
+      return MojomDelayType::kFirstPaint;
+    case FeatureDelayType::kFirstContentfulPaint:
+      return MojomDelayType::kFirstContentfulPaint;
+    case FeatureDelayType::kAlways:
+      return MojomDelayType::kUnknown;
+
+    // Use hints provided by the optimization guide.
+    case FeatureDelayType::kUseOptimizationGuide:
+      // Give up delaying requests when the optimization guide is enabled but
+      // the hints are not available. See ShouldDelay().
+      if (!optimization_hints_)
+        return MojomDelayType::kUnknown;
+      return optimization_hints_->delay_type;
+  }
 }
 
 }  // namespace blink

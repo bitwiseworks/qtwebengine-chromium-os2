@@ -16,12 +16,12 @@ AccessibilityEventRecorder::AccessibilityEventRecorder(
 
 AccessibilityEventRecorder::~AccessibilityEventRecorder() = default;
 
-#if !defined(OS_WIN) && !defined(OS_MACOSX) && !BUILDFLAG(USE_ATK)
+#if !defined(OS_WIN) && !defined(OS_MAC) && !BUILDFLAG(USE_ATK)
 // static
 std::unique_ptr<AccessibilityEventRecorder> AccessibilityEventRecorder::Create(
     BrowserAccessibilityManager* manager,
     base::ProcessId pid,
-    const base::StringPiece& application_name_match_pattern) {
+    const AccessibilityTreeFormatter::TreeSelector& selector) {
   return std::make_unique<AccessibilityEventRecorder>(manager);
 }
 
@@ -35,7 +35,6 @@ AccessibilityEventRecorder::GetTestPasses() {
 #else   // defined(OS_ANDROID)
   return {
       {"blink", &AccessibilityEventRecorder::Create},
-      {"native", &AccessibilityEventRecorder::Create},
   };
 #endif  // defined(OS_ANDROID)
 }

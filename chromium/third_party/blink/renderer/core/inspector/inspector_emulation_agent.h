@@ -7,6 +7,7 @@
 
 #include "base/macros.h"
 #include "base/optional.h"
+#include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/inspector/inspector_base_agent.h"
 #include "third_party/blink/renderer/core/inspector/protocol/Emulation.h"
@@ -74,28 +75,34 @@ class CORE_EXPORT InspectorEmulationAgent final
       protocol::Maybe<int> position_y,
       protocol::Maybe<bool> dont_set_visible_size,
       protocol::Maybe<protocol::Emulation::ScreenOrientation>,
-      protocol::Maybe<protocol::Page::Viewport>) override;
+      protocol::Maybe<protocol::Page::Viewport>,
+      protocol::Maybe<protocol::Emulation::DisplayFeature>) override;
   protocol::Response clearDeviceMetricsOverride() override;
   protocol::Response setUserAgentOverride(
       const String& user_agent,
       protocol::Maybe<String> accept_language,
-      protocol::Maybe<String> platform) override;
+      protocol::Maybe<String> platform,
+      protocol::Maybe<protocol::Emulation::UserAgentMetadata>
+          ua_metadata_override) override;
   protocol::Response setLocaleOverride(protocol::Maybe<String>) override;
 
   // InspectorInstrumentation API
   void ApplyAcceptLanguageOverride(String* accept_lang);
   void ApplyUserAgentOverride(String* user_agent);
+  void ApplyUserAgentMetadataOverride(
+      base::Optional<blink::UserAgentMetadata>* ua_metadata);
   void FrameStartedLoading(LocalFrame*);
   void PrepareRequest(DocumentLoader*,
                       ResourceRequest&,
                       const FetchInitiatorInfo&,
                       ResourceType);
+  void WillCommitLoad(LocalFrame*, DocumentLoader*);
 
   // InspectorBaseAgent overrides.
   protocol::Response disable() override;
   void Restore() override;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   WebViewImpl* GetWebViewImpl();
@@ -112,6 +119,7 @@ class CORE_EXPORT InspectorEmulationAgent final
 
   Member<WebLocalFrameImpl> web_local_frame_;
   base::TimeTicks virtual_time_base_ticks_;
+  HeapVector<Member<DocumentLoader>> pending_document_loaders_;
 
   std::unique_ptr<TimeZoneController::TimeZoneOverride> timezone_override_;
 
@@ -131,6 +139,8 @@ class CORE_EXPORT InspectorEmulationAgent final
   InspectorAgentState::String emulated_vision_deficiency_;
   InspectorAgentState::String navigator_platform_override_;
   InspectorAgentState::String user_agent_override_;
+  InspectorAgentState::String serialized_ua_metadata_override_;
+  base::Optional<blink::UserAgentMetadata> ua_metadata_override_;
   InspectorAgentState::String accept_language_override_;
   InspectorAgentState::String locale_override_;
   InspectorAgentState::Double virtual_time_budget_;

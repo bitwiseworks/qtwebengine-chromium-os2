@@ -12,6 +12,7 @@
 
 #include "base/containers/flat_set.h"
 #include "base/guid.h"
+#include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/pickle.h"
 #include "base/token.h"
@@ -54,6 +55,7 @@ static const SessionCommand::id_type kCommandSetWindowBounds3 = 14;
 static const SessionCommand::id_type kCommandSetWindowAppName = 15;
 static const SessionCommand::id_type kCommandTabClosed = 16;
 static const SessionCommand::id_type kCommandWindowClosed = 17;
+// OBSOLETE: Superseded by kCommandSetTabUserAgentOverride2.
 static const SessionCommand::id_type kCommandSetTabUserAgentOverride = 18;
 static const SessionCommand::id_type kCommandSessionStorageAssociated = 19;
 static const SessionCommand::id_type kCommandSetActiveWindow = 20;
@@ -66,6 +68,9 @@ static const SessionCommand::id_type kCommandSetTabGroup = 25;
 static const SessionCommand::id_type kCommandSetTabGroupMetadata = 26;
 static const SessionCommand::id_type kCommandSetTabGroupMetadata2 = 27;
 static const SessionCommand::id_type kCommandSetTabGuid = 28;
+static const SessionCommand::id_type kCommandSetTabUserAgentOverride2 = 29;
+static const SessionCommand::id_type kCommandSetTabData = 30;
+static const SessionCommand::id_type kCommandSetWindowUserTitle = 31;
 
 namespace {
 
@@ -716,7 +721,26 @@ bool CreateTabsAndWindows(
           return true;
         }
 
-        GetTab(tab_id, tabs)->user_agent_override.swap(user_agent_override);
+        SessionTab* tab = GetTab(tab_id, tabs);
+        tab->user_agent_override.ua_string_override.swap(user_agent_override);
+        tab->user_agent_override.opaque_ua_metadata_override = base::nullopt;
+        break;
+      }
+
+      case kCommandSetTabUserAgentOverride2: {
+        SessionID tab_id = SessionID::InvalidValue();
+        std::string user_agent_override;
+        base::Optional<std::string> opaque_ua_metadata_override;
+        if (!RestoreSetTabUserAgentOverrideCommand2(
+                *command, &tab_id, &user_agent_override,
+                &opaque_ua_metadata_override)) {
+          return true;
+        }
+        SessionTab* tab = GetTab(tab_id, tabs);
+        tab->user_agent_override.ua_string_override =
+            std::move(user_agent_override);
+        tab->user_agent_override.opaque_ua_metadata_override =
+            std::move(opaque_ua_metadata_override);
         break;
       }
 
@@ -783,6 +807,40 @@ bool CreateTabsAndWindows(
           return true;
         }
         GetTab(SessionID::FromSerializedValue(tab_id), tabs)->guid = guid;
+        break;
+      }
+
+      case kCommandSetTabData: {
+        std::unique_ptr<base::Pickle> pickle(command->PayloadAsPickle());
+        base::PickleIterator it(*pickle);
+        SessionID::id_type tab_id = -1;
+        int size = 0;
+        if (!it.ReadInt(&tab_id) || !it.ReadInt(&size)) {
+          DVLOG(1) << "Failed reading command " << command->id();
+          return true;
+        }
+        std::map<std::string, std::string> data;
+        for (int i = 0; i < size; i++) {
+          std::string key;
+          std::string value;
+          if (!it.ReadString(&key) || !it.ReadString(&value)) {
+            DVLOG(1) << "Failed reading command " << command->id();
+            return true;
+          }
+          data.insert({key, value});
+        }
+
+        GetTab(SessionID::FromSerializedValue(tab_id), tabs)->data =
+            std::move(data);
+        break;
+      }
+
+      case kCommandSetWindowUserTitle: {
+        SessionID window_id = SessionID::InvalidValue();
+        std::string title;
+        if (!RestoreSetWindowUserTitleCommand(*command, &window_id, &title))
+          return true;
+        GetWindow(window_id, windows)->user_title = title;
         break;
       }
 
@@ -980,8 +1038,8 @@ std::unique_ptr<SessionCommand> CreateSetTabExtensionAppIDCommand(
 
 std::unique_ptr<SessionCommand> CreateSetTabUserAgentOverrideCommand(
     const SessionID& tab_id,
-    const std::string& user_agent_override) {
-  return CreateSetTabUserAgentOverrideCommand(kCommandSetTabUserAgentOverride,
+    const SerializedUserAgentOverride& user_agent_override) {
+  return CreateSetTabUserAgentOverrideCommand(kCommandSetTabUserAgentOverride2,
                                               tab_id, user_agent_override);
 }
 
@@ -992,6 +1050,13 @@ std::unique_ptr<SessionCommand> CreateSetWindowAppNameCommand(
                                        app_name);
 }
 
+std::unique_ptr<SessionCommand> CreateSetWindowUserTitleCommand(
+    const SessionID& window_id,
+    const std::string& user_title) {
+  return CreateSetWindowUserTitleCommand(kCommandSetWindowUserTitle, window_id,
+                                         user_title);
+}
+
 std::unique_ptr<SessionCommand> CreateSetTabGuidCommand(
     const SessionID& tab_id,
     const std::string& guid) {
@@ -999,6 +1064,19 @@ std::unique_ptr<SessionCommand> CreateSetTabGuidCommand(
   pickle.WriteInt(tab_id.id());
   pickle.WriteString(guid);
   return std::make_unique<SessionCommand>(kCommandSetTabGuid, pickle);
+}
+
+std::unique_ptr<SessionCommand> CreateSetTabDataCommand(
+    const SessionID& tab_id,
+    const std::map<std::string, std::string>& data) {
+  base::Pickle pickle;
+  pickle.WriteInt(tab_id.id());
+  pickle.WriteInt(data.size());
+  for (const auto& kv : data) {
+    pickle.WriteString(kv.first);
+    pickle.WriteString(kv.second);
+  }
+  return std::make_unique<SessionCommand>(kCommandSetTabData, pickle);
 }
 
 bool ReplacePendingCommand(CommandStorageManager* command_storage_manager,

@@ -19,14 +19,12 @@ class MODULES_EXPORT DOMWindowStorageController final
     : public GarbageCollected<DOMWindowStorageController>,
       public Supplement<Document>,
       public LocalDOMWindow::EventListenerObserver {
-  USING_GARBAGE_COLLECTED_MIXIN(DOMWindowStorageController);
-
  public:
   static const char kSupplementName[];
 
   explicit DOMWindowStorageController(Document&);
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   static DOMWindowStorageController& From(Document&);
 

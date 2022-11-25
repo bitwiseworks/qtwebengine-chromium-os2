@@ -42,7 +42,6 @@
 #include "ppapi/buildflags/buildflags.h"
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom.h"
 #include "third_party/blink/public/mojom/renderer_preferences.mojom.h"
-#include "third_party/blink/public/platform/web_text_autosizer_page_info.h"
 #include "ui/base/ime/text_input_type.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/point.h"
@@ -55,7 +54,7 @@
 #include "ui/gfx/ipc/skia/gfx_skia_param_traits.h"
 #include "ui/native_theme/native_theme.h"
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
 #include "third_party/blink/public/platform/mac/web_scrollbar_theme.h"
 #endif
 
@@ -74,7 +73,7 @@ IPC_ENUM_TRAITS_MAX_VALUE(content::ThreeDAPIType,
                           content::THREE_D_API_TYPE_LAST)
 IPC_ENUM_TRAITS_MAX_VALUE(ui::TextInputType, ui::TEXT_INPUT_TYPE_MAX)
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
 IPC_ENUM_TRAITS_MAX_VALUE(blink::ScrollerStyle, blink::kScrollerStyleOverlay)
 #endif
 
@@ -94,14 +93,6 @@ IPC_STRUCT_TRAITS_BEGIN(content::MenuItem)
 IPC_STRUCT_TRAITS_END()
 
 // Messages sent from the browser to the renderer.
-
-// This passes a set of webkit preferences down to the renderer.
-IPC_MESSAGE_ROUTED1(ViewMsg_UpdateWebPreferences,
-                    content::WebPreferences)
-
-// Used to notify the render-view that we have received a target URL. Used
-// to prevent target URLs spamming the browser.
-IPC_MESSAGE_ROUTED0(ViewMsg_UpdateTargetURL_ACK)
 
 // Notification that a move or resize renderer's containing window has
 // started.
@@ -136,24 +127,6 @@ IPC_MESSAGE_ROUTED2(ViewHostMsg_ShowWidget,
 IPC_MESSAGE_ROUTED1(ViewHostMsg_ShowFullscreenWidget,
                     int /* route_id */)
 
-// Sent from an inactive renderer for the browser to route to the active
-// renderer, instructing it to close.
-IPC_MESSAGE_ROUTED0(ViewHostMsg_RouteCloseEvent)
-
-// Notifies the browser that we want to show a destination url for a potential
-// action (e.g. when the user is hovering over a link).
-IPC_MESSAGE_ROUTED1(ViewHostMsg_UpdateTargetURL,
-                    GURL)
-
-IPC_MESSAGE_ROUTED0(ViewHostMsg_Focus)
-
-// Get the list of proxies to use for |url|, as a semicolon delimited list
-// of "<TYPE> <HOST>:<PORT>" | "DIRECT".
-IPC_SYNC_MESSAGE_CONTROL1_2(ViewHostMsg_ResolveProxy,
-                            GURL /* url */,
-                            bool /* result */,
-                            std::string /* proxy list */)
-
 #if BUILDFLAG(ENABLE_PLUGINS)
 // A renderer sends this to the browser process when it wants to access a PPAPI
 // broker. In contrast to FrameHostMsg_OpenChannelToPpapiBroker, this is called
@@ -170,10 +143,6 @@ IPC_MESSAGE_ROUTED3(ViewHostMsg_RequestPpapiBrokerPermission,
 // a cross-process frame, as appropriate.
 IPC_MESSAGE_ROUTED1(ViewHostMsg_TakeFocus,
                     bool /* reverse */)
-
-IPC_MESSAGE_ROUTED1(
-    ViewHostMsg_NotifyTextAutosizerPageInfoChangedInLocalMainFrame,
-    blink::WebTextAutosizerPageInfo /* page_info */)
 
 // Adding a new message? Stick to the sort order above: first platform
 // independent ViewMsg, then ifdefs for platform specific ViewMsg, then platform

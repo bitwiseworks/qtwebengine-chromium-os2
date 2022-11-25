@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "base/android/scoped_java_ref.h"
+#include "base/containers/span.h"
 #include "url/gurl.h"
 
 namespace url {
@@ -20,6 +21,10 @@ class GURLAndroid {
   static base::android::ScopedJavaLocalRef<jobject> FromNativeGURL(
       JNIEnv* env,
       const GURL& gurl);
+  static base::android::ScopedJavaLocalRef<jobject> EmptyGURL(JNIEnv* env);
+  static base::android::ScopedJavaLocalRef<jobjectArray> ToJavaArrayOfGURLs(
+      JNIEnv* env,
+      base::span<base::android::ScopedJavaLocalRef<jobject>> v);
 };
 
 }  // namespace url

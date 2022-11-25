@@ -52,8 +52,8 @@ class CircularQueue {
    public:
     using difference_type = ptrdiff_t;
     using value_type = T;
-    using pointer = const T*;
-    using reference = const T&;
+    using pointer = T*;
+    using reference = T&;
     using iterator_category = std::random_access_iterator_tag;
 
     Iterator(CircularQueue* queue, uint64_t pos, uint32_t generation)
@@ -75,21 +75,16 @@ class CircularQueue {
     }
 
     const T* operator->() const {
-#if PERFETTO_DCHECK_IS_ON()
-      PERFETTO_DCHECK(generation_ == queue_->generation());
-#endif
-      return queue_->Get(pos_);
+      return const_cast<CircularQueue<T>::Iterator*>(this)->operator->();
     }
 
     T& operator*() { return *(operator->()); }
     const T& operator*() const { return *(operator->()); }
 
-    value_type& operator[](difference_type i) {
-      return *(*this + i);
-    }
+    value_type& operator[](difference_type i) { return *(*this + i); }
 
     const value_type& operator[](difference_type i) const {
-      return *(*this + i);
+      return const_cast<CircularQueue<T>::Iterator&>(*this)[i];
     }
 
     Iterator& operator++() {
@@ -199,7 +194,7 @@ class CircularQueue {
       PERFETTO_DCHECK(empty());
       return;
     }
-    erase_front(size());  // Invoke destructors on all alive entries.
+    clear();  // Invoke destructors on all alive entries.
     PERFETTO_DCHECK(empty());
     free(entries_);
   }
@@ -222,6 +217,8 @@ class CircularQueue {
   }
 
   void pop_front() { erase_front(1); }
+
+  void clear() { erase_front(size()); }
 
   T& at(size_t idx) {
     PERFETTO_DCHECK(idx < size());

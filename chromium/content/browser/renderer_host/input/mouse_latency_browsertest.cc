@@ -19,11 +19,13 @@
 #include "content/browser/renderer_host/input/synthetic_tap_gesture.h"
 #include "content/browser/renderer_host/render_widget_host_factory.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
+#include "content/browser/site_instance_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/input/synthetic_gesture_params.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/tracing_controller.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -75,21 +77,19 @@ namespace content {
 class TracingRenderWidgetHost : public RenderWidgetHostImpl {
  public:
   TracingRenderWidgetHost(RenderWidgetHostDelegate* delegate,
-                          RenderProcessHost* process,
+                          AgentSchedulingGroupHost& agent_scheduling_group,
                           int32_t routing_id,
-                          mojo::PendingRemote<mojom::Widget> widget,
                           bool hidden)
       : RenderWidgetHostImpl(delegate,
-                             process,
+                             agent_scheduling_group,
                              routing_id,
-                             std::move(widget),
                              hidden,
-                             std::make_unique<FrameTokenMessageQueue>()) {
-  }
+                             std::make_unique<FrameTokenMessageQueue>()) {}
 
-  void OnMouseEventAck(const MouseEventWithLatencyInfo& event,
-                       InputEventAckSource ack_source,
-                       InputEventAckState ack_result) override {
+  void OnMouseEventAck(
+      const MouseEventWithLatencyInfo& event,
+      blink::mojom::InputEventResultSource ack_source,
+      blink::mojom::InputEventResultState ack_result) override {
     RenderWidgetHostImpl::OnMouseEventAck(event, ack_source, ack_result);
   }
 
@@ -108,12 +108,11 @@ class TracingRenderWidgetHostFactory : public RenderWidgetHostFactory {
 
   std::unique_ptr<RenderWidgetHostImpl> CreateRenderWidgetHost(
       RenderWidgetHostDelegate* delegate,
-      RenderProcessHost* process,
+      AgentSchedulingGroupHost& agent_scheduling_group,
       int32_t routing_id,
-      mojo::PendingRemote<mojom::Widget> widget_interface,
       bool hidden) override {
     return std::make_unique<TracingRenderWidgetHost>(
-        delegate, process, routing_id, std::move(widget_interface), hidden);
+        delegate, agent_scheduling_group, routing_id, hidden);
   }
 
  private:
@@ -304,24 +303,16 @@ class MouseLatencyBrowserTest : public ContentBrowserTest {
 // MouseDown events in the case where no swap is generated.
 // Disabled on Android because we don't support synthetic mouse input on
 // Android (crbug.com/723618).
-// Disabled on Windows due to flakyness (https://crbug.com/800303).
-// Disabled on Linux due to flakyness (https://crbug.com/815363).
-#if defined(OS_ANDROID) || defined(OS_WIN) || defined(OS_LINUX)
-#define MAYBE_MouseDownAndUpRecordedWithoutSwap \
-  DISABLED_MouseDownAndUpRecordedWithoutSwap
-#else
-#define MAYBE_MouseDownAndUpRecordedWithoutSwap \
-  MouseDownAndUpRecordedWithoutSwap
-#endif
+// Disabled on due to flakiness (https://crbug.com/800303, https://crbug.com/815363).
 IN_PROC_BROWSER_TEST_F(MouseLatencyBrowserTest,
-                       MAYBE_MouseDownAndUpRecordedWithoutSwap) {
+                       DISABLED_MouseDownAndUpRecordedWithoutSwap) {
   LoadURL();
 
   auto filter = std::make_unique<InputMsgWatcher>(
-      GetWidgetHost(), blink::WebInputEvent::kMouseUp);
+      GetWidgetHost(), blink::WebInputEvent::Type::kMouseUp);
   StartTracing();
   DoSyncClick(gfx::PointF(100, 100));
-  EXPECT_EQ(INPUT_EVENT_ACK_STATE_NOT_CONSUMED,
+  EXPECT_EQ(blink::mojom::InputEventResultState::kNotConsumed,
             filter->GetAckStateWaitIfNecessary());
   const base::Value& trace_data = StopTracing();
 
@@ -357,17 +348,9 @@ IN_PROC_BROWSER_TEST_F(MouseLatencyBrowserTest,
 // events in the case where events are coalesced. (crbug.com/771165).
 // Disabled on Android because we don't support synthetic mouse input on Android
 // (crbug.com/723618).
-// http://crbug.com/801629 : Flaky on Linux and Windows, and Mac with
-// --enable-features=VizDisplayCompositor
-#if defined(OS_ANDROID) || defined(OS_WIN) || defined(OS_LINUX)
-#define MAYBE_CoalescedMouseMovesCorrectlyTerminated \
-  DISABLED_CoalescedMouseMovesCorrectlyTerminated
-#else
-#define MAYBE_CoalescedMouseMovesCorrectlyTerminated \
-  CoalescedMouseMovesCorrectlyTerminated
-#endif
+// http://crbug.com/801629 : Flaky on multiple platforms.
 IN_PROC_BROWSER_TEST_F(MouseLatencyBrowserTest,
-                       MAYBE_CoalescedMouseMovesCorrectlyTerminated) {
+                       DISABLED_CoalescedMouseMovesCorrectlyTerminated) {
   LoadURL();
 
   StartTracing();

@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as UI from '../ui/ui.js';
 
@@ -27,7 +30,8 @@ export class NetworkManageCustomHeadersView extends UI.Widget.VBox {
     this._list.element.classList.add('custom-headers-list');
     this._list.registerRequiredCSS('network/networkManageCustomHeadersView.css');
 
-    const placeholder = createElementWithClass('div', 'custom-headers-list-list-empty');
+    const placeholder = document.createElement('div');
+    placeholder.classList.add('custom-headers-list-list-empty');
     placeholder.textContent = Common.UIString.UIString('No custom headers');
     this._list.setEmptyPlaceholder(placeholder);
     this._list.show(this.contentElement);
@@ -68,7 +72,8 @@ export class NetworkManageCustomHeadersView extends UI.Widget.VBox {
    * @return {!Element}
    */
   renderItem(item, editable) {
-    const element = createElementWithClass('div', 'custom-headers-list-item');
+    const element = document.createElement('div');
+    element.classList.add('custom-headers-list-item');
     const header = element.createChild('div', 'custom-header-name');
     header.textContent = item.header;
     header.title = item.header;

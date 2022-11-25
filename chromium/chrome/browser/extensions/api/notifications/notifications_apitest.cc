@@ -11,7 +11,9 @@
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/apps/app_service/app_launch_params.h"
-#include "chrome/browser/apps/launch_service/launch_service.h"
+#include "chrome/browser/apps/app_service/app_service_proxy.h"
+#include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
+#include "chrome/browser/apps/app_service/browser_app_launcher.h"
 #include "chrome/browser/apps/platform_apps/app_browsertest_util.h"
 #include "chrome/browser/extensions/api/notifications/extension_notification_display_helper.h"
 #include "chrome/browser/extensions/api/notifications/extension_notification_display_helper_factory.h"
@@ -27,6 +29,7 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "content/public/browser/notification_service.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/api/test/test_api.h"
 #include "extensions/browser/app_window/app_window.h"
@@ -40,7 +43,7 @@
 #include "ui/message_center/public/cpp/notification.h"
 #include "ui/message_center/public/cpp/notifier_id.h"
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
 #include "base/mac/mac_util.h"
 #endif
 
@@ -205,8 +208,9 @@ class NotificationsApiTest : public extensions::ExtensionApiTest {
   }
 
   void LaunchPlatformApp(const Extension* extension) {
-    apps::LaunchService::Get(browser()->profile())
-        ->OpenApplication(apps::AppLaunchParams(
+    apps::AppServiceProxyFactory::GetForProfile(browser()->profile())
+        ->BrowserAppLauncher()
+        ->LaunchAppWithParams(apps::AppLaunchParams(
             extension->id(), apps::mojom::LaunchContainer::kLaunchContainerNone,
             WindowOpenDisposition::NEW_WINDOW,
             apps::mojom::AppLaunchSource::kSourceTest));
@@ -218,7 +222,8 @@ class NotificationsApiTest : public extensions::ExtensionApiTest {
 }  // namespace
 
 // http://crbug.com/691913
-#if (defined(OS_LINUX) || defined(OS_WIN)) && !defined(NDEBUG)
+#if (defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_WIN)) && \
+    !defined(NDEBUG)
 #define MAYBE_TestBasicUsage DISABLED_TestBasicUsage
 #else
 #define MAYBE_TestBasicUsage TestBasicUsage
@@ -236,7 +241,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestCSP) {
 }
 
 // Native notifications don't support (nor use) observers.
-#if !defined(OS_MACOSX)
+#if !defined(OS_MAC)
 IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestByUser) {
   const extensions::Extension* extension =
       LoadExtensionAndWait("notifications/api/by_user");
@@ -275,7 +280,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestByUser) {
     EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
   }
 }
-#endif  // !defined(OS_MACOSX)
+#endif  // !defined(OS_MAC)
 
 IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestPartialUpdate) {
   ASSERT_TRUE(RunExtensionTest("notifications/api/partial_update")) << message_;
@@ -375,7 +380,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestOnPermissionLevelChanged) {
 }
 
 // Native notifications don't support (nor use) observers.
-#if !defined(OS_MACOSX)
+#if !defined(OS_MAC)
 IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestUserGesture) {
   const extensions::Extension* extension =
       LoadExtensionAndWait("notifications/api/user_gesture");
@@ -411,7 +416,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestUserGesture) {
 
   ASSERT_FALSE(GetNotificationForExtension(extension));
 }
-#endif  // !defined(OS_MACOSX)
+#endif  // !defined(OS_MAC)
 
 IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestRequireInteraction) {
   const extensions::Extension* extension =
@@ -448,7 +453,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestShouldDisplayNormal) {
 
 // Full screen related tests don't run on Mac as native notifications full
 // screen decisions are done by the OS directly.
-#if !defined(OS_MACOSX)
+#if !defined(OS_MAC)
 IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestShouldDisplayFullscreen) {
   ExtensionTestMessageListener notification_created_listener("created", false);
   const Extension* extension = LoadAppWithWindowState(
@@ -536,4 +541,4 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest,
   EXPECT_EQ(message_center::FullscreenVisibility::OVER_USER,
             notification->fullscreen_visibility());
 }
-#endif  // !defined(OS_MACOSX)
+#endif  // !defined(OS_MAC)

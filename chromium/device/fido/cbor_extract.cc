@@ -7,7 +7,7 @@
 #include <type_traits>
 
 #include "base/callback.h"
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "components/cbor/values.h"
 
 namespace device {
@@ -66,8 +66,8 @@ class Extractor {
         step_i_ += key.size() + 1;
         map_it = map.find(cbor::Value(std::move(key)));
       } else {
-        map_it = map.find(
-            cbor::Value(static_cast<int64_t>(key_or_string_indicator)));
+        map_it = map.find(cbor::Value(static_cast<int64_t>(
+            static_cast<int8_t>(key_or_string_indicator))));
       }
 
       const void** output = nullptr;

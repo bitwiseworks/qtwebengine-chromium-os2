@@ -28,9 +28,7 @@ source_set("module_info") {
     "//content/public/common",
   ]
 
-  deps = [
-    "//base:i18n",
-  ]
+  deps = [ "//base:i18n" ]
 
   libs = [ "crypt32.lib" ]
 
@@ -62,6 +60,7 @@ source_set("unit_tests") {
   deps = [
     ":conflicts_dll",
     ":module_info",
+    "//base",
     "//chrome/browser",
     "//chrome/services/util_win:lib",
     "//chrome/test:test_support",
@@ -106,6 +105,7 @@ if (is_chrome_branded) {
       "//chrome/chrome_elf:third_party_shared_defines",
       "//chrome/test:test_support_ui",
       "//components/services/quarantine/public/cpp:features",
+      "//content/test:test_support",
       "//testing/gtest",
     ]
   }

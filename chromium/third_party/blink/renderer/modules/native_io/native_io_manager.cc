@@ -9,7 +9,6 @@
 
 #include "base/files/file.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
-#include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/mojom/native_io/native_io.mojom-blink.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
@@ -24,6 +23,7 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
@@ -47,9 +47,11 @@ bool IsValidNativeIOName(const String& name) {
                      &IsValidNativeIONameCharacter);
 }
 
-void OnOpenResult(ScriptPromiseResolver* resolver,
-                  mojo::Remote<mojom::blink::NativeIOFileHost> backend_file,
-                  base::File backing_file) {
+void OnOpenResult(
+    ScriptPromiseResolver* resolver,
+    DisallowNewWrapper<HeapMojoRemote<mojom::blink::NativeIOFileHost>>*
+        backend_file_wrapper,
+    base::File backing_file) {
   ScriptState* script_state = resolver->GetScriptState();
   if (!script_state->ContextIsValid())
     return;
@@ -63,7 +65,7 @@ void OnOpenResult(ScriptPromiseResolver* resolver,
   }
 
   NativeIOFile* file = MakeGarbageCollected<NativeIOFile>(
-      std::move(backing_file), std::move(backend_file),
+      std::move(backing_file), backend_file_wrapper->TakeValue(),
       ExecutionContext::From(script_state));
   resolver->Resolve(file);
 }
@@ -102,12 +104,27 @@ void OnGetAllResult(ScriptPromiseResolver* resolver,
   resolver->Resolve(file_names);
 }
 
+void OnRenameResult(ScriptPromiseResolver* resolver, bool backend_success) {
+  ScriptState* script_state = resolver->GetScriptState();
+  if (!script_state->ContextIsValid())
+    return;
+  ScriptState::Scope scope(script_state);
+
+  if (!backend_success) {
+    resolver->Reject(V8ThrowDOMException::CreateOrEmpty(
+        script_state->GetIsolate(), DOMExceptionCode::kUnknownError,
+        "rename() failed"));
+    return;
+  }
+  resolver->Resolve();
+}
+
 }  // namespace
 
 NativeIOManager::NativeIOManager(
     ExecutionContext* execution_context,
-    mojo::Remote<mojom::blink::NativeIOHost> backend)
-    : ExecutionContextLifecycleObserver(execution_context),
+    HeapMojoRemote<mojom::blink::NativeIOHost> backend)
+    : ExecutionContextClient(execution_context),
       // TODO(pwnall): Get a dedicated queue when the specification matures.
       receiver_task_runner_(
           execution_context->GetTaskRunner(TaskType::kMiscPlatformAPI)),
@@ -126,7 +143,7 @@ ScriptPromise NativeIOManager::open(ScriptState* script_state,
     return ScriptPromise();
   }
 
-  if (!backend_) {
+  if (!backend_.is_bound()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "NativeIOHost backend went away");
     return ScriptPromise();
@@ -135,14 +152,16 @@ ScriptPromise NativeIOManager::open(ScriptState* script_state,
   ExecutionContext* execution_context = GetExecutionContext();
   DCHECK(execution_context);
 
-  mojo::Remote<mojom::blink::NativeIOFileHost> backend_file;
+  HeapMojoRemote<mojom::blink::NativeIOFileHost> backend_file(
+      execution_context);
   mojo::PendingReceiver<mojom::blink::NativeIOFileHost> backend_file_receiver =
       backend_file.BindNewPipeAndPassReceiver(receiver_task_runner_);
 
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
-  backend_->OpenFile(name, std::move(backend_file_receiver),
-                     WTF::Bind(&OnOpenResult, WrapPersistent(resolver),
-                               std::move(backend_file)));
+  backend_->OpenFile(
+      name, std::move(backend_file_receiver),
+      WTF::Bind(&OnOpenResult, WrapPersistent(resolver),
+                WrapPersistent(WrapDisallowNew(std::move(backend_file)))));
   return resolver->Promise();
 }
 
@@ -154,7 +173,7 @@ ScriptPromise NativeIOManager::Delete(ScriptState* script_state,
     return ScriptPromise();
   }
 
-  if (!backend_) {
+  if (!backend_.is_bound()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "NativeIOHost backend went away");
     return ScriptPromise();
@@ -168,7 +187,7 @@ ScriptPromise NativeIOManager::Delete(ScriptState* script_state,
 
 ScriptPromise NativeIOManager::getAll(ScriptState* script_state,
                                       ExceptionState& exception_state) {
-  if (!backend_) {
+  if (!backend_.is_bound()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "NativeIOHost backend went away");
     return ScriptPromise();
@@ -180,6 +199,27 @@ ScriptPromise NativeIOManager::getAll(ScriptState* script_state,
   return resolver->Promise();
 }
 
+ScriptPromise NativeIOManager::rename(ScriptState* script_state,
+                                      String old_name,
+                                      String new_name,
+                                      ExceptionState& exception_state) {
+  if (!IsValidNativeIOName(old_name) || !IsValidNativeIOName(new_name)) {
+    exception_state.ThrowTypeError("Invalid file name");
+    return ScriptPromise();
+  }
+
+  if (!backend_.is_bound()) {
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      "NativeIOHost backend went away");
+    return ScriptPromise();
+  }
+
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
+  backend_->RenameFile(old_name, new_name,
+                       WTF::Bind(&OnRenameResult, WrapPersistent(resolver)));
+  return resolver->Promise();
+}
+
 NativeIOFileSync* NativeIOManager::openSync(String name,
                                             ExceptionState& exception_state) {
   if (!IsValidNativeIOName(name)) {
@@ -187,7 +227,7 @@ NativeIOFileSync* NativeIOManager::openSync(String name,
     return nullptr;
   }
 
-  if (!backend_) {
+  if (!backend_.is_bound()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "NativeIOHost backend went away");
     return nullptr;
@@ -196,7 +236,8 @@ NativeIOFileSync* NativeIOManager::openSync(String name,
   ExecutionContext* execution_context = GetExecutionContext();
   DCHECK(execution_context);
 
-  mojo::Remote<mojom::blink::NativeIOFileHost> backend_file;
+  HeapMojoRemote<mojom::blink::NativeIOFileHost> backend_file(
+      execution_context);
   mojo::PendingReceiver<mojom::blink::NativeIOFileHost> backend_file_receiver =
       backend_file.BindNewPipeAndPassReceiver(receiver_task_runner_);
 
@@ -220,7 +261,7 @@ void NativeIOManager::deleteSync(String name, ExceptionState& exception_state) {
     return;
   }
 
-  if (!backend_) {
+  if (!backend_.is_bound()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "NativeIOHost backend went away");
     return;
@@ -237,7 +278,7 @@ void NativeIOManager::deleteSync(String name, ExceptionState& exception_state) {
 
 Vector<String> NativeIOManager::getAllSync(ExceptionState& exception_state) {
   Vector<String> result;
-  if (!backend_) {
+  if (!backend_.is_bound()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "NativeIOHost backend went away");
     return result;
@@ -253,13 +294,34 @@ Vector<String> NativeIOManager::getAllSync(ExceptionState& exception_state) {
   return result;
 }
 
-void NativeIOManager::Trace(Visitor* visitor) {
-  ScriptWrappable::Trace(visitor);
-  ExecutionContextLifecycleObserver::Trace(visitor);
+void NativeIOManager::renameSync(String old_name,
+                                 String new_name,
+                                 ExceptionState& exception_state) {
+  if (!IsValidNativeIOName(old_name) || !IsValidNativeIOName(new_name)) {
+    exception_state.ThrowTypeError("Invalid file name");
+    return;
+  }
+
+  if (!backend_.is_bound()) {
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      "NativeIOHost backend went away");
+    return;
+  }
+
+  bool backend_success = false;
+  bool call_succeeded =
+      backend_->RenameFile(old_name, new_name, &backend_success);
+
+  if (!call_succeeded || !backend_success) {
+    exception_state.ThrowDOMException(DOMExceptionCode::kUnknownError,
+                                      "renameSync() failed");
+  }
 }
 
-void NativeIOManager::ContextDestroyed() {
-  backend_.reset();
+void NativeIOManager::Trace(Visitor* visitor) const {
+  visitor->Trace(backend_);
+  ScriptWrappable::Trace(visitor);
+  ExecutionContextClient::Trace(visitor);
 }
 
 void NativeIOManager::OnBackendDisconnect() {

@@ -13,8 +13,7 @@ MockAffiliationConsumer::MockAffiliationConsumer() {
   EXPECT_CALL(*this, OnResultCallback(testing::_, testing::_)).Times(0);
 }
 
-MockAffiliationConsumer::~MockAffiliationConsumer() {
-}
+MockAffiliationConsumer::~MockAffiliationConsumer() = default;
 
 void MockAffiliationConsumer::ExpectSuccessWithResult(
     const AffiliatedFacets& expected_result) {
@@ -28,7 +27,7 @@ void MockAffiliationConsumer::ExpectFailure() {
       .Times(1);
 }
 
-AffiliationService::ResultCallback
+AndroidAffiliationService::ResultCallback
 MockAffiliationConsumer::GetResultCallback() {
   return base::BindOnce(&MockAffiliationConsumer::OnResultCallback,
                         base::Unretained(this));

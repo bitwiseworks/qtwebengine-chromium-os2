@@ -16,8 +16,10 @@
 #include "base/supports_user_data.h"
 #include "build/build_config.h"
 #include "net/base/ip_endpoint.h"
+#include "net/base/net_errors.h"
 #include "net/base/net_export.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "net/url_request/referrer_policy.h"
 #include "net/url_request/url_request.h"
 
 class GURL;
@@ -33,12 +35,27 @@ namespace url {
 class Origin;
 }
 
+namespace cloud_print {
+class CloudPrintURLFetcher;
+}
+
+namespace cr_fuchsia {
+class DevToolsListFetcher;
+}
+
+namespace device {
+class UsbTestGadgetImpl;
+}
+
+namespace remoting {
+class GstaticJsonFetcher;
+}
+
 namespace net {
 class HttpResponseHeaders;
 class URLFetcherDelegate;
 class URLFetcherResponseWriter;
 class URLRequestContextGetter;
-class URLRequestStatus;
 
 // NOTE:  This class should not be used by content embedders, as it requires an
 // in-process network stack. Content embedders should use
@@ -110,59 +127,6 @@ class NET_EXPORT URLFetcher {
       CreateUploadStreamCallback;
 
   virtual ~URLFetcher();
-
-  // The unannotated Create() methods are not available on desktop Linux +
-  // Windows. They are available on other platforms, since we only audit network
-  // annotations on Linux & Windows.
-#if (!defined(OS_WIN) && !defined(OS_LINUX)) || defined(OS_CHROMEOS)
-  // |url| is the URL to send the request to. It must be valid.
-  // |request_type| is the type of request to make.
-  // |d| the object that will receive the callback on fetch completion.
-  // This function should not be used in Chromium, please use the version with
-  // NetworkTrafficAnnotationTag below instead.
-  static std::unique_ptr<URLFetcher> Create(
-      const GURL& url,
-      URLFetcher::RequestType request_type,
-      URLFetcherDelegate* d);
-
-  // Like above, but if there's a URLFetcherFactory registered with the
-  // implementation it will be used. |id| may be used during testing to identify
-  // who is creating the URLFetcher.
-  // This function should not be used in Chromium, please use the version with
-  // NetworkTrafficAnnotationTag below instead.
-  static std::unique_ptr<URLFetcher> Create(
-      int id,
-      const GURL& url,
-      URLFetcher::RequestType request_type,
-      URLFetcherDelegate* d);
-#endif
-
-  // |url| is the URL to send the request to. It must be valid.
-  // |request_type| is the type of request to make.
-  // |d| the object that will receive the callback on fetch completion.
-  // |traffic_annotation| metadata about the network traffic send via this
-  // URLFetcher, see net::DefineNetworkTrafficAnnotation. Note that:
-  // - net provides the API for tagging requests with an opaque identifier.
-  // - tools/traffic_annotation/traffic_annotation.proto contains the Chrome
-  // specific .proto describing the verbose annotation format that Chrome's
-  // callsites are expected to follow.
-  // - tools/traffic_annotation/ contains sample and template for annotation and
-  // tools will be added for verification following crbug.com/690323.
-  static std::unique_ptr<URLFetcher> Create(
-      const GURL& url,
-      URLFetcher::RequestType request_type,
-      URLFetcherDelegate* d,
-      NetworkTrafficAnnotationTag traffic_annotation);
-
-  // Like above, but if there's a URLFetcherFactory registered with the
-  // implementation it will be used. |id| may be used during testing to identify
-  // who is creating the URLFetcher.
-  static std::unique_ptr<URLFetcher> Create(
-      int id,
-      const GURL& url,
-      URLFetcher::RequestType request_type,
-      URLFetcherDelegate* d,
-      NetworkTrafficAnnotationTag traffic_annotation);
 
   // Cancels all existing URLFetchers.  Will notify the URLFetcherDelegates.
   // Note that any new URLFetchers created while this is running will not be
@@ -240,8 +204,7 @@ class NET_EXPORT URLFetcher {
 
   // The referrer policy to apply when updating the referrer during redirects.
   // The referrer policy may only be changed before Start() is called.
-  virtual void SetReferrerPolicy(
-      URLRequest::ReferrerPolicy referrer_policy) = 0;
+  virtual void SetReferrerPolicy(ReferrerPolicy referrer_policy) = 0;
 
   // Set extra headers on the request.  Must be called before the request
   // is started.
@@ -358,8 +321,8 @@ class NET_EXPORT URLFetcher {
   // Return the URL that this fetcher is processing.
   virtual const GURL& GetURL() const = 0;
 
-  // The status of the URL fetch.
-  virtual const URLRequestStatus& GetStatus() const = 0;
+  // The error from the URL fetch.
+  virtual Error GetError() const = 0;
 
   // The http response code received. Will return RESPONSE_CODE_INVALID
   // if an error prevented any response from being received.
@@ -380,6 +343,67 @@ class NET_EXPORT URLFetcher {
   virtual bool GetResponseAsFilePath(
       bool take_ownership,
       base::FilePath* out_response_path) const = 0;
+
+ private:
+  // This class is deprecated, and no new code should be using it. Construction
+  // methods are private and pre-existing consumers are friended.
+  friend class cloud_print::CloudPrintURLFetcher;
+  friend class cr_fuchsia::DevToolsListFetcher;
+  friend class device::UsbTestGadgetImpl;
+  friend class remoting::GstaticJsonFetcher;
+
+  // The unannotated Create() methods are not available on desktop Linux +
+  // Windows. They are available on other platforms, since we only audit network
+  // annotations on Linux & Windows.
+#if (!defined(OS_WIN) && !defined(OS_LINUX)) || defined(OS_CHROMEOS)
+  // |url| is the URL to send the request to. It must be valid.
+  // |request_type| is the type of request to make.
+  // |d| the object that will receive the callback on fetch completion.
+  // This function should not be used in Chromium, please use the version with
+  // NetworkTrafficAnnotationTag below instead.
+  static std::unique_ptr<URLFetcher> Create(
+      const GURL& url,
+      URLFetcher::RequestType request_type,
+      URLFetcherDelegate* d);
+
+  // Like above, but if there's a URLFetcherFactory registered with the
+  // implementation it will be used. |id| may be used during testing to identify
+  // who is creating the URLFetcher.
+  // This function should not be used in Chromium, please use the version with
+  // NetworkTrafficAnnotationTag below instead.
+  static std::unique_ptr<URLFetcher> Create(
+      int id,
+      const GURL& url,
+      URLFetcher::RequestType request_type,
+      URLFetcherDelegate* d);
+#endif
+
+  // |url| is the URL to send the request to. It must be valid.
+  // |request_type| is the type of request to make.
+  // |d| the object that will receive the callback on fetch completion.
+  // |traffic_annotation| metadata about the network traffic send via this
+  // URLFetcher, see net::DefineNetworkTrafficAnnotation. Note that:
+  // - net provides the API for tagging requests with an opaque identifier.
+  // - tools/traffic_annotation/traffic_annotation.proto contains the Chrome
+  // specific .proto describing the verbose annotation format that Chrome's
+  // callsites are expected to follow.
+  // - tools/traffic_annotation/ contains sample and template for annotation and
+  // tools will be added for verification following crbug.com/690323.
+  static std::unique_ptr<URLFetcher> Create(
+      const GURL& url,
+      URLFetcher::RequestType request_type,
+      URLFetcherDelegate* d,
+      NetworkTrafficAnnotationTag traffic_annotation);
+
+  // Like above, but if there's a URLFetcherFactory registered with the
+  // implementation it will be used. |id| may be used during testing to identify
+  // who is creating the URLFetcher.
+  static std::unique_ptr<URLFetcher> Create(
+      int id,
+      const GURL& url,
+      URLFetcher::RequestType request_type,
+      URLFetcherDelegate* d,
+      NetworkTrafficAnnotationTag traffic_annotation);
 };
 
 }  // namespace net

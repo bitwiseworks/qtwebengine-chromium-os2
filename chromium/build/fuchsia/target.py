@@ -2,26 +2,28 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import boot_data
 import common
 import json
 import logging
 import os
 import remote_cmd
-import shutil
+import runner_logs
 import subprocess
-import sys
-import tempfile
 import time
 
 
 _SHUTDOWN_CMD = ['dm', 'poweroff']
 _ATTACH_RETRY_INTERVAL = 1
-_ATTACH_RETRY_SECONDS = 60
+_ATTACH_RETRY_SECONDS = 120
 
 # Amount of time to wait for Amber to complete package installation, as a
 # mitigation against hangs due to amber/network-related failures.
-_INSTALL_TIMEOUT_SECS = 5 * 60
+_INSTALL_TIMEOUT_SECS = 10 * 60
+
+
+def _GetPackageUri(package_name):
+  """Returns the URI for the specified package name."""
+  return 'fuchsia-pkg://fuchsia.com/%s' % (package_name)
 
 
 def _GetPackageInfo(package_path):
@@ -58,12 +60,25 @@ class FuchsiaTargetException(Exception):
 class Target(object):
   """Base class representing a Fuchsia deployment target."""
 
-  def __init__(self, output_dir, target_cpu):
-    self._output_dir = output_dir
+  def __init__(self, out_dir, target_cpu):
+    self._out_dir = out_dir
     self._started = False
     self._dry_run = False
     self._target_cpu = target_cpu
     self._command_runner = None
+
+  @staticmethod
+  def RegisterArgs(arg_parser):
+    common_args = arg_parser.add_argument_group(
+        'target', 'Arguments that apply to all targets.')
+    common_args.add_argument(
+        '--out-dir',
+        type=os.path.realpath,
+        help=('Path to the directory in which build files are located. '
+              'Defaults to current directory.'))
+    common_args.add_argument('--system-log-file',
+                             help='File to write system logs to. Specify '
+                             '- to log to stdout.')
 
   # Functions used by the Python context manager for teardown.
   def __enter__(self):
@@ -211,9 +226,14 @@ class Target(object):
 
     host, port = self._GetEndpoint()
     end_time = time.time() + _ATTACH_RETRY_SECONDS
+    ssh_diagnostic_log = runner_logs.FileStreamFor('ssh_diagnostic_log')
     while time.time() < end_time:
       runner = remote_cmd.CommandRunner(self._GetSshConfigPath(), host, port)
-      if runner.RunCommand(['true'], True) == 0:
+      ssh_proc = runner.RunCommandPiped(['true'],
+                                        ssh_args=['-v'],
+                                        stdout=ssh_diagnostic_log,
+                                        stderr=subprocess.STDOUT)
+      if ssh_proc.wait() == 0:
         logging.info('Connected!')
         self._started = True
         return True
@@ -225,16 +245,6 @@ class Target(object):
 
   def _GetSshConfigPath(self, path):
     raise NotImplementedError
-
-  # TODO: remove this once all instances of architecture names have been
-  # converted to the new naming pattern.
-  def _GetTargetSdkLegacyArch(self):
-    """Returns the Fuchsia SDK architecture name for the target CPU."""
-    if self._target_cpu == 'arm64':
-      return 'aarch64'
-    elif self._target_cpu == 'x64':
-      return 'x86_64'
-    raise Exception('Unknown target_cpu %s:' % self._target_cpu)
 
   def GetAmberRepo(self):
     """Returns an AmberRepo instance which serves packages for this Target.
@@ -252,18 +262,37 @@ class Target(object):
 
     with self.GetAmberRepo() as amber_repo:
       # Publish all packages to the serving TUF repository under |tuf_root|.
-      for next_package_path in package_paths:
-        amber_repo.PublishPackage(next_package_path)
+      for package_path in package_paths:
+        amber_repo.PublishPackage(package_path)
 
-      # Install all packages.
-      for next_package_path in package_paths:
-        install_package_name, package_version = \
-            _GetPackageInfo(next_package_path)
-        logging.info('Installing %s version %s.' %
-                     (install_package_name, package_version))
-        return_code = self.RunCommand(['amberctl', 'get_up', '-n',
-                                       install_package_name, '-v',
-                                       package_version],
-                                       timeout_secs=_INSTALL_TIMEOUT_SECS)
+      # Resolve all packages, to have them pulled into the device/VM cache.
+      for package_path in package_paths:
+        package_name, package_version = _GetPackageInfo(package_path)
+        logging.info('Resolving %s into cache.' % (package_name))
+        return_code = self.RunCommand(
+            ['pkgctl', 'resolve',
+             _GetPackageUri(package_name), '>/dev/null'],
+            timeout_secs=_INSTALL_TIMEOUT_SECS)
         if return_code != 0:
-          raise Exception('Error while installing %s.' % install_package_name)
+          raise Exception('Error while resolving %s.' % package_name)
+
+      # Verify that the newly resolved versions of packages are reported.
+      for package_path in package_paths:
+        # Use pkgctl get-hash to determine which version will be resolved.
+        package_name, package_version = _GetPackageInfo(package_path)
+        pkgctl = self.RunCommandPiped(
+            ['pkgctl', 'get-hash',
+             _GetPackageUri(package_name)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        pkgctl_out, pkgctl_err = pkgctl.communicate()
+
+        # Read the expected version from the meta.far Merkel hash file alongside
+        # the package's FAR.
+        meta_far_path = os.path.join(os.path.dirname(package_path), 'meta.far')
+        meta_far_merkel = subprocess.check_output(
+            [common.GetHostToolPathFromPlatform('merkleroot'),
+             meta_far_path]).split()[0]
+        if pkgctl_out != meta_far_merkel:
+          raise Exception('Hash mismatch for %s after resolve (%s vs %s).' %
+                          (package_name, pkgctl_out, meta_far_merkel))

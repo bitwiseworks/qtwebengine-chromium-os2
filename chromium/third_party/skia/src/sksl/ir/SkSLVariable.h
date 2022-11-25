@@ -23,6 +23,8 @@ struct Expression;
  * read or write that storage location.
  */
 struct Variable : public Symbol {
+    static constexpr Kind kSymbolKind = Kind::kVariable;
+
     enum Storage {
         kGlobal_Storage,
         kInterfaceBlock_Storage,
@@ -30,13 +32,13 @@ struct Variable : public Symbol {
         kParameter_Storage
     };
 
-    Variable(int offset, Modifiers modifiers, StringFragment name, const Type& type,
-             Storage storage, Expression* initialValue = nullptr)
-    : INHERITED(offset, kVariable_Kind, name)
+    Variable(int offset, Modifiers modifiers, StringFragment name, const Type* type,
+             bool builtin, Storage storage, Expression* initialValue = nullptr)
+    : INHERITED(offset, kSymbolKind, name, type)
     , fModifiers(modifiers)
-    , fType(type)
     , fStorage(storage)
     , fInitialValue(initialValue)
+    , fBuiltin(builtin)
     , fReadCount(0)
     , fWriteCount(initialValue ? 1 : 0) {}
 
@@ -48,11 +50,9 @@ struct Variable : public Symbol {
         SkASSERT(!fReadCount && !fWriteCount);
     }
 
-#ifdef SK_DEBUG
-    virtual String description() const override {
-        return fModifiers.description() + fType.fName + " " + fName;
+    String description() const override {
+        return fModifiers.description() + this->type().fName + " " + fName;
     }
-#endif
 
     bool dead() const {
         if ((fStorage != kLocal_Storage && fReadCount) ||
@@ -66,10 +66,10 @@ struct Variable : public Symbol {
     }
 
     mutable Modifiers fModifiers;
-    const Type& fType;
     const Storage fStorage;
 
-    Expression* fInitialValue = nullptr;
+    const Expression* fInitialValue = nullptr;
+    bool fBuiltin;
 
     // Tracks how many sites read from the variable. If this is zero for a non-out variable (or
     // becomes zero during optimization), the variable is dead and may be eliminated.
@@ -78,7 +78,7 @@ struct Variable : public Symbol {
     // eliminated.
     mutable int fWriteCount;
 
-    typedef Symbol INHERITED;
+    using INHERITED = Symbol;
 };
 
 } // namespace SkSL

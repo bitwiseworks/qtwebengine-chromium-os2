@@ -28,7 +28,7 @@ class PLATFORM_EXPORT CallbackFunctionBase
  public:
   virtual ~CallbackFunctionBase() = default;
 
-  virtual void Trace(Visitor* visitor);
+  virtual void Trace(Visitor* visitor) const;
 
   v8::Local<v8::Object> CallbackObject() {
     return callback_function_.NewLocal(GetIsolate());
@@ -52,15 +52,18 @@ class PLATFORM_EXPORT CallbackFunctionBase
   // Returns the ScriptState of the relevant realm of the callback object iff
   // the callback is the same origin-domain. Otherwise, reports an error and
   // returns nullptr.
-  ScriptState* CallbackRelevantScriptStateOrReportError(const char* interface,
-                                                        const char* operation);
+  ScriptState* CallbackRelevantScriptStateOrReportError(
+      const char* interface_name,
+      const char* operation_name);
 
   // Returns the ScriptState of the relevant realm of the callback object iff
   // the callback is the same origin-domain. Otherwise, throws an exception and
   // returns nullptr.
   ScriptState* CallbackRelevantScriptStateOrThrowException(
-      const char* interface,
-      const char* operation);
+      const char* interface_name,
+      const char* operation_name);
+
+  ScriptState* IncumbentScriptState() { return incumbent_script_state_; }
 
   DOMWrapperWorld& GetWorld() const { return incumbent_script_state_->World(); }
 
@@ -92,12 +95,10 @@ class PLATFORM_EXPORT CallbackFunctionBase
     return callback_function_.NewLocal(GetIsolate()).As<v8::Function>();
   }
 
-  ScriptState* IncumbentScriptState() { return incumbent_script_state_; }
-
  private:
   // The "callback function type" value.
   // Use v8::Object instead of v8::Function in order to handle
-  // [TreatNonObjectAsNull].
+  // [LegacyTreatNonObjectAsNull].
   TraceWrapperV8Reference<v8::Object> callback_function_;
   // The associated Realm of the callback function type value iff it's the same
   // origin-domain. Otherwise, nullptr.

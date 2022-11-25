@@ -8,7 +8,7 @@
 #include "bench/Benchmark.h"
 
 #include "include/core/SkString.h"
-#include "include/gpu/GrContext.h"
+#include "include/gpu/GrDirectContext.h"
 #include "include/private/SkHalf.h"
 #include "src/core/SkColorSpacePriv.h"
 #include "src/gpu/GrContextPriv.h"
@@ -80,8 +80,7 @@ public:
                 fragBuilder->codeAppendf("%s = half4(1);", args.fOutputCoverage);
             }
             void setData(const GrGLSLProgramDataManager& pdman,
-                         const GrPrimitiveProcessor& primProc,
-                         const CoordTransformRange&) override {
+                         const GrPrimitiveProcessor& primProc) override {
                 const GP& gp = primProc.cast<GP>();
                 fColorSpaceHelper.setData(pdman, gp.fColorSpaceXform.get());
             }
@@ -125,7 +124,7 @@ private:
     Attribute fInPosition;
     Attribute fInColor;
 
-    typedef GrGeometryProcessor INHERITED;
+    using INHERITED = GrGeometryProcessor;
 };
 
 class Op : public GrMeshDrawOp {
@@ -173,19 +172,21 @@ private:
 
     void onCreateProgramInfo(const GrCaps* caps,
                              SkArenaAlloc* arena,
-                             const GrSurfaceProxyView* outputView,
+                             const GrSurfaceProxyView* writeView,
                              GrAppliedClip&& appliedClip,
-                             const GrXferProcessor::DstProxyView& dstProxyView) override {
+                             const GrXferProcessor::DstProxyView& dstProxyView,
+                             GrXferBarrierFlags renderPassXferBarriers) override {
         GrGeometryProcessor* gp = GP::Make(arena, fMode, fColorSpaceXform);
 
         fProgramInfo = GrSimpleMeshDrawOpHelper::CreateProgramInfo(caps,
                                                                    arena,
-                                                                   outputView,
+                                                                   writeView,
                                                                    std::move(appliedClip),
                                                                    dstProxyView,
                                                                    gp,
                                                                    GrProcessorSet::MakeEmptySet(),
                                                                    GrPrimitiveType::kTriangleStrip,
+                                                                   renderPassXferBarriers,
                                                                    GrPipeline::InputFlags::kNone);
     }
 
@@ -274,9 +275,9 @@ private:
     GrSimpleMesh*  fMesh = nullptr;
     GrProgramInfo* fProgramInfo = nullptr;
 
-    typedef GrMeshDrawOp INHERITED;
+    using INHERITED = GrMeshDrawOp;
 };
-}
+}  // namespace
 
 class VertexColorSpaceBench : public Benchmark {
 public:
@@ -289,7 +290,7 @@ public:
     const char* onGetName() override { return fName.c_str(); }
 
     void onDraw(int loops, SkCanvas* canvas) override {
-        GrContext* context = canvas->getGrContext();
+        auto context = canvas->recordingContext()->asDirectContext();
         SkASSERT(context);
 
         if (kHalf_Mode == fMode &&
@@ -333,7 +334,7 @@ public:
                 rtc->priv().testingOnly_addDrawOp(std::move(op));
             }
 
-            context->flush();
+            context->flushAndSubmit();
         }
     }
 
@@ -341,7 +342,7 @@ private:
     SkString fName;
     Mode fMode;
 
-    typedef Benchmark INHERITED;
+    using INHERITED = Benchmark;
 };
 
 DEF_BENCH(return new VertexColorSpaceBench(kBaseline_Mode, "baseline"));

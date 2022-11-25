@@ -1906,11 +1906,10 @@ L(\type\()_8tap_hv):
         bl              L(\type\()_8tap_filter_2)
 
         ext             v18.8b, v17.8b, v28.8b, #4
-        mov             v19.8b, v28.8b
         smull           v2.4s,  v16.4h, v1.h[0]
         smlal           v2.4s,  v17.4h, v1.h[1]
         smlal           v2.4s,  v18.4h, v1.h[2]
-        smlal           v2.4s,  v19.4h, v1.h[3]
+        smlal           v2.4s,  v28.4h, v1.h[3]
 
         sqrshrn         v2.4h,  v2.4s,  #\shift_hv
         sqxtun          v2.8b,  v2.8h
@@ -1919,7 +1918,7 @@ L(\type\()_8tap_hv):
         st1             {v2.h}[1], [\ds2], \d_strd
         b.le            0f
         mov             v16.8b, v18.8b
-        mov             v17.8b, v19.8b
+        mov             v17.8b, v28.8b
         b               2b
 
 280:    // 2x8, 2x16, 2x32 hv
@@ -1956,7 +1955,6 @@ L(\type\()_8tap_hv):
 28:
         bl              L(\type\()_8tap_filter_2)
         ext             v22.8b, v21.8b, v28.8b, #4
-        mov             v23.8b, v28.8b
         smull           v2.4s,  v16.4h, v1.h[0]
         smlal           v2.4s,  v17.4h, v1.h[1]
         smlal           v2.4s,  v18.4h, v1.h[2]
@@ -1964,7 +1962,7 @@ L(\type\()_8tap_hv):
         smlal           v2.4s,  v20.4h, v1.h[4]
         smlal           v2.4s,  v21.4h, v1.h[5]
         smlal           v2.4s,  v22.4h, v1.h[6]
-        smlal           v2.4s,  v23.4h, v1.h[7]
+        smlal           v2.4s,  v28.4h, v1.h[7]
 
         sqrshrn         v2.4h,  v2.4s,  #\shift_hv
         sqxtun          v2.8b,  v2.8h
@@ -1977,7 +1975,7 @@ L(\type\()_8tap_hv):
         mov             v18.8b, v20.8b
         mov             v19.8b, v21.8b
         mov             v20.8b, v22.8b
-        mov             v21.8b, v23.8b
+        mov             v21.8b, v28.8b
         b               28b
 
 0:
@@ -3089,3 +3087,161 @@ endfunc
 
 warp  , 11
 warp t, 7
+
+// void dav1d_emu_edge_8bpc_neon(
+//         const intptr_t bw, const intptr_t bh,
+//         const intptr_t iw, const intptr_t ih,
+//         const intptr_t x, const intptr_t y,
+//         pixel *dst, const ptrdiff_t dst_stride,
+//         const pixel *ref, const ptrdiff_t ref_stride)
+function emu_edge_8bpc_neon, export=1
+        ldp             x8,  x9,  [sp]
+
+        // ref += iclip(y, 0, ih - 1) * PXSTRIDE(ref_stride)
+        // ref += iclip(x, 0, iw - 1)
+        sub             x12, x3,  #1           // ih - 1
+        cmp             x5,  x3
+        sub             x13, x2,  #1           // iw - 1
+        csel            x12, x12, x5,  ge      // min(y, ih - 1)
+        cmp             x4,  x2
+        bic             x12, x12, x12, asr #63 // max(min(y, ih - 1), 0)
+        csel            x13, x13, x4,  ge      // min(x, iw - 1)
+        bic             x13, x13, x13, asr #63 // max(min(x, iw - 1), 0)
+        madd            x8,  x12, x9,  x8      // ref += iclip() * stride
+        add             x8,  x8,  x13          // ref += iclip()
+
+        // bottom_ext = iclip(y + bh - ih, 0, bh - 1)
+        // top_ext = iclip(-y, 0, bh - 1)
+        add             x10, x5,  x1           // y + bh
+        neg             x5,  x5                // -y
+        sub             x10, x10, x3           // y + bh - ih
+        sub             x12, x1,  #1           // bh - 1
+        cmp             x10, x1
+        bic             x5,  x5,  x5,  asr #63 // max(-y, 0)
+        csel            x10, x10, x12, lt      // min(y + bh - ih, bh-1)
+        cmp             x5,  x1
+        bic             x10, x10, x10, asr #63 // max(min(y + bh - ih, bh-1), 0)
+        csel            x5,  x5,  x12, lt      // min(max(-y, 0), bh-1)
+
+        // right_ext = iclip(x + bw - iw, 0, bw - 1)
+        // left_ext = iclip(-x, 0, bw - 1)
+        add             x11, x4,  x0           // x + bw
+        neg             x4,  x4                // -x
+        sub             x11, x11, x2           // x + bw - iw
+        sub             x13, x0,  #1           // bw - 1
+        cmp             x11, x0
+        bic             x4,  x4,  x4,  asr #63 // max(-x, 0)
+        csel            x11, x11, x13, lt      // min(x + bw - iw, bw-1)
+        cmp             x4,  x0
+        bic             x11, x11, x11, asr #63 // max(min(x + bw - iw, bw-1), 0)
+        csel            x4,  x4,  x13, lt      // min(max(-x, 0), bw - 1)
+
+        // center_h = bh - top_ext - bottom_ext
+        // dst += top_ext * PXSTRIDE(dst_stride)
+        // center_w = bw - left_ext - right_ext
+        sub             x1,  x1,  x5           // bh - top_ext
+        madd            x6,  x5,  x7,  x6
+        sub             x2,  x0,  x4           // bw - left_ext
+        sub             x1,  x1,  x10          // center_h = bh - top_ext - bottom_ext
+        sub             x2,  x2,  x11          // center_w = bw - left_ext - right_ext
+
+        mov             x14, x6                // backup of dst
+
+.macro v_loop need_left, need_right
+0:
+.if \need_left
+        ld1r            {v0.16b}, [x8]
+        mov             x12, x6                // out = dst
+        mov             x3,  x4
+1:
+        subs            x3,  x3,  #16
+        st1             {v0.16b}, [x12], #16
+        b.gt            1b
+.endif
+        mov             x13, x8
+        add             x12, x6,  x4           // out = dst + left_ext
+        mov             x3,  x2
+1:
+        ld1             {v0.16b, v1.16b}, [x13], #32
+        subs            x3,  x3,  #32
+        st1             {v0.16b, v1.16b}, [x12], #32
+        b.gt            1b
+.if \need_right
+        add             x3,  x8,  x2           // in + center_w
+        sub             x3,  x3,  #1           // in + center_w - 1
+        add             x12, x6,  x4           // dst + left_ext
+        ld1r            {v0.16b}, [x3]
+        add             x12, x12, x2           // out = dst + left_ext + center_w
+        mov             x3,  x11
+1:
+        subs            x3,  x3,  #16
+        st1             {v0.16b}, [x12], #16
+        b.gt            1b
+.endif
+
+        subs            x1,  x1,  #1           // center_h--
+        add             x6,  x6,  x7
+        add             x8,  x8,  x9
+        b.gt            0b
+.endm
+
+        cbz             x4,  2f
+        // need_left
+        cbz             x11, 3f
+        // need_left + need_right
+        v_loop          1,   1
+        b               5f
+
+2:
+        // !need_left
+        cbz             x11, 4f
+        // !need_left + need_right
+        v_loop          0,   1
+        b               5f
+
+3:
+        // need_left + !need_right
+        v_loop          1,   0
+        b               5f
+
+4:
+        // !need_left + !need_right
+        v_loop          0,   0
+
+5:
+
+        cbz             x10, 3f
+        // need_bottom
+        sub             x8,  x6,  x7           // ref = dst - stride
+        mov             x4,  x0
+1:
+        ld1             {v0.16b, v1.16b}, [x8], #32
+        mov             x3,  x10
+2:
+        subs            x3,  x3,  #1
+        st1             {v0.16b, v1.16b}, [x6], x7
+        b.gt            2b
+        msub            x6,  x7,  x10,  x6     // dst -= bottom_ext * stride
+        subs            x4,  x4,  #32          // bw -= 32
+        add             x6,  x6,  #32          // dst += 32
+        b.gt            1b
+
+3:
+        cbz             x5,  3f
+        // need_top
+        msub            x6,  x7,  x5,  x14     // dst = stored_dst - top_ext * stride
+1:
+        ld1             {v0.16b, v1.16b}, [x14], #32
+        mov             x3,  x5
+2:
+        subs            x3,  x3,  #1
+        st1             {v0.16b, v1.16b}, [x6], x7
+        b.gt            2b
+        msub            x6,  x7,  x5,  x6      // dst -= top_ext * stride
+        subs            x0,  x0,  #32          // bw -= 32
+        add             x6,  x6,  #32          // dst += 32
+        b.gt            1b
+
+3:
+        ret
+endfunc

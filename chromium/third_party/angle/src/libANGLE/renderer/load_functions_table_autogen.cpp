@@ -200,6 +200,18 @@ LoadImageFunctionInfo ALPHA8_EXT_to_R8_UNORM(GLenum type)
     }
 }
 
+LoadImageFunctionInfo BGR10_A2_ANGLEX_to_B10G10R10A2_UNORM(GLenum type)
+{
+    switch (type)
+    {
+        case GL_UNSIGNED_INT_2_10_10_10_REV:
+            return LoadImageFunctionInfo(LoadToNative<GLuint, 1>, false);
+        default:
+            UNREACHABLE();
+            return LoadImageFunctionInfo(UnreachableLoadFunction, true);
+    }
+}
+
 LoadImageFunctionInfo BGR565_ANGLEX_to_B5G6R5_UNORM(GLenum type)
 {
     switch (type)
@@ -3066,6 +3078,18 @@ LoadImageFunctionInfo RGBA8_USCALED_ANGLEX_to_default(GLenum type)
     }
 }
 
+LoadImageFunctionInfo SR8_EXT_to_R8_UNORM_SRGB(GLenum type)
+{
+    switch (type)
+    {
+        case GL_UNSIGNED_BYTE:
+            return LoadImageFunctionInfo(LoadToNative<GLbyte, 1>, false);
+        default:
+            UNREACHABLE();
+            return LoadImageFunctionInfo(UnreachableLoadFunction, true);
+    }
+}
+
 LoadImageFunctionInfo SRGB8_to_R8G8B8A8_UNORM_SRGB(GLenum type)
 {
     switch (type)
@@ -3174,6 +3198,17 @@ LoadFunctionMap GetLoadFunctionsMap(GLenum internalFormat, FormatID angleFormat)
                     return ALPHA8_EXT_to_R8G8B8A8_UNORM;
                 case FormatID::R8_UNORM:
                     return ALPHA8_EXT_to_R8_UNORM;
+                default:
+                    break;
+            }
+            break;
+        }
+        case GL_BGR10_A2_ANGLEX:
+        {
+            switch (angleFormat)
+            {
+                case FormatID::B10G10R10A2_UNORM:
+                    return BGR10_A2_ANGLEX_to_B10G10R10A2_UNORM;
                 default:
                     break;
             }
@@ -4437,6 +4472,17 @@ LoadFunctionMap GetLoadFunctionsMap(GLenum internalFormat, FormatID angleFormat)
             return RGBA8_SSCALED_ANGLEX_to_default;
         case GL_RGBA8_USCALED_ANGLEX:
             return RGBA8_USCALED_ANGLEX_to_default;
+        case GL_SR8_EXT:
+        {
+            switch (angleFormat)
+            {
+                case FormatID::R8_UNORM_SRGB:
+                    return SR8_EXT_to_R8_UNORM_SRGB;
+                default:
+                    break;
+            }
+            break;
+        }
         case GL_SRGB8:
         {
             switch (angleFormat)

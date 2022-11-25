@@ -17,8 +17,11 @@
 #include "components/page_load_metrics/browser/page_load_metrics_util.h"
 #include "components/page_load_metrics/browser/page_load_tracker.h"
 #include "components/page_load_metrics/common/page_load_timing.h"
+#include "content/public/browser/back_forward_cache.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/cookie_access_details.h"
 #include "content/public/browser/global_request_id.h"
+#include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/media_player_id.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_handle.h"
@@ -73,23 +76,6 @@ void MetricsWebContentsObserver::RecordFeatureUsage(
     observer->OnBrowserFeatureUsage(render_frame_host, new_features);
 }
 
-MetricsWebContentsObserver::MetricsWebContentsObserver(
-    content::WebContents* web_contents,
-    std::unique_ptr<PageLoadMetricsEmbedderInterface> embedder_interface)
-    : content::WebContentsObserver(web_contents),
-      in_foreground_(web_contents->GetVisibility() !=
-                     content::Visibility::HIDDEN),
-      embedder_interface_(std::move(embedder_interface)),
-      has_navigated_(false),
-      page_load_metrics_receiver_(web_contents, this) {
-  // Prerenders erroneously report that they are initially visible, so we
-  // manually override visibility state for prerender.
-  if (embedder_interface_->IsPrerender(web_contents))
-    in_foreground_ = false;
-
-  RegisterInputEventObserver(web_contents->GetRenderViewHost());
-}
-
 // static
 MetricsWebContentsObserver* MetricsWebContentsObserver::CreateForWebContents(
     content::WebContents* web_contents,
@@ -120,6 +106,7 @@ void MetricsWebContentsObserver::WebContentsDestroyed() {
   // PageLoadMetricsObservers can cause code to execute that wants to be able to
   // access the current WebContents.
   committed_load_ = nullptr;
+  ukm_smoothness_data_ = {};
   provisional_loads_.clear();
   aborted_provisional_loads_.clear();
 
@@ -151,6 +138,14 @@ void MetricsWebContentsObserver::FrameDeleted(content::RenderFrameHost* rfh) {
     committed_load_->FrameDeleted(rfh);
 }
 
+void MetricsWebContentsObserver::RenderFrameDeleted(
+    content::RenderFrameHost* rfh) {
+  // PageLoadTracker can be associated only with a main frame.
+  if (rfh->GetParent())
+    return;
+  back_forward_cached_pages_.erase(rfh);
+}
+
 void MetricsWebContentsObserver::MediaStartedPlaying(
     const content::WebContentsObserver::MediaPlayerInfo& video_type,
     const content::MediaPlayerId& id) {
@@ -175,6 +170,23 @@ void MetricsWebContentsObserver::WillStartNavigationRequest(
 
   WillStartNavigationRequestImpl(navigation_handle);
   has_navigated_ = true;
+}
+
+MetricsWebContentsObserver::MetricsWebContentsObserver(
+    content::WebContents* web_contents,
+    std::unique_ptr<PageLoadMetricsEmbedderInterface> embedder_interface)
+    : content::WebContentsObserver(web_contents),
+      in_foreground_(web_contents->GetVisibility() !=
+                     content::Visibility::HIDDEN),
+      embedder_interface_(std::move(embedder_interface)),
+      has_navigated_(false),
+      page_load_metrics_receiver_(web_contents, this) {
+  // Prerenders erroneously report that they are initially visible, so we
+  // manually override visibility state for prerender.
+  if (embedder_interface_->IsPrerender(web_contents))
+    in_foreground_ = false;
+
+  RegisterInputEventObserver(web_contents->GetRenderViewHost());
 }
 
 void MetricsWebContentsObserver::WillStartNavigationRequestImpl(
@@ -212,10 +224,11 @@ void MetricsWebContentsObserver::WillStartNavigationRequestImpl(
   const GURL& currently_committed_url =
       committed_load_ ? committed_load_->url() : opener_url;
 
-  // Passing raw pointers to observers_ and embedder_interface_ is safe because
-  // the MetricsWebContentsObserver owns them both list and they are torn down
-  // after the PageLoadTracker. The PageLoadTracker does not hold on to
-  // committed_load_ or navigation_handle beyond the scope of the constructor.
+  // Passing raw pointers to |observers_| and |embedder_interface_| is safe
+  // because the MetricsWebContentsObserver owns them both list and they are
+  // torn down after the PageLoadTracker. The PageLoadTracker does not hold on
+  // to |committed_load_| or |navigation_handle| beyond the scope of the
+  // constructor.
   auto insertion_result = provisional_loads_.insert(std::make_pair(
       navigation_handle,
       std::make_unique<PageLoadTracker>(
@@ -352,24 +365,53 @@ void MetricsWebContentsObserver::FrameSizeChanged(
     committed_load_->FrameSizeChanged(render_frame_host, frame_size);
 }
 
-void MetricsWebContentsObserver::OnCookiesRead(
-    const GURL& url,
-    const GURL& first_party_url,
-    const net::CookieList& cookie_list,
-    bool blocked_by_policy) {
-  if (committed_load_)
-    committed_load_->OnCookiesRead(url, first_party_url, cookie_list,
-                                   blocked_by_policy);
+void MetricsWebContentsObserver::OnCookiesAccessed(
+    content::NavigationHandle* navigation,
+    const content::CookieAccessDetails& details) {
+  OnCookiesAccessedImpl(details);
 }
 
-void MetricsWebContentsObserver::OnCookieChange(
-    const GURL& url,
-    const GURL& first_party_url,
-    const net::CanonicalCookie& cookie,
-    bool blocked_by_policy) {
-  if (committed_load_)
-    committed_load_->OnCookieChange(url, first_party_url, cookie,
-                                    blocked_by_policy);
+void MetricsWebContentsObserver::OnCookiesAccessed(
+    content::RenderFrameHost* rfh,
+    const content::CookieAccessDetails& details) {
+  OnCookiesAccessedImpl(details);
+}
+
+void MetricsWebContentsObserver::OnCookiesAccessedImpl(
+    const content::CookieAccessDetails& details) {
+  if (!committed_load_)
+    return;
+
+  // TODO(altimin): Propagate |CookieAccessDetails| further.
+  switch (details.type) {
+    case content::CookieAccessDetails::Type::kRead:
+      committed_load_->OnCookiesRead(details.url, details.first_party_url,
+                                     details.cookie_list,
+                                     details.blocked_by_policy);
+      break;
+    case content::CookieAccessDetails::Type::kChange:
+      for (const auto& cookie : details.cookie_list) {
+        committed_load_->OnCookieChange(details.url, details.first_party_url,
+                                        cookie, details.blocked_by_policy);
+      }
+      break;
+  }
+}
+
+void MetricsWebContentsObserver::DidActivatePortal(
+    content::WebContents* predecessor_web_contents,
+    base::TimeTicks activation_time) {
+  // The |predecessor_web_contents| is the WebContents that instantiated the
+  // portal.
+  MetricsWebContentsObserver* predecessor_observer =
+      MetricsWebContentsObserver::FromWebContents(predecessor_web_contents);
+  // We only track the portal activation if the predecessor is also being
+  // tracked.
+  if (!committed_load_ || !predecessor_observer ||
+      !predecessor_observer->committed_load_) {
+    return;
+  }
+  committed_load_->DidActivatePortal(activation_time);
 }
 
 void MetricsWebContentsObserver::OnStorageAccessed(const GURL& url,
@@ -442,7 +484,14 @@ void MetricsWebContentsObserver::DidFinishNavigation(
     // the currently committed navigation.
     FinalizeCurrentlyCommittedLoad(navigation_handle,
                                    navigation_handle_tracker.get());
-    committed_load_.reset();
+    // Transfers the ownership of |committed_load_|. This |committed_load_|
+    // might be reused later when restoring the page from the cache.
+    MaybeStorePageLoadTrackerForBackForwardCache(navigation_handle,
+                                                 std::move(committed_load_));
+    // If |navigation_handle| is a back-forward cache navigation, an associated
+    // PageLoadTracker is restored into |committed_load_|.
+    if (MaybeRestorePageLoadTrackerForBackForwardCache(navigation_handle))
+      return;
   }
 
   if (!navigation_handle_tracker)
@@ -499,6 +548,66 @@ void MetricsWebContentsObserver::HandleCommittedNavigationForTrackedLoad(
 
   for (auto& observer : testing_observers_)
     observer.OnCommit(committed_load_.get());
+
+  if (ukm_smoothness_data_.IsValid()) {
+    auto* render_frame_host = navigation_handle->GetRenderFrameHost();
+    const bool is_main_frame =
+        render_frame_host && render_frame_host->GetParent() == nullptr;
+    if (is_main_frame) {
+      committed_load_->metrics_update_dispatcher()
+          ->SetUpSharedMemoryForSmoothness(render_frame_host,
+                                           std::move(ukm_smoothness_data_));
+    }
+  }
+}
+
+void MetricsWebContentsObserver::MaybeStorePageLoadTrackerForBackForwardCache(
+    content::NavigationHandle* next_navigation_handle,
+    std::unique_ptr<PageLoadTracker> previously_committed_load) {
+  if (!previously_committed_load)
+    return;
+
+  content::RenderFrameHost* previous_frame = content::RenderFrameHost::FromID(
+      next_navigation_handle->GetPreviousRenderFrameHostId());
+
+  // The PageLoadTracker is associated with a bfcached document if:
+  bool is_back_forward_cache =
+      // 1. the frame being navigated away from was not already deleted
+      previous_frame &&
+      // 2. the previous frame is in the BFCache
+      previous_frame->IsInBackForwardCache();
+
+  if (!is_back_forward_cache)
+    return;
+
+  previously_committed_load->OnEnterBackForwardCache();
+
+  back_forward_cached_pages_.emplace(previous_frame,
+                                     std::move(previously_committed_load));
+}
+
+bool MetricsWebContentsObserver::MaybeRestorePageLoadTrackerForBackForwardCache(
+    content::NavigationHandle* navigation_handle) {
+  if (!navigation_handle->IsServedFromBackForwardCache())
+    return false;
+
+  auto it =
+      back_forward_cached_pages_.find(navigation_handle->GetRenderFrameHost());
+
+  // There are some cases that the PageLoadTracker does not exist. For example,
+  // if a page is put into the cache before MetricsWebContents is created,
+  // |back_forward_cached_pages_| is empty.
+  if (it == back_forward_cached_pages_.end())
+    return false;
+
+  committed_load_ = std::move(it->second);
+  back_forward_cached_pages_.erase(it);
+  committed_load_->OnRestoreFromBackForwardCache(navigation_handle);
+
+  for (auto& observer : testing_observers_)
+    observer.OnRestoredFromBackForwardCache(committed_load_.get());
+
+  return true;
 }
 
 void MetricsWebContentsObserver::FinalizeCurrentlyCommittedLoad(
@@ -594,6 +703,9 @@ void MetricsWebContentsObserver::OnVisibilityChanged(
       kv.second->PageHidden();
     }
   }
+
+  // As pages in back-forward cache are frozen, |back_forward_cached_pages_|
+  // don't have to be iterated here.
 }
 
 // This will occur when the process for the main RenderFrameHost exits, either
@@ -703,24 +815,7 @@ void MetricsWebContentsObserver::OnTimingUpdated(
 
   const bool is_main_frame = (render_frame_host->GetParent() == nullptr);
   if (is_main_frame) {
-    // While timings arriving for the wrong frame are expected, we do not expect
-    // any of the errors below for main frames. Thus, we track occurrences of
-    // all errors below, rather than returning early after encountering an
-    // error.
-    // TODO(crbug/1061090): Update page load metrics IPC validation to ues
-    // mojo::ReportBadMessage.
-    bool error = false;
-    if (!committed_load_) {
-      RecordInternalError(ERR_IPC_WITH_NO_RELEVANT_LOAD);
-      error = true;
-    }
-
-    if (!web_contents()->GetLastCommittedURL().SchemeIsHTTPOrHTTPS()) {
-      RecordInternalError(ERR_IPC_FROM_BAD_URL_SCHEME);
-      error = true;
-    }
-
-    if (error)
+    if (DoesTimingUpdateHaveError())
       return;
   } else if (!committed_load_) {
     RecordInternalError(ERR_SUBFRAME_IPC_WITH_NO_RELEVANT_LOAD);
@@ -733,6 +828,26 @@ void MetricsWebContentsObserver::OnTimingUpdated(
         std::move(cpu_timing), std::move(new_deferred_resource_data),
         std::move(input_timing_delta));
   }
+}
+
+bool MetricsWebContentsObserver::DoesTimingUpdateHaveError() {
+  // While timings arriving for the wrong frame are expected, we do not expect
+  // any of the errors below for main frames. Thus, we track occurrences of
+  // all errors below, rather than returning early after encountering an
+  // error.
+  // TODO(crbug/1061090): Update page load metrics IPC validation to ues
+  // mojo::ReportBadMessage.
+  bool error = false;
+  if (!committed_load_) {
+    RecordInternalError(ERR_IPC_WITH_NO_RELEVANT_LOAD);
+    error = true;
+  }
+
+  if (!web_contents()->GetLastCommittedURL().SchemeIsHTTPOrHTTPS()) {
+    RecordInternalError(ERR_IPC_FROM_BAD_URL_SCHEME);
+    error = true;
+  }
+  return error;
 }
 
 void MetricsWebContentsObserver::UpdateTiming(
@@ -752,23 +867,41 @@ void MetricsWebContentsObserver::UpdateTiming(
                   std::move(input_timing_delta));
 }
 
+void MetricsWebContentsObserver::SetUpSharedMemoryForSmoothness(
+    base::ReadOnlySharedMemoryRegion shared_memory) {
+  content::RenderFrameHost* render_frame_host =
+      page_load_metrics_receiver_.GetCurrentTargetFrame();
+  const bool is_main_frame = render_frame_host->GetParent() == nullptr;
+  if (!is_main_frame) {
+    // TODO(1115136): Merge smoothness metrics from OOPIFs with the main-frame.
+    return;
+  }
+
+  if (committed_load_) {
+    committed_load_->metrics_update_dispatcher()
+        ->SetUpSharedMemoryForSmoothness(render_frame_host,
+                                         std::move(shared_memory));
+  } else {
+    ukm_smoothness_data_ = std::move(shared_memory);
+  }
+}
+
 bool MetricsWebContentsObserver::ShouldTrackMainFrameNavigation(
     content::NavigationHandle* navigation_handle) const {
   DCHECK(navigation_handle->IsInMainFrame());
   DCHECK(!navigation_handle->HasCommitted() ||
          !navigation_handle->IsSameDocument());
-  // If there is an outer WebContents, then this WebContents is embedded into
-  // another one (it is either a portal or a Chrome App <webview>). Ignore these
-  // navigations for now.
-  if (web_contents()->GetOuterWebContents())
-    return false;
-
   // Ignore non-HTTP schemes (e.g. chrome://).
   if (!navigation_handle->GetURL().SchemeIsHTTPOrHTTPS())
     return false;
 
   // Ignore NTP loads.
   if (embedder_interface_->IsNewTabPageUrl(navigation_handle->GetURL()))
+    return false;
+
+  // The navigation served from the back-forward cache will use the previously
+  // created tracker for the document.
+  if (navigation_handle->IsServedFromBackForwardCache())
     return false;
 
   if (navigation_handle->HasCommitted()) {
@@ -782,10 +915,6 @@ bool MetricsWebContentsObserver::ShouldTrackMainFrameNavigation(
         (http_status_code < 200 || http_status_code >= 400))
       return false;
   }
-
-  // TODO(crbug.com/1014174): Ignore back-forward cached navigations for now.
-  if (navigation_handle->IsServedFromBackForwardCache())
-    return false;
 
   return true;
 }

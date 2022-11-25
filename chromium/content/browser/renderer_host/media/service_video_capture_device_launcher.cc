@@ -9,7 +9,6 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
-#include "base/task/post_task.h"
 #include "content/browser/renderer_host/media/service_launched_video_capture_device.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -117,8 +116,7 @@ void ServiceVideoCaptureDeviceLauncher::LaunchDeviceAsync(
   auto receiver_adapter =
       std::make_unique<video_capture::ReceiverMediaToMojoAdapter>(
           std::make_unique<media::VideoFrameReceiverOnTaskRunner>(
-              std::move(receiver),
-              base::CreateSingleThreadTaskRunner({BrowserThread::IO})));
+              std::move(receiver), GetIOThreadTaskRunner({})));
   mojo::PendingRemote<video_capture::mojom::VideoFrameHandler>
       pending_remote_proxy;
   mojo::MakeSelfOwnedReceiver(
@@ -143,7 +141,9 @@ void ServiceVideoCaptureDeviceLauncher::LaunchDeviceAsync(
 
   // GpuMemoryBuffer-based VideoCapture buffer works only on the Chrome OS
   // VideoCaptureDevice implementation.
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableVideoCaptureUseGpuMemoryBuffer) &&
+      base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kVideoCaptureUseGpuMemoryBuffer)) {
     new_params.buffer_type = media::VideoCaptureBufferType::kGpuMemoryBuffer;
   }
@@ -155,7 +155,8 @@ void ServiceVideoCaptureDeviceLauncher::LaunchDeviceAsync(
   // in use. In order to be able to set |force_reopen_with_new_settings|, we
   // have to refactor code here and upstream to wait for a callback from the
   // service indicating that the device closing is complete.
-  source->CreatePushSubscription(
+  video_capture::mojom::VideoSource* source_ptr = source.get();
+  source_ptr->CreatePushSubscription(
       std::move(pending_remote_proxy), new_params,
       true /*force_reopen_with_new_settings*/, std::move(subscription_receiver),
       base::BindOnce(

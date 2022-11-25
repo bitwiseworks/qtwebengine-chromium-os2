@@ -5,9 +5,9 @@
 #ifndef MOJO_PUBLIC_CPP_PLATFORM_PLATFORM_HANDLE_H_
 #define MOJO_PUBLIC_CPP_PLATFORM_PLATFORM_HANDLE_H_
 
+#include "base/check_op.h"
 #include "base/component_export.h"
 #include "base/files/platform_file.h"
-#include "base/logging.h"
 #include "base/macros.h"
 #include "build/build_config.h"
 #include "mojo/public/c/system/platform_handle.h"
@@ -16,7 +16,7 @@
 #include "base/win/scoped_handle.h"
 #elif defined(OS_FUCHSIA)
 #include <lib/zx/handle.h>
-#elif defined(OS_MACOSX) && !defined(OS_IOS)
+#elif defined(OS_MAC)
 #include "base/mac/scoped_mach_port.h"
 #elif defined(OS_OS2)
 #include "base/os2/scoped_shmem_handle.h"
@@ -48,7 +48,7 @@ class COMPONENT_EXPORT(MOJO_CPP_PLATFORM) PlatformHandle {
     kNone,
 #if defined(OS_WIN) || defined(OS_FUCHSIA)
     kHandle,
-#elif defined(OS_MACOSX) && !defined(OS_IOS)
+#elif defined(OS_MAC)
     kMachSend,
     kMachReceive,
 #elif defined(OS_OS2)
@@ -66,7 +66,7 @@ class COMPONENT_EXPORT(MOJO_CPP_PLATFORM) PlatformHandle {
   explicit PlatformHandle(base::win::ScopedHandle handle);
 #elif defined(OS_FUCHSIA)
   explicit PlatformHandle(zx::handle handle);
-#elif defined(OS_MACOSX) && !defined(OS_IOS)
+#elif defined(OS_MAC)
   explicit PlatformHandle(base::mac::ScopedMachSendRight mach_port);
   explicit PlatformHandle(base::mac::ScopedMachReceiveRight mach_port);
 #elif defined(OS_OS2)
@@ -136,7 +136,7 @@ class COMPONENT_EXPORT(MOJO_CPP_PLATFORM) PlatformHandle {
       type_ = Type::kNone;
     return handle_.release();
   }
-#elif defined(OS_MACOSX) && !defined(OS_IOS)
+#elif defined(OS_MAC)
   bool is_valid() const { return is_valid_fd() || is_valid_mach_port(); }
   bool is_valid_mach_port() const {
     return is_valid_mach_send() || is_valid_mach_receive();
@@ -243,7 +243,7 @@ class COMPONENT_EXPORT(MOJO_CPP_PLATFORM) PlatformHandle {
   base::win::ScopedHandle handle_;
 #elif defined(OS_FUCHSIA)
   zx::handle handle_;
-#elif defined(OS_MACOSX) && !defined(OS_IOS)
+#elif defined(OS_MAC)
   base::mac::ScopedMachSendRight mach_send_;
   base::mac::ScopedMachReceiveRight mach_receive_;
 #elif defined(OS_OS2)

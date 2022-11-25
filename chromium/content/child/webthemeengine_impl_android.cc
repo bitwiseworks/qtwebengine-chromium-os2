@@ -4,7 +4,7 @@
 
 #include "content/child/webthemeengine_impl_android.h"
 
-#include "base/logging.h"
+#include "base/notreached.h"
 #include "base/system/sys_info.h"
 #include "content/child/webthemeengine_impl_conversions.h"
 #include "skia/ext/platform_canvas.h"
@@ -12,7 +12,7 @@
 #include "third_party/blink/public/platform/web_size.h"
 #include "ui/native_theme/native_theme.h"
 
-using blink::WebColorScheme;
+using blink::ColorScheme;
 using blink::WebRect;
 using blink::WebThemeEngine;
 
@@ -84,6 +84,8 @@ static void GetNativeThemeExtraParams(
       native_theme_extra_params->slider.thumb_x = extra_params->slider.thumb_x;
       native_theme_extra_params->slider.thumb_y = extra_params->slider.thumb_y;
       native_theme_extra_params->slider.zoom = extra_params->slider.zoom;
+      native_theme_extra_params->slider.right_to_left =
+          extra_params->slider.right_to_left;
       FALLTHROUGH;
     case WebThemeEngine::kPartSliderThumb:
       native_theme_extra_params->slider.vertical =
@@ -157,7 +159,7 @@ void WebThemeEngineAndroid::Paint(
     WebThemeEngine::State state,
     const blink::WebRect& rect,
     const WebThemeEngine::ExtraParams* extra_params,
-    blink::WebColorScheme color_scheme) {
+    blink::ColorScheme color_scheme) {
   ui::NativeTheme::ExtraParams native_theme_extra_params;
   GetNativeThemeExtraParams(
       part, state, extra_params, &native_theme_extra_params);

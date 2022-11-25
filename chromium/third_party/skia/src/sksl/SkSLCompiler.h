@@ -8,7 +8,6 @@
 #ifndef SKSL_COMPILER
 #define SKSL_COMPILER
 
-#include <map>
 #include <set>
 #include <unordered_set>
 #include <vector>
@@ -16,6 +15,7 @@
 #include "src/sksl/SkSLCFGGenerator.h"
 #include "src/sksl/SkSLContext.h"
 #include "src/sksl/SkSLErrorReporter.h"
+#include "src/sksl/SkSLInliner.h"
 #include "src/sksl/SkSLLexer.h"
 #include "src/sksl/ir/SkSLProgram.h"
 #include "src/sksl/ir/SkSLSymbolTable.h"
@@ -26,10 +26,7 @@
 
 #define SK_FRAGCOLOR_BUILTIN           10001
 #define SK_IN_BUILTIN                  10002
-#define SK_INCOLOR_BUILTIN             10003
 #define SK_OUTCOLOR_BUILTIN            10004
-#define SK_TRANSFORMEDCOORDS2D_BUILTIN 10005
-#define SK_TEXTURESAMPLERS_BUILTIN     10006
 #define SK_OUT_BUILTIN                 10007
 #define SK_LASTFRAGCOLOR_BUILTIN       10008
 #define SK_MAIN_COORDS_BUILTIN         10009
@@ -40,7 +37,6 @@
 #define SK_SAMPLEMASK_BUILTIN             20
 #define SK_VERTEXID_BUILTIN               42
 #define SK_INSTANCEID_BUILTIN             43
-#define SK_CLIPDISTANCE_BUILTIN            3
 #define SK_INVOCATIONID_BUILTIN            8
 #define SK_POSITION_BUILTIN                0
 
@@ -49,6 +45,7 @@ namespace SkSL {
 class ByteCode;
 class ExternalValue;
 class IRGenerator;
+class IRIntrinsicMap;
 struct PipelineStageArgs;
 
 /**
@@ -72,13 +69,17 @@ public:
         kPermitInvalidStaticTests_Flag = 1,
     };
 
+    // An invalid (otherwise unused) character to mark where FormatArgs are inserted
+    static constexpr       char  kFormatArgPlaceholder    = '\001';
+    static constexpr const char* kFormatArgPlaceholderStr = "\001";
+
     struct FormatArg {
         enum class Kind {
-            kInput,
             kOutput,
             kCoords,
             kUniform,
             kChildProcessor,
+            kChildProcessorWithMatrix,
             kFunctionName
         };
 
@@ -102,7 +103,7 @@ public:
         GrSLType fReturnType;
         SkString fName;
         std::vector<GrShaderVar> fParameters;
-        SkString fBody;
+        String fBody;
         std::vector<Compiler::FormatArg> fFormatArgs;
     };
 #endif
@@ -115,17 +116,14 @@ public:
     Compiler& operator=(const Compiler&) = delete;
 
     /**
-     * Registers an ExternalValue as a top-level symbol which is visible in the global namespace.
+     * If externalValues is supplied, those values are registered in the symbol table of the
+     * Program, but ownership is *not* transferred. It is up to the caller to keep them alive.
      */
-    void registerExternalValue(ExternalValue* value);
-
-    std::unique_ptr<Program> convertProgram(Program::Kind kind, String text,
-                                            const Program::Settings& settings);
-
-    bool optimize(Program& program);
-
-    std::unique_ptr<Program> specialize(Program& program,
-                    const std::unordered_map<SkSL::String, SkSL::Program::Settings::Value>& inputs);
+    std::unique_ptr<Program> convertProgram(
+            Program::Kind kind,
+            String text,
+            const Program::Settings& settings,
+            const std::vector<std::unique_ptr<ExternalValue>>* externalValues = nullptr);
 
     bool toSPIRV(Program& program, OutputStream& out);
 
@@ -141,20 +139,17 @@ public:
 
     bool toMetal(Program& program, String* out);
 
+#if defined(SKSL_STANDALONE) || GR_TEST_UTILS
     bool toCPP(Program& program, String name, OutputStream& out);
 
     bool toH(Program& program, String name, OutputStream& out);
+#endif
 
     std::unique_ptr<ByteCode> toByteCode(Program& program);
 
 #if !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
-    bool toPipelineStage(const Program& program, PipelineStageArgs* outArgs);
+    bool toPipelineStage(Program& program, PipelineStageArgs* outArgs);
 #endif
-
-    /**
-     * Takes ownership of the given symbol. It will be destroyed when the compiler is destroyed.
-     */
-    Symbol* takeOwnership(std::unique_ptr<Symbol> symbol);
 
     void error(int offset, String msg) override;
 
@@ -170,15 +165,26 @@ public:
         return *fContext;
     }
 
-    static const char* OperatorName(Token::Kind token);
+    static const char* OperatorName(Token::Kind op);
 
-    static bool IsAssignment(Token::Kind token);
+    // Returns true if op is '=' or any compound assignment operator ('+=', '-=', etc.)
+    static bool IsAssignment(Token::Kind op);
 
-private:
-    void processIncludeFile(Program::Kind kind, const char* src, size_t length,
+    // Given a compound assignment operator, returns the non-assignment version of the operator
+    // (e.g. '+=' becomes '+')
+    static Token::Kind RemoveAssignment(Token::Kind op);
+
+    void processIncludeFile(Program::Kind kind, const char* path,
                             std::shared_ptr<SymbolTable> base,
                             std::vector<std::unique_ptr<ProgramElement>>* outElements,
                             std::shared_ptr<SymbolTable>* outSymbolTable);
+
+private:
+    void loadGeometryIntrinsics();
+
+    void loadInterpreterIntrinsics();
+
+    void loadPipelineIntrinsics();
 
     void addDefinition(const Expression* lvalue, std::unique_ptr<Expression>* expr,
                        DefinitionMap* definitions);
@@ -211,14 +217,25 @@ private:
                            bool* outUpdated,
                            bool* outNeedsRescan);
 
-    void scanCFG(FunctionDefinition& f);
+    /**
+     * Optimizes a function based on control flow analysis. Returns true if changes were made.
+     */
+    bool scanCFG(FunctionDefinition& f);
+
+    /**
+     * Optimize every function in the program.
+     */
+    bool optimize(Program& program);
 
     Position position(int offset);
 
-    std::map<String, std::pair<std::unique_ptr<ProgramElement>, bool>> fGPUIntrinsics;
-    std::map<String, std::pair<std::unique_ptr<ProgramElement>, bool>> fInterpreterIntrinsics;
-    std::unique_ptr<ASTFile> fGpuIncludeSource;
+    std::shared_ptr<SymbolTable> fRootSymbolTable;
+
     std::shared_ptr<SymbolTable> fGpuSymbolTable;
+    std::unique_ptr<IRIntrinsicMap> fGPUIntrinsics;
+    std::shared_ptr<SymbolTable> fInterpreterSymbolTable;
+    std::unique_ptr<IRIntrinsicMap> fInterpreterIntrinsics;
+
     std::vector<std::unique_ptr<ProgramElement>> fVertexInclude;
     std::shared_ptr<SymbolTable> fVertexSymbolTable;
     std::vector<std::unique_ptr<ProgramElement>> fFragmentInclude;
@@ -227,12 +244,13 @@ private:
     std::shared_ptr<SymbolTable> fGeometrySymbolTable;
     std::vector<std::unique_ptr<ProgramElement>> fPipelineInclude;
     std::shared_ptr<SymbolTable> fPipelineSymbolTable;
-    std::unique_ptr<ASTFile> fInterpreterIncludeSource;
-    std::vector<std::unique_ptr<ProgramElement>> fInterpreterInclude;
-    std::shared_ptr<SymbolTable> fInterpreterSymbolTable;
 
-    std::shared_ptr<SymbolTable> fTypes;
-    IRGenerator* fIRGenerator;
+    std::vector<std::unique_ptr<ProgramElement>> fFPInclude;
+    std::shared_ptr<SymbolTable> fFPSymbolTable;
+    std::unique_ptr<IRIntrinsicMap> fFPIntrinsics;
+
+    Inliner fInliner;
+    std::unique_ptr<IRGenerator> fIRGenerator;
     int fFlags;
 
     const String* fSource;
@@ -249,6 +267,6 @@ struct PipelineStageArgs {
 };
 #endif
 
-} // namespace
+}  // namespace SkSL
 
 #endif

@@ -5,10 +5,10 @@
 #ifndef V8_HEAP_SCAVENGER_INL_H_
 #define V8_HEAP_SCAVENGER_INL_H_
 
-#include "src/heap/scavenger.h"
-
 #include "src/heap/incremental-marking-inl.h"
 #include "src/heap/local-allocator-inl.h"
+#include "src/heap/memory-chunk.h"
+#include "src/heap/scavenger.h"
 #include "src/objects/map.h"
 #include "src/objects/objects-inl.h"
 #include "src/objects/slots-inl.h"
@@ -97,7 +97,7 @@ void Scavenger::PageMemoryFence(MaybeObject object) {
   // with  page initialization.
   HeapObject heap_object;
   if (object->GetHeapObject(&heap_object)) {
-    MemoryChunk::FromHeapObject(heap_object)->SynchronizedHeapLoad();
+    BasicMemoryChunk::FromHeapObject(heap_object)->SynchronizedHeapLoad();
   }
 #endif
 }
@@ -211,7 +211,7 @@ bool Scavenger::HandleLargeObject(Map map, HeapObject object, int object_size,
   // object_size > kMaxRegularHeapObjectSize
   if (V8_UNLIKELY(
           FLAG_young_generation_large_objects &&
-          MemoryChunk::FromHeapObject(object)->InNewLargeObjectSpace())) {
+          BasicMemoryChunk::FromHeapObject(object)->InNewLargeObjectSpace())) {
     DCHECK_EQ(NEW_LO_SPACE,
               MemoryChunk::FromHeapObject(object)->owner_identity());
     if (object.synchronized_compare_and_swap_map_word(

@@ -17,9 +17,9 @@
 #ifndef SRC_TRACE_PROCESSOR_IMPORTERS_JSON_JSON_TRACKER_H_
 #define SRC_TRACE_PROCESSOR_IMPORTERS_JSON_JSON_TRACKER_H_
 
-#include "src/trace_processor/destructible.h"
 #include "src/trace_processor/importers/json/json_utils.h"
-#include "src/trace_processor/trace_processor_context.h"
+#include "src/trace_processor/types/destructible.h"
+#include "src/trace_processor/types/trace_processor_context.h"
 
 namespace Json {
 class Value;
@@ -33,7 +33,7 @@ class JsonTracker : public Destructible {
   JsonTracker(const JsonTracker&) = delete;
   JsonTracker& operator=(const JsonTracker&) = delete;
   explicit JsonTracker(TraceProcessorContext*);
-  virtual ~JsonTracker();
+  ~JsonTracker() override;
 
   static JsonTracker* GetOrCreate(TraceProcessorContext* context) {
     if (!context->json_tracker) {

@@ -16,14 +16,29 @@ enum class ControlsVisibilityReason {
   // Browser controls are hidden when fullscreen is active.
   kFullscreen = 0,
 
-  // Browser controls are always shown for a few seconds after a navigation.
-  kPostNavigation,
-
   // Find in page forces browser controls to be visible.
   kFindInPage,
 
   // Tab modal dialogs obscure the content while leaving controls interactive.
   kTabModalDialog,
+
+  // If accessibility is enabled, controls are forced shown.
+  kAccessibility,
+
+  // Browser controls visibility can be set to force them to animate in/out when
+  // being set or cleared.
+  kAnimation,
+
+  // If the renderer isn't able to update the controls position because it is
+  // being destroyed, crashed, or is unresponsive, show the controls.
+  kRendererUnavailable,
+
+  // Miscellaneous reasons for showing the controls, including:
+  //  * User entering text
+  //  * The URL being dangerous or having a warning
+  //  * An interstitial is showing
+  //  * chrome:// URL
+  kOther,
 
   kReasonCount,
 };

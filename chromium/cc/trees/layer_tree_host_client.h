@@ -10,7 +10,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "cc/input/browser_controls_state.h"
-#include "cc/metrics/frame_sequence_tracker.h"
+#include "cc/metrics/frame_sequence_tracker_collection.h"
 #include "ui/gfx/geometry/scroll_offset.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 
@@ -61,11 +61,10 @@ struct ApplyViewportChangesArgs {
 
 using ManipulationInfo = uint32_t;
 constexpr ManipulationInfo kManipulationInfoNone = 0;
-constexpr ManipulationInfo kManipulationInfoHasScrolledByWheel = 1 << 0;
-constexpr ManipulationInfo kManipulationInfoHasScrolledByTouch = 1 << 1;
-constexpr ManipulationInfo kManipulationInfoHasScrolledByPrecisionTouchPad =
-    1 << 2;
-constexpr ManipulationInfo kManipulationInfoHasPinchZoomed = 1 << 3;
+constexpr ManipulationInfo kManipulationInfoWheel = 1 << 0;
+constexpr ManipulationInfo kManipulationInfoTouch = 1 << 1;
+constexpr ManipulationInfo kManipulationInfoPrecisionTouchPad = 1 << 2;
+constexpr ManipulationInfo kManipulationInfoPinchZoom = 1 << 3;
 
 // A LayerTreeHost is bound to a LayerTreeHostClient. The main rendering
 // loop (in ProxyMain or SingleThreadProxy) calls methods on the
@@ -101,6 +100,9 @@ class LayerTreeHostClient {
   virtual void WillUpdateLayers() = 0;
   virtual void DidUpdateLayers() = 0;
 
+  virtual void DidObserveFirstScrollDelay(
+      base::TimeDelta first_scroll_delay,
+      base::TimeTicks first_scroll_timestamp) = 0;
   // Notification that the proxy started or stopped deferring main frame updates
   virtual void OnDeferMainFrameUpdatesChanged(bool) = 0;
 
@@ -168,9 +170,10 @@ class LayerTreeHostClient {
   // committed to the compositor, which is before the call to
   // RecordEndOfFrameMetrics.
   virtual std::unique_ptr<BeginMainFrameMetrics> GetBeginMainFrameMetrics() = 0;
+  virtual void NotifyThroughputTrackerResults(CustomTrackerResults results) = 0;
 
  protected:
-  virtual ~LayerTreeHostClient() {}
+  virtual ~LayerTreeHostClient() = default;
 };
 
 // LayerTreeHost->WebThreadScheduler callback interface. Instances of this class

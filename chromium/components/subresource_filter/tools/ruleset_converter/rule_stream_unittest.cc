@@ -11,7 +11,6 @@
 
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/logging.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -33,9 +32,9 @@ std::vector<std::string> GetSomeRules() {
       "|http://example.com/?key=value$~third-party,domain=ex.com",
       "&key1=value1&key2=value2|$script,image,font",
       "domain1.com,domain1.com###id",
-      "@@whitelisted.com$document,domain=example.com|~sub.example.com",
+      "@@allowlisted.com$document,domain=example.com|~sub.example.com",
       "###absolute_evil_id",
-      "@@whitelisted.com$match-case,document,domain=another.example.com",
+      "@@allowlisted.com$match-case,document,domain=another.example.com",
       "domain.com,~sub.domain.com,sub.sub.domain.com#@#id",
       "#@#absolute_good_id",
       "host$websocket",
@@ -47,7 +46,7 @@ std::vector<std::string> GetSomeRules() {
 std::vector<std::string> GetSomeChromeUnfriendlyRules() {
   return std::vector<std::string>{
       "/a[0-9].com/$image",
-      "a.com$image,popup"
+      "a.com$image,popup",
       "a.com$popup",
       "a.com$~image",
       "a.com$~popup",

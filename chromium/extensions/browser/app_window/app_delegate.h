@@ -63,6 +63,7 @@ class AppDelegate {
   virtual void AddNewContents(
       content::BrowserContext* context,
       std::unique_ptr<content::WebContents> new_contents,
+      const GURL& target_url,
       WindowOpenDisposition disposition,
       const gfx::Rect& initial_rect,
       bool user_gesture) = 0;
@@ -73,7 +74,7 @@ class AppDelegate {
       SkColor initial_color) = 0;
   virtual void RunFileChooser(
       content::RenderFrameHost* render_frame_host,
-      std::unique_ptr<content::FileSelectListener> listener,
+      scoped_refptr<content::FileSelectListener> listener,
       const blink::mojom::FileChooserParams& params) = 0;
   virtual void RequestMediaAccessPermission(
       content::WebContents* web_contents,

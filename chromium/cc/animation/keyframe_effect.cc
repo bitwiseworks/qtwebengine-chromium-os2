@@ -168,7 +168,7 @@ void KeyframeEffect::RemoveFromTicking() {
   is_ticking_ = false;
   // Resetting last_tick_time_ here ensures that calling ::UpdateState
   // before ::Animate doesn't start a keyframe model.
-  last_tick_time_ = base::TimeTicks();
+  last_tick_time_ = base::nullopt;
   animation_->RemoveFromTicking();
 }
 
@@ -178,19 +178,20 @@ void KeyframeEffect::UpdateState(bool start_ready_keyframe_models,
 
   // Animate hasn't been called, this happens if an element has been added
   // between the Commit and Draw phases.
-  if (last_tick_time_ == base::TimeTicks())
+  if (last_tick_time_ == base::nullopt)
     start_ready_keyframe_models = false;
 
   if (start_ready_keyframe_models)
     PromoteStartedKeyframeModels(events);
 
-  MarkFinishedKeyframeModels(last_tick_time_);
-  MarkKeyframeModelsForDeletion(last_tick_time_, events);
+  auto last_tick_time = last_tick_time_.value_or(base::TimeTicks());
+  MarkFinishedKeyframeModels(last_tick_time);
+  MarkKeyframeModelsForDeletion(last_tick_time, events);
   PurgeKeyframeModelsMarkedForDeletion(/* impl_only */ true);
 
   if (start_ready_keyframe_models) {
     if (needs_to_start_keyframe_models_) {
-      StartKeyframeModels(last_tick_time_);
+      StartKeyframeModels(last_tick_time);
       PromoteStartedKeyframeModels(events);
     }
   }
@@ -213,14 +214,28 @@ void KeyframeEffect::UpdateTickingState() {
   }
 }
 
-void KeyframeEffect::Pause(base::TimeDelta pause_offset) {
-  for (auto& keyframe_model : keyframe_models_)
+void KeyframeEffect::Pause(base::TimeDelta pause_offset,
+                           PauseCondition pause_condition) {
+  bool did_pause = false;
+  for (auto& keyframe_model : keyframe_models_) {
+    // TODO(crbug.com/1076012): KeyframeEffect is paused with local time for
+    // scroll-linked animations. To make sure the start event of a keyframe
+    // model is sent to blink, we should not set its run state to PAUSED until
+    // such event is sent. This should be revisited once KeyframeEffect is able
+    // to tick scroll-linked keyframe models directly.
+    if (pause_condition == PauseCondition::kAfterStart &&
+        (keyframe_model->run_state() ==
+             KeyframeModel::WAITING_FOR_TARGET_AVAILABILITY ||
+         keyframe_model->run_state() == KeyframeModel::STARTING))
+      continue;
     keyframe_model->Pause(pause_offset);
-
-  if (has_bound_element_animations()) {
-    animation_->SetNeedsCommit();
-    SetNeedsPushProperties();
+    did_pause = true;
   }
+
+  if (!did_pause || !has_bound_element_animations())
+    return;
+  animation_->SetNeedsCommit();
+  SetNeedsPushProperties();
 }
 
 void KeyframeEffect::AddKeyframeModel(
@@ -313,7 +328,8 @@ void KeyframeEffect::RemoveKeyframeModel(int keyframe_model_id) {
 void KeyframeEffect::AbortKeyframeModel(int keyframe_model_id) {
   if (KeyframeModel* keyframe_model = GetKeyframeModelById(keyframe_model_id)) {
     if (!keyframe_model->is_finished()) {
-      keyframe_model->SetRunState(KeyframeModel::ABORTED, last_tick_time_);
+      keyframe_model->SetRunState(KeyframeModel::ABORTED,
+                                  last_tick_time_.value_or(base::TimeTicks()));
       if (has_bound_element_animations())
         element_animations_->UpdateClientAnimationState();
     }
@@ -338,10 +354,13 @@ void KeyframeEffect::AbortKeyframeModelsWithProperty(
       // Currently only impl-only scroll offset KeyframeModels can be completed
       // on the main thread.
       if (needs_completion && keyframe_model->is_impl_only()) {
-        keyframe_model->SetRunState(KeyframeModel::ABORTED_BUT_NEEDS_COMPLETION,
-                                    last_tick_time_);
+        keyframe_model->SetRunState(
+            KeyframeModel::ABORTED_BUT_NEEDS_COMPLETION,
+            last_tick_time_.value_or(base::TimeTicks()));
       } else {
-        keyframe_model->SetRunState(KeyframeModel::ABORTED, last_tick_time_);
+        keyframe_model->SetRunState(
+            KeyframeModel::ABORTED,
+            last_tick_time_.value_or(base::TimeTicks()));
       }
       aborted_keyframe_model = true;
     }
@@ -451,14 +470,6 @@ bool KeyframeEffect::HasTickingKeyframeModel() const {
       return true;
   }
   return false;
-}
-
-size_t KeyframeEffect::TickingKeyframeModelsCount() const {
-  size_t ticking_keyframe_models_count = 0;
-  for (const auto& it : keyframe_models_)
-    if (!it->is_finished())
-      ticking_keyframe_models_count++;
-  return ticking_keyframe_models_count;
 }
 
 bool KeyframeEffect::AffectsCustomProperty() const {
@@ -575,7 +586,7 @@ bool KeyframeEffect::IsCurrentlyAnimatingProperty(
     ElementListType list_type) const {
   for (const auto& keyframe_model : keyframe_models_) {
     if (!keyframe_model->is_finished() &&
-        keyframe_model->InEffect(last_tick_time_) &&
+        keyframe_model->InEffect(last_tick_time_.value_or(base::TimeTicks())) &&
         keyframe_model->target_property_id() == target_property) {
       if ((list_type == ElementListType::ACTIVE &&
            keyframe_model->affects_active_elements()) ||
@@ -613,7 +624,8 @@ void KeyframeEffect::GetPropertyAnimationState(
 
   for (const auto& keyframe_model : keyframe_models_) {
     if (!keyframe_model->is_finished()) {
-      bool in_effect = keyframe_model->InEffect(last_tick_time_);
+      bool in_effect =
+          keyframe_model->InEffect(last_tick_time_.value_or(base::TimeTicks()));
       bool active = keyframe_model->affects_active_elements();
       bool pending = keyframe_model->affects_pending_elements();
       int property = keyframe_model->target_property_id();
@@ -642,10 +654,12 @@ void KeyframeEffect::MarkAbortedKeyframeModelsForDeletion(
     if (KeyframeModel* keyframe_model =
             GetKeyframeModelById(keyframe_model_impl->id())) {
       if (keyframe_model->run_state() == KeyframeModel::ABORTED) {
-        keyframe_model_impl->SetRunState(KeyframeModel::WAITING_FOR_DELETION,
-                                         keyframe_effect_impl->last_tick_time_);
-        keyframe_model->SetRunState(KeyframeModel::WAITING_FOR_DELETION,
-                                    last_tick_time_);
+        keyframe_model_impl->SetRunState(
+            KeyframeModel::WAITING_FOR_DELETION,
+            keyframe_effect_impl->last_tick_time_.value_or(base::TimeTicks()));
+        keyframe_model->SetRunState(
+            KeyframeModel::WAITING_FOR_DELETION,
+            last_tick_time_.value_or(base::TimeTicks()));
         keyframe_model_aborted = true;
       }
     }
@@ -763,8 +777,12 @@ void KeyframeEffect::PushPropertiesTo(KeyframeEffect* keyframe_effect_impl) {
     // the host as well.
     if (keyframe_effect_impl->has_attached_element())
       keyframe_effect_impl->animation_->DetachElement();
-    if (element_id_)
-      keyframe_effect_impl->animation_->AttachElement(element_id_);
+    if (element_id_) {
+      if (element_id_.GetStableId() == ElementId::kReservedElementId)
+        keyframe_effect_impl->animation_->AttachNoElement();
+      else
+        keyframe_effect_impl->animation_->AttachElement(element_id_);
+    }
   }
 
   keyframe_effect_impl->scroll_offset_animation_was_interrupted_ =
@@ -911,16 +929,18 @@ void KeyframeEffect::PromoteStartedKeyframeModels(AnimationEvents* events) {
   for (auto& keyframe_model : keyframe_models_) {
     if (keyframe_model->run_state() == KeyframeModel::STARTING &&
         keyframe_model->affects_active_elements()) {
-      keyframe_model->SetRunState(KeyframeModel::RUNNING, last_tick_time_);
+      keyframe_model->SetRunState(KeyframeModel::RUNNING,
+                                  last_tick_time_.value_or(base::TimeTicks()));
       if (!keyframe_model->has_set_start_time() &&
           !keyframe_model->needs_synchronized_start_time())
-        keyframe_model->set_start_time(last_tick_time_);
+        keyframe_model->set_start_time(
+            last_tick_time_.value_or(base::TimeTicks()));
 
       base::TimeTicks start_time;
       if (keyframe_model->has_set_start_time())
         start_time = keyframe_model->start_time();
       else
-        start_time = last_tick_time_;
+        start_time = last_tick_time_.value_or(base::TimeTicks());
 
       GenerateEvent(events, *keyframe_model, AnimationEvent::STARTED,
                     start_time);

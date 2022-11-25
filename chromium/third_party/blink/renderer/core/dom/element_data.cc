@@ -32,6 +32,7 @@
 
 #include "third_party/blink/renderer/core/css/css_property_value_set.h"
 #include "third_party/blink/renderer/core/dom/qualified_name.h"
+#include "third_party/blink/renderer/platform/wtf/size_assertions.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
@@ -43,8 +44,7 @@ struct SameSizeAsElementData final
   void* pointers[2];
 };
 
-static_assert(sizeof(ElementData) == sizeof(SameSizeAsElementData),
-              "ElementData should stay small");
+ASSERT_SIZE(ElementData, SameSizeAsElementData);
 
 static AdditionalBytes AdditionalBytesForShareableElementDataWithAttributeCount(
     unsigned count) {
@@ -55,13 +55,13 @@ ElementData::ElementData()
     : bit_field_(IsUniqueFlag::encode(true) | ArraySize::encode(0) |
                  PresentationAttributeStyleIsDirty::encode(false) |
                  StyleAttributeIsDirty::encode(false) |
-                 AnimatedSvgAttributesAreDirty::encode(false)) {}
+                 SvgAttributesAreDirty::encode(false)) {}
 
 ElementData::ElementData(unsigned array_size)
     : bit_field_(IsUniqueFlag::encode(false) | ArraySize::encode(array_size) |
                  PresentationAttributeStyleIsDirty::encode(false) |
                  StyleAttributeIsDirty::encode(false) |
-                 AnimatedSvgAttributesAreDirty::encode(false)) {}
+                 SvgAttributesAreDirty::encode(false)) {}
 
 ElementData::ElementData(const ElementData& other, bool is_unique)
     : bit_field_(
@@ -71,8 +71,8 @@ ElementData::ElementData(const ElementData& other, bool is_unique)
               other.bit_field_.get<PresentationAttributeStyleIsDirty>()) |
           StyleAttributeIsDirty::encode(
               other.bit_field_.get<StyleAttributeIsDirty>()) |
-          AnimatedSvgAttributesAreDirty::encode(
-              other.bit_field_.get<AnimatedSvgAttributesAreDirty>())),
+          SvgAttributesAreDirty::encode(
+              other.bit_field_.get<SvgAttributesAreDirty>())),
       class_names_(other.class_names_),
       id_for_style_resolution_(other.id_for_style_resolution_) {
   // NOTE: The inline style is copied by the subclass copy constructor since we
@@ -110,11 +110,11 @@ bool ElementData::IsEquivalent(const ElementData* other) const {
   return true;
 }
 
-void ElementData::Trace(Visitor* visitor) {
+void ElementData::Trace(Visitor* visitor) const {
   if (bit_field_.get_concurrently<IsUniqueFlag>()) {
-    static_cast<UniqueElementData*>(this)->TraceAfterDispatch(visitor);
+    static_cast<const UniqueElementData*>(this)->TraceAfterDispatch(visitor);
   } else {
-    static_cast<ShareableElementData*>(this)->TraceAfterDispatch(visitor);
+    static_cast<const ShareableElementData*>(this)->TraceAfterDispatch(visitor);
   }
 }
 

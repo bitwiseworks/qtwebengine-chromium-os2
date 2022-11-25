@@ -10,7 +10,7 @@
 #include "content/browser/service_worker/service_worker_container_host.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
-#include "content/browser/service_worker/service_worker_provider_host.h"
+#include "content/browser/service_worker/service_worker_host.h"
 #include "content/browser/service_worker/service_worker_registration.h"
 #include "content/browser/service_worker/service_worker_type_converters.h"
 #include "content/common/service_worker/service_worker_utils.h"
@@ -128,11 +128,10 @@ bool PrepareExtendableMessageEventFromServiceWorker(
   DCHECK(source_container_host->IsContainerForServiceWorker());
   blink::mojom::ServiceWorkerObjectInfoPtr source_worker_info;
   base::WeakPtr<ServiceWorkerObjectHost> service_worker_object_host =
-      worker->provider_host()
+      worker->worker_host()
           ->container_host()
           ->GetOrCreateServiceWorkerObjectHost(
-              source_container_host->service_worker_host()
-                  ->running_hosted_version());
+              source_container_host->service_worker_host()->version());
   if (service_worker_object_host) {
     // CreateCompleteObjectInfoToSend() is safe because |source_worker_info|
     // will be sent immediately by the caller of this function.
@@ -285,37 +284,32 @@ void ServiceWorkerObjectHost::DispatchExtendableMessageEvent(
     return;
   }
   DCHECK_EQ(container_origin_, url::Origin::Create(container_host_->url()));
-  switch (container_host_->type()) {
-    case blink::mojom::ServiceWorkerContainerType::kForWindow:
-      service_worker_client_utils::GetClient(
-          container_host_,
-          base::BindOnce(&DispatchExtendableMessageEventFromClient, context_,
-                         version_, std::move(message), container_origin_,
-                         std::move(callback)));
-      return;
-    case blink::mojom::ServiceWorkerContainerType::kForServiceWorker: {
-      // Clamp timeout to the sending worker's remaining timeout, to prevent
-      // postMessage from keeping workers alive forever.
-      base::TimeDelta timeout = container_host_->service_worker_host()
-                                    ->running_hosted_version()
-                                    ->remaining_timeout();
 
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE,
-          base::BindOnce(&DispatchExtendableMessageEventFromServiceWorker,
-                         version_, std::move(message), container_origin_,
-                         base::make_optional(timeout), std::move(callback),
-                         container_host_->GetWeakPtr()));
-      return;
-    }
-    case blink::mojom::ServiceWorkerContainerType::kForDedicatedWorker:
-    case blink::mojom::ServiceWorkerContainerType::kForSharedWorker:
+  if (container_host_->IsContainerForServiceWorker()) {
+    // Clamp timeout to the sending worker's remaining timeout, to prevent
+    // postMessage from keeping workers alive forever.
+    base::TimeDelta timeout =
+        container_host_->service_worker_host()->version()->remaining_timeout();
+
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&DispatchExtendableMessageEventFromServiceWorker,
+                       version_, std::move(message), container_origin_,
+                       base::make_optional(timeout), std::move(callback),
+                       container_host_->GetWeakPtr()));
+  } else if (container_host_->IsContainerForWindowClient()) {
+    service_worker_client_utils::GetClient(
+        container_host_,
+        base::BindOnce(&DispatchExtendableMessageEventFromClient, context_,
+                       version_, std::move(message), container_origin_,
+                       std::move(callback)));
+  } else {
+    DCHECK(container_host_->IsContainerForWorkerClient());
+
     // Web workers don't yet have access to ServiceWorker objects, so they
     // can't postMessage to one (https://crbug.com/371690).
-    case blink::mojom::ServiceWorkerContainerType::kUnknown:
-      break;
+    NOTREACHED();
   }
-  NOTREACHED() << container_host_->type();
 }
 
 void ServiceWorkerObjectHost::OnConnectionError() {

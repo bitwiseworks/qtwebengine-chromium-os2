@@ -38,8 +38,8 @@ SyntheticGestureTargetAndroid::SyntheticGestureTargetAndroid(
 SyntheticGestureTargetAndroid::~SyntheticGestureTargetAndroid() = default;
 
 void SyntheticGestureTargetAndroid::TouchSetPointer(int index,
-                                                    int x,
-                                                    int y,
+                                                    float x,
+                                                    float y,
                                                     int id) {
   TRACE_EVENT0("input", "SyntheticGestureTargetAndroid::TouchSetPointer");
   JNIEnv* env = base::android::AttachCurrentThread();
@@ -48,10 +48,10 @@ void SyntheticGestureTargetAndroid::TouchSetPointer(int index,
       env, java_ref_, index, x * scale_factor, y * scale_factor, id);
 }
 
-void SyntheticGestureTargetAndroid::TouchSetScrollDeltas(int x,
-                                                         int y,
-                                                         int dx,
-                                                         int dy) {
+void SyntheticGestureTargetAndroid::TouchSetScrollDeltas(float x,
+                                                         float y,
+                                                         float dx,
+                                                         float dy) {
   TRACE_EVENT0("input", "SyntheticGestureTargetAndroid::TouchSetScrollDeltas");
   JNIEnv* env = base::android::AttachCurrentThread();
 
@@ -81,16 +81,16 @@ void SyntheticGestureTargetAndroid::DispatchWebTouchEventToPlatform(
     const ui::LatencyInfo&) {
   MotionEventAction action = MOTION_EVENT_ACTION_INVALID;
   switch (web_touch.GetType()) {
-    case WebInputEvent::kTouchStart:
+    case WebInputEvent::Type::kTouchStart:
       action = MOTION_EVENT_ACTION_START;
       break;
-    case WebInputEvent::kTouchMove:
+    case WebInputEvent::Type::kTouchMove:
       action = MOTION_EVENT_ACTION_MOVE;
       break;
-    case WebInputEvent::kTouchCancel:
+    case WebInputEvent::Type::kTouchCancel:
       action = MOTION_EVENT_ACTION_CANCEL;
       break;
-    case WebInputEvent::kTouchEnd:
+    case WebInputEvent::Type::kTouchEnd:
       action = MOTION_EVENT_ACTION_END;
       break;
     default:

@@ -17,10 +17,10 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/post_task.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "content/browser/site_instance_impl.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -30,7 +30,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
-#include "content/public/common/web_preferences.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -44,14 +44,16 @@
 #include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "mojo/public/cpp/test_support/test_utils.h"
+#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/test/embedded_test_server/controllable_http_response.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
-#include "services/network/cross_origin_read_blocking.h"
+#include "services/network/public/cpp/cross_origin_read_blocking.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/initiator_lock_compatibility.h"
 #include "services/network/public/cpp/network_switches.h"
 #include "services/network/test/test_url_loader_client.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "third_party/blink/public/common/web_preferences/web_preferences.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom-shared.h"
 
 namespace content {
@@ -309,9 +311,10 @@ class RequestInterceptor {
     }
 
     if (!got_all_data) {
-      base::PostTask(FROM_HERE, base::BindOnce(&RequestInterceptor::ReadBody,
-                                               base::Unretained(this),
-                                               std::move(completion_callback)));
+      base::ThreadTaskRunnerHandle::Get()->PostTask(
+          FROM_HERE,
+          base::BindOnce(&RequestInterceptor::ReadBody, base::Unretained(this),
+                         std::move(completion_callback)));
     } else {
       std::move(completion_callback).Run();
     }
@@ -773,7 +776,14 @@ IN_PROC_BROWSER_TEST_P(CrossSiteDocumentBlockingTest, BackToAboutBlank) {
   }
 }
 
-IN_PROC_BROWSER_TEST_P(CrossSiteDocumentBlockingTest, BlockForVariousTargets) {
+#if defined(OS_ANDROID)
+// Test is flaky on Android, see crbug.com/1075663
+#define MAYBE_BlockForVariousTargets DISABLED_BlockForVariousTargets
+#else
+#define MAYBE_BlockForVariousTargets BlockForVariousTargets
+#endif
+IN_PROC_BROWSER_TEST_P(CrossSiteDocumentBlockingTest,
+                       MAYBE_BlockForVariousTargets) {
   // This webpage loads a cross-site HTML page in different targets such as
   // <img>,<link>,<embed>, etc. Since the requested document is blocked, and one
   // character string (' ') is returned instead, this tests that the renderer
@@ -1418,9 +1428,9 @@ IN_PROC_BROWSER_TEST_P(CrossSiteDocumentBlockingTest, PrefetchIsNotImpacted) {
 
 // This test covers a scenario where foo.com document HTML-Imports a bar.com
 // document.  Because of historical reasons, bar.com fetches use foo.com's
-// URLLoaderFactory.  This means that |request_initiator_site_lock| enforcement
-// can incorrectly classify such fetches as malicious (kIncorrectLock).
-// This test ensures that UMAs properly detect such mishaps.
+// URLLoaderFactory.  This means that |request_initiator_origin_lock|
+// enforcement can incorrectly classify such fetches as malicious
+// (kIncorrectLock). This test ensures that UMAs properly detect such mishaps.
 //
 // TODO(lukasza, yoichio): https://crbug.com/766694: Remove this test once HTML
 // Imports are removed from the codebase.
@@ -1446,7 +1456,7 @@ IN_PROC_BROWSER_TEST_P(CrossSiteDocumentBlockingTest,
   // perform a fetch of nosniff.json same-origin (bar.com) via <script> element.
   // CORB should normally allow such fetch (request_initiator == bar.com ==
   // origin_of_fetch_target), but here the fetch will be blocked, because
-  // request_initiator_site_lock (a.com) will differ from request_initiator.
+  // request_initiator_origin_lock (a.com) will differ from request_initiator.
   // Such mishap is okay, because CORB only blocks HTML/XML/JSON and such
   // content type wouldn't have worked in <script> (or other non-XHR/fetch
   // context) anyway.
@@ -1465,7 +1475,7 @@ IN_PROC_BROWSER_TEST_P(CrossSiteDocumentBlockingTest,
     ExecuteScriptAsync(shell()->web_contents(), script);
     interceptor.WaitForRequestCompletion();
 
-    // NetworkService enforices |request_initiator_site_lock| for CORB,
+    // NetworkService enforces |request_initiator_origin_lock| for CORB,
     // which means that legitimate fetches from HTML Imported scripts may get
     // incorrectly blocked.
     interceptor.Verify(CorbExpectations::kShouldBeBlockedWithoutSniffing,
@@ -1482,8 +1492,8 @@ IN_PROC_BROWSER_TEST_P(CrossSiteDocumentBlockingTest,
 //    - CORB sees that the request was made from bar.com and blocks it.
 //
 // The test helps show that the bug above means that in XHR/fetch scenarios
-// request_initiator is accidentally compatible with request_initiator_site_lock
-// and therefore the lock can be safely enforced.
+// request_initiator is accidentally compatible with
+// request_initiator_origin_lock and therefore the lock can be safely enforced.
 //
 // There are 2 almost identical tests here:
 // - HtmlImports_CompatibleLock1
@@ -1549,8 +1559,8 @@ IN_PROC_BROWSER_TEST_P(CrossSiteDocumentBlockingTest,
 //    - CORB sees that the request was made from bar.com and blocks it.
 //
 // The test helps show that the bug above means that in XHR/fetch scenarios
-// request_initiator is accidentally compatible with request_initiator_site_lock
-// and therefore the lock can be safely enforced.
+// request_initiator is accidentally compatible with
+// request_initiator_origin_lock and therefore the lock can be safely enforced.
 //
 // There are 2 almost identical tests here:
 // - HtmlImports_CompatibleLock1
@@ -1647,10 +1657,9 @@ class CrossSiteDocumentBlockingServiceWorkerTest : public ContentBrowserTest {
     // Sanity check of test setup - the 2 https servers should be cross-site
     // (the second server should have a different hostname because of the call
     // to SetSSLConfig with CERT_COMMON_NAME_IS_DOMAIN argument).
-    ASSERT_FALSE(SiteInstanceImpl::IsSameSite(
-        IsolationContext(shell()->web_contents()->GetBrowserContext()),
+    ASSERT_FALSE(net::registry_controlled_domains::SameDomainOrHost(
         GetURLOnServiceWorkerServer("/"), GetURLOnCrossOriginServer("/"),
-        true /* should_use_effective_urls */));
+        net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES));
   }
 
   GURL GetURLOnServiceWorkerServer(const std::string& path) {

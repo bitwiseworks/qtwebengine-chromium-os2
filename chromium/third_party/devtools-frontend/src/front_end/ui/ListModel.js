@@ -14,6 +14,7 @@ export class ListModel extends Common.ObjectWrapper.ObjectWrapper {
    */
   constructor(items) {
     super();
+    /** @type {!Array<T>} */
     this._items = items || [];
   }
 
@@ -143,7 +144,7 @@ export class ListModel extends Common.ObjectWrapper.ObjectWrapper {
       // Splice may fail with too many arguments.
       const before = this._items.slice(0, from);
       const after = this._items.slice(to);
-      this._items = [].concat(before, items, after);
+      this._items = [...before, ...items, ...after];
     }
     this._replaced(from, removed, items.length);
     return removed;

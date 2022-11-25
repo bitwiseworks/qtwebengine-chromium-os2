@@ -97,7 +97,7 @@ protected:
         // AA with stroke style
         SkPaint p;
         p.setAntiAlias(true);
-        p.setStyle(SkPaint::kStroke_Style);
+        p.setStroke(true);
         p.setStrokeWidth(SkIntToScalar(3));
         fPaints.push_back(p);
         }
@@ -106,7 +106,7 @@ protected:
         // AA with stroke style, width = 0
         SkPaint p;
         p.setAntiAlias(true);
-        p.setStyle(SkPaint::kStroke_Style);
+        p.setStroke(true);
         fPaints.push_back(p);
         }
 
@@ -202,7 +202,7 @@ protected:
     }
 
 private:
-    typedef GM INHERITED;
+    using INHERITED = GM;
     SkTArray<SkPaint> fPaints;
     SkTArray<SkMatrix> fMatrices;
 };
@@ -211,4 +211,4 @@ private:
 
 DEF_GM( return new CircleGM; )
 
-}
+}  // namespace skiagm

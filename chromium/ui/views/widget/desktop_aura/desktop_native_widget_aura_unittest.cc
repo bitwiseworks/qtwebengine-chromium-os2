@@ -22,7 +22,7 @@
 #include "ui/aura/test/window_occlusion_tracker_test_api.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
-#include "ui/base/mojom/cursor_type.mojom-shared.h"
+#include "ui/base/cursor/mojom/cursor_type.mojom-shared.h"
 #include "ui/display/screen.h"
 #include "ui/events/event_processor.h"
 #include "ui/events/event_utils.h"
@@ -69,7 +69,7 @@ TEST_F(DesktopNativeWidgetAuraTest, DesktopAuraWindowSizeTest) {
 
   // On Linux we test this with popup windows because the WM may ignore the size
   // suggestion for normal windows.
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
   Widget::InitParams init_params = CreateParams(Widget::InitParams::TYPE_POPUP);
 #else
   Widget::InitParams init_params =
@@ -286,8 +286,8 @@ std::unique_ptr<Widget> CreateAndShowControlWidget(aura::Window* parent) {
   Widget::InitParams params(Widget::InitParams::TYPE_CONTROL);
   params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.parent = parent;
-  params.native_widget = CreatePlatformNativeWidgetImpl(params, widget.get(),
-                                                        kStubCapture, nullptr);
+  params.native_widget =
+      CreatePlatformNativeWidgetImpl(widget.get(), kStubCapture, nullptr);
   widget->Init(std::move(params));
   widget->Show();
   return widget;
@@ -592,7 +592,7 @@ void RunCloseWidgetDuringDispatchTest(WidgetTest* test,
       test->CreateParams(Widget::InitParams::TYPE_POPUP);
   params.bounds = gfx::Rect(0, 0, 50, 100);
   widget->Init(std::move(params));
-  widget->SetContentsView(new CloseWidgetView(last_event_type));
+  widget->SetContentsView(std::make_unique<CloseWidgetView>(last_event_type));
   widget->Show();
   GenerateMouseEvents(widget, last_event_type);
 }
@@ -606,23 +606,6 @@ TEST_F(DesktopAuraWidgetTest, CloseWidgetDuringMousePress) {
 TEST_F(DesktopAuraWidgetTest, CloseWidgetDuringMouseReleased) {
   RunCloseWidgetDuringDispatchTest(this, ui::ET_MOUSE_RELEASED);
 }
-
-namespace {
-
-// Provides functionality to create a window modal dialog.
-class ModalDialogDelegate : public DialogDelegateView {
- public:
-  ModalDialogDelegate() = default;
-  ~ModalDialogDelegate() override = default;
-
-  // WidgetDelegate overrides.
-  ui::ModalType GetModalType() const override { return ui::MODAL_TYPE_WINDOW; }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ModalDialogDelegate);
-};
-
-}  // namespace
 
 #if defined(OS_CHROMEOS)
 // TODO(crbug.com/916272): investigate fixing and enabling on Chrome OS.
@@ -666,10 +649,11 @@ TEST_F(DesktopWidgetTest, MAYBE_WindowMouseModalityTest) {
   // the main view within the dialog.
 
   // This instance will be destroyed when the dialog is destroyed.
-  ModalDialogDelegate* dialog_delegate = new ModalDialogDelegate;
+  auto dialog_delegate = std::make_unique<DialogDelegateView>();
+  dialog_delegate->SetModalType(ui::MODAL_TYPE_WINDOW);
 
   Widget* modal_dialog_widget = views::DialogDelegate::CreateDialogWidget(
-      dialog_delegate, nullptr, top_level_widget.GetNativeView());
+      dialog_delegate.release(), nullptr, top_level_widget.GetNativeView());
   modal_dialog_widget->SetBounds(gfx::Rect(100, 100, 200, 200));
   EventCountView* dialog_widget_view = new EventCountView();
   dialog_widget_view->SetBounds(0, 0, 50, 50);
@@ -715,15 +699,15 @@ TEST_F(DesktopWidgetTest, WindowModalityActivationTest) {
   HWND win32_window = views::HWNDForWidget(top_level_widget);
   EXPECT_TRUE(::IsWindow(win32_window));
 
-  // This instance will be destroyed when the dialog is destroyed.
-  ModalDialogDelegate* dialog_delegate = new ModalDialogDelegate;
-
   // We should be able to activate the window even if the WidgetDelegate
   // says no, when a modal dialog is active.
   widget_delegate.SetCanActivate(false);
 
+  auto dialog_delegate = std::make_unique<DialogDelegateView>();
+  dialog_delegate->SetModalType(ui::MODAL_TYPE_WINDOW);
+
   Widget* modal_dialog_widget = views::DialogDelegate::CreateDialogWidget(
-      dialog_delegate, nullptr, top_level_widget->GetNativeView());
+      dialog_delegate.release(), nullptr, top_level_widget->GetNativeView());
   modal_dialog_widget->SetBounds(gfx::Rect(100, 100, 200, 200));
   modal_dialog_widget->Show();
   EXPECT_TRUE(modal_dialog_widget->IsVisible());

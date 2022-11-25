@@ -108,7 +108,7 @@ int main(int argc, char** argv) {
         // lazily allocate the surfaces
         if (!surf) {
             if (FLAGS_gpu) {
-                context = factory.getContextInfo(contextType).grContext();
+                context = factory.getContextInfo(contextType).directContext();
                 surf = SkSurface::MakeRenderTarget(context,
                                                    SkBudgeted::kNo,
                                                    info,
@@ -146,6 +146,7 @@ int main(int argc, char** argv) {
                                                 SkSurface::RescaleGamma::kSrc,
                                                 kNone_SkFilterQuality,
                                                 read_pixels_cb, &asyncRec);
+                context->submit();
             } else {
                 SkPixmap pm;
                 SkAssertResult(surf->peekPixels(&pm));

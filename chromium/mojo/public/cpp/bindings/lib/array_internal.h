@@ -11,8 +11,8 @@
 #include <limits>
 #include <new>
 
+#include "base/check.h"
 #include "base/component_export.h"
-#include "base/logging.h"
 #include "base/macros.h"
 #include "mojo/public/c/system/macros.h"
 #include "mojo/public/cpp/bindings/lib/bindings_internal.h"
@@ -284,8 +284,7 @@ class Array_Data {
     BufferWriter() = default;
 
     void Allocate(size_t num_elements, Buffer* buffer) {
-      if (num_elements > Traits::kMaxNumElements)
-        return;
+      CHECK_LE(num_elements, Traits::kMaxNumElements);
 
       uint32_t num_bytes =
           Traits::GetStorageSize(static_cast<uint32_t>(num_elements));

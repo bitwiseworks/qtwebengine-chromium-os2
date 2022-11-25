@@ -4,6 +4,7 @@
 
 #include "components/keep_alive_registry/keep_alive_types.h"
 #include "base/logging.h"
+#include "base/notreached.h"
 
 std::ostream& operator<<(std::ostream& out, const KeepAliveOrigin& origin) {
   switch (origin) {
@@ -19,6 +20,8 @@ std::ostream& operator<<(std::ostream& out, const KeepAliveOrigin& origin) {
       return out << "BACKGROUND_MODE_MANAGER";
     case KeepAliveOrigin::BACKGROUND_MODE_MANAGER_STARTUP:
       return out << "BACKGROUND_MODE_MANAGER_STARTUP";
+    case KeepAliveOrigin::BACKGROUND_MODE_MANAGER_FORCE_INSTALLED_EXTENSIONS:
+      return out << "BACKGROUND_MODE_MANAGER_FORCE_INSTALLED_EXTENSIONS";
     case KeepAliveOrigin::BACKGROUND_SYNC:
       return out << "BACKGROUND_SYNC";
     case KeepAliveOrigin::LOGIN_DISPLAY_HOST_WEBUI:
@@ -27,6 +30,8 @@ std::ostream& operator<<(std::ostream& out, const KeepAliveOrigin& origin) {
       return out << "PIN_MIGRATION";
     case KeepAliveOrigin::REMOTE_DEBUGGING:
       return out << "REMOTE_DEBUGGING";
+    case KeepAliveOrigin::DEVTOOLS_WINDOW:
+      return out << "DEVTOOLS_WINDOW";
     case KeepAliveOrigin::NOTIFICATION:
       return out << "NOTIFICATION";
     case KeepAliveOrigin::PENDING_NOTIFICATION_CLICK_EVENT:

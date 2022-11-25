@@ -8,6 +8,8 @@
 #include <memory>
 #include <string>
 
+#include "base/callback_forward.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/metrics/field_trial.h"
 #include "base/sequence_checker.h"
 #include "base/time/time.h"
@@ -22,8 +24,14 @@
 class PrefRegistrySimple;
 class PrefService;
 
+namespace network {
+class SharedURLLoaderFactory;
+}
+
 namespace metrics {
 class MetricsStateManager;
+
+extern const char kCrashpadHistogramAllocatorName[];
 
 // AndroidMetricsServiceClient is a singleton which manages metrics collection
 // intended for use by WebView & WebLayer.
@@ -99,12 +107,27 @@ class AndroidMetricsServiceClient : public MetricsServiceClient,
   std::unique_ptr<const base::FieldTrial::EntropyProvider>
   CreateLowEntropyProvider();
 
+  // Updates the state of whether UKM is enabled or not by calling back into
+  // IsUkmAllowedForAllProfiles(). If |must_purge| is true then currently
+  // collected data will be purged.
+  void UpdateUkm(bool must_purge);
+
+  // Updates the state of the UKM service if it's running. This should be called
+  // when a BrowserContext is created or destroyed which would change the value
+  // of IsOffTheRecordSessionActive().
+  void UpdateUkmService();
+
+  // Whether or not consent state has been determined, regardless of whether
+  // it is positive or negative.
+  bool IsConsentDetermined() const;
+
   // EnabledStateProvider
   bool IsConsentGiven() const override;
   bool IsReportingEnabled() const override;
 
   // MetricsServiceClient
   MetricsService* GetMetricsService() override;
+  ukm::UkmService* GetUkmService() override;
   void SetMetricsClientId(const std::string& client_id) override;
   std::string GetApplicationLocale() override;
   bool GetBrand(std::string* brand_code) override;
@@ -119,6 +142,7 @@ class AndroidMetricsServiceClient : public MetricsServiceClient,
       MetricsLogUploader::MetricServiceType service_type,
       const MetricsLogUploader::UploadCallback& on_upload_complete) override;
   base::TimeDelta GetStandardUploadInterval() override;
+  bool IsUkmAllowedForAllProfiles() override;
   bool ShouldStartUpFastForTesting() const override;
 
   // Gets the embedding app's package name if it's OK to log. Otherwise, this
@@ -130,16 +154,19 @@ class AndroidMetricsServiceClient : public MetricsServiceClient,
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override;
 
+  // Runs |closure| when CollectFinalMetricsForLog() is called.
+  void SetCollectFinalMetricsForLogClosureForTesting(base::OnceClosure closure);
+
   metrics::MetricsStateManager* metrics_state_manager() const {
     return metrics_state_manager_.get();
   }
 
  protected:
-  // Called by Initialize() to allow embedder specific initialization.
-  virtual void InitInternal() = 0;
-
   // Called by MaybeStartMetrics() to allow embedder specific initialization.
   virtual void OnMetricsStart() = 0;
+
+  // Called by MaybeStartMetrics() when metrics collection failed to start.
+  virtual void OnMetricsNotStarted() = 0;
 
   // Returns the metrics sampling rate, to be used by IsInSample(). This is a
   // per mille value, so this integer must always be in the inclusive range [0,
@@ -177,17 +204,25 @@ class AndroidMetricsServiceClient : public MetricsServiceClient,
   // sensitive, see https://crbug.com/969803.
   virtual int GetPackageNameLimitRatePerMille() = 0;
 
-  // Whether or not MetricsService::OnApplicationNotIdle should be called for
-  // notifications.
-  virtual bool ShouldWakeMetricsService() = 0;
-
   // Called by CreateMetricsService, allows the embedder to register additional
   // MetricsProviders. Does nothing by default.
   virtual void RegisterAdditionalMetricsProviders(MetricsService* service);
 
+  // Called by CreateMetricsService if metrics should be persisted. If the
+  // client returns true then its
+  // variations::PlatformFieldTrials::SetupFieldTrials needs to also call
+  // InstantiatePersistentHistograms.
+  virtual bool IsPersistentHistogramsEnabled();
+
   // Returns the embedding application's package name (unconditionally). Virtual
   // for testing.
   virtual std::string GetAppPackageNameInternal();
+
+  // Returns whether there are any OffTheRecord browsers/tabs open.
+  virtual bool IsOffTheRecordSessionActive();
+
+  // Returns a URLLoaderFactory when the system uploader isn't used.
+  virtual scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory();
 
   void EnsureOnValidSequence() const {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -199,13 +234,14 @@ class AndroidMetricsServiceClient : public MetricsServiceClient,
   void MaybeStartMetrics();
   void RegisterForNotifications();
 
-  std::unique_ptr<MetricsService> CreateMetricsService(
-      MetricsStateManager* state_manager,
-      AndroidMetricsServiceClient* client,
-      PrefService* prefs);
+  void CreateMetricsService(MetricsStateManager* state_manager,
+                            AndroidMetricsServiceClient* client,
+                            PrefService* prefs);
+  void CreateUkmService();
 
   std::unique_ptr<MetricsStateManager> metrics_state_manager_;
   std::unique_ptr<MetricsService> metrics_service_;
+  std::unique_ptr<ukm::UkmService> ukm_service_;
   content::NotificationRegistrar registrar_;
   PrefService* pref_service_ = nullptr;
   bool init_finished_ = false;
@@ -218,6 +254,8 @@ class AndroidMetricsServiceClient : public MetricsServiceClient,
   // When non-zero, this overrides the default value in
   // GetStandardUploadInterval().
   base::TimeDelta overridden_upload_interval_;
+
+  base::OnceClosure collect_final_metrics_for_log_closure_;
 
   // MetricsServiceClient may be created before the UI thread is promoted to
   // BrowserThread::UI. Use |sequence_checker_| to enforce that the

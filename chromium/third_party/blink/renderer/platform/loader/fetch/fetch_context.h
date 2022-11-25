@@ -54,7 +54,9 @@ namespace blink {
 
 enum class ResourceType : uint8_t;
 class ClientHintsPreferences;
+class FeaturePolicy;
 class KURL;
+struct ResourceLoaderOptions;
 class ResourceTimingInfo;
 class WebScopedVirtualTimePauser;
 
@@ -75,7 +77,7 @@ class PLATFORM_EXPORT FetchContext : public GarbageCollected<FetchContext> {
 
   virtual ~FetchContext() = default;
 
-  virtual void Trace(Visitor*) {}
+  virtual void Trace(Visitor*) const {}
 
   virtual void AddAdditionalRequestHeaders(ResourceRequest&);
 
@@ -113,11 +115,13 @@ class PLATFORM_EXPORT FetchContext : public GarbageCollected<FetchContext> {
       const KURL&,
       const ResourceLoaderOptions&,
       ReportingDisposition,
-      const Vector<KURL>& redirect_chain) const {
+      const base::Optional<ResourceRequest::RedirectInfo>& redirect_info)
+      const {
     return ResourceRequestBlockedReason::kOther;
   }
   virtual base::Optional<ResourceRequestBlockedReason> CheckCSPForRequest(
       mojom::RequestContextType,
+      network::mojom::RequestDestination request_destination,
       const KURL&,
       const ResourceLoaderOptions&,
       ReportingDisposition,
@@ -132,7 +136,8 @@ class PLATFORM_EXPORT FetchContext : public GarbageCollected<FetchContext> {
   virtual void PopulateResourceRequest(ResourceType,
                                        const ClientHintsPreferences&,
                                        const FetchParameters::ResourceWidth&,
-                                       ResourceRequest&);
+                                       ResourceRequest&,
+                                       const ResourceLoaderOptions&);
 
   // Called when the underlying context is detached. Note that some
   // FetchContexts continue working after detached (e.g., for fetch() operations
@@ -142,15 +147,19 @@ class PLATFORM_EXPORT FetchContext : public GarbageCollected<FetchContext> {
     return MakeGarbageCollected<FetchContext>();
   }
 
+  virtual const FeaturePolicy* GetFeaturePolicy() const { return nullptr; }
+
   // Determine if the request is on behalf of an advertisement. If so, return
   // true.
-  virtual bool CalculateIfAdSubresource(const ResourceRequest& resource_request,
-                                        ResourceType type) {
+  virtual bool CalculateIfAdSubresource(
+      const ResourceRequest& resource_request,
+      ResourceType type,
+      const FetchInitiatorInfo& initiator_info) {
     return false;
   }
 
-  virtual WebURLRequest::PreviewsState previews_state() const {
-    return WebURLRequest::kPreviewsUnspecified;
+  virtual PreviewsState previews_state() const {
+    return PreviewsTypes::kPreviewsUnspecified;
   }
 
   // Returns a receiver corresponding to a request with |request_id|.

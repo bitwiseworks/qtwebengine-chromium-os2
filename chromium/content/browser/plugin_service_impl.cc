@@ -72,13 +72,13 @@ void WillLoadPluginsCallback(base::SequenceChecker* sequence_checker) {
 // static
 void PluginServiceImpl::RecordBrokerUsage(int render_process_id,
                                           int render_frame_id) {
-  WebContents* web_contents = WebContents::FromRenderFrameHost(
-      RenderFrameHost::FromID(render_process_id, render_frame_id));
-  if (web_contents) {
-    ukm::SourceId source_id = static_cast<WebContentsImpl*>(web_contents)
-                                  ->GetUkmSourceIdForLastCommittedSource();
-    ukm::builders::Pepper_Broker(source_id).Record(ukm::UkmRecorder::Get());
-  }
+  RenderFrameHostImpl* rfh =
+      RenderFrameHostImpl::FromID(render_process_id, render_frame_id);
+  if (!rfh)
+    return;
+
+  ukm::SourceId source_id = rfh->GetPageUkmSourceId();
+  ukm::builders::Pepper_Broker(source_id).Record(ukm::UkmRecorder::Get());
 }
 
 // static
@@ -208,7 +208,7 @@ PpapiPluginProcessHost* PluginServiceImpl::FindOrStartPpapiPluginProcess(
     // https://www.chromium.org/flash-roadmap).
     RenderProcessHostImpl::AddCorbExceptionForPlugin(render_process_id);
   } else if (info->permissions & ppapi::PERMISSION_PDF) {
-    // We want to limit ability to bypass |request_initiator_site_lock| to
+    // We want to limit ability to bypass |request_initiator_origin_lock| to
     // trustworthy renderers.  PDF plugin is okay, because it is always hosted
     // by the PDF extension (mhjfbmdgcfjbbpaeojofohoefgiehjai) or
     // chrome://print, both of which we assume are trustworthy (the extension
@@ -218,8 +218,9 @@ PpapiPluginProcessHost* PluginServiceImpl::FindOrStartPpapiPluginProcess(
     // web-controlled content.  This is a defense-in-depth for verifying that
     // ShouldAllowPluginCreation called above is doing the right thing.
     auto* policy = ChildProcessSecurityPolicyImpl::GetInstance();
-    GURL renderer_lock = policy->GetOriginLock(render_process_id);
-    CHECK(!renderer_lock.SchemeIsHTTPOrHTTPS());
+    ProcessLock renderer_lock = policy->GetProcessLock(render_process_id);
+    CHECK(!renderer_lock.matches_scheme(url::kHttpScheme) &&
+          !renderer_lock.matches_scheme(url::kHttpsScheme));
     CHECK(embedder_origin.scheme() != url::kHttpScheme);
     CHECK(embedder_origin.scheme() != url::kHttpsScheme);
     CHECK(!embedder_origin.opaque());
@@ -313,8 +314,8 @@ void PluginServiceImpl::OpenChannelToPpapiBroker(
     int render_frame_id,
     const base::FilePath& path,
     PpapiPluginProcessHost::BrokerClient* client) {
-  base::PostTask(FROM_HERE, {BrowserThread::UI},
-                 base::BindOnce(&PluginServiceImpl::RecordBrokerUsage,
+  GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindOnce(&PluginServiceImpl::RecordBrokerUsage,
                                 render_process_id, render_frame_id));
 
   PpapiPluginProcessHost* plugin_host = FindOrStartPpapiBrokerProcess(
@@ -389,14 +390,14 @@ base::string16 PluginServiceImpl::GetPluginDisplayNameByPath(
   if (PluginService::GetInstance()->GetPluginInfoByPath(path, &info) &&
       !info.name.empty()) {
     plugin_name = info.name;
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
     // Many plugins on the Mac have .plugin in the actual name, which looks
     // terrible, so look for that and strip it off if present.
     static const char kPluginExtension[] = ".plugin";
     if (base::EndsWith(plugin_name, base::ASCIIToUTF16(kPluginExtension),
                        base::CompareCase::SENSITIVE))
       plugin_name.erase(plugin_name.length() - strlen(kPluginExtension));
-#endif  // defined(OS_MACOSX)
+#endif  // defined(OS_MAC)
   }
   return plugin_name;
 }

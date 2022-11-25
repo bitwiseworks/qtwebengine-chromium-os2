@@ -9,6 +9,7 @@
 #define SkPathRef_DEFINED
 
 #include "include/core/SkMatrix.h"
+#include "include/core/SkPathTypes.h"
 #include "include/core/SkPoint.h"
 #include "include/core/SkRRect.h"
 #include "include/core/SkRect.h"
@@ -23,8 +24,21 @@
 #include <limits>
 #include <tuple>
 
+struct SkPathView;
 class SkRBuffer;
 class SkWBuffer;
+
+enum class SkPathConvexity {
+    kConvex,
+    kConcave,
+    kUnknown,
+};
+
+enum class SkPathFirstDirection {
+    kCW,         // == SkPathDirection::kCW
+    kCCW,        // == SkPathDirection::kCCW
+    kUnknown,
+};
 
 /**
  * Holds the path verbs and points. It is versioned by a generation ID. None of its public methods
@@ -43,6 +57,26 @@ class SkWBuffer;
 
 class SK_API SkPathRef final : public SkNVRefCnt<SkPathRef> {
 public:
+    SkPathRef(SkTDArray<SkPoint> points, SkTDArray<uint8_t> verbs, SkTDArray<SkScalar> weights,
+              unsigned segmentMask)
+        : fPoints(std::move(points))
+        , fVerbs(std::move(verbs))
+        , fConicWeights(std::move(weights))
+    {
+        fBoundsIsDirty = true;    // this also invalidates fIsFinite
+        fGenerationID = 0;        // recompute
+        fSegmentMask = segmentMask;
+        fIsOval = false;
+        fIsRRect = false;
+        // The next two values don't matter unless fIsOval or fIsRRect are true.
+        fRRectOrOvalIsCCW = false;
+        fRRectOrOvalStartIdx = 0xAC;
+        SkDEBUGCODE(fEditorsAttached.store(0);)
+
+        this->computeBounds();  // do this now, before we worry about multiple owners/threads
+        SkDEBUGCODE(this->validate();)
+    }
+
     class Editor {
     public:
         Editor(sk_sp<SkPathRef>* pathRef,
@@ -316,6 +350,8 @@ public:
     bool isValid() const;
     SkDEBUGCODE(void validate() const { SkASSERT(this->isValid()); } )
 
+    SkPathView view(SkPathFillType, SkPathConvexity) const;
+
 private:
     enum SerializationOffsets {
         kLegacyRRectOrOvalStartIdx_SerializationShift = 28, // requires 3 bits, ignored.
@@ -488,6 +524,7 @@ private:
     friend class PathRefTest_Private;
     friend class ForceIsRRect_Private; // unit test isRRect
     friend class SkPath;
+    friend class SkPathBuilder;
     friend class SkPathPriv;
 };
 

@@ -53,7 +53,7 @@ class PLATFORM_EXPORT ResponseBodyLoaderDrainableInterface
   // them back to the associated client asynchronously.
   virtual BytesConsumer& DrainAsBytesConsumer() = 0;
 
-  virtual void Trace(Visitor*) {}
+  virtual void Trace(Visitor*) const {}
 };
 
 // ResponseBodyLoader reads the response body and reports the contents to the
@@ -70,8 +70,6 @@ class PLATFORM_EXPORT ResponseBodyLoader final
     : public ResponseBodyLoaderDrainableInterface,
       private ResponseBodyLoaderClient,
       private BytesConsumer::Client {
-  USING_GARBAGE_COLLECTED_MIXIN(ResponseBodyLoader);
-
  public:
   ResponseBodyLoader(BytesConsumer&,
                      ResponseBodyLoaderClient&,
@@ -100,7 +98,7 @@ class PLATFORM_EXPORT ResponseBodyLoader final
   bool IsSuspended() const { return suspended_; }
   bool IsDrained() const { return drained_; }
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   // The maximal number of bytes consumed in a task. When there are more bytes
   // in the data pipe, they will be consumed in following tasks. Setting a too

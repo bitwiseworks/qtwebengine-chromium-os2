@@ -27,120 +27,129 @@
 namespace ui {
 
 namespace {
-
+// clang-format off
 const base::flat_map<NativeTheme::ColorId, ColorId>&
 NativeThemeColorIdToColorIdMap() {
   using NTCID = NativeTheme::ColorId;
   static const base::NoDestructor<base::flat_map<NativeTheme::ColorId, ColorId>>
       map({
-          {NTCID::kColorId_AlertSeverityHigh, kColorAlertHighSeverity},
-          {NTCID::kColorId_AlertSeverityLow, kColorAlertLowSeverity},
-          {NTCID::kColorId_AlertSeverityMedium, kColorAlertMediumSeverity},
-          {NTCID::kColorId_BubbleBackground, kColorBubbleBackground},
-          {NTCID::kColorId_BubbleFooterBackground,
-           kColorBubbleFooterBackground},
-          {NTCID::kColorId_DialogBackground, kColorButtonBackground},
-          {NTCID::kColorId_ButtonBorderColor, kColorButtonBorder},
-          {NTCID::kColorId_ButtonDisabledColor, kColorButtonDisabledForeground},
-          {NTCID::kColorId_ButtonEnabledColor, kColorButtonForeground},
-          {NTCID::kColorId_ProminentButtonColor,
-           kColorButtonProminentBackground},
-          {NTCID::kColorId_ProminentButtonDisabledColor,
-           kColorButtonProminentDisabledBackground},
-          {NTCID::kColorId_ProminentButtonFocusedColor,
-           kColorButtonProminentFocusedBackground},
-          {NTCID::kColorId_TextOnProminentButtonColor,
-           kColorButtonProminentForeground},
-          {NTCID::kColorId_ButtonUncheckedColor,
-           kColorButtonUncheckedForeground},
-          {NTCID::kColorId_DialogBackground, kColorDialogBackground},
-          {NTCID::kColorId_DialogForeground, kColorDialogForeground},
-          {NTCID::kColorId_FocusedBorderColor, kColorFocusableBorderFocused},
-          {NTCID::kColorId_UnfocusedBorderColor,
-           kColorFocusableBorderUnfocused},
-          {NTCID::kColorId_DefaultIconColor, kColorIcon},
-          {NTCID::kColorId_LabelDisabledColor, kColorLabelDisabledForeground},
-          {NTCID::kColorId_LabelEnabledColor, kColorLabelForeground},
-          {NTCID::kColorId_LabelSecondaryColor, kColorLabelSecondaryForeground},
-          {NTCID::kColorId_LabelTextSelectionBackgroundFocused,
-           kColorLabelSelectionBackground},
-          {NTCID::kColorId_LabelTextSelectionColor,
-           kColorLabelSelectionForeground},
-          {NTCID::kColorId_LinkDisabled, kColorLinkDisabledForeground},
-          {NTCID::kColorId_LinkEnabled, kColorLinkForeground},
-          {NTCID::kColorId_LinkPressed, kColorLinkPressedForeground},
-          {NTCID::kColorId_MenuBackgroundColor, kColorMenuBackground},
-          {NTCID::kColorId_MenuBorderColor, kColorMenuBorder},
-          {NTCID::kColorId_MenuItemInitialAlertBackgroundColor,
-           kColorMenuItemBackgroundAlertedInitial},
-          {NTCID::kColorId_MenuItemTargetAlertBackgroundColor,
-           kColorMenuItemBackgroundAlertedTarget},
-          {NTCID::kColorId_DisabledMenuItemForegroundColor,
-           kColorMenuItemDisabledForeground},
-          {NTCID::kColorId_EnabledMenuItemForegroundColor,
-           kColorMenuItemForeground},
-          {NTCID::kColorId_HighlightedMenuItemBackgroundColor,
-           kColorMenuItemHighlightedBackground},
-          {NTCID::kColorId_HighlightedMenuItemForegroundColor,
-           kColorMenuItemHighlightedForeground},
-          {NTCID::kColorId_MenuItemMinorTextColor,
-           kColorMenuItemSecondaryForeground},
-          {NTCID::kColorId_FocusedMenuItemBackgroundColor,
-           kColorMenuItemSelectedBackground},
-          {NTCID::kColorId_SelectedMenuItemForegroundColor,
-           kColorMenuItemSelectedForeground},
-          {NTCID::kColorId_MenuSeparatorColor, kColorMenuSeparator},
-          {NTCID::kColorId_TabBottomBorder, kColorTabContentSeparator},
-          {NTCID::kColorId_TabTitleColorInactive, kColorTabForeground},
-          {NTCID::kColorId_TabTitleColorActive, kColorTabSelectedForeground},
-          {NTCID::kColorId_TableBackground, kColorTableBackground},
-          // TODO(http://crbug.com/1057754): kColorId_TableBackgroundAlternate,
-          // which is not needed on platforms other than Mac..
-          {NTCID::kColorId_TableText, kColorTableForeground},
-          {NTCID::kColorId_TableGroupingIndicatorColor,
-           kColorTableGroupingIndicator},
-          {NTCID::kColorId_TableHeaderBackground, kColorTableHeaderBackground},
-          {NTCID::kColorId_TableHeaderText, kColorTableHeaderForeground},
-          // TODO(http://crbug.com/1057754): kColorId_TableHeaderSeparator,
-          // which is implemented as a native theme override on Mac.
-          {NTCID::kColorId_TableSelectionBackgroundFocused,
-           kColorTableSelectedFocusedBackground},
-          {NTCID::kColorId_TableSelectedText,
-           kColorTableSelectedFocusedForeground},
-          {NTCID::kColorId_TableSelectionBackgroundUnfocused,
-           kColorTableSelectedUnfocusedBackground},
-          {NTCID::kColorId_TableSelectedTextUnfocused,
-           kColorTableSelectedUnfocusedForeground},
-          {NTCID::kColorId_TextfieldDefaultBackground,
-           kColorTextfieldBackground},
-          {NTCID::kColorId_TextfieldReadOnlyBackground,
-           kColorTextfieldDisabledBackground},
-          {NTCID::kColorId_TextfieldReadOnlyColor,
-           kColorTextfieldDisabledForeground},
-          {NTCID::kColorId_TextfieldPlaceholderColor,
-           kColorTextfieldPlaceholderForeground},
-          {NTCID::kColorId_TextfieldDefaultColor, kColorTextfieldForeground},
-          {NTCID::kColorId_TextfieldSelectionBackgroundFocused,
-           kColorTextfieldSelectionBackground},
-          {NTCID::kColorId_TextfieldSelectionColor,
-           kColorTextfieldSelectionForeground},
-          {NTCID::kColorId_ThrobberSpinningColor, kColorThrobber},
-          {NTCID::kColorId_TooltipBackground, kColorTooltipBackground},
-          {NTCID::kColorId_TooltipText, kColorTooltipForeground},
-          {NTCID::kColorId_TreeBackground, kColorTreeBackground},
-          {NTCID::kColorId_TreeText, kColorTreeNodeForeground},
-          {NTCID::kColorId_TreeSelectionBackgroundFocused,
-           kColorTreeNodeSelectedFocusedBackground},
-          {NTCID::kColorId_TreeSelectedText,
-           kColorTreeNodeSelectedFocusedForeground},
-          {NTCID::kColorId_TreeSelectionBackgroundUnfocused,
-           kColorTreeNodeSelectedUnfocusedBackground},
-          {NTCID::kColorId_TreeSelectedTextUnfocused,
-           kColorTreeNodeSelectedUnfocusedForeground},
-          {NTCID::kColorId_WindowBackground, kColorWindowBackground},
+        {NTCID::kColorId_AlertSeverityHigh, kColorAlertHighSeverity},
+        {NTCID::kColorId_AlertSeverityLow, kColorAlertLowSeverity},
+        {NTCID::kColorId_AlertSeverityMedium, kColorAlertMediumSeverity},
+        {NTCID::kColorId_BubbleBackground, kColorBubbleBackground},
+        {NTCID::kColorId_BubbleFooterBackground,
+          kColorBubbleFooterBackground},
+        {NTCID::kColorId_ButtonColor, kColorButtonBackground},
+        {NTCID::kColorId_ButtonBorderColor, kColorButtonBorder},
+        {NTCID::kColorId_DisabledButtonBorderColor, kColorButtonBorderDisabled},
+        {NTCID::kColorId_ButtonDisabledColor,
+          kColorButtonForegroundDisabled},
+        {NTCID::kColorId_ButtonEnabledColor, kColorButtonForeground},
+        {NTCID::kColorId_ProminentButtonColor,
+          kColorButtonBackgroundProminent},
+        {NTCID::kColorId_ProminentButtonDisabledColor,
+          kColorButtonBackgroundProminentDisabled},
+        {NTCID::kColorId_ProminentButtonFocusedColor,
+          kColorButtonBackgroundProminentFocused},
+        {NTCID::kColorId_TextOnProminentButtonColor,
+          kColorButtonForegroundProminent},
+        {NTCID::kColorId_ButtonUncheckedColor,
+          kColorButtonForegroundUnchecked},
+        {NTCID::kColorId_DialogBackground, kColorDialogBackground},
+        {NTCID::kColorId_DialogForeground, kColorDialogForeground},
+        {NTCID::kColorId_FocusedBorderColor, kColorFocusableBorderFocused},
+        {NTCID::kColorId_UnfocusedBorderColor,
+          kColorFocusableBorderUnfocused},
+        {NTCID::kColorId_MenuIconColor, kColorMenuIcon},
+        {NTCID::kColorId_DefaultIconColor, kColorIcon},
+        {NTCID::kColorId_LabelDisabledColor, kColorLabelForegroundDisabled},
+        {NTCID::kColorId_LabelEnabledColor, kColorLabelForeground},
+        {NTCID::kColorId_LabelSecondaryColor,
+          kColorLabelForegroundSecondary},
+        {NTCID::kColorId_LabelTextSelectionBackgroundFocused,
+          kColorLabelSelectionBackground},
+        {NTCID::kColorId_LabelTextSelectionColor,
+          kColorLabelSelectionForeground},
+        {NTCID::kColorId_LinkDisabled, kColorLinkForegroundDisabled},
+        {NTCID::kColorId_LinkEnabled, kColorLinkForeground},
+        {NTCID::kColorId_LinkPressed, kColorLinkForegroundPressed},
+        {NTCID::kColorId_MenuBackgroundColor, kColorMenuBackground},
+        {NTCID::kColorId_MenuBorderColor, kColorMenuBorder},
+        {NTCID::kColorId_MenuItemInitialAlertBackgroundColor,
+          kColorMenuItemBackgroundAlertedInitial},
+        {NTCID::kColorId_MenuItemTargetAlertBackgroundColor,
+          kColorMenuItemBackgroundAlertedTarget},
+        {NTCID::kColorId_DisabledMenuItemForegroundColor,
+          kColorMenuItemForegroundDisabled},
+        {NTCID::kColorId_EnabledMenuItemForegroundColor,
+          kColorMenuItemForeground},
+        {NTCID::kColorId_HighlightedMenuItemBackgroundColor,
+          kColorMenuItemBackgroundHighlighted},
+        {NTCID::kColorId_HighlightedMenuItemForegroundColor,
+          kColorMenuItemForegroundHighlighted},
+        {NTCID::kColorId_MenuItemMinorTextColor,
+          kColorMenuItemForegroundSecondary},
+        {NTCID::kColorId_FocusedMenuItemBackgroundColor,
+          kColorMenuItemBackgroundSelected},
+        {NTCID::kColorId_SelectedMenuItemForegroundColor,
+          kColorMenuItemForegroundSelected},
+        {NTCID::kColorId_MenuSeparatorColor, kColorMenuSeparator},
+        {NTCID::kColorId_TabBottomBorder, kColorTabContentSeparator},
+        {NTCID::kColorId_TabTitleColorInactive, kColorTabForeground},
+        {NTCID::kColorId_TabSelectedBorderColor, kColorTabBorderSelected},
+        {NTCID::kColorId_TabTitleColorActive, kColorTabForegroundSelected},
+        {NTCID::kColorId_TableBackground, kColorTableBackground},
+#if defined(OS_APPLE)
+        {NTCID::kColorId_TableBackgroundAlternate,
+          kColorTableBackgroundAlternate},
+#endif
+        {NTCID::kColorId_TableText, kColorTableForeground},
+        {NTCID::kColorId_TableGroupingIndicatorColor,
+          kColorTableGroupingIndicator},
+        {NTCID::kColorId_TableHeaderBackground,
+          kColorTableHeaderBackground},
+        {NTCID::kColorId_TableHeaderText, kColorTableHeaderForeground},
+        // TODO(http://crbug.com/1057754): kColorId_TableHeaderSeparator,
+        // which is implemented as a native theme override on Mac.
+        {NTCID::kColorId_TableSelectionBackgroundFocused,
+          kColorTableBackgroundSelectedFocused},
+        {NTCID::kColorId_TableSelectedText,
+          kColorTableForegroundSelectedFocused},
+        {NTCID::kColorId_TableSelectionBackgroundUnfocused,
+          kColorTableBackgroundSelectedUnfocused},
+        {NTCID::kColorId_TableSelectedTextUnfocused,
+          kColorTableForegroundSelectedUnfocused},
+        {NTCID::kColorId_TextfieldDefaultBackground,
+          kColorTextfieldBackground},
+        {NTCID::kColorId_TextfieldReadOnlyBackground,
+          kColorTextfieldBackgroundDisabled},
+        {NTCID::kColorId_TextfieldReadOnlyColor,
+          kColorTextfieldForegroundDisabled},
+        {NTCID::kColorId_TextfieldPlaceholderColor,
+          kColorTextfieldForegroundPlaceholder},
+        {NTCID::kColorId_TextfieldDefaultColor, kColorTextfieldForeground},
+        {NTCID::kColorId_TextfieldSelectionBackgroundFocused,
+          kColorTextfieldSelectionBackground},
+        {NTCID::kColorId_TextfieldSelectionColor,
+          kColorTextfieldSelectionForeground},
+        {NTCID::kColorId_ThrobberSpinningColor, kColorThrobber},
+        {NTCID::kColorId_TooltipBackground, kColorTooltipBackground},
+        {NTCID::kColorId_TooltipText, kColorTooltipForeground},
+        {NTCID::kColorId_TreeBackground, kColorTreeBackground},
+        {NTCID::kColorId_TreeText, kColorTreeNodeForeground},
+        {NTCID::kColorId_TreeSelectionBackgroundFocused,
+          kColorTreeNodeBackgroundSelectedFocused},
+        {NTCID::kColorId_TreeSelectedText,
+          kColorTreeNodeForegroundSelectedFocused},
+        {NTCID::kColorId_TreeSelectionBackgroundUnfocused,
+          kColorTreeNodeBackgroundSelectedUnfocused},
+        {NTCID::kColorId_TreeSelectedTextUnfocused,
+          kColorTreeNodeForegroundSelectedUnfocused},
+        {NTCID::kColorId_WindowBackground, kColorWindowBackground},
       });
   return *map;
 }
+// clang-format on
 
 void ReportHistogramBooleanUsesColorProvider(bool uses_color_provider) {
   UMA_HISTOGRAM_BOOLEAN("NativeTheme.GetSystemColor.UsesColorProvider",
@@ -157,7 +166,7 @@ NativeTheme::ExtraParams::ExtraParams(const ExtraParams& other) {
   memcpy(this, &other, sizeof(*this));
 }
 
-#if !defined(OS_WIN) && !defined(OS_MACOSX)
+#if !defined(OS_WIN) && !defined(OS_APPLE)
 // static
 bool NativeTheme::SystemDarkModeSupported() {
   return false;
@@ -190,6 +199,14 @@ SkColor NativeTheme::GetSystemColor(ColorId color_id,
   return GetAuraColor(color_id, this, color_scheme);
 }
 
+SkColor NativeTheme::GetSystemButtonPressedColor(SkColor base_color) const {
+  return base_color;
+}
+
+SkColor NativeTheme::FocusRingColorForBaseColor(SkColor base_color) const {
+  return base_color;
+}
+
 float NativeTheme::GetBorderRadiusForPart(Part part,
                                           float width,
                                           float height,
@@ -220,10 +237,12 @@ NativeTheme::NativeTheme(bool should_use_dark_colors)
     ColorProviderManager::Get().SetColorProviderInitializer(base::BindRepeating(
         [](ColorProvider* provider, ColorProviderManager::ColorMode color_mode,
            ColorProviderManager::ContrastMode contrast_mode) {
-          ui::AddCoreDefaultColorMixers(
-              provider, color_mode == ColorProviderManager::ColorMode::kDark);
-          ui::AddNativeColorMixers(provider);
-          ui::AddUiColorMixers(provider);
+          const bool is_dark_color_mode =
+              color_mode == ColorProviderManager::ColorMode::kDark;
+          ui::AddCoreDefaultColorMixer(provider, is_dark_color_mode);
+          ui::AddNativeCoreColorMixer(provider, is_dark_color_mode);
+          ui::AddUiColorMixer(provider);
+          ui::AddNativeUiColorMixer(provider, is_dark_color_mode);
         }));
   });
   if (!color_provider_manager_init.is_null())
@@ -241,20 +260,13 @@ bool NativeTheme::UsesHighContrastColors() const {
   return is_high_contrast_;
 }
 
-NativeTheme::HighContrastColorScheme NativeTheme::GetHighContrastColorScheme()
-    const {
-  if (!UsesHighContrastColors())
-    return NativeTheme::HighContrastColorScheme::kNone;
-  switch (GetPreferredColorScheme()) {
-    case NativeTheme::PreferredColorScheme::kDark:
-      return HighContrastColorScheme::kDark;
-    case NativeTheme::PreferredColorScheme::kLight:
-      return HighContrastColorScheme::kLight;
-    case NativeTheme::PreferredColorScheme::kNoPreference:
-      return NativeTheme::HighContrastColorScheme::kCustom;
-  }
-  NOTREACHED();
-  return NativeTheme::HighContrastColorScheme::kNone;
+NativeTheme::PlatformHighContrastColorScheme
+NativeTheme::GetPlatformHighContrastColorScheme() const {
+  if (GetDefaultSystemColorScheme() != ColorScheme::kPlatformHighContrast)
+    return PlatformHighContrastColorScheme::kNone;
+  return (GetPreferredColorScheme() == PreferredColorScheme::kDark)
+             ? PlatformHighContrastColorScheme::kDark
+             : PlatformHighContrastColorScheme::kLight;
 }
 
 NativeTheme::PreferredColorScheme NativeTheme::GetPreferredColorScheme() const {

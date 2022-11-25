@@ -10,6 +10,8 @@
 #include "net/third_party/quiche/src/quic/core/http/http_decoder.h"
 #include "net/third_party/quiche/src/quic/core/http/quic_spdy_session.h"
 #include "net/third_party/quiche/src/quic/core/quic_types.h"
+#include "net/third_party/quiche/src/quic/platform/api/quic_flag_utils.h"
+#include "net/third_party/quiche/src/quic/platform/api/quic_flags.h"
 #include "net/third_party/quiche/src/common/platform/api/quiche_string_piece.h"
 #include "net/third_party/quiche/src/common/platform/api/quiche_text_utils.h"
 
@@ -18,7 +20,10 @@ namespace quic {
 QuicReceiveControlStream::QuicReceiveControlStream(
     PendingStream* pending,
     QuicSpdySession* spdy_session)
-    : QuicStream(pending, READ_UNIDIRECTIONAL, /*is_static=*/true),
+    : QuicStream(pending,
+                 spdy_session,
+                 READ_UNIDIRECTIONAL,
+                 /*is_static=*/true),
       settings_frame_received_(false),
       decoder_(this),
       spdy_session_(spdy_session) {
@@ -91,10 +96,7 @@ bool QuicReceiveControlStream::OnMaxPushIdFrame(const MaxPushIdFrame& frame) {
     return false;
   }
 
-  // TODO(b/124216424): Signal error if received push ID is smaller than a
-  // previously received value.
-  spdy_session()->OnMaxPushIdFrame(frame.push_id);
-  return true;
+  return spdy_session()->OnMaxPushIdFrame(frame.push_id);
 }
 
 bool QuicReceiveControlStream::OnGoAwayFrame(const GoAwayFrame& frame) {
@@ -108,12 +110,7 @@ bool QuicReceiveControlStream::OnGoAwayFrame(const GoAwayFrame& frame) {
     return false;
   }
 
-  if (spdy_session()->perspective() == Perspective::IS_SERVER) {
-    OnWrongFrame("Go Away");
-    return false;
-  }
-
-  spdy_session()->OnHttp3GoAway(frame.stream_id);
+  spdy_session()->OnHttp3GoAway(frame.id);
   return true;
 }
 
@@ -134,13 +131,7 @@ bool QuicReceiveControlStream::OnSettingsFrameStart(
 bool QuicReceiveControlStream::OnSettingsFrame(const SettingsFrame& frame) {
   QUIC_DVLOG(1) << "Control Stream " << id()
                 << " received settings frame: " << frame;
-  if (spdy_session_->debug_visitor() != nullptr) {
-    spdy_session_->debug_visitor()->OnSettingsFrameReceived(frame);
-  }
-  for (const auto& setting : frame.values) {
-    spdy_session_->OnSetting(setting.first, setting.second);
-  }
-  return true;
+  return spdy_session_->OnSettingsFrame(frame);
 }
 
 bool QuicReceiveControlStream::OnDataFrameStart(QuicByteCount /*header_length*/,

@@ -4,7 +4,9 @@
 
 #include "ui/events/event_dispatcher.h"
 
+#include "base/check.h"
 #include "base/macros.h"
+#include "base/notreached.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/event.h"
 #include "ui/events/event_dispatcher.h"
@@ -19,9 +21,7 @@ namespace {
 class TestTarget : public EventTarget,
                    public EventHandler {
  public:
-  TestTarget() : parent_(NULL), valid_(true) {
-    SetTargetHandler(this);
-  }
+  TestTarget() : parent_(nullptr), valid_(true) { SetTargetHandler(this); }
   ~TestTarget() override {}
 
   void set_parent(TestTarget* parent) { parent_ = parent; }
@@ -50,7 +50,7 @@ class TestTarget : public EventTarget,
     return nullptr;
   }
 
-  EventTargeter* GetEventTargeter() override { return NULL; }
+  EventTargeter* GetEventTargeter() override { return nullptr; }
 
   TestTarget* parent_;
   std::vector<int> handler_list_;
@@ -161,8 +161,7 @@ class EventHandlerDestroyer : public TestEventHandler {
   EventHandlerDestroyer(int id, EventHandler* destroy)
       : TestEventHandler(id),
         to_destroy_(destroy),
-        dispatcher_delegate_(NULL) {
-  }
+        dispatcher_delegate_(nullptr) {}
 
   ~EventHandlerDestroyer() override { CHECK(!to_destroy_); }
 
@@ -174,11 +173,11 @@ class EventHandlerDestroyer : public TestEventHandler {
   void ReceivedEvent(Event* event) override {
     TestEventHandler::ReceivedEvent(event);
     delete to_destroy_;
-    to_destroy_ = NULL;
+    to_destroy_ = nullptr;
 
     if (dispatcher_delegate_) {
       delete dispatcher_delegate_;
-      dispatcher_delegate_ = NULL;
+      dispatcher_delegate_ = nullptr;
     }
   }
 

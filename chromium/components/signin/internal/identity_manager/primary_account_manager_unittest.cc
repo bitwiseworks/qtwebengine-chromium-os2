@@ -12,6 +12,7 @@
 #include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
+#include "build/build_config.h"
 #include "components/image_fetcher/core/fake_image_decoder.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
@@ -154,16 +155,14 @@ TEST_F(PrimaryAccountManagerTest, SignOut) {
   EXPECT_FALSE(manager_->IsAuthenticated());
   EXPECT_TRUE(manager_->GetAuthenticatedAccountInfo().email.empty());
   EXPECT_TRUE(manager_->GetAuthenticatedAccountId().empty());
-  EXPECT_EQ(main_account_id,
-            manager_->GetUnconsentedPrimaryAccountInfo().account_id);
+  EXPECT_TRUE(manager_->GetUnconsentedPrimaryAccountInfo().IsEmpty());
   // Should not be persisted anymore
   ShutDownManager();
   CreatePrimaryAccountManager();
   EXPECT_FALSE(manager_->IsAuthenticated());
   EXPECT_TRUE(manager_->GetAuthenticatedAccountInfo().email.empty());
   EXPECT_TRUE(manager_->GetAuthenticatedAccountId().empty());
-  EXPECT_EQ(main_account_id,
-            manager_->GetUnconsentedPrimaryAccountInfo().account_id);
+  EXPECT_TRUE(manager_->GetUnconsentedPrimaryAccountInfo().IsEmpty());
 }
 
 TEST_F(PrimaryAccountManagerTest, SignOutRevoke) {
@@ -186,6 +185,8 @@ TEST_F(PrimaryAccountManagerTest, SignOutRevoke) {
   EXPECT_TRUE(token_service_.GetAccounts().empty());
 }
 
+// kRemoveAuthenticatedAccountIfInError isn't supported on Android.
+#if !defined(OS_ANDROID)
 TEST_F(PrimaryAccountManagerTest, SignOutDiceNoRevoke) {
   account_consistency_ = signin::AccountConsistencyMethod::kDice;
   CreatePrimaryAccountManager();
@@ -241,6 +242,7 @@ TEST_F(PrimaryAccountManagerTest, SignOutDiceWithError) {
   std::vector<CoreAccountId> expected_tokens = {other_account_id};
   EXPECT_EQ(expected_tokens, token_service_.GetAccounts());
 }
+#endif
 
 TEST_F(PrimaryAccountManagerTest, SignOutWhileProhibited) {
   CreatePrimaryAccountManager();
@@ -258,6 +260,23 @@ TEST_F(PrimaryAccountManagerTest, SignOutWhileProhibited) {
   manager_->SignOut(signin_metrics::SIGNOUT_TEST,
                     signin_metrics::SignoutDelete::IGNORE_METRIC);
   EXPECT_FALSE(manager_->IsAuthenticated());
+}
+
+TEST_F(PrimaryAccountManagerTest, UnconsentedSignOutWhileProhibited) {
+  CreatePrimaryAccountManager();
+  EXPECT_FALSE(manager_->IsAuthenticated());
+  EXPECT_TRUE(manager_->GetAuthenticatedAccountInfo().email.empty());
+  EXPECT_TRUE(manager_->GetAuthenticatedAccountId().empty());
+
+  CoreAccountId account_id = AddToAccountTracker("gaia_id", "user@gmail.com");
+  CoreAccountInfo account_info = account_tracker()->GetAccountInfo(account_id);
+  manager_->SetUnconsentedPrimaryAccountInfo(account_info);
+  EXPECT_TRUE(manager_->HasUnconsentedPrimaryAccount());
+  EXPECT_FALSE(manager_->IsAuthenticated());
+  signin_client()->set_is_signout_allowed(false);
+  manager_->SignOut(signin_metrics::SIGNOUT_TEST,
+                    signin_metrics::SignoutDelete::IGNORE_METRIC);
+  EXPECT_FALSE(manager_->HasUnconsentedPrimaryAccount());
 }
 
 TEST_F(PrimaryAccountManagerTest, ProhibitedAtStartup) {

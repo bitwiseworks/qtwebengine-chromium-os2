@@ -19,9 +19,8 @@ jumbo_component("x11") {
     "events_devices_x11_export.h",
     "touch_factory_x11.cc",
     "touch_factory_x11.h",
+    "xinput_util.h",
   ]
-
-  configs += [ "//build/config/linux:x11" ]
 
   defines = [ "EVENTS_DEVICES_X11_IMPLEMENTATION" ]
 

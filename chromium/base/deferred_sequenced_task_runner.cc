@@ -7,7 +7,7 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/logging.h"
+#include "base/check.h"
 
 namespace base {
 
@@ -26,9 +26,12 @@ DeferredSequencedTaskRunner::DeferredTask::operator=(DeferredTask&& other) =
 
 DeferredSequencedTaskRunner::DeferredSequencedTaskRunner(
     scoped_refptr<SequencedTaskRunner> target_task_runner)
-    : DeferredSequencedTaskRunner() {
-  DCHECK(target_task_runner);
-  target_task_runner_ = std::move(target_task_runner);
+    : created_thread_id_(PlatformThread::CurrentId()),
+      target_task_runner_(std::move(target_task_runner)) {
+#if DCHECK_IS_ON()
+  AutoLock lock(lock_);
+  DCHECK(target_task_runner_);
+#endif
 }
 
 DeferredSequencedTaskRunner::DeferredSequencedTaskRunner()

@@ -9,7 +9,8 @@
 
 #include <limits>
 
-#include "base/logging.h"
+#include "base/check.h"
+#include "base/notreached.h"
 #include "base/strings/string_util.h"
 #include "base/task/post_task.h"
 #include "content/child/child_thread_impl.h"
@@ -107,14 +108,6 @@ class HeaderFlattener : public blink::WebHTTPHeaderVisitor {
 
 }  // namespace
 
-net::HttpRequestHeaders GetWebURLRequestHeaders(
-    const blink::WebURLRequest& request) {
-  net::HttpRequestHeaders headers;
-  HttpRequestHeadersVisitor visitor(&headers);
-  request.VisitHttpHeaderFields(&visitor);
-  return headers;
-}
-
 std::string GetWebURLRequestHeadersAsString(
     const blink::WebURLRequest& request) {
   HeaderFlattener flattener;
@@ -149,12 +142,12 @@ WebHTTPBody GetWebHTTPBodyForRequestBody(
           http_body.AppendBlob(WebString::FromASCII(element.blob_uuid()));
         break;
       case network::mojom::DataElementType::kDataPipe: {
-        http_body.AppendDataPipe(element.CloneDataPipeGetter().PassPipe());
+        http_body.AppendDataPipe(element.CloneDataPipeGetter());
         break;
       }
       case network::mojom::DataElementType::kUnknown:
-      case network::mojom::DataElementType::kRawFile:
       case network::mojom::DataElementType::kChunkedDataPipe:
+      case network::mojom::DataElementType::kReadOnceStream:
         NOTREACHED();
         break;
     }
@@ -203,11 +196,10 @@ scoped_refptr<network::ResourceRequestBody> GetRequestBodyForWebHTTPBody(
         }
         break;
       case WebHTTPBody::Element::kTypeBlob: {
-        DCHECK(element.optional_blob_handle.is_valid());
+        DCHECK(element.optional_blob);
         mojo::Remote<blink::mojom::Blob> blob_remote(
             mojo::PendingRemote<blink::mojom::Blob>(
-                std::move(element.optional_blob_handle),
-                blink::mojom::Blob::Version_));
+                std::move(element.optional_blob)));
 
         mojo::PendingRemote<network::mojom::DataPipeGetter>
             data_pipe_getter_remote;
@@ -222,7 +214,7 @@ scoped_refptr<network::ResourceRequestBody> GetRequestBodyForWebHTTPBody(
         // mojo::Remote<network::mojom::DataPipeGetter> data_pipe_getter.
         mojo::Remote<network::mojom::DataPipeGetter> data_pipe_getter(
             mojo::PendingRemote<network::mojom::DataPipeGetter>(
-                std::move(element.data_pipe_getter), 0u));
+                std::move(element.data_pipe_getter)));
 
         // Set the cloned DataPipeGetter to the output |request_body|, while
         // keeping the original message pipe back in the input |httpBody|. This
@@ -231,7 +223,7 @@ scoped_refptr<network::ResourceRequestBody> GetRequestBodyForWebHTTPBody(
         mojo::PendingRemote<network::mojom::DataPipeGetter> cloned_getter;
         data_pipe_getter->Clone(cloned_getter.InitWithNewPipeAndPassReceiver());
         request_body->AppendDataPipe(std::move(cloned_getter));
-        element.data_pipe_getter = data_pipe_getter.Unbind().PassPipe();
+        element.data_pipe_getter = data_pipe_getter.Unbind();
         break;
       }
     }
@@ -241,9 +233,9 @@ scoped_refptr<network::ResourceRequestBody> GetRequestBodyForWebHTTPBody(
   return request_body;
 }
 
-std::string GetFetchIntegrityForWebURLRequest(const WebURLRequest& request) {
-  return request.GetFetchIntegrity().Utf8();
-}
+#define STATIC_ASSERT_ENUM(a, b)                            \
+  static_assert(static_cast<int>(a) == static_cast<int>(b), \
+                "mismatching enums: " #a)
 
 blink::mojom::RequestContextType GetRequestContextTypeForWebURLRequest(
     const WebURLRequest& request) {
@@ -261,7 +253,7 @@ blink::WebMixedContentContextType GetMixedContentContextTypeForWebURLRequest(
     const WebURLRequest& request) {
   return blink::WebMixedContent::ContextTypeFromRequestContext(
       request.GetRequestContext(),
-      /*strict_mixed_content_checking_for_plugin=*/false);
+      blink::WebMixedContent::CheckModeForPlugin::kLax);
 }
 
 #undef STATIC_ASSERT_ENUM

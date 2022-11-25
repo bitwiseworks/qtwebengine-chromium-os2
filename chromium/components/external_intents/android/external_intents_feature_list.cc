@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/android/jni_string.h"
+#include "base/notreached.h"
 #include "components/external_intents/android/jni_headers/ExternalIntentsFeatureList_jni.h"
 
 namespace external_intents {
@@ -37,10 +38,6 @@ const base::Feature* FindFeatureExposedToJava(const std::string& feature_name) {
 const base::Feature kIntentBlockExternalFormRedirectsNoGesture{
     "IntentBlockExternalFormRedirectsNoGesture",
     base::FEATURE_DISABLED_BY_DEFAULT};
-
-static jboolean JNI_ExternalIntentsFeatureList_IsInitialized(JNIEnv* env) {
-  return !!base::FeatureList::GetInstance();
-}
 
 static jboolean JNI_ExternalIntentsFeatureList_IsEnabled(
     JNIEnv* env,

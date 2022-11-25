@@ -1611,7 +1611,7 @@ MinidumpContext* MinidumpThread::GetContext() {
 }
 
 
-bool MinidumpThread::GetThreadID(uint32_t *thread_id) const {
+bool MinidumpThread::GetThreadID(uint32_t* thread_id) const {
   BPLOG_IF(ERROR, !thread_id) << "MinidumpThread::GetThreadID requires "
                                  "|thread_id|";
   assert(thread_id);
@@ -1973,14 +1973,14 @@ string MinidumpModule::code_identifier() const {
   if (!has_debug_info_)
     return "";
 
-  MinidumpSystemInfo *minidump_system_info = minidump_->GetSystemInfo();
+  MinidumpSystemInfo* minidump_system_info = minidump_->GetSystemInfo();
   if (!minidump_system_info) {
     BPLOG(ERROR) << "MinidumpModule code_identifier requires "
                     "MinidumpSystemInfo";
     return "";
   }
 
-  const MDRawSystemInfo *raw_system_info = minidump_system_info->system_info();
+  const MDRawSystemInfo* raw_system_info = minidump_system_info->system_info();
   if (!raw_system_info) {
     BPLOG(ERROR) << "MinidumpModule code_identifier requires MDRawSystemInfo";
     return "";
@@ -2093,7 +2093,7 @@ string MinidumpModule::debug_file() const {
     // No usable CodeView record.  Try the miscellaneous debug record.
     if (misc_record_) {
       const MDImageDebugMisc* misc_record =
-          reinterpret_cast<const MDImageDebugMisc *>(&(*misc_record_)[0]);
+          reinterpret_cast<const MDImageDebugMisc*>(&(*misc_record_)[0]);
       if (!misc_record->unicode) {
         // If it's not Unicode, just stuff it into the string.  It's unclear
         // if misc_record->data is 0-terminated, so use an explicit size.
@@ -2549,7 +2549,7 @@ void MinidumpModule::Print() {
          code_identifier().c_str());
 
   uint32_t cv_record_size;
-  const uint8_t *cv_record = GetCVRecord(&cv_record_size);
+  const uint8_t* cv_record = GetCVRecord(&cv_record_size);
   if (cv_record) {
     if (cv_record_signature_ == MD_CVINFOPDB70_SIGNATURE) {
       const MDCVInfoPDB70* cv_record_70 =
@@ -2654,12 +2654,9 @@ MinidumpModuleList::MinidumpModuleList(Minidump* minidump)
       modules_(NULL),
       module_count_(0) {
   MDOSPlatform platform;
-  if (minidump_->GetPlatform(&platform)) {
-    if (platform == MD_OS_ANDROID) {
-      range_map_->SetMergeStrategy(MergeRangeStrategy::kTruncateUpper);
-    } else if (platform == MD_OS_LINUX) {
-      range_map_->SetMergeStrategy(MergeRangeStrategy::kTruncateLower);
-    }
+  if (minidump_->GetPlatform(&platform) &&
+      (platform == MD_OS_ANDROID || platform == MD_OS_LINUX)) {
+    range_map_->SetMergeStrategy(MergeRangeStrategy::kTruncateLower);
   }
 }
 
@@ -3218,7 +3215,7 @@ bool MinidumpException::Read(uint32_t expected_size) {
 }
 
 
-bool MinidumpException::GetThreadID(uint32_t *thread_id) const {
+bool MinidumpException::GetThreadID(uint32_t* thread_id) const {
   BPLOG_IF(ERROR, !thread_id) << "MinidumpException::GetThreadID requires "
                                  "|thread_id|";
   assert(thread_id);
@@ -3702,14 +3699,14 @@ string MinidumpUnloadedModule::code_identifier() const {
     return "";
   }
 
-  MinidumpSystemInfo *minidump_system_info = minidump_->GetSystemInfo();
+  MinidumpSystemInfo* minidump_system_info = minidump_->GetSystemInfo();
   if (!minidump_system_info) {
     BPLOG(ERROR) << "MinidumpUnloadedModule code_identifier requires "
                     "MinidumpSystemInfo";
     return "";
   }
 
-  const MDRawSystemInfo *raw_system_info = minidump_system_info->system_info();
+  const MDRawSystemInfo* raw_system_info = minidump_system_info->system_info();
   if (!raw_system_info) {
     BPLOG(ERROR) << "MinidumpUnloadedModule code_identifier requires "
                  << "MDRawSystemInfo";
@@ -4359,7 +4356,7 @@ bool MinidumpBreakpadInfo::Read(uint32_t expected_size) {
 }
 
 
-bool MinidumpBreakpadInfo::GetDumpThreadID(uint32_t *thread_id) const {
+bool MinidumpBreakpadInfo::GetDumpThreadID(uint32_t* thread_id) const {
   BPLOG_IF(ERROR, !thread_id) << "MinidumpBreakpadInfo::GetDumpThreadID "
                                  "requires |thread_id|";
   assert(thread_id);
@@ -4380,7 +4377,7 @@ bool MinidumpBreakpadInfo::GetDumpThreadID(uint32_t *thread_id) const {
 }
 
 
-bool MinidumpBreakpadInfo::GetRequestingThreadID(uint32_t *thread_id)
+bool MinidumpBreakpadInfo::GetRequestingThreadID(uint32_t* thread_id)
     const {
   BPLOG_IF(ERROR, !thread_id) << "MinidumpBreakpadInfo::GetRequestingThreadID "
                                  "requires |thread_id|";
@@ -4698,7 +4695,7 @@ void MinidumpMemoryInfoList::Print() {
 // MinidumpLinuxMaps
 //
 
-MinidumpLinuxMaps::MinidumpLinuxMaps(Minidump *minidump)
+MinidumpLinuxMaps::MinidumpLinuxMaps(Minidump* minidump)
     : MinidumpObject(minidump) {
 }
 
@@ -4714,7 +4711,7 @@ void MinidumpLinuxMaps::Print() const {
 // MinidumpLinuxMapsList
 //
 
-MinidumpLinuxMapsList::MinidumpLinuxMapsList(Minidump *minidump)
+MinidumpLinuxMapsList::MinidumpLinuxMapsList(Minidump* minidump)
     : MinidumpStream(minidump),
       maps_(NULL),
       maps_count_(0) {
@@ -4729,7 +4726,7 @@ MinidumpLinuxMapsList::~MinidumpLinuxMapsList() {
   }
 }
 
-const MinidumpLinuxMaps *MinidumpLinuxMapsList::GetLinuxMapsForAddress(
+const MinidumpLinuxMaps* MinidumpLinuxMapsList::GetLinuxMapsForAddress(
     uint64_t address) const {
   if (!valid_ || (maps_ == NULL)) {
     BPLOG(ERROR) << "Invalid MinidumpLinuxMapsList for GetLinuxMapsForAddress";
@@ -4751,7 +4748,7 @@ const MinidumpLinuxMaps *MinidumpLinuxMapsList::GetLinuxMapsForAddress(
   return NULL;
 }
 
-const MinidumpLinuxMaps *MinidumpLinuxMapsList::GetLinuxMapsAtIndex(
+const MinidumpLinuxMaps* MinidumpLinuxMapsList::GetLinuxMapsAtIndex(
     unsigned int index) const {
   if (!valid_ || (maps_ == NULL)) {
     BPLOG(ERROR) << "Invalid MinidumpLinuxMapsList for GetLinuxMapsAtIndex";
@@ -5093,7 +5090,7 @@ bool Minidump::Open() {
   return true;
 }
 
-bool Minidump::GetContextCPUFlagsFromSystemInfo(uint32_t *context_cpu_flags) {
+bool Minidump::GetContextCPUFlagsFromSystemInfo(uint32_t* context_cpu_flags) {
   // Initialize output parameters
   *context_cpu_flags = 0;
 
@@ -5369,8 +5366,8 @@ MinidumpMemoryInfoList* Minidump::GetMemoryInfoList() {
   return GetStream(&memory_info_list);
 }
 
-MinidumpLinuxMapsList *Minidump::GetLinuxMapsList() {
-  MinidumpLinuxMapsList *linux_maps_list;
+MinidumpLinuxMapsList* Minidump::GetLinuxMapsList() {
+  MinidumpLinuxMapsList* linux_maps_list;
   return GetStream(&linux_maps_list);
 }
 

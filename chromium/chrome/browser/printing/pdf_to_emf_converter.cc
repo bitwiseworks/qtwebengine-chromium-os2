@@ -132,7 +132,8 @@ class PdfConverterImpl : public PdfConverter {
  private:
   class GetPageCallbackData {
    public:
-    GetPageCallbackData(int page_number, PdfConverter::GetPageCallback callback)
+    GetPageCallbackData(uint32_t page_number,
+                        PdfConverter::GetPageCallback callback)
         : page_number_(page_number), callback_(callback) {}
 
     GetPageCallbackData(GetPageCallbackData&& other) {
@@ -145,12 +146,12 @@ class PdfConverterImpl : public PdfConverter {
       return *this;
     }
 
-    int page_number() const { return page_number_; }
+    uint32_t page_number() const { return page_number_; }
 
     PdfConverter::GetPageCallback callback() const { return callback_; }
 
    private:
-    int page_number_;
+    uint32_t page_number_;
 
     PdfConverter::GetPageCallback callback_;
 
@@ -159,7 +160,7 @@ class PdfConverterImpl : public PdfConverter {
 
   void Initialize(scoped_refptr<base::RefCountedMemory> data);
 
-  void GetPage(int page_number,
+  void GetPage(uint32_t page_number,
                PdfConverter::GetPageCallback get_page_callback) override;
 
   void Stop();
@@ -305,7 +306,7 @@ void PdfConverterImpl::OnPageCount(
 }
 
 void PdfConverterImpl::GetPage(
-    int page_number,
+    uint32_t page_number,
     PdfConverter::GetPageCallback get_page_callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(pdf_to_emf_converter_.is_bound());
@@ -407,6 +408,16 @@ void PdfConverterImpl::RecordConversionMetrics() {
     case PdfRenderSettings::Mode::POSTSCRIPT_LEVEL3:
       UMA_HISTOGRAM_MEMORY_KB("Printing.ConversionSize.PostScript3",
                               average_page_size_in_kb);
+      return;
+    case PdfRenderSettings::Mode::EMF_WITH_REDUCED_RASTERIZATION:
+      UMA_HISTOGRAM_MEMORY_KB(
+          "Printing.ConversionSize.EmfWithReducedRasterization",
+          average_page_size_in_kb);
+      return;
+    case PdfRenderSettings::Mode::EMF_WITH_REDUCED_RASTERIZATION_AND_GDI_TEXT:
+      UMA_HISTOGRAM_MEMORY_KB(
+          "Printing.ConversionSize.EmfWithReducedRasterizationAndGdiText",
+          average_page_size_in_kb);
       return;
     default:
       NOTREACHED();

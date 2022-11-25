@@ -51,12 +51,23 @@ SystemNetworkContextManager::CreateDefaultNetworkContextParams(
     const std::string& user_agent) {
   network::mojom::NetworkContextParamsPtr network_context_params =
       network::mojom::NetworkContextParams::New();
+  network_context_params->cert_verifier_params = content::GetCertVerifierParams(
+      network::mojom::CertVerifierCreationParams::New());
+  ConfigureDefaultNetworkContextParams(network_context_params.get(),
+                                       user_agent);
+  variations::UpdateCorsExemptHeaderForVariations(network_context_params.get());
+  return network_context_params;
+}
+
+// static
+void SystemNetworkContextManager::ConfigureDefaultNetworkContextParams(
+    network::mojom::NetworkContextParams* network_context_params,
+    const std::string& user_agent) {
   network_context_params->user_agent = user_agent;
-#if defined(OS_LINUX) || defined(OS_WIN)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_WIN)
   // We're not configuring the cookie encryption on these platforms yet.
   network_context_params->enable_encrypted_cookies = false;
-#endif
-  return network_context_params;
+#endif // defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_WIN)
 }
 
 SystemNetworkContextManager::SystemNetworkContextManager(
@@ -83,8 +94,6 @@ SystemNetworkContextManager::GetSystemNetworkContext() {
 
 void SystemNetworkContextManager::OnNetworkServiceCreated(
     network::mojom::NetworkService* network_service) {
-  // The system NetworkContext must be created first, since it sets
-  // |primary_network_context| to true.
   system_network_context_.reset();
   network_service->CreateNetworkContext(
       system_network_context_.BindNewPipeAndPassReceiver(),
@@ -95,10 +104,8 @@ network::mojom::NetworkContextParamsPtr
 SystemNetworkContextManager::CreateSystemNetworkContextManagerParams() {
   network::mojom::NetworkContextParamsPtr network_context_params =
       CreateDefaultNetworkContextParams(user_agent_);
-  content::UpdateCorsExemptHeader(network_context_params.get());
 
   network_context_params->context_name = std::string("system");
-  network_context_params->primary_network_context = true;
 
   return network_context_params;
 }

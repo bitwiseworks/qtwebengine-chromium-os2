@@ -18,15 +18,18 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+
+#include <atomic>
 #include <memory>
 #include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
-#include "v8-internal.h"  // NOLINT(build/include)
-#include "v8-version.h"   // NOLINT(build/include)
-#include "v8config.h"     // NOLINT(build/include)
+#include "cppgc/common.h"
+#include "v8-internal.h"  // NOLINT(build/include_directory)
+#include "v8-version.h"   // NOLINT(build/include_directory)
+#include "v8config.h"     // NOLINT(build/include_directory)
 
 // We reserve the V8_* prefix for macros defined in V8 public API and
 // assume there are no name conflicts with the embedder's code.
@@ -43,6 +46,7 @@ class BigInt;
 class BigIntObject;
 class Boolean;
 class BooleanObject;
+class CFunction;
 class Context;
 class Data;
 class Date;
@@ -123,19 +127,20 @@ namespace internal {
 enum class ArgumentsType;
 template <ArgumentsType>
 class Arguments;
-class DeferredHandles;
+template <typename T>
+class CustomArguments;
+class FunctionCallbackArguments;
+class GlobalHandles;
 class Heap;
 class HeapObject;
 class ExternalString;
 class Isolate;
 class LocalEmbedderHeapTracer;
 class MicrotaskQueue;
-struct ScriptStreamingData;
-template<typename T> class CustomArguments;
 class PropertyCallbackArguments;
-class FunctionCallbackArguments;
-class GlobalHandles;
+class ReadOnlyHeap;
 class ScopedExternalStringLock;
+struct ScriptStreamingData;
 class ThreadLocalTop;
 
 namespace wasm {
@@ -144,6 +149,10 @@ class StreamingDecoder;
 }  // namespace wasm
 
 }  // namespace internal
+
+namespace metrics {
+class Recorder;
+}  // namespace metrics
 
 namespace debug {
 class ConsoleCallArguments;
@@ -896,6 +905,23 @@ class TracedReferenceBase {
         const_cast<TracedReferenceBase<T>&>(*this));
   }
 
+ protected:
+  /**
+   * Update this reference in a thread-safe way
+   */
+  void SetSlotThreadSafe(T* new_val) {
+    reinterpret_cast<std::atomic<T*>*>(&val_)->store(new_val,
+                                                     std::memory_order_relaxed);
+  }
+
+  /**
+   * Get this reference in a thread-safe way
+   */
+  const T* GetSlotThreadSafe() const {
+    return reinterpret_cast<std::atomic<const T*> const*>(&val_)->load(
+        std::memory_order_relaxed);
+  }
+
  private:
   enum DestructionMode { kWithDestructor, kWithoutDestructor };
 
@@ -1148,6 +1174,14 @@ class TracedReference : public TracedReferenceBase<T> {
     return reinterpret_cast<TracedReference<S>&>(
         const_cast<TracedReference<T>&>(*this));
   }
+
+  /**
+   * Returns true if this TracedReference is empty, i.e., has not been
+   * assigned an object. This version of IsEmpty is thread-safe.
+   */
+  bool IsEmptyThreadSafe() const {
+    return this->GetSlotThreadSafe() == nullptr;
+  }
 };
 
  /**
@@ -1285,6 +1319,32 @@ class V8_EXPORT SealHandleScope {
  * The superclass of objects that can reside on V8's heap.
  */
 class V8_EXPORT Data {
+ public:
+  /**
+   * Returns true if this data is a |v8::Value|.
+   */
+  bool IsValue() const;
+
+  /**
+   * Returns true if this data is a |v8::Module|.
+   */
+  bool IsModule() const;
+
+  /**
+   * Returns true if this data is a |v8::Private|.
+   */
+  bool IsPrivate() const;
+
+  /**
+   * Returns true if this data is a |v8::ObjectTemplate|.
+   */
+  bool IsObjectTemplate() const;
+
+  /**
+   * Returns true if this data is a |v8::FunctionTemplate|.
+   */
+  bool IsFunctionTemplate() const;
+
  private:
   Data();
 };
@@ -1541,6 +1601,23 @@ class V8_EXPORT Module : public Data {
    */
   Local<UnboundModuleScript> GetUnboundModuleScript();
 
+  /**
+   * Returns the underlying script's id.
+   *
+   * The module must be a SourceTextModule and must not have a kErrored status.
+   */
+  int ScriptId();
+
+  /**
+   * Returns whether the module is a SourceTextModule.
+   */
+  bool IsSourceTextModule() const;
+
+  /**
+   * Returns whether the module is a SyntheticModule.
+   */
+  bool IsSyntheticModule() const;
+
   /*
    * Callback defined in the embedder.  This is responsible for setting
    * the module's exported values with calls to SetSyntheticModuleExport().
@@ -1579,6 +1656,11 @@ class V8_EXPORT Module : public Data {
       "the latter will crash with a failed CHECK().")
   void SetSyntheticModuleExport(Local<String> export_name,
                                 Local<Value> export_value);
+
+  V8_INLINE static Module* Cast(Data* data);
+
+ private:
+  static void CheckCast(Data* obj);
 };
 
 /**
@@ -2208,14 +2290,6 @@ struct MemoryRange {
 
 struct JSEntryStub {
   MemoryRange code;
-};
-
-struct UnwindState {
-  MemoryRange code_range;
-  MemoryRange embedded_code_range;
-  JSEntryStub js_entry_stub;
-  JSEntryStub js_construct_entry_stub;
-  JSEntryStub js_run_microtasks_entry_stub;
 };
 
 struct JSEntryStubs {
@@ -2882,6 +2956,8 @@ class V8_EXPORT Value : public Data {
   bool FullIsUndefined() const;
   bool FullIsNull() const;
   bool FullIsString() const;
+
+  static void CheckCast(Data* that);
 };
 
 
@@ -3037,9 +3113,17 @@ class V8_EXPORT String : public Name {
   V8_INLINE static Local<String> Empty(Isolate* isolate);
 
   /**
-   * Returns true if the string is external
+   * Returns true if the string is external two-byte.
+   *
    */
+  V8_DEPRECATE_SOON(
+      "Use String::IsExternalTwoByte() or String::IsExternalOneByte()")
   bool IsExternal() const;
+
+  /**
+   * Returns true if the string is both external and two-byte.
+   */
+  bool IsExternalTwoByte() const;
 
   /**
    * Returns true if the string is both external and one-byte.
@@ -3612,11 +3696,11 @@ enum PropertyFilter {
 
 /**
  * Options for marking whether callbacks may trigger JS-observable side effects.
- * Side-effect-free callbacks are whitelisted during debug evaluation with
+ * Side-effect-free callbacks are allowlisted during debug evaluation with
  * throwOnSideEffect. It applies when calling a Function, FunctionTemplate,
  * or an Accessor callback. For Interceptors, please see
  * PropertyHandlerFlags's kHasNoSideEffect.
- * Callbacks that only cause side effects to the receiver are whitelisted if
+ * Callbacks that only cause side effects to the receiver are allowlisted if
  * invoked on receiver objects that are created within the same debug-evaluate
  * call, as these objects are temporary and the side effect does not escape.
  */
@@ -4762,11 +4846,17 @@ class V8_EXPORT CompiledWasmModule {
    */
   MemorySpan<const uint8_t> GetWireBytesRef();
 
+  const std::string& source_url() const { return source_url_; }
+
  private:
-  explicit CompiledWasmModule(std::shared_ptr<internal::wasm::NativeModule>);
-  friend class Utils;
+  friend class WasmModuleObject;
+  friend class WasmStreaming;
+
+  explicit CompiledWasmModule(std::shared_ptr<internal::wasm::NativeModule>,
+                              const char* source_url, size_t url_length);
 
   const std::shared_ptr<internal::wasm::NativeModule> native_module_;
+  const std::string source_url_;
 };
 
 // An instance of WebAssembly.Module.
@@ -5338,9 +5428,10 @@ class V8_EXPORT TypedArray : public ArrayBufferView {
   /*
    * The largest typed array size that can be constructed using New.
    */
-  static constexpr size_t kMaxLength = internal::kApiSystemPointerSize == 4
-                                           ? internal::kSmiMaxValue
-                                           : 0xFFFFFFFF;
+  static constexpr size_t kMaxLength =
+      internal::kApiSystemPointerSize == 4
+          ? internal::kSmiMaxValue
+          : static_cast<size_t>(uint64_t{1} << 32);
 
   /**
    * Number of elements in this typed array
@@ -5934,37 +6025,6 @@ class V8_EXPORT RegExp : public Object {
 };
 
 /**
- * An instance of the built-in FinalizationRegistry constructor.
- *
- * The C++ name is FinalizationGroup for backwards compatibility. This API is
- * experimental and deprecated.
- */
-class V8_EXPORT FinalizationGroup : public Object {
- public:
-  /**
-   * Runs the cleanup callback of the given FinalizationRegistry.
-   *
-   * V8 will inform the embedder that there are finalizer callbacks be
-   * called through HostCleanupFinalizationGroupCallback.
-   *
-   * HostCleanupFinalizationGroupCallback should schedule a task to
-   * call FinalizationGroup::Cleanup() at some point in the
-   * future. It's the embedders responsiblity to make this call at a
-   * time which does not interrupt synchronous ECMAScript code
-   * execution.
-   *
-   * If the result is Nothing<bool> then an exception has
-   * occurred. Otherwise the result is |true| if the cleanup callback
-   * was called successfully. The result is never |false|.
-   */
-  V8_DEPRECATED(
-      "FinalizationGroup cleanup is automatic if "
-      "HostCleanupFinalizationGroupCallback is not set")
-  static V8_WARN_UNUSED_RESULT Maybe<bool> Cleanup(
-      Local<FinalizationGroup> finalization_group);
-};
-
-/**
  * A JavaScript value that wraps a C++ void*. This type of value is mainly used
  * to associate C++ data structures with JavaScript objects.
  */
@@ -5977,13 +6037,14 @@ class V8_EXPORT External : public Value {
   static void CheckCast(v8::Value* obj);
 };
 
-#define V8_INTRINSICS_LIST(F)                      \
-  F(ArrayProto_entries, array_entries_iterator)    \
-  F(ArrayProto_forEach, array_for_each_iterator)   \
-  F(ArrayProto_keys, array_keys_iterator)          \
-  F(ArrayProto_values, array_values_iterator)      \
-  F(ErrorPrototype, initial_error_prototype)       \
-  F(IteratorPrototype, initial_iterator_prototype) \
+#define V8_INTRINSICS_LIST(F)                                 \
+  F(ArrayProto_entries, array_entries_iterator)               \
+  F(ArrayProto_forEach, array_for_each_iterator)              \
+  F(ArrayProto_keys, array_keys_iterator)                     \
+  F(ArrayProto_values, array_values_iterator)                 \
+  F(AsyncIteratorPrototype, initial_async_iterator_prototype) \
+  F(ErrorPrototype, initial_error_prototype)                  \
+  F(IteratorPrototype, initial_iterator_prototype)            \
   F(ObjProto_valueOf, object_value_of_function)
 
 enum Intrinsic {
@@ -6330,7 +6391,6 @@ typedef bool (*AccessCheckCallback)(Local<Context> accessing_context,
                                     Local<Object> accessed_object,
                                     Local<Value> data);
 
-class CFunction;
 /**
  * A FunctionTemplate is used to create functions at runtime. There
  * can only be one function created from a FunctionTemplate in a
@@ -6448,11 +6508,6 @@ class V8_EXPORT FunctionTemplate : public Template {
       ConstructorBehavior behavior = ConstructorBehavior::kAllow,
       SideEffectType side_effect_type = SideEffectType::kHasSideEffect,
       const CFunction* c_function = nullptr);
-
-  /** Get a template included in the snapshot by index. */
-  V8_DEPRECATED("Use v8::Isolate::GetDataFromSnapshotOnce instead")
-  static MaybeLocal<FunctionTemplate> FromSnapshot(Isolate* isolate,
-                                                   size_t index);
 
   /**
    * Creates a function template backed/cached by a private property.
@@ -6742,11 +6797,6 @@ class V8_EXPORT ObjectTemplate : public Template {
   static Local<ObjectTemplate> New(
       Isolate* isolate,
       Local<FunctionTemplate> constructor = Local<FunctionTemplate>());
-
-  /** Get a template included in the snapshot by index. */
-  V8_DEPRECATED("Use v8::Isolate::GetDataFromSnapshotOnce instead")
-  static MaybeLocal<ObjectTemplate> FromSnapshot(Isolate* isolate,
-                                                 size_t index);
 
   /** Creates a new instance of this template.*/
   V8_WARN_UNUSED_RESULT MaybeLocal<Object> NewInstance(Local<Context> context);
@@ -7180,6 +7230,9 @@ class V8_EXPORT Exception {
   static Local<Value> ReferenceError(Local<String> message);
   static Local<Value> SyntaxError(Local<String> message);
   static Local<Value> TypeError(Local<String> message);
+  static Local<Value> WasmCompileError(Local<String> message);
+  static Local<Value> WasmLinkError(Local<String> message);
+  static Local<Value> WasmRuntimeError(Local<String> message);
   static Local<Value> Error(Local<String> message);
 
   /**
@@ -7222,20 +7275,6 @@ typedef void (*AddCrashKeyCallback)(CrashKeyId id, const std::string& value);
 // --- Enter/Leave Script Callback ---
 typedef void (*BeforeCallEnteredCallback)(Isolate*);
 typedef void (*CallCompletedCallback)(Isolate*);
-
-/**
- * HostCleanupFinalizationGroupCallback is called when we require the
- * embedder to enqueue a task that would call
- * FinalizationGroup::Cleanup().
- *
- * The FinalizationGroup is the one for which the embedder needs to
- * call FinalizationGroup::Cleanup() on.
- *
- * The context provided is the one in which the FinalizationGroup was
- * created in.
- */
-typedef void (*HostCleanupFinalizationGroupCallback)(
-    Local<Context> context, Local<FinalizationGroup> fg);
 
 /**
  * HostImportModuleDynamicallyCallback is called when we require the
@@ -7526,6 +7565,9 @@ typedef bool (*WasmThreadsEnabledCallback)(Local<Context> context);
 typedef Local<String> (*WasmLoadSourceMapCallback)(Isolate* isolate,
                                                    const char* name);
 
+// --- Callback for checking if WebAssembly Simd is enabled ---
+typedef bool (*WasmSimdEnabledCallback)(Local<Context> context);
+
 // --- Garbage Collection Callbacks ---
 
 /**
@@ -7603,6 +7645,7 @@ class V8_EXPORT SharedMemoryStatistics {
   size_t read_only_space_physical_size_;
 
   friend class V8;
+  friend class internal::ReadOnlyHeap;
 };
 
 /**
@@ -7882,16 +7925,12 @@ enum class MemoryPressureLevel { kNone, kModerate, kCritical };
  */
 class V8_EXPORT EmbedderHeapTracer {
  public:
+  using EmbedderStackState = cppgc::EmbedderStackState;
+
   enum TraceFlags : uint64_t {
     kNoFlags = 0,
     kReduceMemory = 1 << 0,
-  };
-
-  // Indicator for the stack state of the embedder.
-  enum EmbedderStackState {
-    kUnknown,
-    kNonEmpty,
-    kEmpty,
+    kForced = 1 << 2,
   };
 
   /**
@@ -8109,10 +8148,11 @@ enum class MeasureMemoryMode { kSummary, kDetailed };
 /**
  * Controls how promptly a memory measurement request is executed.
  * By default the measurement is folded with the next scheduled GC which may
- * happen after a while. The kEager starts increment GC right away and
- * is useful for testing.
+ * happen after a while and is forced after some timeout.
+ * The kEager mode starts incremental GC right away and is useful for testing.
+ * The kLazy mode does not force GC.
  */
-enum class MeasureMemoryExecution { kDefault, kEager };
+enum class MeasureMemoryExecution { kDefault, kEager, kLazy };
 
 /**
  * The delegate is used in Isolate::MeasureMemory API.
@@ -8183,7 +8223,9 @@ class V8_EXPORT Isolate {
           array_buffer_allocator_shared(),
           external_references(nullptr),
           allow_atomics_wait(true),
-          only_terminate_in_safe_scope(false) {}
+          only_terminate_in_safe_scope(false),
+          embedder_wrapper_type_index(-1),
+          embedder_wrapper_object_index(-1) {}
 
     /**
      * Allows the host application to provide the address of a function that is
@@ -8247,6 +8289,14 @@ class V8_EXPORT Isolate {
      * Termination is postponed when there is no active SafeForTerminationScope.
      */
     bool only_terminate_in_safe_scope;
+
+    /**
+     * The following parameters describe the offsets for addressing type info
+     * for wrapped API objects and are used by the fast C API
+     * (for details see v8-fast-api-calls.h).
+     */
+    int embedder_wrapper_type_index;
+    int embedder_wrapper_object_index;
   };
 
 
@@ -8339,7 +8389,7 @@ class V8_EXPORT Isolate {
 
   /**
    * This scope allows terminations inside direct V8 API calls and forbid them
-   * inside any recursice API calls without explicit SafeForTerminationScope.
+   * inside any recursive API calls without explicit SafeForTerminationScope.
    */
   class V8_EXPORT SafeForTerminationScope {
    public:
@@ -8422,8 +8472,8 @@ class V8_EXPORT Isolate {
     kFunctionTokenOffsetTooLongForToString = 49,
     kWasmSharedMemory = 50,
     kWasmThreadOpcodes = 51,
-    kAtomicsNotify = 52,
-    kAtomicsWake = 53,
+    kAtomicsNotify = 52,  // Unused.
+    kAtomicsWake = 53,    // Unused.
     kCollator = 54,
     kNumberFormat = 55,
     kDateTimeFormat = 56,
@@ -8444,7 +8494,7 @@ class V8_EXPORT Isolate {
     kOptimizedFunctionWithOneShotBytecode = 71,
     kRegExpMatchIsTrueishOnNonJSRegExp = 72,
     kRegExpMatchIsFalseishOnJSRegExp = 73,
-    kDateGetTimezoneOffset = 74,
+    kDateGetTimezoneOffset = 74,  // Unused.
     kStringNormalize = 75,
     kCallSiteAPIGetFunctionSloppyCall = 76,
     kCallSiteAPIGetThisSloppyCall = 77,
@@ -8460,6 +8510,27 @@ class V8_EXPORT Isolate {
     kDateTimeFormatDateTimeStyle = 87,
     kBreakIteratorTypeWord = 88,
     kBreakIteratorTypeLine = 89,
+    kInvalidatedArrayBufferDetachingProtector = 90,
+    kInvalidatedArrayConstructorProtector = 91,
+    kInvalidatedArrayIteratorLookupChainProtector = 92,
+    kInvalidatedArraySpeciesLookupChainProtector = 93,
+    kInvalidatedIsConcatSpreadableLookupChainProtector = 94,
+    kInvalidatedMapIteratorLookupChainProtector = 95,
+    kInvalidatedNoElementsProtector = 96,
+    kInvalidatedPromiseHookProtector = 97,
+    kInvalidatedPromiseResolveLookupChainProtector = 98,
+    kInvalidatedPromiseSpeciesLookupChainProtector = 99,
+    kInvalidatedPromiseThenLookupChainProtector = 100,
+    kInvalidatedRegExpSpeciesLookupChainProtector = 101,
+    kInvalidatedSetIteratorLookupChainProtector = 102,
+    kInvalidatedStringIteratorLookupChainProtector = 103,
+    kInvalidatedStringLengthOverflowLookupChainProtector = 104,
+    kInvalidatedTypedArraySpeciesLookupChainProtector = 105,
+    kWasmSimdOpcodes = 106,
+    kVarRedeclaredCatchBinding = 107,
+    kWasmRefTypes = 108,
+    kWasmBulkMemory = 109,
+    kWasmMultiValue = 110,
 
     // If you add new values here, you'll also need to update Chromium's:
     // web_feature.mojom, use_counter_callback.cc, and enums.xml. V8 changes to
@@ -8549,17 +8620,6 @@ class V8_EXPORT Isolate {
       AbortOnUncaughtExceptionCallback callback);
 
   /**
-   * This specifies the callback to be called when FinalizationRegistries
-   * are ready to be cleaned up and require FinalizationGroup::Cleanup()
-   * to be called in a future task.
-   */
-  V8_DEPRECATED(
-      "FinalizationRegistry cleanup is automatic if "
-      "HostCleanupFinalizationGroupCallback is not set")
-  void SetHostCleanupFinalizationGroupCallback(
-      HostCleanupFinalizationGroupCallback callback);
-
-  /**
    * This specifies the callback called by the upcoming dynamic
    * import() language feature to load modules.
    */
@@ -8567,7 +8627,7 @@ class V8_EXPORT Isolate {
       HostImportModuleDynamicallyCallback callback);
 
   /**
-   * This specifies the callback called by the upcoming importa.meta
+   * This specifies the callback called by the upcoming import.meta
    * language feature to retrieve host-defined meta data for a module.
    */
   void SetHostInitializeImportMetaObjectCallback(
@@ -8751,8 +8811,7 @@ class V8_EXPORT Isolate {
    *   kept alive by JavaScript objects.
    * \returns the adjusted value.
    */
-  V8_INLINE int64_t
-      AdjustAmountOfExternalAllocatedMemory(int64_t change_in_bytes);
+  int64_t AdjustAmountOfExternalAllocatedMemory(int64_t change_in_bytes);
 
   /**
    * Returns the number of phantom handles without callbacks that were reset
@@ -9003,6 +9062,13 @@ class V8_EXPORT Isolate {
   void RequestInterrupt(InterruptCallback callback, void* data);
 
   /**
+   * Returns true if there is ongoing background work within V8 that will
+   * eventually post a foreground task, like asynchronous WebAssembly
+   * compilation.
+   */
+  bool HasPendingBackgroundTasks();
+
+  /**
    * Request garbage collection in this Isolate. It is only valid to call this
    * function if --expose_gc was specified.
    *
@@ -9137,6 +9203,18 @@ class V8_EXPORT Isolate {
    */
   void SetCreateHistogramFunction(CreateHistogramCallback);
   void SetAddHistogramSampleFunction(AddHistogramSampleCallback);
+
+  /**
+   * Enables the host application to provide a mechanism for recording
+   * event based metrics. In order to use this interface
+   *   include/v8-metrics.h
+   * needs to be included and the recorder needs to be derived from the
+   * Recorder base class defined there.
+   * This method can only be called once per isolate and must happen during
+   * isolate initialization before background threads are spawned.
+   */
+  void SetMetricsRecorder(
+      const std::shared_ptr<metrics::Recorder>& metrics_recorder);
 
   /**
    * Enables the host application to provide a mechanism for recording a
@@ -9282,13 +9360,6 @@ class V8_EXPORT Isolate {
   void GetCodeRange(void** start, size_t* length_in_bytes);
 
   /**
-   * Returns the UnwindState necessary for use with the Unwinder API.
-   */
-  // TODO(petermarshall): Remove this API.
-  V8_DEPRECATED("Use entry_stubs + code_pages version.")
-  UnwindState GetUnwindState();
-
-  /**
    * Returns the JSEntryStubs necessary for use with the Unwinder API.
    */
   JSEntryStubs GetJSEntryStubs();
@@ -9372,6 +9443,8 @@ class V8_EXPORT Isolate {
   void SetWasmThreadsEnabledCallback(WasmThreadsEnabledCallback callback);
 
   void SetWasmLoadSourceMapCallback(WasmLoadSourceMapCallback callback);
+
+  void SetWasmSimdEnabledCallback(WasmSimdEnabledCallback callback);
 
   /**
   * Check if V8 is dead and therefore unusable.  This is the case after
@@ -9511,7 +9584,6 @@ class V8_EXPORT Isolate {
 
   internal::Address* GetDataFromSnapshotOnce(size_t index);
   void ReportExternalAllocationLimitReached();
-  void CheckMemoryPressure();
 };
 
 class V8_EXPORT StartupData {
@@ -9522,11 +9594,15 @@ class V8_EXPORT StartupData {
    * Only valid for StartupData returned by SnapshotCreator::CreateBlob().
    */
   bool CanBeRehashed() const;
+  /**
+   * Allows embedders to verify whether the data is valid for the current
+   * V8 instance.
+   */
+  bool IsValid() const;
 
   const char* data;
   int raw_size;
 };
-
 
 /**
  * EntropySource is used as a callback function when v8 needs a source
@@ -9597,7 +9673,13 @@ class V8_EXPORT V8 {
    * Initializes V8. This function needs to be called before the first Isolate
    * is created. It always returns true.
    */
-  static bool Initialize();
+  V8_INLINE static bool Initialize() {
+    const int kBuildConfiguration =
+        (internal::PointerCompressionIsEnabled() ? kPointerCompression : 0) |
+        (internal::SmiValuesAre31Bits() ? k31BitSmis : 0) |
+        (internal::HeapSandboxIsEnabled() ? kHeapSandbox : 0);
+    return Initialize(kBuildConfiguration);
+  }
 
   /**
    * Allows the host application to provide a callback which can be used
@@ -9731,6 +9813,18 @@ class V8_EXPORT V8 {
  private:
   V8();
 
+  enum BuildConfigurationFeatures {
+    kPointerCompression = 1 << 0,
+    k31BitSmis = 1 << 1,
+    kHeapSandbox = 1 << 2,
+  };
+
+  /**
+   * Checks that the embedder build configuration is compatible with
+   * the V8 binary and if so initializes V8.
+   */
+  static bool Initialize(int build_config);
+
   static internal::Address* GlobalizeReference(internal::Isolate* isolate,
                                                internal::Address* handle);
   static internal::Address* GlobalizeTracedReference(internal::Isolate* isolate,
@@ -9787,6 +9881,11 @@ class V8_EXPORT V8 {
 
 /**
  * Helper class to create a snapshot data blob.
+ *
+ * The Isolate used by a SnapshotCreator is owned by it, and will be entered
+ * and exited by the constructor and destructor, respectively; The destructor
+ * will also destroy the Isolate. Experimental language features, including
+ * those available by default, are not available while creating a snapshot.
  */
 class V8_EXPORT SnapshotCreator {
  public:
@@ -9815,6 +9914,10 @@ class V8_EXPORT SnapshotCreator {
   SnapshotCreator(const intptr_t* external_references = nullptr,
                   StartupData* existing_blob = nullptr);
 
+  /**
+   * Destroy the snapshot creator, and exit and dispose of the Isolate
+   * associated with it.
+   */
   ~SnapshotCreator();
 
   /**
@@ -9844,13 +9947,6 @@ class V8_EXPORT SnapshotCreator {
   size_t AddContext(Local<Context> context,
                     SerializeInternalFieldsCallback callback =
                         SerializeInternalFieldsCallback());
-
-  /**
-   * Add a template to be included in the snapshot blob.
-   * \returns the index of the template in the snapshot blob.
-   */
-  V8_DEPRECATED("use AddData instead")
-  size_t AddTemplate(Local<Template> template_obj);
 
   /**
    * Attach arbitrary V8::Data to the context snapshot, which can be retrieved
@@ -10066,8 +10162,6 @@ class V8_EXPORT TryCatch {
   /**
    * Returns the exception caught by this try/catch block.  If no exception has
    * been caught an empty handle is returned.
-   *
-   * The returned handle is valid until this TryCatch block has been destroyed.
    */
   Local<Value> Exception() const;
 
@@ -10089,9 +10183,6 @@ class V8_EXPORT TryCatch {
   /**
    * Returns the message associated with this exception.  If there is
    * no message associated an empty handle is returned.
-   *
-   * The returned handle is valid until this TryCatch block has been
-   * destroyed.
    */
   Local<v8::Message> Message() const;
 
@@ -10625,12 +10716,14 @@ class V8_EXPORT Unwinder {
    *
    * The unwinder also needs the virtual memory range of all possible V8 code
    * objects. There are two ranges required - the heap code range and the range
-   * for code embedded in the binary. The V8 API provides all required inputs
-   * via an UnwindState object through the Isolate::GetUnwindState() API. These
-   * values will not change after Isolate initialization, so the same
-   * |unwind_state| can be used for multiple calls.
+   * for code embedded in the binary.
    *
-   * \param unwind_state Input state for the Isolate that the stack comes from.
+   * Available on x64, ARM64 and ARM32.
+   *
+   * \param code_pages A list of all of the ranges in which V8 has allocated
+   * executable code. The caller should obtain this list by calling
+   * Isolate::CopyCodePages() during the same interrupt/thread suspension that
+   * captures the stack.
    * \param register_state The current registers. This is an in-out param that
    * will be overwritten with the register values after unwinding, on success.
    * \param stack_base The resulting stack pointer and frame pointer values are
@@ -10641,20 +10734,6 @@ class V8_EXPORT Unwinder {
    *
    * \return True on success.
    */
-  // TODO(petermarshall): Remove this API
-  V8_DEPRECATED("Use entry_stubs + code_pages version.")
-  static bool TryUnwindV8Frames(const UnwindState& unwind_state,
-                                RegisterState* register_state,
-                                const void* stack_base);
-
-  /**
-   * The same as above, but is available on x64, ARM64 and ARM32.
-   *
-   * \param code_pages A list of all of the ranges in which V8 has allocated
-   * executable code. The caller should obtain this list by calling
-   * Isolate::CopyCodePages() during the same interrupt/thread suspension that
-   * captures the stack.
-   */
   static bool TryUnwindV8Frames(const JSEntryStubs& entry_stubs,
                                 size_t code_pages_length,
                                 const MemoryRange* code_pages,
@@ -10662,20 +10741,13 @@ class V8_EXPORT Unwinder {
                                 const void* stack_base);
 
   /**
-   * Whether the PC is within the V8 code range represented by code_range or
-   * embedded_code_range in |unwind_state|.
+   * Whether the PC is within the V8 code range represented by code_pages.
    *
    * If this returns false, then calling UnwindV8Frames() with the same PC
    * and unwind_state will always fail. If it returns true, then unwinding may
    * (but not necessarily) be successful.
-   */
-  // TODO(petermarshall): Remove this API
-  V8_DEPRECATED("Use code_pages version.")
-  static bool PCIsInV8(const UnwindState& unwind_state, void* pc);
-
-  /**
-   * The same as above, but is available on x64, ARM64 and ARM32. See the
-   * comment on TryUnwindV8Frames.
+   *
+   * Available on x64, ARM64 and ARM32
    */
   static bool PCIsInV8(size_t code_pages_length, const MemoryRange* code_pages,
                        void* pc);
@@ -10807,8 +10879,15 @@ V8_INLINE void PersistentBase<T>::SetWeak(
     P* parameter, typename WeakCallbackInfo<P>::Callback callback,
     WeakCallbackType type) {
   typedef typename WeakCallbackInfo<void>::Callback Callback;
+#if (__GNUC__ >= 8) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-function-type"
+#endif
   V8::MakeWeak(reinterpret_cast<internal::Address*>(this->val_), parameter,
                reinterpret_cast<Callback>(callback), type);
+#if (__GNUC__ >= 8) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 }
 
 template <class T>
@@ -10889,7 +10968,7 @@ template <class T>
 void TracedReferenceBase<T>::Reset() {
   if (IsEmpty()) return;
   V8::DisposeTracedGlobal(reinterpret_cast<internal::Address*>(val_));
-  val_ = nullptr;
+  SetSlotThreadSafe(nullptr);
 }
 
 template <class T>
@@ -10945,10 +11024,11 @@ template <class T>
 template <class S>
 void TracedReference<T>::Reset(Isolate* isolate, const Local<S>& other) {
   static_assert(std::is_base_of<T, S>::value, "type check");
-  Reset();
+  this->Reset();
   if (other.IsEmpty()) return;
-  this->val_ = this->New(isolate, other.val_, &this->val_,
-                         TracedReferenceBase<T>::kWithoutDestructor);
+  this->SetSlotThreadSafe(
+      this->New(isolate, other.val_, &this->val_,
+                TracedReferenceBase<T>::kWithoutDestructor));
 }
 
 template <class T>
@@ -11362,7 +11442,9 @@ void* Object::GetAlignedPointerFromInternalField(int index) {
                 instance_type == I::kJSApiObjectType ||
                 instance_type == I::kJSSpecialApiObjectType)) {
     int offset = I::kJSObjectHeaderSize + (I::kEmbedderDataSlotSize * index);
-    return I::ReadRawField<void*>(obj, offset);
+    internal::Isolate* isolate = I::GetIsolateForHeapSandbox(obj);
+    A value = I::ReadExternalPointerField(isolate, obj, offset);
+    return reinterpret_cast<void*>(value);
   }
 #endif
   return SlowGetAlignedPointerFromInternalField(index);
@@ -11392,7 +11474,9 @@ String::ExternalStringResource* String::GetExternalStringResource() const {
 
   ExternalStringResource* result;
   if (I::IsExternalTwoByteString(I::GetInstanceType(obj))) {
-    void* value = I::ReadRawField<void*>(obj, I::kStringResourceOffset);
+    internal::Isolate* isolate = I::GetIsolateForHeapSandbox(obj);
+    A value =
+        I::ReadExternalPointerField(isolate, obj, I::kStringResourceOffset);
     result = reinterpret_cast<String::ExternalStringResource*>(value);
   } else {
     result = GetExternalStringResourceSlow();
@@ -11414,8 +11498,10 @@ String::ExternalStringResourceBase* String::GetExternalStringResourceBase(
   ExternalStringResourceBase* resource;
   if (type == I::kExternalOneByteRepresentationTag ||
       type == I::kExternalTwoByteRepresentationTag) {
-    void* value = I::ReadRawField<void*>(obj, I::kStringResourceOffset);
-    resource = static_cast<ExternalStringResourceBase*>(value);
+    internal::Isolate* isolate = I::GetIsolateForHeapSandbox(obj);
+    A value =
+        I::ReadExternalPointerField(isolate, obj, I::kStringResourceOffset);
+    resource = reinterpret_cast<ExternalStringResourceBase*>(value);
   } else {
     resource = GetExternalStringResourceBaseSlow(encoding_out);
   }
@@ -11500,6 +11586,13 @@ template <class T> Value* Value::Cast(T* value) {
   return static_cast<Value*>(value);
 }
 
+template <>
+V8_INLINE Value* Value::Cast(Data* value) {
+#ifdef V8_ENABLE_CHECKS
+  CheckCast(value);
+#endif
+  return static_cast<Value*>(value);
+}
 
 Boolean* Boolean::Cast(v8::Value* value) {
 #ifdef V8_ENABLE_CHECKS
@@ -11532,6 +11625,12 @@ Private* Private::Cast(Data* data) {
   return reinterpret_cast<Private*>(data);
 }
 
+Module* Module::Cast(Data* data) {
+#ifdef V8_ENABLE_CHECKS
+  CheckCast(data);
+#endif
+  return reinterpret_cast<Module*>(data);
+}
 
 Number* Number::Cast(v8::Value* value) {
 #ifdef V8_ENABLE_CHECKS
@@ -11928,46 +12027,6 @@ MaybeLocal<T> Isolate::GetDataFromSnapshotOnce(size_t index) {
   return Local<T>(data);
 }
 
-int64_t Isolate::AdjustAmountOfExternalAllocatedMemory(
-    int64_t change_in_bytes) {
-  typedef internal::Internals I;
-  constexpr int64_t kMemoryReducerActivationLimit = 32 * 1024 * 1024;
-  int64_t* external_memory = reinterpret_cast<int64_t*>(
-      reinterpret_cast<uint8_t*>(this) + I::kExternalMemoryOffset);
-  int64_t* external_memory_limit = reinterpret_cast<int64_t*>(
-      reinterpret_cast<uint8_t*>(this) + I::kExternalMemoryLimitOffset);
-  int64_t* external_memory_low_since_mc =
-      reinterpret_cast<int64_t*>(reinterpret_cast<uint8_t*>(this) +
-                                 I::kExternalMemoryLowSinceMarkCompactOffset);
-
-  // Embedders are weird: we see both over- and underflows here. Perform the
-  // addition with unsigned types to avoid undefined behavior.
-  const int64_t amount =
-      static_cast<int64_t>(static_cast<uint64_t>(change_in_bytes) +
-                           static_cast<uint64_t>(*external_memory));
-  *external_memory = amount;
-
-  if (amount < *external_memory_low_since_mc) {
-    *external_memory_low_since_mc = amount;
-    *external_memory_limit = amount + I::kExternalAllocationSoftLimit;
-  }
-
-  if (change_in_bytes <= 0) return *external_memory;
-
-  int64_t allocation_diff_since_last_mc = static_cast<int64_t>(
-      static_cast<uint64_t>(*external_memory) -
-      static_cast<uint64_t>(*external_memory_low_since_mc));
-  // Only check memory pressure and potentially trigger GC if the amount of
-  // external memory increased.
-  if (allocation_diff_since_last_mc > kMemoryReducerActivationLimit) {
-    CheckMemoryPressure();
-  }
-  if (amount > *external_memory_limit) {
-    ReportExternalAllocationLimitReached();
-  }
-  return *external_memory;
-}
-
 Local<Value> Context::GetEmbedderData(int index) {
 #ifndef V8_ENABLE_CHECKS
   typedef internal::Address A;
@@ -12003,7 +12062,9 @@ void* Context::GetAlignedPointerFromEmbedderData(int index) {
       I::ReadTaggedPointerField(ctx, I::kNativeContextEmbedderDataOffset);
   int value_offset =
       I::kEmbedderDataArrayHeaderSize + (I::kEmbedderDataSlotSize * index);
-  return I::ReadRawField<void*>(embedder_data, value_offset);
+  internal::Isolate* isolate = I::GetIsolateForHeapSandbox(ctx);
+  return reinterpret_cast<void*>(
+      I::ReadExternalPointerField(isolate, embedder_data, value_offset));
 #else
   return SlowGetAlignedPointerFromEmbedderData(index);
 #endif

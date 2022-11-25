@@ -37,7 +37,7 @@ ServiceWorkerManager* MockExtensionSystem::service_worker_manager() {
   return nullptr;
 }
 
-SharedUserScriptMaster* MockExtensionSystem::shared_user_script_master() {
+SharedUserScriptManager* MockExtensionSystem::shared_user_script_manager() {
   return nullptr;
 }
 
@@ -69,6 +69,10 @@ const base::OneShotEvent& MockExtensionSystem::ready() const {
   return ready_;
 }
 
+bool MockExtensionSystem::is_ready() const {
+  return ready_.is_signaled();
+}
+
 ContentVerifier* MockExtensionSystem::content_verifier() {
   return nullptr;
 }
@@ -86,6 +90,10 @@ void MockExtensionSystem::InstallUpdate(
     InstallUpdateCallback install_update_callback) {
   NOTREACHED();
 }
+
+void MockExtensionSystem::PerformActionBasedOnOmahaAttributes(
+    const std::string& extension_id,
+    const base::Value& attributes) {}
 
 bool MockExtensionSystem::FinishDelayedInstallationIfReady(
     const std::string& extension_id,

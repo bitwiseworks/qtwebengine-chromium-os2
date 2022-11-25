@@ -27,9 +27,11 @@
 #include "net/http/http_raw_request_headers.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_request.h"
-#include "services/network/cross_origin_read_blocking.h"
 #include "services/network/keepalive_statistics_recorder.h"
+#include "services/network/network_service.h"
+#include "services/network/public/cpp/cross_origin_read_blocking.h"
 #include "services/network/public/cpp/initiator_lock_compatibility.h"
+#include "services/network/public/mojom/cookie_access_observer.mojom.h"
 #include "services/network/public/mojom/cross_origin_embedder_policy.mojom-forward.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
 #include "services/network/public/mojom/network_service.mojom.h"
@@ -37,13 +39,18 @@
 #include "services/network/public/mojom/url_loader.mojom.h"
 #include "services/network/resource_scheduler/resource_scheduler.h"
 #include "services/network/resource_scheduler/resource_scheduler_client.h"
+#include "services/network/trust_tokens/pending_trust_token_store.h"
 #include "services/network/trust_tokens/trust_token_request_helper.h"
+#include "services/network/trust_tokens/trust_token_request_helper_factory.h"
 #include "services/network/upload_progress_tracker.h"
 
 namespace net {
 class HttpResponseHeaders;
+class IPEndPoint;
+struct RedirectInfo;
+struct TransportInfo;
 class URLRequestContext;
-}
+}  // namespace net
 
 namespace network {
 
@@ -90,9 +97,8 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   // The URLLoader must be destroyed before the |url_request_context|.
   // The |origin_policy_manager| must always be provided for requests that
   // have the |obey_origin_policy| flag set.
-  // If |trust_token_helper| is non-null, it will be queried to perform trust
-  // token operation steps before each request is started, and after each
-  // response's headers arrive.
+  // |trust_token_helper_factory| must be non-null exactly when the request has
+  // Trust Tokens parameters.
   URLLoader(
       net::URLRequestContext* url_request_context,
       mojom::NetworkServiceClient* network_service_client,
@@ -102,6 +108,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
       int32_t options,
       const ResourceRequest& request,
       mojo::PendingRemote<mojom::URLLoaderClient> url_loader_client,
+      base::Optional<DataPipeUseTracker> response_body_use_tracker,
       const net::NetworkTrafficAnnotationTag& traffic_annotation,
       const mojom::URLLoaderFactoryParams* factory_params,
       mojom::CrossOriginEmbedderPolicyReporter* reporter,
@@ -112,19 +119,25 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
       base::WeakPtr<NetworkUsageAccumulator> network_usage_accumulator,
       mojom::TrustedURLLoaderHeaderClient* url_loader_header_client,
       mojom::OriginPolicyManager* origin_policy_manager,
-      std::unique_ptr<TrustTokenRequestHelper> trust_token_helper);
+      std::unique_ptr<TrustTokenRequestHelperFactory>
+          trust_token_helper_factory,
+      mojo::PendingRemote<mojom::CookieAccessObserver> cookie_observer);
   ~URLLoader() override;
 
   // mojom::URLLoader implementation:
-  void FollowRedirect(const std::vector<std::string>& removed_headers,
-                      const net::HttpRequestHeaders& modified_headers,
-                      const base::Optional<GURL>& new_url) override;
+  void FollowRedirect(
+      const std::vector<std::string>& removed_headers,
+      const net::HttpRequestHeaders& modified_headers,
+      const net::HttpRequestHeaders& modified_cors_exempt_headers,
+      const base::Optional<GURL>& new_url) override;
   void SetPriority(net::RequestPriority priority,
                    int32_t intra_priority_value) override;
   void PauseReadingBodyFromNet() override;
   void ResumeReadingBodyFromNet() override;
 
   // net::URLRequest::Delegate implementation:
+  int OnConnected(net::URLRequest* url_request,
+                  const net::TransportInfo& info) override;
   void OnReceivedRedirect(net::URLRequest* url_request,
                           const net::RedirectInfo& redirect_info,
                           bool* defer_redirect) override;
@@ -202,9 +215,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
       const net::HttpRequestHeaders& request_headers,
       bool added_during_redirect);
 
-  // Exposed for testing.
-  static CrossOriginEmbedderPolicy ParseCrossOriginEmbedderPolicyValue(
-      const net::HttpResponseHeaders* headers);
+  static bool HasFetchStreamingUploadBody(const ResourceRequest*);
 
  private:
   // This class is used to set the URLLoader as user data on a URLRequest. This
@@ -241,9 +252,46 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   void SetUpUpload(const ResourceRequest& request,
                    int error_code,
                    const std::vector<base::File> opened_files);
-  void BeginTrustTokenOperationIfNecessaryAndThenScheduleStart();
+
+  // A request with Trust Tokens parameters will (assuming preconditions pass
+  // and operations are successful) have one TrustTokenRequestHelper::Begin
+  // executed against the request and one TrustTokenRequestHelper::Finalize
+  // executed against its response.
+  //
+  // Outbound control flow:
+  //
+  // Start in BeginTrustTokenOperationIfNecessaryAndThenScheduleStart
+  // - If there are no Trust Tokens parameters, immediately ScheduleStart.
+  // - Otherwise:
+  //   - asynchronously construct a TrustTokenRequestHelper;
+  //   - receive the helper (or an error) in OnDoneConstructingTrustTokenHelper
+  //   and, if an error, fail the request;
+  //   - execute TrustTokenRequestHelper::Begin against the helper;
+  //   - receive the result in OnDoneBeginningTrustTokenOperation;
+  //   - if successful, ScheduleStart; if there was an error, fail.
+  //
+  // Inbound control flow:
+  //
+  // Start in OnResponseStarted
+  // - If there are no Trust Tokens parameters, proceed to
+  // ContinueOnResponseStarted.
+  // - Otherwise:
+  //   - execute TrustTokenRequestHelper::Finalize against the helper;
+  //   - receive the result in OnDoneFinalizingTrusttokenOperation;
+  //   - if successful, ContinueOnResponseStarted; if there was an error, fail.
+  void BeginTrustTokenOperationIfNecessaryAndThenScheduleStart(
+      const ResourceRequest& request);
+  void OnDoneConstructingTrustTokenHelper(
+      mojom::TrustTokenOperationType type,
+      TrustTokenStatusOrRequestHelper status_or_helper);
   void OnDoneBeginningTrustTokenOperation(
       mojom::TrustTokenOperationStatus status);
+  void OnDoneFinalizingTrustTokenOperation(
+      mojom::TrustTokenOperationStatus status);
+  // Continuation of |OnResponseStarted| after possibly asynchronously
+  // concluding the request's Trust Tokens operation.
+  void ContinueOnResponseStarted();
+
   void ScheduleStart();
   void ReadMore();
   void DidRead(int num_bytes, bool completed_synchronously);
@@ -280,7 +328,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   void CompleteBlockedResponse(
       int error_code,
       bool should_report_corb_blocking,
-      base::Optional<BlockedByResponseReason> reason = base::nullopt);
+      base::Optional<mojom::BlockedByResponseReason> reason = base::nullopt);
 
   enum BlockResponseForCorbResult {
     // Returned when caller of BlockResponseForCorb doesn't need to continue,
@@ -296,6 +344,16 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   void ReportFlaggedResponseCookies();
   void StartReading();
   void OnOriginPolicyManagerRetrieveDone(const OriginPolicy& origin_policy);
+
+  // Checks if the request initiator should be allowed to make requests to the
+  // remote endpoint, as described in |info|.
+  //
+  // Returns a net error code.
+  //
+  // See the CORS-RFC1918 spec: https://wicg.github.io/cors-rfc1918.
+  //
+  // Helper for OnConnected().
+  int CanConnectToRemoteEndpoint(const net::TransportInfo& info) const;
 
   net::URLRequestContext* url_request_context_;
   mojom::NetworkServiceClient* network_service_client_;
@@ -330,6 +388,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   int64_t total_written_bytes_ = 0;
 
   mojo::ScopedDataPipeProducerHandle response_body_stream_;
+  base::Optional<DataPipeUseTracker> response_body_use_tracker_;
   scoped_refptr<NetToMojoPendingBuffer> pending_write_;
   uint32_t pending_write_buffer_size_ = 0;
   uint32_t pending_write_buffer_offset_ = 0;
@@ -433,9 +492,12 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   // the request with the pertinent request headers and, on receiving the
   // corresponding response, processes and strips Trust Tokens response headers.
   //
-  // |trust_token_helper_| is null for (the usual case where) the request has no
-  // associated Trust Tokens operation.
+  // For requests configured for Trust Tokens operations, |trust_token_helper_|
+  // is constructed (using |trust_token_helper_factory_|) just before the
+  // outbound (Begin) operation; for requests without associated Trust Tokens
+  // operations, the field remains null, as does |trust_token_helper_factory_|.
   std::unique_ptr<TrustTokenRequestHelper> trust_token_helper_;
+  std::unique_ptr<TrustTokenRequestHelperFactory> trust_token_helper_factory_;
 
   // The cached result of the request's Trust Tokens protocol operation, if any.
   // This can describe the result of either an outbound (request-annotating)
@@ -444,16 +506,23 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   // specific to one direction.
   base::Optional<mojom::TrustTokenOperationStatus> trust_token_status_;
 
-  // Stores ResourceRequest::isolated_world_origin.
+  // Observer listening to all cookie reads and writes made by this request.
+  mojo::Remote<mojom::CookieAccessObserver> cookie_observer_;
+
+  // Client security state copied from the input ResourceRequest.
   //
-  // Note that |isolated_world_origin_| is unreliable (i.e. always
-  // base::nullopt) when URLLoaderFactoryParams::ignore_isolated_world_origin
-  // may be |true| (e.g. when the CorbAllowlistAlsoAppliesToOorCors feature is
-  // enabled).
-  //
-  // TODO(lukasza): https://crbug.com/920638: Remove
-  // |isolated_world_origin_| once we gather enough UMA and Rappor data.
-  const base::Optional<url::Origin> isolated_world_origin_;
+  // If |factory_params_->client_security_state| is non-null, this is null.
+  // We indeed prefer the factory params over the request params as we trust the
+  // former more, given that they always come from the browser process.
+  mojom::ClientSecurityStatePtr request_client_security_state_;
+
+  // Indicates |url_request_| is fetch upload request and that has streaming
+  // body.
+  const bool has_fetch_streaming_upload_body_;
+
+  // Indicates whether fetch upload streaming is allowed/rejected over H/1.
+  // Even if this is false but there is a QUIC/H2 stream, the upload is allowed.
+  const bool allow_http1_for_streaming_upload_;
 
   base::WeakPtrFactory<URLLoader> weak_ptr_factory_{this};
 

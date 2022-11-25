@@ -31,11 +31,14 @@
 #include "third_party/blink/renderer/platform/graphics/bitmap_image.h"
 
 #include "base/bind.h"
+#include "base/feature_list.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "cc/paint/image_provider.h"
 #include "cc/paint/skia_paint_canvas.h"
 #include "cc/tiles/mipmap_util.h"
+#include "media/media_buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/renderer/platform/geometry/float_rect.h"
 #include "third_party/blink/renderer/platform/graphics/bitmap_image_metrics.h"
 #include "third_party/blink/renderer/platform/graphics/deferred_image_decoder.h"
@@ -118,8 +121,6 @@ class BitmapImageTest : public testing::Test {
  public:
   class FakeImageObserver : public GarbageCollected<FakeImageObserver>,
                             public ImageObserver {
-    USING_GARBAGE_COLLECTED_MIXIN(FakeImageObserver);
-
    public:
     FakeImageObserver()
         : last_decoded_size_(0), last_decoded_size_changed_delta_(0) {}
@@ -353,8 +354,8 @@ TEST_F(BitmapImageTest, ConstantImageIdForPartiallyLoadedImages) {
   auto image1 = image_->PaintImageForCurrentFrame();
   auto image2 = image_->PaintImageForCurrentFrame();
   EXPECT_EQ(image1, image2);
-  auto sk_image1 = image1.GetSkImage();
-  auto sk_image2 = image2.GetSkImage();
+  auto sk_image1 = image1.GetSwSkImage();
+  auto sk_image2 = image2.GetSwSkImage();
   EXPECT_EQ(sk_image1->uniqueID(), sk_image2->uniqueID());
 
   // Frame keys should be the same for these PaintImages.
@@ -365,7 +366,7 @@ TEST_F(BitmapImageTest, ConstantImageIdForPartiallyLoadedImages) {
   // image ids for partial decodes.
   DestroyDecodedData();
   auto image3 = image_->PaintImageForCurrentFrame();
-  auto sk_image3 = image3.GetSkImage();
+  auto sk_image3 = image3.GetSwSkImage();
   EXPECT_NE(sk_image1, sk_image3);
   EXPECT_NE(sk_image1->uniqueID(), sk_image3->uniqueID());
 
@@ -377,7 +378,7 @@ TEST_F(BitmapImageTest, ConstantImageIdForPartiallyLoadedImages) {
   // Load complete. This should generate a new image id.
   image_->SetData(image_data, true);
   auto complete_image = image_->PaintImageForCurrentFrame();
-  auto complete_sk_image = complete_image.GetSkImage();
+  auto complete_sk_image = complete_image.GetSwSkImage();
   EXPECT_NE(sk_image3, complete_sk_image);
   EXPECT_NE(sk_image3->uniqueID(), complete_sk_image->uniqueID());
   EXPECT_NE(complete_image.GetKeyForFrame(PaintImage::kDefaultFrameIndex),
@@ -388,7 +389,7 @@ TEST_F(BitmapImageTest, ConstantImageIdForPartiallyLoadedImages) {
   // uniqueIDs.
   DestroyDecodedData();
   auto new_complete_image = image_->PaintImageForCurrentFrame();
-  auto new_complete_sk_image = new_complete_image.GetSkImage();
+  auto new_complete_sk_image = new_complete_image.GetSwSkImage();
   EXPECT_NE(new_complete_sk_image, complete_sk_image);
   EXPECT_EQ(new_complete_image.GetKeyForFrame(PaintImage::kDefaultFrameIndex),
             complete_image.GetKeyForFrame(PaintImage::kDefaultFrameIndex));
@@ -406,8 +407,8 @@ TEST_F(BitmapImageTest, ImageForDefaultFrame_MultiFrame) {
   auto paint_image1 = default_image1->PaintImageForCurrentFrame();
   auto paint_image2 = default_image2->PaintImageForCurrentFrame();
   EXPECT_EQ(paint_image1, paint_image2);
-  EXPECT_EQ(paint_image1.GetSkImage()->uniqueID(),
-            paint_image2.GetSkImage()->uniqueID());
+  EXPECT_EQ(paint_image1.GetSwSkImage()->uniqueID(),
+            paint_image2.GetSwSkImage()->uniqueID());
 }
 
 TEST_F(BitmapImageTest, ImageForDefaultFrame_SingleFrame) {
@@ -606,7 +607,7 @@ class BitmapImageTestWithMockDecoder : public BitmapImageTest,
     BitmapImageTest::SetUp();
 
     auto decoder = std::make_unique<MockImageDecoder>(this);
-    decoder->SetSize(10, 10);
+    decoder->SetSize(10u, 10u);
     image_->SetDecoderForTesting(
         DeferredImageDecoder::CreateForTesting(std::move(decoder)));
   }
@@ -686,17 +687,17 @@ TEST_F(BitmapImageTestWithMockDecoder,
   // In all cases, the image shouldn't animate.
 
   // Only one loop allowed.
-  image_->SetAnimationPolicy(kImageAnimationPolicyAnimateOnce);
+  image_->SetAnimationPolicy(web_pref::kImageAnimationPolicyAnimateOnce);
   image = image_->PaintImageForCurrentFrame();
   EXPECT_EQ(image.repetition_count(), kAnimationNone);
 
   // No animation allowed.
-  image_->SetAnimationPolicy(kImageAnimationPolicyNoAnimation);
+  image_->SetAnimationPolicy(web_pref::kImageAnimationPolicyNoAnimation);
   image = image_->PaintImageForCurrentFrame();
   EXPECT_EQ(image.repetition_count(), kAnimationNone);
 
   // Default policy.
-  image_->SetAnimationPolicy(kImageAnimationPolicyAllowed);
+  image_->SetAnimationPolicy(web_pref::kImageAnimationPolicyAllowed);
   image = image_->PaintImageForCurrentFrame();
   EXPECT_EQ(image.repetition_count(), kAnimationNone);
 }
@@ -715,17 +716,17 @@ TEST_F(BitmapImageTestWithMockDecoder,
   // other cases, it remains loop once.
 
   // Only one loop allowed.
-  image_->SetAnimationPolicy(kImageAnimationPolicyAnimateOnce);
+  image_->SetAnimationPolicy(web_pref::kImageAnimationPolicyAnimateOnce);
   image = image_->PaintImageForCurrentFrame();
   EXPECT_EQ(image.repetition_count(), kAnimationLoopOnce);
 
   // No animation allowed.
-  image_->SetAnimationPolicy(kImageAnimationPolicyNoAnimation);
+  image_->SetAnimationPolicy(web_pref::kImageAnimationPolicyNoAnimation);
   image = image_->PaintImageForCurrentFrame();
   EXPECT_EQ(image.repetition_count(), kAnimationNone);
 
   // Default policy.
-  image_->SetAnimationPolicy(kImageAnimationPolicyAllowed);
+  image_->SetAnimationPolicy(web_pref::kImageAnimationPolicyAllowed);
   image = image_->PaintImageForCurrentFrame();
   EXPECT_EQ(image.repetition_count(), kAnimationLoopOnce);
 }
@@ -743,17 +744,17 @@ TEST_F(BitmapImageTestWithMockDecoder,
   // The repetition count is determined by the animation policy.
 
   // Only one loop allowed.
-  image_->SetAnimationPolicy(kImageAnimationPolicyAnimateOnce);
+  image_->SetAnimationPolicy(web_pref::kImageAnimationPolicyAnimateOnce);
   image = image_->PaintImageForCurrentFrame();
   EXPECT_EQ(image.repetition_count(), kAnimationLoopOnce);
 
   // No animation allowed.
-  image_->SetAnimationPolicy(kImageAnimationPolicyNoAnimation);
+  image_->SetAnimationPolicy(web_pref::kImageAnimationPolicyNoAnimation);
   image = image_->PaintImageForCurrentFrame();
   EXPECT_EQ(image.repetition_count(), kAnimationNone);
 
   // Default policy.
-  image_->SetAnimationPolicy(kImageAnimationPolicyAllowed);
+  image_->SetAnimationPolicy(web_pref::kImageAnimationPolicyAllowed);
   image = image_->PaintImageForCurrentFrame();
   EXPECT_EQ(image.repetition_count(), repetition_count_);
 }
@@ -828,6 +829,12 @@ using DecodedImageTypeHistogramTest =
     BitmapHistogramTest<BitmapImageMetrics::DecodedImageType>;
 
 TEST_P(DecodedImageTypeHistogramTest, ImageType) {
+#if BUILDFLAG(ENABLE_AV1_DECODER)
+  if (GetParam().type == BitmapImageMetrics::kImageAVIF &&
+      !base::FeatureList::IsEnabled(features::kAVIF)) {
+    return;
+  }
+#endif
   RunTest("Blink.DecodedImageType");
 }
 
@@ -839,7 +846,11 @@ const DecodedImageTypeHistogramTest::ParamType
         {"animated-10color.gif", BitmapImageMetrics::kImageGIF},
         {"webp-color-profile-lossy.webp", BitmapImageMetrics::kImageWebP},
         {"wrong-frame-dimensions.ico", BitmapImageMetrics::kImageICO},
-        {"lenna.bmp", BitmapImageMetrics::kImageBMP}};
+        {"gracehopper.bmp", BitmapImageMetrics::kImageBMP},
+#if BUILDFLAG(ENABLE_AV1_DECODER)
+        {"red-full-ranged-8bpc.avif", BitmapImageMetrics::kImageAVIF},
+#endif
+};
 
 INSTANTIATE_TEST_SUITE_P(
     DecodedImageTypeHistogramTest,
@@ -868,6 +879,29 @@ INSTANTIATE_TEST_SUITE_P(
     DecodedImageOrientationHistogramTest,
     DecodedImageOrientationHistogramTest,
     testing::ValuesIn(kDecodedImageOrientationHistogramTestParams));
+
+using DecodedImageDensitySizeCorrectionDetectedHistogramTest =
+    BitmapHistogramTest<bool>;
+
+TEST_P(DecodedImageDensitySizeCorrectionDetectedHistogramTest, bool) {
+  RunTest("Blink.DecodedImage.DensitySizeCorrectionDetected");
+}
+
+const DecodedImageDensitySizeCorrectionDetectedHistogramTest::ParamType
+    kDecodedImageDensitySizeCorrectionHistogramTestParams[] = {
+        {"exif-resolution-none.jpg", false},
+        {"exif-resolution-invalid-cm.jpg", false},
+        {"exif-resolution-invalid-no-match.jpg", false},
+        {"exif-resolution-invalid-partial.jpg", false},
+        {"exif-resolution-no-change.jpg", false},
+        {"exif-resolution-valid-hires.jpg", true},
+        {"exif-resolution-valid-lores.jpg", true},
+        {"exif-resolution-valid-non-uniform.jpg", true}};
+
+INSTANTIATE_TEST_SUITE_P(
+    DecodedImageDensitySizeCorrectionDetectedHistogramTest,
+    DecodedImageDensitySizeCorrectionDetectedHistogramTest,
+    testing::ValuesIn(kDecodedImageDensitySizeCorrectionHistogramTestParams));
 
 using DecodedImageDensityHistogramTestKiBWeighted = BitmapHistogramTest<int>;
 

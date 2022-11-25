@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';  // eslint-disable-line no-unused-vars
 import * as PerfUI from '../perf_ui/perf_ui.js';
 import * as SDK from '../sdk/sdk.js';
+import * as ThemeSupport from '../theme_support/theme_support.js';
 
 import {NetworkLogView} from './NetworkLogView.js';
 import {NetworkTimeBoundary} from './NetworkTimeCalculator.js';
@@ -254,6 +258,7 @@ export class NetworkOverview extends PerfUI.TimelineOverviewPane.TimelineOvervie
     drawLines(RequestTimeRangeNames.Connecting);
     drawLines(RequestTimeRangeNames.ServiceWorker);
     drawLines(RequestTimeRangeNames.ServiceWorkerPreparation);
+    drawLines(RequestTimeRangeNames.ServiceWorkerRespondWith);
     drawLines(RequestTimeRangeNames.Push);
     drawLines(RequestTimeRangeNames.Proxy);
     drawLines(RequestTimeRangeNames.DNS);
@@ -271,9 +276,7 @@ export class NetworkOverview extends PerfUI.TimelineOverviewPane.TimelineOvervie
       const y = ((band === -1) ? 0 : (band % this._numBands + 1)) * _bandHeight + paddingTop;
       const timeRanges = RequestTimingView.calculateRequestTimeRanges(request, this.calculator().minimumBoundary());
 
-      // This is the value of var(--selection-bg-color)
-      // to match the selection color used in the performance panel
-      context.fillStyle = '#1a73e8';
+      context.fillStyle = ThemeSupport.ThemeSupport.instance().getComputedValue('--selection-bg-color');
 
       const start = timeRanges[0].start * 1000;
       const end = timeRanges[0].end * 1000;
@@ -320,7 +323,7 @@ export class NetworkOverview extends PerfUI.TimelineOverviewPane.TimelineOvervie
     if (this._selectedFilmStripTime !== -1) {
       context.lineWidth = 2;
       context.beginPath();
-      context.strokeStyle = '#FCCC49';  // Keep in sync with .network-frame-divider CSS rule.
+      context.strokeStyle = ThemeSupport.ThemeSupport.instance().getComputedValue('--network-frame-divider-color');
       const x = Math.round(calculator.computePosition(this._selectedFilmStripTime));
       context.moveTo(x, 0);
       context.lineTo(x, height);
@@ -336,6 +339,7 @@ export const RequestTimeRangeNameToColor = {
   [RequestTimeRangeNames.Connecting]: '#FF9800',
   [RequestTimeRangeNames.ServiceWorker]: '#FF9800',
   [RequestTimeRangeNames.ServiceWorkerPreparation]: '#FF9800',
+  [RequestTimeRangeNames.ServiceWorkerRespondWith]: '#00FFFF',
   [RequestTimeRangeNames.Push]: '#8CDBff',
   [RequestTimeRangeNames.Proxy]: '#A1887F',
   [RequestTimeRangeNames.DNS]: '#009688',

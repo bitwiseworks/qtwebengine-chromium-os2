@@ -45,8 +45,6 @@ const char kSetUserPassword[] = "SetUserPassword";
 const char kEnableChromeDevFeatures[] = "EnableChromeDevFeatures";
 const char kQueryDevFeatures[] = "QueryDevFeatures";
 const char kSetOomScoreAdj[] = "SetOomScoreAdj";
-const char kStartVmConcierge[] = "StartVmConcierge";
-const char kStopVmConcierge[] = "StopVmConcierge";
 const char kStartVmPluginDispatcher[] = "StartVmPluginDispatcher";
 const char kStopVmPluginDispatcher[] = "StopVmPluginDispatcher";
 const char kSetRlzPingSent[] = "SetRlzPingSent";
@@ -55,6 +53,8 @@ const char kGetU2fFlags[] = "GetU2fFlags";
 const char kSetSchedulerConfiguration[] = "SetSchedulerConfiguration";
 const char kSetSchedulerConfigurationV2[] = "SetSchedulerConfigurationV2";
 const char kSwapSetParameter[] = "SwapSetParameter";
+const char kBackupArcBugReport[] = "BackupArcBugReport";
+const char kDeleteArcBugReportBackup[] = "DeleteArcBugReportBackup";
 
 // Properties.
 const char kCrashSenderTestMode[] = "CrashSenderTestMode";
@@ -78,6 +78,11 @@ enum CupsResult {
   CUPS_LPADMIN_FAILURE = 3,
   CUPS_AUTOCONF_FAILURE = 4,
   CUPS_BAD_URI = 5,
+  CUPS_IO_ERROR = 6,
+  CUPS_MEMORY_ALLOC_ERROR = 7,
+  CUPS_PRINTER_UNREACHABLE = 8,
+  CUPS_PRINTER_WRONG_RESPONSE = 9,
+  CUPS_PRINTER_NOT_AUTOCONF = 10
 };
 
 // Debug log keys which should be substituted in the system info dialog.
@@ -87,6 +92,7 @@ namespace scheduler_configuration {
 
 // Keys which should be given to SetSchedulerConfiguration.
 constexpr char kConservativeScheduler[] = "conservative";
+constexpr char kCoreIsolationScheduler[] = "core-scheduling";
 constexpr char kPerformanceScheduler[] = "performance";
 
 }  // namespace scheduler_configuration

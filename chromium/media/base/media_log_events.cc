@@ -6,7 +6,7 @@
 
 #include <string>
 
-#include "base/logging.h"
+#include "base/notreached.h"
 
 namespace media {
 
@@ -39,6 +39,15 @@ std::string MediaLogEventToString(MediaLogEvent level) {
   }
   NOTREACHED();
   return "";
+}
+
+std::string TruncateUrlString(const std::string& url) {
+  if (url.length() > kMaxUrlLength) {
+    // Take substring and _then_ replace, to avoid copying unused data.
+    return url.substr(0, kMaxUrlLength)
+        .replace(kMaxUrlLength - 3, kMaxUrlLength, "...");
+  }
+  return url;
 }
 
 }  // namespace media

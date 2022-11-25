@@ -43,6 +43,11 @@ void SetShellStartupId(aura::Window* window,
                        const base::Optional<std::string>& id);
 const std::string* GetShellStartupId(aura::Window* window);
 
+// Hides/shows the shelf when fullscreen. If true, shelf is inaccessible
+// (plain fullscreen). If false, shelf auto-hides and can be shown with a
+// mouse gesture (immersive fullscreen).
+void SetShellUseImmersiveForFullscreen(aura::Window* window, bool value);
+
 // Sets the client accessibility ID for the window. The accessibility ID
 // identifies the accessibility tree provided by client.
 void SetShellClientAccessibilityId(aura::Window* window,
@@ -65,7 +70,7 @@ ShellSurfaceBase* GetShellSurfaceBaseForWindow(aura::Window* window);
 // event handling is grabbed by an window, it'll first examine that
 // window, then traverse to its transient parent if the parent also
 // requested grab.
-Surface* GetTargetSurfaceForLocatedEvent(ui::LocatedEvent* event);
+Surface* GetTargetSurfaceForLocatedEvent(const ui::LocatedEvent* event);
 
 // Allow the |window| to activate itself for the diration of |timeout|. Returns
 // the permission object, where deleting the object ammounts to Revoke()ing the

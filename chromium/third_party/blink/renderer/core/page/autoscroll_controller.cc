@@ -92,7 +92,7 @@ static const ui::Cursor& MiddleClickAutoscrollCursor(
 
 AutoscrollController::AutoscrollController(Page& page) : page_(&page) {}
 
-void AutoscrollController::Trace(Visitor* visitor) {
+void AutoscrollController::Trace(Visitor* visitor) const {
   visitor->Trace(page_);
 }
 
@@ -323,7 +323,7 @@ void AutoscrollController::StopMiddleClickAutoscroll(LocalFrame* frame) {
   page_->GetChromeClient().AutoscrollEnd(frame);
   autoscroll_type_ = kNoAutoscroll;
   page_->GetChromeClient().SetCursorOverridden(false);
-  frame->LocalFrameRoot().GetEventHandler().ScheduleCursorUpdate();
+  frame->LocalFrameRoot().GetEventHandler().UpdateCursor();
   autoscroll_layout_object_ = nullptr;
 }
 

@@ -8,14 +8,16 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/device/public/mojom/nfc.mojom-blink.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_receiver.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_wrapper_mode.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 
 namespace blink {
 
 class LocalDOMWindow;
-class NDEFScanOptions;
 class NDEFReader;
 class NDEFWriter;
 
@@ -24,9 +26,6 @@ class NDEFWriter;
 class MODULES_EXPORT NFCProxy final : public GarbageCollected<NFCProxy>,
                                       public Supplement<LocalDOMWindow>,
                                       public device::mojom::blink::NFCClient {
-  USING_GARBAGE_COLLECTED_MIXIN(NFCProxy);
-  USING_PRE_FINALIZER(NFCProxy, Dispose);
-
  public:
   static const char kSupplementName[];
   static NFCProxy* From(LocalDOMWindow&);
@@ -34,9 +33,7 @@ class MODULES_EXPORT NFCProxy final : public GarbageCollected<NFCProxy>,
   explicit NFCProxy(LocalDOMWindow&);
   ~NFCProxy() override;
 
-  void Dispose();
-
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   // There is no matching RemoveWriter() method because writers are
   // automatically removed from the weak hash set when they are garbage
@@ -44,7 +41,6 @@ class MODULES_EXPORT NFCProxy final : public GarbageCollected<NFCProxy>,
   void AddWriter(NDEFWriter*);
 
   void StartReading(NDEFReader*,
-                    const NDEFScanOptions*,
                     device::mojom::blink::NFC::WatchCallback);
   void StopReading(NDEFReader*);
   bool IsReading(const NDEFReader*);
@@ -83,7 +79,10 @@ class MODULES_EXPORT NFCProxy final : public GarbageCollected<NFCProxy>,
   WriterSet writers_;
 
   mojo::Remote<device::mojom::blink::NFC> nfc_remote_;
-  mojo::Receiver<device::mojom::blink::NFCClient> client_receiver_;
+  HeapMojoReceiver<device::mojom::blink::NFCClient,
+                   NFCProxy,
+                   HeapMojoWrapperMode::kWithoutContextObserver>
+      client_receiver_;
 };
 
 }  // namespace blink

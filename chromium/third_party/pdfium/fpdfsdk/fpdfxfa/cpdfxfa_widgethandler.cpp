@@ -224,7 +224,7 @@ std::unique_ptr<CPDFSDK_Annot> CPDFXFA_WidgetHandler::NewAnnotForXFA(
     CXFA_FFWidget* pAnnot,
     CPDFSDK_PageView* pPageView) {
   CPDFSDK_InteractiveForm* pForm = m_pFormFillEnv->GetInteractiveForm();
-  return pdfium::MakeUnique<CPDFXFA_Widget>(pAnnot, pPageView, pForm);
+  return std::make_unique<CPDFXFA_Widget>(pAnnot, pPageView, pForm);
 }
 
 void CPDFXFA_WidgetHandler::OnDraw(CPDFSDK_PageView* pPageView,
@@ -294,6 +294,15 @@ void CPDFXFA_WidgetHandler::ReplaceSelection(CPDFSDK_Annot* pAnnot,
 
   CXFA_FFWidgetHandler* pWidgetHandler = GetXFAFFWidgetHandler(pXFAWidget);
   return pWidgetHandler->PasteText(pXFAWidget->GetXFAFFWidget(), text);
+}
+
+bool CPDFXFA_WidgetHandler::SelectAllText(CPDFSDK_Annot* pAnnot) {
+  CPDFXFA_Widget* pXFAWidget = ToXFAWidget(pAnnot);
+  if (!pXFAWidget)
+    return false;
+
+  CXFA_FFWidgetHandler* pWidgetHandler = GetXFAFFWidgetHandler(pXFAWidget);
+  return pWidgetHandler->SelectAllText(pXFAWidget->GetXFAFFWidget());
 }
 
 bool CPDFXFA_WidgetHandler::CanUndo(CPDFSDK_Annot* pAnnot) {
@@ -456,8 +465,8 @@ bool CPDFXFA_WidgetHandler::OnMouseMove(CPDFSDK_PageView* pPageView,
 bool CPDFXFA_WidgetHandler::OnMouseWheel(CPDFSDK_PageView* pPageView,
                                          ObservedPtr<CPDFSDK_Annot>* pAnnot,
                                          uint32_t nFlags,
-                                         short zDelta,
-                                         const CFX_PointF& point) {
+                                         const CFX_PointF& point,
+                                         const CFX_Vector& delta) {
   if (!pPageView)
     return false;
 
@@ -467,7 +476,7 @@ bool CPDFXFA_WidgetHandler::OnMouseWheel(CPDFSDK_PageView* pPageView,
 
   CXFA_FFWidgetHandler* pWidgetHandler = GetXFAFFWidgetHandler(pXFAWidget);
   return pWidgetHandler->OnMouseWheel(pXFAWidget->GetXFAFFWidget(),
-                                      GetFWLFlags(nFlags), zDelta, point);
+                                      GetFWLFlags(nFlags), point, delta);
 }
 
 bool CPDFXFA_WidgetHandler::OnRButtonDown(CPDFSDK_PageView* pPageView,
@@ -601,16 +610,10 @@ bool CPDFXFA_WidgetHandler::OnXFAChangedFocus(
   if (!pXFAPageView)
     return true;
 
-  ObservedPtr<CXFA_FFPageView> pObservedXFAPageView(pXFAPageView);
-  bool bRet = pXFAPageView->GetDocView()->SetFocus(hWidget);
+  if (pXFAPageView->GetDocView()->SetFocus(hWidget))
+    return true;
 
-  // Check |pXFAPageView| again because |SetFocus| can trigger JS to destroy it.
-  if (pObservedXFAPageView &&
-      pXFAPageView->GetDocView()->GetFocusWidget() == hWidget) {
-    bRet = true;
-  }
-
-  return bRet;
+  return pXFAPageView->GetDocView()->GetFocusWidget() == hWidget;
 }
 
 bool CPDFXFA_WidgetHandler::SetIndexSelected(ObservedPtr<CPDFSDK_Annot>* pAnnot,

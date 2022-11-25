@@ -21,7 +21,9 @@
 #include "content/public/common/referrer.h"
 #include "mojo/public/cpp/system/simple_watcher.h"
 #include "net/base/ip_endpoint.h"
+#include "net/base/isolation_info.h"
 #include "net/base/load_flags.h"
+#include "net/cookies/site_for_cookies.h"
 #include "net/http/http_response_info.h"
 #include "services/network/public/cpp/net_adapters.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -104,9 +106,10 @@ ServiceWorkerSingleScriptUpdateChecker::ServiceWorkerSingleScriptUpdateChecker(
     ServiceWorkerUpdatedScriptLoader::BrowserContextGetter
         browser_context_getter,
     scoped_refptr<network::SharedURLLoaderFactory> loader_factory,
-    std::unique_ptr<ServiceWorkerResponseReader> compare_reader,
-    std::unique_ptr<ServiceWorkerResponseReader> copy_reader,
-    std::unique_ptr<ServiceWorkerResponseWriter> writer,
+    mojo::Remote<storage::mojom::ServiceWorkerResourceReader> compare_reader,
+    mojo::Remote<storage::mojom::ServiceWorkerResourceReader> copy_reader,
+    mojo::Remote<storage::mojom::ServiceWorkerResourceWriter> writer,
+    int64_t writer_resource_id,
     ResultCallback callback)
     : script_url_(script_url),
       is_main_script_(is_main_script),
@@ -154,8 +157,9 @@ ServiceWorkerSingleScriptUpdateChecker::ServiceWorkerSingleScriptUpdateChecker(
   // This key is used to isolate requests from different contexts in accessing
   // shared network resources like the http cache.
   resource_request.trusted_params = network::ResourceRequest::TrustedParams();
-  resource_request.trusted_params->network_isolation_key =
-      net::NetworkIsolationKey(origin, origin);
+  resource_request.trusted_params->isolation_info = net::IsolationInfo::Create(
+      net::IsolationInfo::RedirectMode::kUpdateNothing, origin, origin,
+      net::SiteForCookies::FromOrigin(origin));
 
   if (is_main_script_) {
     // Set the "Service-Worker" header for the main script request:
@@ -169,19 +173,15 @@ ServiceWorkerSingleScriptUpdateChecker::ServiceWorkerSingleScriptUpdateChecker(
     resource_request.credentials_mode =
         network::mojom::CredentialsMode::kSameOrigin;
 
-    // |fetch_request_context_type| and |resource_type| roughly correspond to
-    // the request's |destination| in the Fetch spec.
-    // The destination is "serviceworker" for the main script.
+    // The request's destination is "serviceworker" for the main script.
     // https://w3c.github.io/ServiceWorker/#update-algorithm
-    resource_request.fetch_request_context_type =
-        static_cast<int>(blink::mojom::RequestContextType::SERVICE_WORKER);
     resource_request.destination =
         network::mojom::RequestDestination::kServiceWorker;
     resource_request.resource_type =
         static_cast<int>(blink::mojom::ResourceType::kServiceWorker);
 
     // Request SSLInfo. It will be persisted in service worker storage and
-    // may be used by ServiceWorkerNavigationLoader for navigations handled
+    // may be used by ServiceWorkerMainResourceLoader for navigations handled
     // by this service worker.
     options |= network::mojom::kURLLoadOptionSendSSLInfoWithResponse;
   } else {
@@ -191,12 +191,8 @@ ServiceWorkerSingleScriptUpdateChecker::ServiceWorkerSingleScriptUpdateChecker(
     // https://html.spec.whatwg.org/C/#fetch-a-classic-worker-imported-script
     DCHECK_EQ(network::mojom::RequestMode::kNoCors, resource_request.mode);
 
-    // |fetch_request_context_type| and |resource_type| roughly correspond to
-    // the request's |destination| in the Fetch spec.
-    // The destination is "script" for the imported script.
+    // The request's destination is "script" for the imported script.
     // https://w3c.github.io/ServiceWorker/#update-algorithm
-    resource_request.fetch_request_context_type =
-        static_cast<int>(blink::mojom::RequestContextType::SCRIPT);
     resource_request.destination = network::mojom::RequestDestination::kScript;
     resource_request.resource_type =
         static_cast<int>(blink::mojom::ResourceType::kScript);
@@ -219,16 +215,14 @@ ServiceWorkerSingleScriptUpdateChecker::ServiceWorkerSingleScriptUpdateChecker(
 
   cache_writer_ = ServiceWorkerCacheWriter::CreateForComparison(
       std::move(compare_reader), std::move(copy_reader), std::move(writer),
+      writer_resource_id,
       /*pause_when_not_identical=*/true);
 
-  // Get a unique request id across browser-initiated navigations and navigation
-  // preloads.
-  const int request_id = GlobalRequestID::MakeBrowserInitiated().request_id;
   network_loader_ = ServiceWorkerUpdatedScriptLoader::
       ThrottlingURLLoaderCoreWrapper::CreateLoaderAndStart(
           loader_factory->Clone(), browser_context_getter, MSG_ROUTING_NONE,
-          request_id, options, resource_request,
-          network_client_receiver_.BindNewPipeAndPassRemote(),
+          GlobalRequestID::MakeBrowserInitiated().request_id, options,
+          resource_request, network_client_receiver_.BindNewPipeAndPassRemote(),
           kUpdateCheckTrafficAnnotation);
   DCHECK_EQ(network_loader_state_,
             ServiceWorkerUpdatedScriptLoader::LoaderState::kNotStarted);
@@ -253,11 +247,9 @@ void ServiceWorkerSingleScriptUpdateChecker::OnReceiveResponse(
   blink::ServiceWorkerStatusCode service_worker_status;
   network::URLLoaderCompletionStatus completion_status;
   std::string error_message;
-  std::unique_ptr<net::HttpResponseInfo> response_info =
-      service_worker_loader_helpers::CreateHttpResponseInfoAndCheckHeaders(
+  if (!service_worker_loader_helpers::CheckResponseHead(
           *response_head, &service_worker_status, &completion_status,
-          &error_message);
-  if (!response_info) {
+          &error_message)) {
     DCHECK_NE(net::OK, completion_status.error_code);
     Fail(service_worker_status, error_message, completion_status);
     return;
@@ -278,15 +270,19 @@ void ServiceWorkerSingleScriptUpdateChecker::OnReceiveResponse(
            network::URLLoaderCompletionStatus(net::ERR_INSECURE_RESPONSE));
       return;
     }
-    cross_origin_embedder_policy_ = response_head->cross_origin_embedder_policy;
+    // TODO(arthursonzogni): Ensure CrossOriginEmbedderPolicy to be available
+    // here, not matter the URLLoader used to load it.
+    cross_origin_embedder_policy_ =
+        response_head->parsed_headers
+            ? response_head->parsed_headers->cross_origin_embedder_policy
+            : network::CrossOriginEmbedderPolicy();
   }
 
   network_loader_state_ =
       ServiceWorkerUpdatedScriptLoader::LoaderState::kWaitingForBody;
   network_accessed_ = response_head->network_accessed;
 
-  WriteHeaders(
-      base::MakeRefCounted<HttpResponseInfoIOBuffer>(std::move(response_info)));
+  WriteHeaders(std::move(response_head));
 }
 
 void ServiceWorkerSingleScriptUpdateChecker::OnReceiveRedirect(
@@ -428,7 +424,7 @@ const char* ServiceWorkerSingleScriptUpdateChecker::ResultToString(
 //------------------------------------------------------------------------------
 
 void ServiceWorkerSingleScriptUpdateChecker::WriteHeaders(
-    scoped_refptr<HttpResponseInfoIOBuffer> info_buffer) {
+    network::mojom::URLResponseHeadPtr response_head) {
   TRACE_EVENT_WITH_FLOW0(
       "ServiceWorker", "ServiceWorkerSingleScriptUpdateChecker::WriteHeaders",
       this, TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
@@ -441,7 +437,7 @@ void ServiceWorkerSingleScriptUpdateChecker::WriteHeaders(
   // Pass the header to the cache_writer_. This is written to the storage when
   // the body had changes.
   net::Error error = cache_writer_->MaybeWriteHeaders(
-      info_buffer.get(),
+      std::move(response_head),
       base::BindOnce(
           &ServiceWorkerSingleScriptUpdateChecker::OnWriteHeadersComplete,
           weak_factory_.GetWeakPtr()));

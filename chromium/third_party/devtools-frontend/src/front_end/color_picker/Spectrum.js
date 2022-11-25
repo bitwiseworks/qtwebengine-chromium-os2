@@ -25,6 +25,8 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
 
 import * as Common from '../common/common.js';
 import * as Host from '../host/host.js';
@@ -110,6 +112,7 @@ export class Spectrum extends UI.Widget.VBox {
       inputValue.addEventListener('keydown', this._inputChanged.bind(this), false);
       inputValue.addEventListener('input', this._inputChanged.bind(this), false);
       inputValue.addEventListener('mousewheel', this._inputChanged.bind(this), false);
+      inputValue.addEventListener('paste', this._pasted.bind(this), false);
     }
 
     this._textLabels = this._displayContainer.createChild('div', 'spectrum-text-label');
@@ -123,6 +126,7 @@ export class Spectrum extends UI.Widget.VBox {
     this._hexValue.addEventListener('keydown', this._inputChanged.bind(this), false);
     this._hexValue.addEventListener('input', this._inputChanged.bind(this), false);
     this._hexValue.addEventListener('mousewheel', this._inputChanged.bind(this), false);
+    this._hexValue.addEventListener('paste', this._pasted.bind(this), false);
 
     const label = this._hexContainer.createChild('div', 'spectrum-text-label');
     label.textContent = ls`HEX`;
@@ -154,7 +158,7 @@ export class Spectrum extends UI.Widget.VBox {
       this._contrastOverlay = new ContrastOverlay(this._contrastInfo, this._colorElement);
       this._contrastDetails = new ContrastDetails(
           this._contrastInfo, this.contentElement, this._toggleColorPicker.bind(this),
-          this._contrastPanelExpanded.bind(this));
+          this._contrastPanelExpanded.bind(this), this.colorSelected.bind(this));
 
       this._contrastDetailsBackgroundColorPickedToggledBound =
           this._contrastDetailsBackgroundColorPickedToggled.bind(this);
@@ -414,7 +418,8 @@ export class Spectrum extends UI.Widget.VBox {
    * @return {!Element}
    */
   _createPaletteColor(colorText, colorName, animationDelay) {
-    const element = createElementWithClass('div', 'spectrum-palette-color');
+    const element = document.createElement('div');
+    element.classList.add('spectrum-palette-color');
     element.style.background =
         Platform.StringUtilities.sprintf('linear-gradient(%s, %s), url(Images/checker.png)', colorText, colorText);
     if (animationDelay) {
@@ -678,7 +683,8 @@ export class Spectrum extends UI.Widget.VBox {
    */
   _createPreviewPaletteElement(palette) {
     const colorsPerPreviewRow = 5;
-    const previewElement = createElementWithClass('div', 'palette-preview');
+    const previewElement = document.createElement('div');
+    previewElement.classList.add('palette-preview');
     UI.ARIAUtils.markAsButton(previewElement);
     previewElement.tabIndex = 0;
     const titleElement = previewElement.createChild('div', 'palette-preview-title');
@@ -864,6 +870,13 @@ export class Spectrum extends UI.Widget.VBox {
   }
 
   /**
+   * @param {!Common.Color.Color} color
+   */
+  colorSelected(color) {
+    this._innerSetColor(color.hsva(), '', undefined /* colorName */, undefined /* colorFormat */, ChangeSource.Other);
+  }
+
+  /**
    * @param {!Array<number>|undefined} hsva
    * @param {string|undefined} colorString
    * @param {string|undefined} colorName
@@ -931,6 +944,7 @@ export class Spectrum extends UI.Widget.VBox {
     }
     const cf = Common.Color.Format;
     const color = this._color();
+
     let colorString = color.asString(this._colorFormat);
     if (colorString) {
       return colorString;
@@ -1038,6 +1052,23 @@ export class Spectrum extends UI.Widget.VBox {
   }
 
   /**
+   * If the pasted input is parsable as a color, applies it converting to the current user format
+   * @param {!Event} event
+   */
+  _pasted(/** @type {!ClipboardEvent} */ event) {
+    if (!event.clipboardData) {
+      return;
+    }
+    const text = event.clipboardData.getData('text');
+    const color = Common.Color.Color.parse(text);
+    if (!color) {
+      return;
+    }
+    this._innerSetColor(color.hsva(), text, undefined /* colorName */, undefined /* colorFormat */, ChangeSource.Other);
+    event.preventDefault();
+  }
+
+  /**
    * @param {!Event} event
    */
   _inputChanged(event) {
@@ -1063,9 +1094,10 @@ export class Spectrum extends UI.Widget.VBox {
     if (this._colorFormat === cf.Nickname || this._colorFormat === cf.HEX || this._colorFormat === cf.ShortHEX) {
       colorString = this._hexValue.value;
     } else {
-      const format = this._colorFormat === cf.RGB ? 'rgba' : 'hsla';
-      const values = this._textValues.map(elementValue).join(', ');
-      colorString = Platform.StringUtilities.sprintf('%s(%s)', format, values);
+      const format = this._colorFormat === cf.RGB ? 'rgb' : 'hsl';
+      const values = this._textValues.slice(0, -1).map(elementValue).join(' ');
+      const alpha = this._textValues.slice(-1).map(elementValue).join(' ');
+      colorString = Platform.StringUtilities.sprintf('%s(%s)', format, [values, alpha].join(' / '));
     }
 
     const color = Common.Color.Color.parse(colorString);

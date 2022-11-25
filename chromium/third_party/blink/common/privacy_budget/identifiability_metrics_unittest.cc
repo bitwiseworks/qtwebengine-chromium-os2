@@ -4,39 +4,41 @@
 
 #include "third_party/blink/public/common/privacy_budget/identifiability_metrics.h"
 
-#include "stdint.h"
-
+#include <cstdint>
 #include <vector>
 
+#include "base/strings/string_piece_forward.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace blink {
 
-TEST(IdentifiabilityMetricsTest, DigestForMetrics_Basic) {
+TEST(IdentifiabilityMetricsTest, IdentifiabilityDigestOfBytes_Basic) {
   const uint8_t kInput[] = {1, 2, 3, 4, 5};
-  auto digest = DigestForMetrics(kInput);
+  auto digest = IdentifiabilityDigestOfBytes(kInput);
 
   // Due to our requirement that the digest be stable and persistable, this test
   // should always pass once the code reaches the stable branch.
-  EXPECT_EQ(UINT64_C(238255523), digest);
+  EXPECT_EQ(UINT64_C(0x7cd845f1db5ad659), digest);
 }
 
-TEST(IdentifiabilityMetricsTest, DigestForMetrics_Padding) {
+TEST(IdentifiabilityMetricsTest, IdentifiabilityDigestOfBytes_Padding) {
   const uint8_t kTwoBytes[] = {1, 2};
   const std::vector<uint8_t> kLong(16 * 1024, 'x');
 
   // Ideally we should be using all 64-bits or at least the 56 LSBs.
-  EXPECT_EQ(UINT64_C(2790220116), DigestForMetrics(kTwoBytes));
-  EXPECT_EQ(UINT64_C(2857827930), DigestForMetrics(kLong));
+  EXPECT_EQ(UINT64_C(0xb74c74c9fcf0505a),
+            IdentifiabilityDigestOfBytes(kTwoBytes));
+  EXPECT_EQ(UINT64_C(0x76b3567105dc5253), IdentifiabilityDigestOfBytes(kLong));
 }
 
-TEST(IdentifiabilityMetricsTest, DigestForMetrics_EdgeCases) {
+TEST(IdentifiabilityMetricsTest, IdentifiabilityDigestOfBytes_EdgeCases) {
   const std::vector<uint8_t> kEmpty;
   const uint8_t kOneByte[] = {1};
 
   // As before, these tests should always pass.
-  EXPECT_EQ(0x0u, DigestForMetrics(kEmpty));
-  EXPECT_EQ(UINT64_C(0x9e76b331), DigestForMetrics(kOneByte));
+  EXPECT_EQ(UINT64_C(0x9ae16a3b2f90404f), IdentifiabilityDigestOfBytes(kEmpty));
+  EXPECT_EQ(UINT64_C(0x6209312a69a56947),
+            IdentifiabilityDigestOfBytes(kOneByte));
 }
 
 }  // namespace blink

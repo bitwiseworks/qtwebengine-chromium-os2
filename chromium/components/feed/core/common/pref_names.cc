@@ -4,6 +4,8 @@
 
 #include "components/feed/core/common/pref_names.h"
 
+#include <string>
+
 #include "components/feed/core/common/user_classifier.h"
 #include "components/prefs/pref_registry_simple.h"
 
@@ -31,10 +33,19 @@ const char kUserClassifierLastTimeToUseSuggestions[] =
 const char kHostOverrideHost[] = "feed.host_override.host";
 const char kHostOverrideBlessNonce[] = "feed.host_override.bless_nonce";
 
+const char kHasReachedClickAndViewActionsUploadConditions[] =
+    "feed.clicks_and_views_upload_conditions_reached";
+const char kLastFetchHadNoticeCard[] = "feed.last_fetch_had_notice_card";
+
 const char kThrottlerRequestCountListPrefName[] =
     "feedv2.request_throttler.request_counts";
 const char kThrottlerLastRequestTime[] =
     "feedv2.request_throttler.last_request_time";
+const char kDebugStreamData[] = "feedv2.debug_stream_data";
+const char kRequestSchedule[] = "feedv2.request_schedule";
+const char kMetricsData[] = "feedv2.metrics_data";
+const char kClientInstanceId[] = "feedv2.client_instance_id";
+const char kActionsEndpointOverride[] = "feedv2.actions_endpoint_override";
 
 }  // namespace prefs
 
@@ -49,6 +60,14 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
   registry->RegisterListPref(feed::prefs::kThrottlerRequestCountListPrefName);
   registry->RegisterTimePref(feed::prefs::kThrottlerLastRequestTime,
                              base::Time());
+  registry->RegisterStringPref(feed::prefs::kDebugStreamData, std::string());
+  registry->RegisterDictionaryPref(feed::prefs::kRequestSchedule);
+  registry->RegisterDictionaryPref(feed::prefs::kMetricsData);
+  registry->RegisterStringPref(feed::prefs::kClientInstanceId, "");
+  registry->RegisterStringPref(feed::prefs::kActionsEndpointOverride, "");
+  registry->RegisterBooleanPref(
+      feed::prefs::kHasReachedClickAndViewActionsUploadConditions, false);
+  registry->RegisterBooleanPref(feed::prefs::kLastFetchHadNoticeCard, true);
   UserClassifier::RegisterProfilePrefs(registry);
 }
 

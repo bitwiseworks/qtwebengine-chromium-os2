@@ -29,7 +29,6 @@
 #include <memory>
 
 #include "mojo/public/cpp/bindings/pending_receiver.h"
-#include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/mojom/dom_storage/dom_storage.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/dom_storage/session_storage_namespace.mojom-blink.h"
 #include "third_party/blink/public/mojom/dom_storage/storage_area.mojom-blink-forward.h"
@@ -37,6 +36,8 @@
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/heap/heap_allocator.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_wrapper_mode.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin_hash.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
@@ -68,8 +69,6 @@ class WebViewClient;
 class MODULES_EXPORT StorageNamespace final
     : public GarbageCollected<StorageNamespace>,
       public Supplement<Page> {
-  USING_GARBAGE_COLLECTED_MIXIN(StorageNamespace);
-
  public:
   static const char kSupplementName[];
 
@@ -99,7 +98,7 @@ class MODULES_EXPORT StorageNamespace final
   void AddInspectorStorageAgent(InspectorDOMStorageAgent* agent);
   void RemoveInspectorStorageAgent(InspectorDOMStorageAgent* agent);
 
-  void Trace(Visitor* visitor) override;
+  void Trace(Visitor* visitor) const override;
 
   // Iterates all of the inspector agents and calls
   // |DidDispatchDOMStorageEvent|.
@@ -127,7 +126,11 @@ class MODULES_EXPORT StorageNamespace final
   // Lives globally.
   StorageController* controller_;
   String namespace_id_;
-  mojo::Remote<mojom::blink::SessionStorageNamespace> namespace_;
+  // |StorageNamespace| is a per-Page object and doesn't have any
+  // |ExecutionContext|.
+  HeapMojoRemote<mojom::blink::SessionStorageNamespace,
+                 HeapMojoWrapperMode::kWithoutContextObserver>
+      namespace_{nullptr};
   HashMap<scoped_refptr<const SecurityOrigin>,
           scoped_refptr<CachedStorageArea>,
           SecurityOriginHash>

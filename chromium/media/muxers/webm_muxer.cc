@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "base/bind.h"
+#include "base/logging.h"
 #include "media/base/audio_parameters.h"
 #include "media/base/limits.h"
 #include "media/base/video_frame.h"
@@ -137,12 +138,9 @@ base::Optional<mkvmuxer::Colour> ColorFromColorSpace(
 WebmMuxer::VideoParameters::VideoParameters(
     scoped_refptr<media::VideoFrame> frame)
     : visible_rect_size(frame->visible_rect().size()),
-      frame_rate(0.0),
+      frame_rate(frame->metadata()->frame_rate.value_or(0.0)),
       codec(kUnknownVideoCodec),
-      color_space(frame->ColorSpace()) {
-  ignore_result(frame->metadata()->GetDouble(VideoFrameMetadata::FRAME_RATE,
-                                             &frame_rate));
-}
+      color_space(frame->ColorSpace()) {}
 
 WebmMuxer::VideoParameters::VideoParameters(
     gfx::Size visible_rect_size,
@@ -224,6 +222,7 @@ bool WebmMuxer::OnEncodedVideo(const VideoParameters& params,
     if (first_frame_timestamp_video_.is_null()) {
       // Compensate for time in pause spent before the first frame.
       first_frame_timestamp_video_ = timestamp - total_time_in_pause_;
+      last_frame_timestamp_video_ = first_frame_timestamp_video_;
     }
   }
 
@@ -252,6 +251,7 @@ bool WebmMuxer::OnEncodedAudio(const media::AudioParameters& params,
     if (first_frame_timestamp_audio_.is_null()) {
       // Compensate for time in pause spent before the first frame.
       first_frame_timestamp_audio_ = timestamp - total_time_in_pause_;
+      last_frame_timestamp_audio_ = first_frame_timestamp_audio_;
     }
   }
 
@@ -439,7 +439,6 @@ bool WebmMuxer::FlushNextFrame() {
     force_one_libwebm_error_ = false;
     return false;
   }
-
   DCHECK(frame.data.data());
   bool result =
       frame.alpha_data.empty()

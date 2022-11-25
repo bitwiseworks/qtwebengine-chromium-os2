@@ -18,8 +18,8 @@
 #include "base/test/task_environment.h"
 #include "storage/browser/quota/quota_manager.h"
 #include "storage/browser/quota/quota_temporary_storage_evictor.h"
-#include "storage/browser/test/mock_storage_client.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "url/gurl.h"
 
 using blink::mojom::StorageType;
 
@@ -108,9 +108,9 @@ class MockQuotaEvictionHandler : public QuotaEvictionHandler {
   // Simulates an access to |origin|.  It reorders the internal LRU list.
   // It internally uses AddOrigin().
   void AccessOrigin(const url::Origin& origin) {
-    const auto& found = origins_.find(origin);
-    EXPECT_TRUE(origins_.end() != found);
-    AddOrigin(origin, found->second);
+    const auto& it = origins_.find(origin);
+    EXPECT_TRUE(origins_.end() != it);
+    AddOrigin(origin, it->second);
   }
 
   // Simulates adding or overwriting the |origin| to the internal origin set

@@ -3,10 +3,14 @@
 // found in the LICENSE file.
 
 import 'chrome://resources/mojo/mojo/public/js/mojo_bindings_lite.js';
+import 'chrome://resources/mojo/mojo/public/mojom/base/big_buffer.mojom-lite.js';
+import 'chrome://resources/mojo/mojo/public/mojom/base/string16.mojom-lite.js';
 import 'chrome://resources/mojo/mojo/public/mojom/base/text_direction.mojom-lite.js';
+import 'chrome://resources/mojo/mojo/public/mojom/base/time.mojom-lite.js';
+import 'chrome://resources/mojo/skia/public/mojom/skcolor.mojom-lite.js';
 import 'chrome://resources/mojo/url/mojom/url.mojom-lite.js';
 
-import './skcolor.mojom-lite.js';
+import './omnibox.mojom-lite.js';
 import './new_tab_page.mojom-lite.js';
 
 import {addSingletonGetter} from 'chrome://resources/js/cr.m.js';
@@ -30,6 +34,11 @@ export class BrowserProxy {
     window.location.href = href;
   }
 
+  /** @param {string} url */
+  open(url) {
+    window.open(url, '_blank');
+  }
+
   /**
    * @param {function()} callback
    * @param {number} duration
@@ -50,11 +59,11 @@ export class BrowserProxy {
   }
 
   /**
-   * @param {string} path
+   * @param {string} src
    * @return {string}
    */
-  createUntrustedIframeSrc(path) {
-    return `chrome-untrusted://new-tab-page/${path}`;
+  createIframeSrc(src) {
+    return src;
   }
 
   /**
@@ -63,6 +72,31 @@ export class BrowserProxy {
    */
   matchMedia(query) {
     return window.matchMedia(query);
+  }
+
+  /** @return {number} */
+  now() {
+    return Date.now();
+  }
+
+  /**
+   * Returns promise that resolves when lazy rendering should be started.
+   * @return {!Promise}
+   */
+  waitForLazyRender() {
+    return new Promise((resolve, reject) => {
+      setTimeout(resolve, 50);
+    });
+  }
+
+  /**
+   * Posts |message| on the content window of |iframe| at |targetOrigin|.
+   * @param {!HTMLIFrameElement} iframe
+   * @param {*} message
+   * @param {string} targetOrigin
+   */
+  postMessage(iframe, message, targetOrigin) {
+    iframe.contentWindow.postMessage(message, targetOrigin);
   }
 }
 

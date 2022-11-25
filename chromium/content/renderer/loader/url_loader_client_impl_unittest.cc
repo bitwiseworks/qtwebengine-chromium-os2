@@ -7,7 +7,6 @@
 #include <vector>
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
-#include "content/renderer/loader/navigation_response_override_parameters.h"
 #include "content/renderer/loader/resource_dispatcher.h"
 #include "content/renderer/loader/test_request_peer.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -52,20 +51,14 @@ class URLLoaderClientImplTest : public ::testing::Test,
  protected:
   URLLoaderClientImplTest() : dispatcher_(new ResourceDispatcher()) {
     auto request = std::make_unique<network::ResourceRequest>();
-    // Set request context type to fetch so that ResourceDispatcher doesn't
-    // install MimeSniffingThrottle, which makes URLLoaderThrottleLoader
-    // defer the request.
-    request->fetch_request_context_type =
-        static_cast<int>(blink::mojom::RequestContextType::FETCH);
     request_id_ = dispatcher_->StartAsync(
-        std::move(request), 0,
+        std::move(request), 0 /* loader_option */,
         blink::scheduler::GetSingleThreadTaskRunnerForTesting(),
         TRAFFIC_ANNOTATION_FOR_TESTS, false,
         std::make_unique<TestRequestPeer>(dispatcher_.get(),
                                           &request_peer_context_),
         base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(this),
-        std::vector<std::unique_ptr<blink::URLLoaderThrottle>>(),
-        nullptr /* navigation_response_override_params */);
+        std::vector<std::unique_ptr<blink::URLLoaderThrottle>>());
     request_peer_context_.request_id = request_id_;
 
     base::RunLoop().RunUntilIdle();

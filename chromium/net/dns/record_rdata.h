@@ -11,14 +11,16 @@
 #include <string>
 #include <vector>
 
+#include "base/check_op.h"
 #include "base/compiler_specific.h"
-#include "base/logging.h"
 #include "base/macros.h"
+#include "base/optional.h"
 #include "base/strings/string_piece.h"
 #include "net/base/io_buffer.h"
 #include "net/base/ip_address.h"
 #include "net/base/net_export.h"
 #include "net/dns/public/dns_protocol.h"
+#include "third_party/boringssl/src/include/openssl/sha.h"
 
 namespace net {
 
@@ -267,47 +269,79 @@ class NET_EXPORT_PRIVATE OptRecordRdata : public RecordRdata {
   DISALLOW_COPY_AND_ASSIGN(OptRecordRdata);
 };
 
-// TLS 1.3 Encrypted Server Name Indication
-// record format (https://tools.ietf.org/id/draft-ietf-tls-esni-04.txt)
-// struct {
-//   ESNIKeys esni_keys;  // see spec
-//   Extension dns_extensions<0..2 ^ 16 - 1>;
-// } ESNIRecord;
-class NET_EXPORT EsniRecordRdata : public RecordRdata {
+// This class parses and serializes the INTEGRITY DNS record.
+//
+// This RR was invented for a preliminary HTTPSSVC experiment. See the public
+// design doc:
+// https://docs.google.com/document/d/14eCqVyT_3MSj7ydqNFl1Yl0yg1fs6g24qmYUUdi5V-k/edit?usp=sharing
+//
+// The wire format of INTEGRITY records consists of a U16-prefixed nonce
+// followed by |kDigestLen| bytes, which should be equal to the SHA256 hash of
+// the nonce contents.
+class NET_EXPORT IntegrityRecordRdata : public RecordRdata {
  public:
-  static constexpr uint16_t kType = dns_protocol::kExperimentalTypeEsniDraft4;
-  static constexpr uint16_t kAddressSetExtensionType = 0x1001u;
+  static constexpr uint16_t kType = dns_protocol::kExperimentalTypeIntegrity;
 
-  ~EsniRecordRdata() override;
+  static constexpr size_t kDigestLen = SHA256_DIGEST_LENGTH;
 
-  // Parsing an ESNIRecord Rdata succeeds when all of the following hold:
-  // 1. The esni_keys field is well-formed.
-  // 2. The dns_extensions field is well-formed and, additionally, valid
-  // in the sense that its enum members have values allowed by the spec.
-  // 3. The Rdata field contains no data beyond the ESNIKeys and, optionally,
-  // one DNS extension of type address_set.
-  static std::unique_ptr<EsniRecordRdata> Create(base::StringPiece data,
-                                                 const DnsRecordParser& parser);
+  using Nonce = std::vector<uint8_t>;
+  using Digest = std::array<uint8_t, kDigestLen>;
 
-  // Two EsniRecordRdatas compare equal if their ESNIKeys fields agree
-  // and their address sets contain the same addresses in the same order.
+  IntegrityRecordRdata() = delete;
+  // Constructs a new record, computing the digest value from |nonce|.
+  explicit IntegrityRecordRdata(Nonce nonce);
+  IntegrityRecordRdata(IntegrityRecordRdata&&);
+  IntegrityRecordRdata(const IntegrityRecordRdata&);
+  ~IntegrityRecordRdata() override;
+
+  IntegrityRecordRdata& operator=(const IntegrityRecordRdata&) = default;
+  IntegrityRecordRdata& operator=(IntegrityRecordRdata&&) = default;
+
+  // RecordRdata:
   bool IsEqual(const RecordRdata* other) const override;
   uint16_t Type() const override;
 
-  // Returns the ESNIKeys field of the record. This is an opaque bitstring
-  // passed to the SSL library.
-  base::StringPiece esni_keys() const { return esni_keys_; }
+  // Attempts to parse an INTEGRITY record from |data|. Never returns nullptr.
+  // The caller can check the intactness of the record with |IsIntact()|.
+  static std::unique_ptr<IntegrityRecordRdata> Create(
+      const base::StringPiece& data);
 
-  // Returns the IP addresses parsed from the address_set DNS extension, if any.
-  const std::vector<IPAddress>& addresses() const { return addresses_; }
+  // Generate an integrity record with a random nonce and corresponding digest.
+  // Postcondition: |IsIntact()| is true.
+  static IntegrityRecordRdata Random();
+
+  // Serialize |this| using the INTEGRITY wire format. Returns |base::nullopt|
+  // when |!IsIntact()|.
+  base::Optional<std::vector<uint8_t>> Serialize() const;
+
+  // Precondition: |IsIntact()|.
+  const Nonce& nonce() const {
+    CHECK(is_intact_);
+    return nonce_;
+  }
+
+  // Precondition: |IsIntact()|.
+  const Digest& digest() const {
+    CHECK(is_intact_);
+    return digest_;
+  }
+
+  // To be considered intact, this record must have parsed successfully (if
+  // parsed by |Create()|) and the digest must match the hash of the nonce.
+  bool IsIntact() const { return is_intact_; }
 
  private:
-  EsniRecordRdata();
+  IntegrityRecordRdata(Nonce nonce_, Digest digest_, size_t rdata_len);
 
-  std::string esni_keys_;
-  std::vector<IPAddress> addresses_;
+  static Digest Hash(const Nonce& nonce);
 
-  DISALLOW_COPY_AND_ASSIGN(EsniRecordRdata);
+  // Returns the exact number of bytes a record constructed from |nonce| would
+  // occupy when serialized.
+  static size_t LengthForSerialization(const Nonce& nonce);
+
+  Nonce nonce_;
+  Digest digest_;
+  bool is_intact_;
 };
 
 }  // namespace net

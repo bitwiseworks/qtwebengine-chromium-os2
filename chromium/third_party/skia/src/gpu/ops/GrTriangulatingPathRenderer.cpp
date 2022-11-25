@@ -11,19 +11,19 @@
 #include "src/core/SkGeometry.h"
 #include "src/gpu/GrAuditTrail.h"
 #include "src/gpu/GrCaps.h"
-#include "src/gpu/GrClip.h"
 #include "src/gpu/GrDefaultGeoProcFactory.h"
 #include "src/gpu/GrDrawOpTest.h"
 #include "src/gpu/GrEagerVertexAllocator.h"
 #include "src/gpu/GrOpFlushState.h"
 #include "src/gpu/GrProgramInfo.h"
+#include "src/gpu/GrRenderTargetContext.h"
 #include "src/gpu/GrResourceCache.h"
 #include "src/gpu/GrResourceProvider.h"
 #include "src/gpu/GrSimpleMesh.h"
 #include "src/gpu/GrStyle.h"
 #include "src/gpu/GrTriangulator.h"
 #include "src/gpu/geometry/GrPathUtils.h"
-#include "src/gpu/geometry/GrShape.h"
+#include "src/gpu/geometry/GrStyledShape.h"
 #include "src/gpu/ops/GrMeshDrawOp.h"
 #include "src/gpu/ops/GrSimpleMeshDrawOpHelperWithStencil.h"
 
@@ -89,7 +89,7 @@ public:
         size_t size = eagerCount * stride;
         fVertexBuffer = fResourceProvider->createBuffer(size, GrGpuBufferType::kVertex,
                                                         kStatic_GrAccessPattern);
-        if (!fVertexBuffer.get()) {
+        if (!fVertexBuffer) {
             return nullptr;
         }
         if (fCanMapVB) {
@@ -170,7 +170,7 @@ public:
 
     static std::unique_ptr<GrDrawOp> Make(GrRecordingContext* context,
                                           GrPaint&& paint,
-                                          const GrShape& shape,
+                                          const GrStyledShape& shape,
                                           const SkMatrix& viewMatrix,
                                           SkIRect devClipBounds,
                                           GrAAType aaType,
@@ -190,19 +190,9 @@ public:
         }
     }
 
-#ifdef SK_DEBUG
-    SkString dumpInfo() const override {
-        SkString string;
-        string.appendf("Color 0x%08x, aa: %d\n", fColor.toBytes_RGBA(), fAntiAlias);
-        string += fHelper.dumpInfo();
-        string += INHERITED::dumpInfo();
-        return string;
-    }
-#endif
-
     TriangulatingPathOp(Helper::MakeArgs helperArgs,
                         const SkPMColor4f& color,
-                        const GrShape& shape,
+                        const GrStyledShape& shape,
                         const SkMatrix& viewMatrix,
                         const SkIRect& devClipBounds,
                         GrAAType aaType,
@@ -280,24 +270,25 @@ private:
             return;
         }
         vmi.mapRect(&clipBounds);
-        bool isLinear;
+        int numCountedCurves;
         bool canMapVB = GrCaps::kNone_MapFlags != target->caps().mapBufferFlags();
         StaticVertexAllocator allocator(rp, canMapVB);
-        int count = GrTriangulator::PathToTriangles(getPath(), tol, clipBounds, &allocator,
-                                                    GrTriangulator::Mode::kNormal, &isLinear);
-        if (count == 0) {
+        int vertexCount = GrTriangulator::PathToTriangles(getPath(), tol, clipBounds, &allocator,
+                                                          GrTriangulator::Mode::kNormal,
+                                                          &numCountedCurves);
+        if (vertexCount == 0) {
             return;
         }
         sk_sp<GrGpuBuffer> vb = allocator.detachVertexBuffer();
         TessInfo info;
-        info.fTolerance = isLinear ? 0 : tol;
-        info.fCount = count;
+        info.fTolerance = (numCountedCurves == 0) ? 0 : tol;
+        info.fCount = vertexCount;
         fShape.addGenIDChangeListener(
                 sk_make_sp<UniqueKeyInvalidator>(key, target->contextUniqueID()));
         key.setCustomData(SkData::MakeWithCopy(&info, sizeof(info)));
         rp->assignUniqueKeyToResource(key, vb.get());
 
-        this->createMesh(target, std::move(vb), 0, count);
+        this->createMesh(target, std::move(vb), 0, vertexCount);
     }
 
     void drawAA(Target* target) {
@@ -311,23 +302,25 @@ private:
         SkScalar tol = GrPathUtils::kDefaultTolerance;
         sk_sp<const GrBuffer> vertexBuffer;
         int firstVertex;
-        bool isLinear;
+        int numCountedCurves;
         GrEagerDynamicVertexAllocator allocator(target, &vertexBuffer, &firstVertex);
-        int count = GrTriangulator::PathToTriangles(path, tol, clipBounds, &allocator,
-                                                    GrTriangulator::Mode::kEdgeAntialias, &isLinear);
-        if (count == 0) {
+        int vertexCount = GrTriangulator::PathToTriangles(path, tol, clipBounds, &allocator,
+                                                          GrTriangulator::Mode::kEdgeAntialias,
+                                                          &numCountedCurves);
+        if (vertexCount == 0) {
             return;
         }
-        this->createMesh(target, std::move(vertexBuffer), firstVertex, count);
+        this->createMesh(target, std::move(vertexBuffer), firstVertex, vertexCount);
     }
 
     GrProgramInfo* programInfo() override { return fProgramInfo; }
 
     void onCreateProgramInfo(const GrCaps* caps,
                              SkArenaAlloc* arena,
-                             const GrSurfaceProxyView* outputView,
+                             const GrSurfaceProxyView* writeView,
                              GrAppliedClip&& appliedClip,
-                             const GrXferProcessor::DstProxyView& dstProxyView) override {
+                             const GrXferProcessor::DstProxyView& dstProxyView,
+                             GrXferBarrierFlags renderPassXferBarriers) override {
         GrGeometryProcessor* gp;
         {
             using namespace GrDefaultGeoProcFactory;
@@ -367,9 +360,10 @@ private:
         GrPrimitiveType primitiveType = TRIANGULATOR_WIREFRAME ? GrPrimitiveType::kLines
                                                                : GrPrimitiveType::kTriangles;
 
-        fProgramInfo =  fHelper.createProgramInfoWithStencil(caps, arena, outputView,
+        fProgramInfo =  fHelper.createProgramInfoWithStencil(caps, arena, writeView,
                                                              std::move(appliedClip), dstProxyView,
-                                                             gp, primitiveType);
+                                                             gp, primitiveType,
+                                                             renderPassXferBarriers);
     }
 
     void onPrepareDraws(Target* target) override {
@@ -399,9 +393,16 @@ private:
         flushState->drawMesh(*fMesh);
     }
 
+#if GR_TEST_UTILS
+    SkString onDumpInfo() const override {
+        return SkStringPrintf("Color 0x%08x, aa: %d\n%s",
+                              fColor.toBytes_RGBA(), fAntiAlias, fHelper.dumpInfo().c_str());
+    }
+#endif
+
     Helper         fHelper;
     SkPMColor4f    fColor;
-    GrShape        fShape;
+    GrStyledShape  fShape;
     SkMatrix       fViewMatrix;
     SkIRect        fDevClipBounds;
     bool           fAntiAlias;
@@ -409,7 +410,7 @@ private:
     GrSimpleMesh*  fMesh = nullptr;
     GrProgramInfo* fProgramInfo = nullptr;
 
-    typedef GrMeshDrawOp INHERITED;
+    using INHERITED = GrMeshDrawOp;
 };
 
 }  // anonymous namespace
@@ -417,14 +418,11 @@ private:
 bool GrTriangulatingPathRenderer::onDrawPath(const DrawPathArgs& args) {
     GR_AUDIT_TRAIL_AUTO_FRAME(args.fRenderTargetContext->auditTrail(),
                               "GrTriangulatingPathRenderer::onDrawPath");
-    SkIRect clipBoundsI;
-    args.fClip->getConservativeBounds(args.fRenderTargetContext->width(),
-                                      args.fRenderTargetContext->height(),
-                                      &clipBoundsI);
+
     std::unique_ptr<GrDrawOp> op = TriangulatingPathOp::Make(
-            args.fContext, std::move(args.fPaint), *args.fShape, *args.fViewMatrix, clipBoundsI,
-            args.fAAType, args.fUserStencilSettings);
-    args.fRenderTargetContext->addDrawOp(*args.fClip, std::move(op));
+            args.fContext, std::move(args.fPaint), *args.fShape, *args.fViewMatrix,
+            *args.fClipConservativeBounds, args.fAAType, args.fUserStencilSettings);
+    args.fRenderTargetContext->addDrawOp(args.fClip, std::move(op));
     return true;
 }
 
@@ -434,7 +432,7 @@ bool GrTriangulatingPathRenderer::onDrawPath(const DrawPathArgs& args) {
 
 GR_DRAW_OP_TEST_DEFINE(TriangulatingPathOp) {
     SkMatrix viewMatrix = GrTest::TestMatrixInvertible(random);
-    SkPath path = GrTest::TestPath(random);
+    const SkPath& path = GrTest::TestPath(random);
     SkIRect devClipBounds = SkIRect::MakeLTRB(
         random->nextU(), random->nextU(), random->nextU(), random->nextU());
     devClipBounds.sort();
@@ -447,7 +445,7 @@ GR_DRAW_OP_TEST_DEFINE(TriangulatingPathOp) {
     do {
         GrTest::TestStyle(random, &style);
     } while (!style.isSimpleFill());
-    GrShape shape(path, style);
+    GrStyledShape shape(path, style);
     return TriangulatingPathOp::Make(context, std::move(paint), shape, viewMatrix, devClipBounds,
                                      aaType, GrGetRandomStencil(random, context));
 }

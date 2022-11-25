@@ -18,7 +18,7 @@
 
 #include "util/crypto/openssl_util.h"
 #include "util/crypto/sha2.h"
-#include "util/logging.h"
+#include "util/osp_logging.h"
 
 namespace openscreen {
 
@@ -143,19 +143,6 @@ bssl::UniquePtr<EVP_PKEY> GenerateRsaKeyPair(int key_bits) {
 }
 
 ErrorOr<bssl::UniquePtr<X509>> CreateSelfSignedX509Certificate(
-    absl::string_view name,
-    std::chrono::seconds duration,
-    const EVP_PKEY& key_pair,
-    std::chrono::seconds time_since_unix_epoch) {
-  bssl::UniquePtr<X509> certificate = CreateCertificateInternal(
-      name, duration, key_pair, time_since_unix_epoch, false, nullptr, nullptr);
-  if (!certificate) {
-    return Error::Code::kCertificateCreationError;
-  }
-  return certificate;
-}
-
-ErrorOr<bssl::UniquePtr<X509>> CreateSelfSignedX509CertificateForTest(
     absl::string_view name,
     std::chrono::seconds duration,
     const EVP_PKEY& key_pair,

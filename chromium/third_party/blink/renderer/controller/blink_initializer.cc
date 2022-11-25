@@ -43,17 +43,20 @@
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/web/blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_initializer.h"
-#include "third_party/blink/renderer/bindings/modules/v8/v8_context_snapshot_external_references.h"
 #include "third_party/blink/renderer/controller/blink_leak_detector.h"
 #include "third_party/blink/renderer/controller/dev_tools_frontend_impl.h"
+#include "third_party/blink/renderer/controller/performance_manager/renderer_resource_coordinator_impl.h"
+#include "third_party/blink/renderer/controller/performance_manager/v8_detailed_memory_reporter_impl.h"
+#include "third_party/blink/renderer/controller/performance_manager/v8_worker_memory_reporter.h"
 #include "third_party/blink/renderer/core/animation/animation_clock.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/execution_context/agent.h"
 #include "third_party/blink/renderer/core/frame/display_cutout_client_impl.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/platform/bindings/microtask.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
+#include "third_party/blink/renderer/platform/disk_data_allocator.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
-#include "third_party/blink/renderer/platform/instrumentation/histogram.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
@@ -65,14 +68,20 @@
 #include "third_party/blink/renderer/controller/oom_intervention_impl.h"
 #endif
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
 #include "third_party/blink/renderer/controller/memory_usage_monitor_posix.h"
 #endif
 
-#if defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_MACOSX) || \
-    defined(OS_WIN)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_ANDROID) || \
+    defined(OS_MAC) || defined(OS_WIN)
 #include "third_party/blink/renderer/controller/highest_pmf_reporter.h"
 #include "third_party/blink/renderer/controller/user_level_memory_pressure_signal_generator.h"
+#endif
+
+#if defined(USE_BLINK_V8_BINDING_NEW_IDL_INTERFACE)
+#include "third_party/blink/renderer/bindings/core/v8/v8_context_snapshot.h"
+#else
+#include "third_party/blink/renderer/bindings/modules/v8/v8_context_snapshot_external_references.h"
 #endif
 
 namespace blink {
@@ -111,11 +120,6 @@ void InitializeCommon(Platform* platform, mojo::BinderMap* binders) {
     const size_t kMB = 1024 * 1024;
     for (size_t size = 512 * kMB; size >= 32 * kMB; size -= 16 * kMB) {
       if (base::ReserveAddressSpace(size)) {
-        // Report successful reservation.
-        DEFINE_STATIC_LOCAL(CustomCountHistogram, reservation_size_histogram,
-                            ("Renderer4.ReservedMemory", 32, 512, 32));
-        reservation_size_histogram.Count(size / kMB);
-
         break;
       }
     }
@@ -126,8 +130,12 @@ void InitializeCommon(Platform* platform, mojo::BinderMap* binders) {
   // BlinkInitializer::Initialize() must be called before InitializeMainThread
   GetBlinkInitializer().Initialize();
 
+#if defined(USE_BLINK_V8_BINDING_NEW_IDL_INTERFACE)
+  V8Initializer::InitializeMainThread(V8ContextSnapshot::GetReferenceTable());
+#else
   V8Initializer::InitializeMainThread(
       V8ContextSnapshotExternalReferences::GetTable());
+#endif
 
   GetBlinkInitializer().RegisterInterfaces(*binders);
 
@@ -146,8 +154,8 @@ void InitializeCommon(Platform* platform, mojo::BinderMap* binders) {
   CrashMemoryMetricsReporterImpl::Instance();
 #endif
 
-#if defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_MACOSX) || \
-    defined(OS_WIN)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_ANDROID) || \
+    defined(OS_MAC) || defined(OS_WIN)
   // Initialize UserLevelMemoryPressureSignalGenerator so it starts monitoring.
   if (UserLevelMemoryPressureSignalGenerator::Enabled())
     UserLevelMemoryPressureSignalGenerator::Instance();
@@ -156,23 +164,34 @@ void InitializeCommon(Platform* platform, mojo::BinderMap* binders) {
   // navigation.
   HighestPmfReporter::Instance();
 #endif
+
+  // Initialize performance manager.
+  RendererResourceCoordinatorImpl::MaybeInitialize();
+  V8WorkerMemoryReporter::RegisterWebMemoryReporter();
 }
 
 }  // namespace
 
+// Function defined in third_party/blink/public/web/blink.h.
 void Initialize(Platform* platform,
                 mojo::BinderMap* binders,
                 scheduler::WebThreadScheduler* main_thread_scheduler) {
   DCHECK(binders);
-  Platform::Initialize(platform, main_thread_scheduler);
+  Platform::InitializeMainThread(platform, main_thread_scheduler);
   InitializeCommon(platform, binders);
 }
 
+// Function defined in third_party/blink/public/web/blink.h.
 void CreateMainThreadAndInitialize(Platform* platform,
                                    mojo::BinderMap* binders) {
   DCHECK(binders);
   Platform::CreateMainThreadAndInitialize(platform);
   InitializeCommon(platform, binders);
+}
+
+// Function defined in third_party/blink/public/web/blink.h.
+void SetIsCrossOriginIsolated(bool value) {
+  Agent::SetIsCrossOriginIsolated(value);
 }
 
 void BlinkInitializer::RegisterInterfaces(mojo::BinderMap& binders) {
@@ -192,7 +211,8 @@ void BlinkInitializer::RegisterInterfaces(mojo::BinderMap& binders) {
                   &CrashMemoryMetricsReporterImpl::Bind)),
               main_thread->GetTaskRunner());
 #endif
-#if defined(OS_LINUX)
+
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
   binders.Add(ConvertToBaseRepeatingCallback(
                   CrossThreadBindRepeating(&MemoryUsageMonitorPosix::Bind)),
               main_thread->GetTaskRunner());
@@ -200,6 +220,14 @@ void BlinkInitializer::RegisterInterfaces(mojo::BinderMap& binders) {
 
   binders.Add(ConvertToBaseRepeatingCallback(
                   CrossThreadBindRepeating(&BlinkLeakDetector::Create)),
+              main_thread->GetTaskRunner());
+
+  binders.Add(ConvertToBaseRepeatingCallback(
+                  CrossThreadBindRepeating(&DiskDataAllocator::Bind)),
+              main_thread->GetTaskRunner());
+
+  binders.Add(ConvertToBaseRepeatingCallback(CrossThreadBindRepeating(
+                  &V8DetailedMemoryReporterImpl::Create)),
               main_thread->GetTaskRunner());
 }
 

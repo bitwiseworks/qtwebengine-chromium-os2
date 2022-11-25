@@ -18,15 +18,9 @@ cdm::FileIO* CdmAuxiliaryHelper::CreateCdmFileIO(cdm::FileIOClient* client) {
   return nullptr;
 }
 
-#if BUILDFLAG(ENABLE_CDM_PROXY)
-cdm::CdmProxy* CdmAuxiliaryHelper::CreateCdmProxy(cdm::CdmProxyClient* client) {
-  return nullptr;
+url::Origin CdmAuxiliaryHelper::GetCdmOrigin() {
+  return url::Origin();
 }
-
-int CdmAuxiliaryHelper::GetCdmProxyCdmId() {
-  return CdmContext::kInvalidCdmId;
-}
-#endif  // BUILDFLAG(ENABLE_CDM_PROXY)
 
 cdm::Buffer* CdmAuxiliaryHelper::CreateCdmBuffer(size_t capacity) {
   return nullptr;

@@ -10,8 +10,8 @@
 
 #include "base/callback_forward.h"
 #include "content/public/common/content_client.h"
+#include "mojo/public/cpp/bindings/binder_map.h"
 #include "mojo/public/cpp/bindings/generic_pending_receiver.h"
-#include "services/service_manager/public/cpp/binder_map.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 #include "services/service_manager/public/cpp/service.h"
 #include "services/service_manager/public/mojom/service.mojom.h"
@@ -44,6 +44,10 @@ class CONTENT_EXPORT ContentUtilityClient {
   // corresponding UtilityProcessHost.
   virtual void ExposeInterfacesToBrowser(mojo::BinderMap* binders) {}
 
+  // Called on the main thread immediately after the IO thread is created.
+  virtual void PostIOThreadCreated(
+      base::SingleThreadTaskRunner* io_thread_task_runner) {}
+
   // Allows the embedder to handle an incoming service request. If this is
   // called, this utility process was started for the sole purpose of running
   // the service identified by |service_name|.
@@ -56,7 +60,7 @@ class CONTENT_EXPORT ContentUtilityClient {
   // If the embedder returns |false| this process is terminated immediately.
   virtual bool HandleServiceRequest(
       const std::string& service_name,
-      service_manager::mojom::ServiceRequest request);
+      mojo::PendingReceiver<service_manager::mojom::Service> receiver);
 
   // Allows the embedder to handle an incoming service interface request to run
   // a service on the IO thread. Should return a ServiceFactory instance which

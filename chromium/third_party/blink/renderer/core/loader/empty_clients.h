@@ -35,12 +35,13 @@
 #include "cc/paint/paint_canvas.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/common/input/web_menu_source_type.h"
 #include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
+#include "third_party/blink/public/common/widget/screen_info.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/platform.h"
-#include "third_party/blink/public/platform/web_screen_info.h"
 #include "third_party/blink/public/platform/web_spell_check_panel_host_client.h"
 #include "third_party/blink/public/platform/web_url_loader.h"
 #include "third_party/blink/renderer/core/core_export.h"
@@ -82,8 +83,6 @@ class Cursor;
 
 namespace blink {
 
-enum class GlobalObjectReusePolicy;
-
 class CORE_EXPORT EmptyChromeClient : public ChromeClient {
  public:
   ~EmptyChromeClient() override = default;
@@ -93,7 +92,8 @@ class CORE_EXPORT EmptyChromeClient : public ChromeClient {
   void ChromeDestroyed() override {}
   void SetWindowRect(const IntRect&, LocalFrame&) override {}
   IntRect RootWindowRect(LocalFrame&) override { return IntRect(); }
-  void Focus(LocalFrame*) override {}
+  void FocusPage() override {}
+  void DidFocusPage() override {}
   bool CanTakeFocus(mojom::blink::FocusType) override { return false; }
   void TakeFocus(mojom::blink::FocusType) override {}
   void Show(NavigationPolicy) override {}
@@ -110,7 +110,7 @@ class CORE_EXPORT EmptyChromeClient : public ChromeClient {
                             cc::PaintHoldingCommitTrigger) override {}
   void StartDragging(LocalFrame*,
                      const WebDragData&,
-                     WebDragOperationsMask,
+                     DragOperationsMask,
                      const SkBitmap& drag_image,
                      const gfx::Point& drag_image_offset) override {}
   bool AcceptsLoadDrops() const override { return true; }
@@ -134,8 +134,8 @@ class CORE_EXPORT EmptyChromeClient : public ChromeClient {
                              const FrameLoadRequest&,
                              const AtomicString&,
                              const WebWindowFeatures&,
-                             mojom::blink::WebSandboxFlags,
-                             const FeaturePolicy::FeatureState&,
+                             network::mojom::blink::WebSandboxFlags,
+                             const FeaturePolicyFeatureState&,
                              const SessionStorageNamespaceId&) override {
     return nullptr;
   }
@@ -169,9 +169,7 @@ class CORE_EXPORT EmptyChromeClient : public ChromeClient {
   float WindowToViewportScalar(LocalFrame*, const float s) const override {
     return s;
   }
-  WebScreenInfo GetScreenInfo(LocalFrame&) const override {
-    return WebScreenInfo();
-  }
+  ScreenInfo GetScreenInfo(LocalFrame&) const override { return ScreenInfo(); }
   void ContentsSizeChanged(LocalFrame*, const IntSize&) const override {}
   void ShowMouseOverURL(const HitTestResult&) override {}
   void SetToolTip(LocalFrame&, const String&, TextDirection) override {}
@@ -210,19 +208,15 @@ class CORE_EXPORT EmptyChromeClient : public ChromeClient {
   void RegisterPopupOpeningObserver(PopupOpeningObserver*) override {}
   void UnregisterPopupOpeningObserver(PopupOpeningObserver*) override {}
   void NotifyPopupOpeningObservers() const override {}
-  void FallbackCursorModeLockCursor(LocalFrame* frame,
-                                    bool left,
-                                    bool right,
-                                    bool up,
-                                    bool down) override {}
-  void FallbackCursorModeSetCursorVisibility(LocalFrame* frame,
-                                             bool visible) override {}
+
   void RequestBeginMainFrameNotExpected(LocalFrame& frame,
                                         bool request) override {}
   int GetLayerTreeId(LocalFrame& frame) override { return 0; }
   void SetCursorForPlugin(const ui::Cursor&, LocalFrame*) override {}
   void InstallSupplements(LocalFrame&) override {}
   void MainFrameScrollOffsetChanged(LocalFrame& main_frame) const override {}
+  void BatterySavingsChanged(LocalFrame& main_frame,
+                             WebBatterySavingsFlags savings) override {}
 };
 
 class CORE_EXPORT EmptyLocalFrameClient : public LocalFrameClient {
@@ -234,13 +228,6 @@ class CORE_EXPORT EmptyLocalFrameClient : public LocalFrameClient {
 
   bool InShadowTree() const override { return false; }
 
-  Frame* Opener() const override { return nullptr; }
-  void SetOpener(Frame*) override {}
-
-  Frame* Parent() const override { return nullptr; }
-  Frame* Top() const override { return nullptr; }
-  Frame* NextSibling() const override { return nullptr; }
-  Frame* FirstChild() const override { return nullptr; }
   void WillBeDetached() override {}
   void Detached(FrameDetachType) override {}
 
@@ -253,7 +240,7 @@ class CORE_EXPORT EmptyLocalFrameClient : public LocalFrameClient {
   void DispatchDidReceiveTitle(const String&) override {}
   void DispatchDidCommitLoad(HistoryItem*,
                              WebHistoryCommitType,
-                             GlobalObjectReusePolicy) override {}
+                             bool) override {}
   void DispatchDidFailLoad(const ResourceError&,
                            WebHistoryCommitType) override {}
   void DispatchDidFinishDocumentLoad() override {}
@@ -262,11 +249,10 @@ class CORE_EXPORT EmptyLocalFrameClient : public LocalFrameClient {
   void BeginNavigation(
       const ResourceRequest&,
       mojom::RequestContextFrameType,
-      Document* origin_document,
+      LocalDOMWindow*,
       DocumentLoader*,
       WebNavigationType,
       NavigationPolicy,
-      bool,
       WebFrameLoadType,
       bool,
       TriggeringEventInfo,
@@ -275,6 +261,7 @@ class CORE_EXPORT EmptyLocalFrameClient : public LocalFrameClient {
       mojo::PendingRemote<mojom::blink::BlobURLToken>,
       base::TimeTicks,
       const String&,
+      const base::Optional<WebImpression>&,
       WTF::Vector<network::mojom::blink::ContentSecurityPolicyPtr>
           initiator_csp,
       network::mojom::blink::CSPSourcePtr initiator_self_source,
@@ -306,14 +293,11 @@ class CORE_EXPORT EmptyLocalFrameClient : public LocalFrameClient {
   void TransitionToCommittedForNewPage() override {}
 
   bool NavigateBackForward(int offset) const override { return false; }
-  void DidRunInsecureContent(const SecurityOrigin*, const KURL&) override {}
   void DidDispatchPingLoader(const KURL&) override {}
-  void DidDisplayContentWithCertificateErrors() override {}
-  void DidRunContentWithCertificateErrors() override {}
   void SelectorMatchChanged(const Vector<String>&,
                             const Vector<String>&) override {}
   LocalFrame* CreateFrame(const AtomicString&, HTMLFrameOwnerElement*) override;
-  std::pair<RemoteFrame*, base::UnguessableToken> CreatePortal(
+  std::pair<RemoteFrame*, PortalToken> CreatePortal(
       HTMLPortalElement*,
       mojo::PendingAssociatedReceiver<mojom::blink::Portal>,
       mojo::PendingAssociatedRemote<mojom::blink::PortalClient>) override;
@@ -332,7 +316,7 @@ class CORE_EXPORT EmptyLocalFrameClient : public LocalFrameClient {
       HTMLMediaElement&) override;
 
   void DidCreateInitialEmptyDocument() override {}
-  void DidCommitJavascriptUrlNavigation(DocumentLoader*) override {}
+  void DidCommitDocumentReplacementNavigation(DocumentLoader*) override {}
   void DispatchDidClearWindowObjectInMainWorld() override {}
   void DocumentElementAvailable() override {}
   void RunScriptsAtDocumentElementAvailable() override {}
@@ -411,35 +395,25 @@ class CORE_EXPORT EmptyRemoteFrameClient : public RemoteFrameClient {
 
   // RemoteFrameClient implementation.
   void Navigate(const ResourceRequest&,
+                blink::WebLocalFrame* initiator_frame,
                 bool should_replace_current_entry,
                 bool is_opener_navigation,
                 bool initiator_frame_has_download_sandbox_flag,
                 bool initiator_frame_is_ad,
-                mojo::PendingRemote<mojom::blink::BlobURLToken>) override {}
+                mojo::PendingRemote<mojom::blink::BlobURLToken>,
+                const base::Optional<WebImpression>&) override {}
   unsigned BackForwardLength() override { return 0; }
-  void ForwardPostMessage(
-      MessageEvent*,
-      scoped_refptr<const SecurityOrigin> target,
-      base::Optional<base::UnguessableToken> locked_agent_cluster_id,
-      LocalFrame* source_frame) const override {}
   void FrameRectsChanged(const IntRect& local_frame_rect,
                          const IntRect& transformed_frame_rect) override {}
   void UpdateRemoteViewportIntersection(
       const ViewportIntersectionState& intersection_state) override {}
-  void AdvanceFocus(mojom::blink::FocusType, LocalFrame* source) override {}
-  uint32_t Print(const IntRect& rect, cc::PaintCanvas* canvas) const override {
-    return 0;
+  AssociatedInterfaceProvider* GetRemoteAssociatedInterfaces() override {
+    return AssociatedInterfaceProvider::GetEmptyAssociatedInterfaceProvider();
   }
 
   // FrameClient implementation.
   bool InShadowTree() const override { return false; }
   void Detached(FrameDetachType) override {}
-  Frame* Opener() const override { return nullptr; }
-  void SetOpener(Frame*) override {}
-  Frame* Parent() const override { return nullptr; }
-  Frame* Top() const override { return nullptr; }
-  Frame* NextSibling() const override { return nullptr; }
-  Frame* FirstChild() const override { return nullptr; }
   base::UnguessableToken GetDevToolsFrameToken() const override {
     return base::UnguessableToken::Create();
   }

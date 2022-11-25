@@ -65,7 +65,7 @@ class PLATFORM_EXPORT RawResource final : public Resource {
   // Exposed for testing
   static RawResource* CreateForTest(const ResourceRequest& request,
                                     ResourceType type) {
-    ResourceLoaderOptions options;
+    ResourceLoaderOptions options(nullptr /* world */);
     return MakeGarbageCollected<RawResource>(request, type, options);
   }
   static RawResource* CreateForTest(const KURL& url,
@@ -94,7 +94,7 @@ class PLATFORM_EXPORT RawResource final : public Resource {
 
   scoped_refptr<BlobDataHandle> DownloadedBlob() const;
 
-  void Trace(Visitor* visitor) override;
+  void Trace(Visitor* visitor) const override;
 
  protected:
   CachedMetadataHandler* CreateCachedMetadataHandler(
@@ -128,8 +128,7 @@ class PLATFORM_EXPORT RawResource final : public Resource {
                    uint64_t total_bytes_to_be_sent) override;
   void DidDownloadData(uint64_t) override;
   void DidDownloadToBlob(scoped_refptr<BlobDataHandle>) override;
-  bool MatchPreload(const FetchParameters&,
-                    base::SingleThreadTaskRunner*) override;
+  void MatchPreload(const FetchParameters&) override;
 
   scoped_refptr<BlobDataHandle> downloaded_blob_;
 

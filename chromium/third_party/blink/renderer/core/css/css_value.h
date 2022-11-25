@@ -109,8 +109,9 @@ class CORE_EXPORT CSSValue : public GarbageCollected<CSSValue> {
   bool IsInheritedValue() const { return class_type_ == kInheritedClass; }
   bool IsInitialValue() const { return class_type_ == kInitialClass; }
   bool IsUnsetValue() const { return class_type_ == kUnsetClass; }
+  bool IsRevertValue() const { return class_type_ == kRevertClass; }
   bool IsCSSWideKeyword() const {
-    return class_type_ >= kInheritedClass && class_type_ <= kUnsetClass;
+    return class_type_ >= kInheritedClass && class_type_ <= kRevertClass;
   }
   bool IsLayoutFunctionValue() const {
     return class_type_ == kLayoutFunctionClass;
@@ -169,8 +170,15 @@ class CORE_EXPORT CSSValue : public GarbageCollected<CSSValue> {
   bool IsShorthandWrapperValue() const {
     return class_type_ == kKeyframeShorthandClass;
   }
-  bool IsLightDarkColorPair() const {
-    return class_type_ == kLightDarkColorPairClass;
+  bool IsInitialColorValue() const {
+    return class_type_ == kInitialColorValueClass;
+  }
+  bool IsLightDarkValuePair() const {
+    return class_type_ == kLightDarkValuePairClass;
+  }
+  bool IsIdSelectorValue() const { return class_type_ == kIdSelectorClass; }
+  bool IsElementOffsetValue() const {
+    return class_type_ == kElementOffsetClass;
   }
 
   bool HasFailedOrCanceledSubresources() const;
@@ -178,10 +186,11 @@ class CORE_EXPORT CSSValue : public GarbageCollected<CSSValue> {
   void ReResolveUrl(const Document&) const;
 
   bool operator==(const CSSValue&) const;
+  bool operator!=(const CSSValue& o) const { return !(*this == o); }
 
   void FinalizeGarbageCollectedObject();
   void TraceAfterDispatch(blink::Visitor* visitor) const {}
-  void Trace(Visitor*);
+  void Trace(Visitor*) const;
 
   // ~CSSValue should be public, because non-public ~CSSValue causes C2248
   // error: 'blink::CSSValue::~CSSValue' : cannot access protected member
@@ -201,7 +210,9 @@ class CORE_EXPORT CSSValue : public GarbageCollected<CSSValue> {
     kStringClass,
     kURIClass,
     kValuePairClass,
-    kLightDarkColorPairClass,
+    kLightDarkValuePairClass,
+    kIdSelectorClass,
+    kElementOffsetClass,
 
     // Basic shape classes.
     // TODO(sashab): Represent these as a single subclass, BasicShapeClass.
@@ -236,6 +247,7 @@ class CORE_EXPORT CSSValue : public GarbageCollected<CSSValue> {
     kInheritedClass,
     kInitialClass,
     kUnsetClass,
+    kRevertClass,
 
     kReflectClass,
     kShadowClass,
@@ -252,6 +264,7 @@ class CORE_EXPORT CSSValue : public GarbageCollected<CSSValue> {
     kCSSContentDistributionClass,
 
     kKeyframeShorthandClass,
+    kInitialColorValueClass,
 
     // List class types must appear after ValueListClass.
     kValueListClass,

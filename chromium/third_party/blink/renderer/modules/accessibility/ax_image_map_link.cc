@@ -122,7 +122,11 @@ void AXImageMapLink::GetRelativeBounds(AXObject** out_container,
   *out_container = AXObjectCache().GetOrCreate(layout_object);
 }
 
-void AXImageMapLink::Trace(Visitor* visitor) {
+bool AXImageMapLink::IsImageMapLink() const {
+  return true;
+}
+
+void AXImageMapLink::Trace(Visitor* visitor) const {
   AXNodeObject::Trace(visitor);
 }
 

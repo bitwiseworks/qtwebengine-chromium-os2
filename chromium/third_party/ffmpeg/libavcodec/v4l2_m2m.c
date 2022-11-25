@@ -329,6 +329,9 @@ static void v4l2_m2m_destroy_context(void *opaque, uint8_t *context)
     sem_destroy(&s->refsync);
 
     close(s->fd);
+    av_frame_unref(s->frame);
+    av_frame_free(&s->frame);
+    av_packet_unref(&s->buf_pkt);
 
     av_free(s);
 }
@@ -338,13 +341,18 @@ int ff_v4l2_m2m_codec_end(V4L2m2mPriv *priv)
     V4L2m2mContext *s = priv->context;
     int ret;
 
-    ret = ff_v4l2_context_set_status(&s->output, VIDIOC_STREAMOFF);
-    if (ret)
-        av_log(s->avctx, AV_LOG_ERROR, "VIDIOC_STREAMOFF %s\n", s->output.name);
+    if (!s)
+        return 0;
 
-    ret = ff_v4l2_context_set_status(&s->capture, VIDIOC_STREAMOFF);
-    if (ret)
-        av_log(s->avctx, AV_LOG_ERROR, "VIDIOC_STREAMOFF %s\n", s->capture.name);
+    if (s->fd >= 0) {
+        ret = ff_v4l2_context_set_status(&s->output, VIDIOC_STREAMOFF);
+        if (ret)
+            av_log(s->avctx, AV_LOG_ERROR, "VIDIOC_STREAMOFF %s\n", s->output.name);
+
+        ret = ff_v4l2_context_set_status(&s->capture, VIDIOC_STREAMOFF);
+        if (ret)
+            av_log(s->avctx, AV_LOG_ERROR, "VIDIOC_STREAMOFF %s\n", s->capture.name);
+    }
 
     ff_v4l2_context_release(&s->output);
 
@@ -358,7 +366,6 @@ int ff_v4l2_m2m_codec_init(V4L2m2mPriv *priv)
 {
     int ret = AVERROR(EINVAL);
     struct dirent *entry;
-    char node[PATH_MAX];
     DIR *dirp;
 
     V4L2m2mContext *s = priv->context;
@@ -372,9 +379,8 @@ int ff_v4l2_m2m_codec_init(V4L2m2mPriv *priv)
         if (strncmp(entry->d_name, "video", 5))
             continue;
 
-        snprintf(node, sizeof(node), "/dev/%s", entry->d_name);
-        av_log(s->avctx, AV_LOG_DEBUG, "probing device %s\n", node);
-        strncpy(s->devname, node, strlen(node) + 1);
+        snprintf(s->devname, sizeof(s->devname), "/dev/%s", entry->d_name);
+        av_log(s->avctx, AV_LOG_DEBUG, "probing device %s\n", s->devname);
         ret = v4l2_probe_driver(s);
         if (!ret)
             break;
@@ -389,7 +395,7 @@ int ff_v4l2_m2m_codec_init(V4L2m2mPriv *priv)
         return ret;
     }
 
-    av_log(s->avctx, AV_LOG_INFO, "Using device %s\n", node);
+    av_log(s->avctx, AV_LOG_INFO, "Using device %s\n", s->devname);
 
     return v4l2_configure_contexts(s);
 }
@@ -416,6 +422,13 @@ int ff_v4l2_m2m_create_context(V4L2m2mPriv *priv, V4L2m2mContext **s)
     priv->context->output.num_buffers  = priv->num_output_buffers;
     priv->context->self_ref = priv->context_ref;
     priv->context->fd = -1;
+
+    priv->context->frame = av_frame_alloc();
+    if (!priv->context->frame) {
+        av_buffer_unref(&priv->context_ref);
+        *s = NULL; /* freed when unreferencing context_ref */
+        return AVERROR(ENOMEM);
+    }
 
     return 0;
 }

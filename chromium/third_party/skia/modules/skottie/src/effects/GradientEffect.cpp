@@ -79,8 +79,8 @@ private:
                 fInstanceType = new_type;
             }
 
-            fGradient->setColorStops({{0, ValueTraits<VectorValue>::As<SkColor4f>(fStartColor)},
-                                      {1, ValueTraits<VectorValue>::As<SkColor4f>(  fEndColor)}});
+            fGradient->setColorStops({{0, fStartColor},
+                                      {1,   fEndColor}});
         };
 
         static constexpr int kLinearShapeValue = 1;
@@ -124,7 +124,7 @@ private:
                 fShape   = 0; // 1 -> linear, 7 -> radial (?!)
 };
 
-} // anonymous ns
+}  // namespace
 
 sk_sp<sksg::RenderNode> EffectBuilder::attachGradientEffect(const skjson::ArrayValue& jprops,
                                                             sk_sp<sksg::RenderNode> layer) const {

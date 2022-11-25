@@ -21,12 +21,13 @@
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
+#include "base/check.h"
 #include "base/compiler_specific.h"
 #include "base/containers/queue.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
-#include "base/logging.h"
+#include "base/notreached.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
@@ -386,7 +387,7 @@ class SSLServerSocketTest : public PlatformTest, public WithTaskEnvironment {
     client_context_ = std::make_unique<SSLClientContext>(
         ssl_config_service_.get(), cert_verifier_.get(),
         transport_security_state_.get(), ct_verifier_.get(),
-        ct_policy_enforcer_.get(), ssl_client_session_cache_.get());
+        ct_policy_enforcer_.get(), ssl_client_session_cache_.get(), nullptr);
   }
 
  protected:

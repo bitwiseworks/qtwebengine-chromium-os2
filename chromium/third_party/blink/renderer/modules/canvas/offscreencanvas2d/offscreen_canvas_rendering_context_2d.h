@@ -12,6 +12,8 @@
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context_factory.h"
 #include "third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.h"
+#include "third_party/blink/renderer/modules/canvas/canvas2d/identifiability_study_helper.h"
+#include "third_party/blink/renderer/platform/privacy_budget/identifiability_digest_helpers.h"
 
 namespace blink {
 
@@ -23,7 +25,6 @@ class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
     : public CanvasRenderingContext,
       public BaseRenderingContext2D {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(OffscreenCanvasRenderingContext2D);
 
  public:
   class Factory : public CanvasRenderingContextFactory {
@@ -58,7 +59,7 @@ class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
   // CanvasRenderingContext implementation
   ~OffscreenCanvasRenderingContext2D() override;
   ContextType GetContextType() const override { return kContext2D; }
-  bool Is2d() const override { return true; }
+  bool IsRenderingContext2D() const override { return true; }
   bool IsComposited() const override { return false; }
   bool IsAccelerated() const override;
   void SetOffscreenCanvasGetContextResult(OffscreenRenderingContext&) final;
@@ -69,7 +70,7 @@ class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
   void ClearRect(double x, double y, double width, double height) override {
     BaseRenderingContext2D::clearRect(x, y, width, height);
   }
-  scoped_refptr<StaticBitmapImage> GetImage(AccelerationHint) final;
+  scoped_refptr<StaticBitmapImage> GetImage() final;
   void Reset() override;
   void RestoreCanvasMatrixClipStack(cc::PaintCanvas* c) const override {
     RestoreMatrixClipStack(c);
@@ -123,9 +124,21 @@ class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
 
   ImageBitmap* TransferToImageBitmap(ScriptState*) final;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   bool PushFrame() override;
+
+  IdentifiableToken IdentifiableTextToken() const override {
+    return identifiability_study_helper_.GetToken();
+  }
+
+  bool IdentifiabilityEncounteredSkippedOps() const override {
+    return identifiability_study_helper_.encountered_skipped_ops();
+  }
+
+  bool IdentifiabilityEncounteredSensitiveOps() const override {
+    return identifiability_study_helper_.encountered_sensitive_ops();
+  }
 
  protected:
   CanvasColorParams ColorParams() const override;

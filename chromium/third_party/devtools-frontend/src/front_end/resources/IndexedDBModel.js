@@ -28,6 +28,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as ProtocolClient from '../protocol_client/protocol_client.js';
 import * as SDK from '../sdk/sdk.js';
@@ -42,7 +45,8 @@ export class IndexedDBModel extends SDK.SDKModel.SDKModel {
    */
   constructor(target) {
     super(target);
-    target.registerStorageDispatcher(this);
+    // TODO(chromium:1011811): Make the cast below unnecessary.
+    target.registerStorageDispatcher(/** @type {!ProtocolProxyApi.StorageDispatcher} */ (this));
     this._securityOriginManager = target.model(SDK.SecurityOriginManager.SecurityOriginManager);
     this._indexedDBAgent = target.indexedDBAgent();
     this._storageAgent = target.storageAgent();

@@ -10,8 +10,9 @@
 #include <string>
 #include <utility>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/macros.h"
+#include "base/notreached.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
@@ -53,7 +54,7 @@ const extensions::Extension* GetExtension(WebContents* web_contents) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   if (!web_contents)
-    return NULL;
+    return nullptr;
 
   extensions::ExtensionRegistry* registry =
       extensions::ExtensionRegistry::Get(web_contents->GetBrowserContext());
@@ -78,12 +79,20 @@ base::string16 GetTitle(WebContents* web_contents) {
   return url_formatter::FormatUrlForSecurityDisplay(web_contents->GetURL());
 }
 
+// Returns if the passed |device| is capturing the whole display. This is
+// different from capturing a tab or a single window on a desktop.
+bool IsDeviceCapturingDisplay(const blink::MediaStreamDevice& device) {
+  return device.display_media_info &&
+         device.display_media_info.value()->display_surface ==
+             media::mojom::DisplayCaptureSurfaceType::MONITOR;
+}
+
 typedef void (MediaStreamCaptureIndicator::Observer::*ObserverMethod)(
     content::WebContents* web_contents,
     bool value);
 
-ObserverMethod GetObserverMethodToCall(blink::mojom::MediaStreamType type) {
-  switch (type) {
+ObserverMethod GetObserverMethodToCall(const blink::MediaStreamDevice& device) {
+  switch (device.type) {
     case blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE:
       return &MediaStreamCaptureIndicator::Observer::OnIsCapturingAudioChanged;
 
@@ -98,8 +107,11 @@ ObserverMethod GetObserverMethodToCall(blink::mojom::MediaStreamType type) {
     case blink::mojom::MediaStreamType::GUM_DESKTOP_AUDIO_CAPTURE:
     case blink::mojom::MediaStreamType::DISPLAY_VIDEO_CAPTURE:
     case blink::mojom::MediaStreamType::DISPLAY_AUDIO_CAPTURE:
-      return &MediaStreamCaptureIndicator::Observer::
-          OnIsCapturingDesktopChanged;
+      return IsDeviceCapturingDisplay(device)
+                 ? &MediaStreamCaptureIndicator::Observer::
+                       OnIsCapturingDisplayChanged
+                 : &MediaStreamCaptureIndicator::Observer::
+                       OnIsCapturingWindowChanged;
 
     case blink::mojom::MediaStreamType::NO_SERVICE:
     case blink::mojom::MediaStreamType::NUM_MEDIA_TYPES:
@@ -125,7 +137,8 @@ class MediaStreamCaptureIndicator::WebContentsDeviceUsage
   bool IsCapturingAudio() const { return audio_stream_count_ > 0; }
   bool IsCapturingVideo() const { return video_stream_count_ > 0; }
   bool IsMirroring() const { return mirroring_stream_count_ > 0; }
-  bool IsCapturingDesktop() const { return desktop_stream_count_ > 0; }
+  bool IsCapturingWindow() const { return window_stream_count_ > 0; }
+  bool IsCapturingDisplay() const { return display_stream_count_ > 0; }
 
   std::unique_ptr<content::MediaStreamUI> RegisterMediaStream(
       const blink::MediaStreamDevices& devices,
@@ -142,7 +155,7 @@ class MediaStreamCaptureIndicator::WebContentsDeviceUsage
   void NotifyStopped();
 
  private:
-  int& GetStreamCount(blink::mojom::MediaStreamType type);
+  int& GetStreamCount(const blink::MediaStreamDevice& device);
 
   // content::WebContentsObserver overrides.
   void WebContentsDestroyed() override {
@@ -153,7 +166,8 @@ class MediaStreamCaptureIndicator::WebContentsDeviceUsage
   int audio_stream_count_ = 0;
   int video_stream_count_ = 0;
   int mirroring_stream_count_ = 0;
-  int desktop_stream_count_ = 0;
+  int window_stream_count_ = 0;
+  int display_stream_count_ = 0;
 
   base::OnceClosure stop_callback_;
   base::WeakPtrFactory<WebContentsDeviceUsage> weak_factory_{this};
@@ -185,7 +199,12 @@ class MediaStreamCaptureIndicator::UIDelegate : public content::MediaStreamUI {
   gfx::NativeViewId OnStarted(
       base::OnceClosure stop_callback,
       content::MediaStreamUI::SourceCallback source_callback) override {
-    DCHECK(!started_);
+    if (started_) {
+      // Ignore possibly-compromised renderers that might call
+      // MediaStreamDispatcherHost::OnStreamStarted() more than once.
+      // See: https://crbug.com/1155426
+      return 0;
+    }
     started_ = true;
 
     if (device_usage_) {
@@ -223,11 +242,11 @@ void MediaStreamCaptureIndicator::WebContentsDeviceUsage::AddDevices(
     const blink::MediaStreamDevices& devices,
     base::OnceClosure stop_callback) {
   for (const auto& device : devices) {
-    int& stream_count = GetStreamCount(device.type);
+    int& stream_count = GetStreamCount(device);
     ++stream_count;
 
     if (web_contents() && stream_count == 1) {
-      ObserverMethod obs_func = GetObserverMethodToCall(device.type);
+      ObserverMethod obs_func = GetObserverMethodToCall(device);
       DCHECK(obs_func);
       for (Observer& obs : indicator_->observers_)
         (obs.*obs_func)(web_contents(), true);
@@ -245,12 +264,12 @@ void MediaStreamCaptureIndicator::WebContentsDeviceUsage::AddDevices(
 void MediaStreamCaptureIndicator::WebContentsDeviceUsage::RemoveDevices(
     const blink::MediaStreamDevices& devices) {
   for (const auto& device : devices) {
-    int& stream_count = GetStreamCount(device.type);
+    int& stream_count = GetStreamCount(device);
     --stream_count;
     DCHECK_GE(stream_count, 0);
 
     if (web_contents() && stream_count == 0) {
-      ObserverMethod obs_func = GetObserverMethodToCall(device.type);
+      ObserverMethod obs_func = GetObserverMethodToCall(device);
       DCHECK(obs_func);
       for (Observer& obs : indicator_->observers_)
         (obs.*obs_func)(web_contents(), false);
@@ -271,8 +290,8 @@ void MediaStreamCaptureIndicator::WebContentsDeviceUsage::NotifyStopped() {
 }
 
 int& MediaStreamCaptureIndicator::WebContentsDeviceUsage::GetStreamCount(
-    blink::mojom::MediaStreamType type) {
-  switch (type) {
+    const blink::MediaStreamDevice& device) {
+  switch (device.type) {
     case blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE:
       return audio_stream_count_;
 
@@ -287,7 +306,8 @@ int& MediaStreamCaptureIndicator::WebContentsDeviceUsage::GetStreamCount(
     case blink::mojom::MediaStreamType::GUM_DESKTOP_AUDIO_CAPTURE:
     case blink::mojom::MediaStreamType::DISPLAY_VIDEO_CAPTURE:
     case blink::mojom::MediaStreamType::DISPLAY_AUDIO_CAPTURE:
-      return desktop_stream_count_;
+      return IsDeviceCapturingDisplay(device) ? display_stream_count_
+                                              : window_stream_count_;
 
     case blink::mojom::MediaStreamType::NO_SERVICE:
     case blink::mojom::MediaStreamType::NUM_MEDIA_TYPES:
@@ -337,45 +357,68 @@ void MediaStreamCaptureIndicator::ExecuteCommand(int command_id,
     web_contents->GetDelegate()->ActivateContents(web_contents);
 }
 
+bool MediaStreamCaptureIndicator::CheckUsage(
+    content::WebContents* web_contents,
+    const WebContentsDeviceUsagePredicate& pred) const {
+  auto it = usage_map_.find(web_contents);
+  if (it != usage_map_.end() && pred.Run(it->second.get()))
+    return true;
+
+  for (auto* inner_contents : web_contents->GetInnerWebContents()) {
+    if (CheckUsage(inner_contents, pred))
+      return true;
+  }
+
+  return false;
+}
+
 bool MediaStreamCaptureIndicator::IsCapturingUserMedia(
     content::WebContents* web_contents) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-
-  auto it = usage_map_.find(web_contents);
-  return it != usage_map_.end() &&
-         (it->second->IsCapturingAudio() || it->second->IsCapturingVideo());
+  return CheckUsage(
+      web_contents,
+      base::BindRepeating([](const WebContentsDeviceUsage* usage) {
+        return usage->IsCapturingAudio() || usage->IsCapturingVideo();
+      }));
 }
 
 bool MediaStreamCaptureIndicator::IsCapturingVideo(
     content::WebContents* web_contents) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-
-  auto it = usage_map_.find(web_contents);
-  return it != usage_map_.end() && it->second->IsCapturingVideo();
+  return CheckUsage(
+      web_contents,
+      base::BindRepeating(&WebContentsDeviceUsage::IsCapturingVideo));
 }
 
 bool MediaStreamCaptureIndicator::IsCapturingAudio(
     content::WebContents* web_contents) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-
-  auto it = usage_map_.find(web_contents);
-  return it != usage_map_.end() && it->second->IsCapturingAudio();
+  return CheckUsage(
+      web_contents,
+      base::BindRepeating(&WebContentsDeviceUsage::IsCapturingAudio));
 }
 
 bool MediaStreamCaptureIndicator::IsBeingMirrored(
     content::WebContents* web_contents) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-
-  auto it = usage_map_.find(web_contents);
-  return it != usage_map_.end() && it->second->IsMirroring();
+  return CheckUsage(web_contents,
+                    base::BindRepeating(&WebContentsDeviceUsage::IsMirroring));
 }
 
-bool MediaStreamCaptureIndicator::IsCapturingDesktop(
+bool MediaStreamCaptureIndicator::IsCapturingWindow(
     content::WebContents* web_contents) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  return CheckUsage(
+      web_contents,
+      base::BindRepeating(&WebContentsDeviceUsage::IsCapturingWindow));
+}
 
-  auto it = usage_map_.find(web_contents);
-  return it != usage_map_.end() && it->second->IsCapturingDesktop();
+bool MediaStreamCaptureIndicator::IsCapturingDisplay(
+    content::WebContents* web_contents) const {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  return CheckUsage(
+      web_contents,
+      base::BindRepeating(&WebContentsDeviceUsage::IsCapturingDisplay));
 }
 
 void MediaStreamCaptureIndicator::NotifyStopped(
@@ -385,10 +428,33 @@ void MediaStreamCaptureIndicator::NotifyStopped(
   auto it = usage_map_.find(web_contents);
   DCHECK(it != usage_map_.end());
   it->second->NotifyStopped();
+
+  for (auto* inner_contents : web_contents->GetInnerWebContents())
+    NotifyStopped(inner_contents);
 }
 
 void MediaStreamCaptureIndicator::UnregisterWebContents(
     WebContents* web_contents) {
+  if (IsCapturingVideo(web_contents)) {
+    for (Observer& observer : observers_)
+      observer.OnIsCapturingVideoChanged(web_contents, false);
+  }
+  if (IsCapturingAudio(web_contents)) {
+    for (Observer& observer : observers_)
+      observer.OnIsCapturingAudioChanged(web_contents, false);
+  }
+  if (IsBeingMirrored(web_contents)) {
+    for (Observer& observer : observers_)
+      observer.OnIsBeingMirroredChanged(web_contents, false);
+  }
+  if (IsCapturingWindow(web_contents)) {
+    for (Observer& observer : observers_)
+      observer.OnIsCapturingWindowChanged(web_contents, false);
+  }
+  if (IsCapturingDisplay(web_contents)) {
+    for (Observer& observer : observers_)
+      observer.OnIsCapturingDisplayChanged(web_contents, false);
+  }
   usage_map_.erase(web_contents);
   UpdateNotificationUserInterface();
 }
@@ -429,9 +495,9 @@ void MediaStreamCaptureIndicator::MaybeDestroyStatusTrayIcon() {
     return;
 
   StatusTray* status_tray = g_browser_process->status_tray();
-  if (status_tray != NULL) {
+  if (status_tray != nullptr) {
     status_tray->RemoveStatusIcon(status_icon_);
-    status_icon_ = NULL;
+    status_icon_ = nullptr;
   }
 }
 
@@ -452,9 +518,8 @@ void MediaStreamCaptureIndicator::UpdateNotificationUserInterface() {
 
     WebContents* const web_contents = it.first;
 
-    // The audio/video icon is shown only for non-whitelisted extensions or on
-    // Android. For regular tabs on desktop, we show an indicator in the tab
-    // icon.
+    // The audio/video icon is shown for extensions or on Android. For
+    // regular tabs on desktop, we show an indicator in the tab icon.
 #if BUILDFLAG(ENABLE_EXTENSIONS)
     const extensions::Extension* extension = GetExtension(web_contents);
     if (!extension)

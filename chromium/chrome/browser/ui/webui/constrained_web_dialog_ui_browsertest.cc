@@ -20,8 +20,10 @@
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
+#include "content/public/test/test_utils.h"
 #include "ui/web_dialogs/test/test_web_dialog_delegate.h"
 
 using content::WebContents;
@@ -45,23 +47,6 @@ std::string GetChangeDimensionsScript(int dimension) {
   return base::StringPrintf("window.document.body.style.width = %d + 'px';"
       "window.document.body.style.height = %d + 'px';", dimension, dimension);
 }
-
-class ConstrainedWebDialogBrowserTestObserver
-    : public content::WebContentsObserver {
- public:
-  explicit ConstrainedWebDialogBrowserTestObserver(WebContents* contents)
-      : content::WebContentsObserver(contents),
-        contents_destroyed_(false) {
-  }
-  ~ConstrainedWebDialogBrowserTestObserver() override {}
-
-  bool contents_destroyed() { return contents_destroyed_; }
-
- private:
-  void WebContentsDestroyed() override { contents_destroyed_ = true; }
-
-  bool contents_destroyed_;
-};
 
 class AutoResizingTestWebDialogDelegate
     : public ui::test::TestWebDialogDelegate {
@@ -109,7 +94,7 @@ class ConstrainedWebDialogBrowserTest : public InProcessBrowserTest {
 
 // Tests that opening/closing the constrained window won't crash it.
 // Flaky on trusty builder: http://crbug.com/1020490.
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
 #define MAYBE_BasicTest DISABLED_BasicTest
 #else
 #define MAYBE_BasicTest BasicTest
@@ -129,7 +114,7 @@ IN_PROC_BROWSER_TEST_F(ConstrainedWebDialogBrowserTest, MAYBE_BasicTest) {
 }
 
 // TODO(https://crbug.com/1020038): Crashy on Linux
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
 #define MAYBE_ReleaseWebContents DISABLED_ReleaseWebContents
 #else
 #define MAYBE_ReleaseWebContents ReleaseWebContents
@@ -150,15 +135,15 @@ IN_PROC_BROWSER_TEST_F(ConstrainedWebDialogBrowserTest,
   ASSERT_TRUE(dialog_contents);
   ASSERT_TRUE(IsShowingWebContentsModalDialog(web_contents));
 
-  ConstrainedWebDialogBrowserTestObserver observer(dialog_contents);
+  content::WebContentsDestroyedWatcher watcher(dialog_contents);
   std::unique_ptr<WebContents> dialog_contents_holder =
       dialog_delegate->ReleaseWebContents();
   dialog_delegate->OnDialogCloseFromWebUI();
 
-  ASSERT_FALSE(observer.contents_destroyed());
+  ASSERT_FALSE(watcher.IsDestroyed());
   EXPECT_FALSE(IsShowingWebContentsModalDialog(web_contents));
   dialog_contents_holder.reset();
-  EXPECT_TRUE(observer.contents_destroyed());
+  EXPECT_TRUE(watcher.IsDestroyed());
 }
 
 // Tests that dialog autoresizes based on web contents when autoresizing
@@ -213,7 +198,7 @@ IN_PROC_BROWSER_TEST_F(ConstrainedWebDialogBrowserTest,
   observer.Wait();
 
   // Wait until the entire WebContents has loaded.
-  WaitForLoadStop(dialog_delegate->GetWebContents());
+  EXPECT_TRUE(WaitForLoadStop(dialog_delegate->GetWebContents()));
 
   ASSERT_TRUE(IsShowingWebContentsModalDialog(web_contents));
 
@@ -265,7 +250,7 @@ IN_PROC_BROWSER_TEST_F(ConstrainedWebDialogBrowserTest,
   EXPECT_TRUE(IsShowingWebContentsModalDialog(web_contents));
 
   // Wait until the entire WebContents has loaded.
-  WaitForLoadStop(dialog_delegate->GetWebContents());
+  EXPECT_TRUE(WaitForLoadStop(dialog_delegate->GetWebContents()));
 
   gfx::Size initial_dialog_size;
   delegate_ptr->GetDialogSize(&initial_dialog_size);

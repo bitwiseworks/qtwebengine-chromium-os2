@@ -62,22 +62,22 @@ class JSRegExpStringIterator;
 class JSRelativeTimeFormat;
 class JSSegmentIterator;
 class JSSegmenter;
+class JSSegments;
 class JSV8BreakIterator;
 class JSWeakCollection;
 class JSFinalizationRegistry;
-class JSFinalizationRegistryCleanupIterator;
 class JSWeakMap;
 class JSWeakRef;
 class JSWeakSet;
+class ProfileDataFromFile;
 class PromiseCapability;
 class PromiseFulfillReactionJobTask;
 class PromiseReaction;
 class PromiseReactionJobTask;
 class PromiseRejectReactionJobTask;
-class WasmDebugInfo;
 class Zone;
-#define MAKE_FORWARD_DECLARATION(V, NAME, Name, name) class Name;
-TORQUE_INTERNAL_CLASS_LIST_GENERATOR(MAKE_FORWARD_DECLARATION, UNUSED)
+#define MAKE_FORWARD_DECLARATION(Name) class Name;
+TORQUE_DEFINED_CLASS_LIST(MAKE_FORWARD_DECLARATION)
 #undef MAKE_FORWARD_DECLARATION
 
 template <typename T>
@@ -274,6 +274,7 @@ class CodeAssemblerParameterizedLabel;
   V(WordShl, WordT, WordT, IntegralT)                                   \
   V(WordShr, WordT, WordT, IntegralT)                                   \
   V(WordSar, WordT, WordT, IntegralT)                                   \
+  V(WordSarShiftOutZeros, WordT, WordT, IntegralT)                      \
   V(Word32Or, Word32T, Word32T, Word32T)                                \
   V(Word32And, Word32T, Word32T, Word32T)                               \
   V(Word32Xor, Word32T, Word32T, Word32T)                               \
@@ -281,6 +282,7 @@ class CodeAssemblerParameterizedLabel;
   V(Word32Shl, Word32T, Word32T, Word32T)                               \
   V(Word32Shr, Word32T, Word32T, Word32T)                               \
   V(Word32Sar, Word32T, Word32T, Word32T)                               \
+  V(Word32SarShiftOutZeros, Word32T, Word32T, Word32T)                  \
   V(Word64And, Word64T, Word64T, Word64T)                               \
   V(Word64Or, Word64T, Word64T, Word64T)                                \
   V(Word64Xor, Word64T, Word64T, Word64T)                               \
@@ -375,7 +377,8 @@ class V8_EXPORT_PRIVATE CodeAssembler {
   ~CodeAssembler();
 
   static Handle<Code> GenerateCode(CodeAssemblerState* state,
-                                   const AssemblerOptions& options);
+                                   const AssemblerOptions& options,
+                                   const ProfileDataFromFile* profile_data);
 
   bool Is64() const;
   bool Is32() const;
@@ -389,7 +392,6 @@ class V8_EXPORT_PRIVATE CodeAssembler {
 
   // Shortened aliases for use in CodeAssembler subclasses.
   using Label = CodeAssemblerLabel;
-  using Variable = CodeAssemblerVariable;
   template <class T>
   using TVariable = TypedCodeAssemblerVariable<T>;
   using VariableList = CodeAssemblerVariableList;
@@ -533,6 +535,7 @@ class V8_EXPORT_PRIVATE CodeAssembler {
   TNode<String> StringConstant(const char* str);
   TNode<Oddball> BooleanConstant(bool value);
   TNode<ExternalReference> ExternalConstant(ExternalReference address);
+  TNode<Float32T> Float32Constant(double value);
   TNode<Float64T> Float64Constant(double value);
   TNode<BoolT> Int32TrueConstant() {
     return ReinterpretCast<BoolT>(Int32Constant(1));
@@ -572,6 +575,8 @@ class V8_EXPORT_PRIVATE CodeAssembler {
   void Return(TNode<Int32T> value);
   void Return(TNode<Uint32T> value);
   void Return(TNode<WordT> value);
+  void Return(TNode<Float32T> value);
+  void Return(TNode<Float64T> value);
   void Return(TNode<WordT> value1, TNode<WordT> value2);
   void PopAndReturn(Node* pop, Node* value);
 
@@ -593,9 +598,25 @@ class V8_EXPORT_PRIVATE CodeAssembler {
     Comment(s.str());
   }
 
-  void StaticAssert(TNode<BoolT> value);
+  void StaticAssert(TNode<BoolT> value,
+                    const char* source = "unknown position");
 
+  // The following methods refer to source positions in CSA or Torque code
+  // compiled during mksnapshot, not JS compiled at runtime.
   void SetSourcePosition(const char* file, int line);
+  void PushSourcePosition();
+  void PopSourcePosition();
+  class SourcePositionScope {
+   public:
+    explicit SourcePositionScope(CodeAssembler* ca) : ca_(ca) {
+      ca->PushSourcePosition();
+    }
+    ~SourcePositionScope() { ca_->PopSourcePosition(); }
+
+   private:
+    CodeAssembler* ca_;
+  };
+  const std::vector<FileAndLine>& GetMacroSourcePositionStack() const;
 
   void Bind(Label* label);
 #if DEBUG
@@ -798,6 +819,10 @@ class V8_EXPORT_PRIVATE CodeAssembler {
     return Unsigned(
         Word32Shr(static_cast<Node*>(left), static_cast<Node*>(right)));
   }
+  TNode<Int32T> Word32Sar(TNode<Int32T> left, TNode<Int32T> right) {
+    return Signed(
+        Word32Sar(static_cast<Node*>(left), static_cast<Node*>(right)));
+  }
 
   TNode<IntPtrT> WordAnd(TNode<IntPtrT> left, TNode<IntPtrT> right) {
     return Signed(WordAnd(static_cast<Node*>(left), static_cast<Node*>(right)));
@@ -932,6 +957,12 @@ class V8_EXPORT_PRIVATE CodeAssembler {
   TNode<UintPtrT> ChangeUint32ToWord(TNode<Word32T> value);
   // No-op on 32-bit, otherwise sign extend.
   TNode<IntPtrT> ChangeInt32ToIntPtr(TNode<Word32T> value);
+
+  // Truncates a float to a 32-bit integer. If the float is outside of 32-bit
+  // range, make sure that overflow detection is easy. In particular, return
+  // int_min instead of int_max on arm platforms by using parameter
+  // kSetOverflowToMin.
+  TNode<Int32T> TruncateFloat32ToInt32(SloppyTNode<Float32T> value);
 
   // No-op that guarantees that the value is kept alive till this point even
   // if GC happens.
@@ -1197,8 +1228,16 @@ class V8_EXPORT_PRIVATE CodeAssembler {
   DISALLOW_COPY_AND_ASSIGN(CodeAssembler);
 };
 
+// TODO(solanes, v8:6949): this class should be merged into
+// TypedCodeAssemblerVariable. It's required to be separate for
+// CodeAssemblerVariableLists.
 class V8_EXPORT_PRIVATE CodeAssemblerVariable {
  public:
+  Node* value() const;
+  MachineRepresentation rep() const;
+  bool IsBound() const;
+
+ protected:
   explicit CodeAssemblerVariable(CodeAssembler* assembler,
                                  MachineRepresentation rep);
   CodeAssemblerVariable(CodeAssembler* assembler, MachineRepresentation rep,
@@ -1212,9 +1251,6 @@ class V8_EXPORT_PRIVATE CodeAssemblerVariable {
 
   ~CodeAssemblerVariable();
   void Bind(Node* value);
-  Node* value() const;
-  MachineRepresentation rep() const;
-  bool IsBound() const;
 
  private:
   class Impl;
@@ -1238,20 +1274,19 @@ template <class T>
 class TypedCodeAssemblerVariable : public CodeAssemblerVariable {
  public:
   TypedCodeAssemblerVariable(TNode<T> initial_value, CodeAssembler* assembler)
-      : CodeAssemblerVariable(assembler, MachineRepresentationOf<T>::value,
+      : CodeAssemblerVariable(assembler, PhiMachineRepresentationOf<T>,
                               initial_value) {}
   explicit TypedCodeAssemblerVariable(CodeAssembler* assembler)
-      : CodeAssemblerVariable(assembler, MachineRepresentationOf<T>::value) {}
+      : CodeAssemblerVariable(assembler, PhiMachineRepresentationOf<T>) {}
 #if DEBUG
   TypedCodeAssemblerVariable(AssemblerDebugInfo debug_info,
                              CodeAssembler* assembler)
       : CodeAssemblerVariable(assembler, debug_info,
-                              MachineRepresentationOf<T>::value) {}
+                              PhiMachineRepresentationOf<T>) {}
   TypedCodeAssemblerVariable(AssemblerDebugInfo debug_info,
                              TNode<T> initial_value, CodeAssembler* assembler)
       : CodeAssemblerVariable(assembler, debug_info,
-                              MachineRepresentationOf<T>::value,
-                              initial_value) {}
+                              PhiMachineRepresentationOf<T>, initial_value) {}
 #endif  // DEBUG
 
   TNode<T> value() const {
@@ -1375,7 +1410,7 @@ class CodeAssemblerParameterizedLabel
   void CreatePhis(TNode<Types>*... results) {
     const std::vector<Node*>& phi_nodes =
         CodeAssemblerParameterizedLabelBase::CreatePhis(
-            {MachineRepresentationOf<Types>::value...});
+            {PhiMachineRepresentationOf<Types>...});
     auto it = phi_nodes.begin();
     USE(it);
     ITERATE_PACK(AssignPhi(results, *(it++)));
@@ -1395,13 +1430,13 @@ class V8_EXPORT_PRIVATE CodeAssemblerState {
   // |result_size| specifies the number of results returned by the stub.
   // TODO(rmcilroy): move result_size to the CallInterfaceDescriptor.
   CodeAssemblerState(Isolate* isolate, Zone* zone,
-                     const CallInterfaceDescriptor& descriptor, Code::Kind kind,
+                     const CallInterfaceDescriptor& descriptor, CodeKind kind,
                      const char* name, PoisoningMitigationLevel poisoning_level,
                      int32_t builtin_index = Builtins::kNoBuiltinId);
 
   // Create with JSCall linkage.
   CodeAssemblerState(Isolate* isolate, Zone* zone, int parameter_count,
-                     Code::Kind kind, const char* name,
+                     CodeKind kind, const char* name,
                      PoisoningMitigationLevel poisoning_level,
                      int32_t builtin_index = Builtins::kNoBuiltinId);
 
@@ -1425,7 +1460,7 @@ class V8_EXPORT_PRIVATE CodeAssemblerState {
   friend class ScopedExceptionHandler;
 
   CodeAssemblerState(Isolate* isolate, Zone* zone,
-                     CallDescriptor* call_descriptor, Code::Kind kind,
+                     CallDescriptor* call_descriptor, CodeKind kind,
                      const char* name, PoisoningMitigationLevel poisoning_level,
                      int32_t builtin_index);
 
@@ -1433,7 +1468,7 @@ class V8_EXPORT_PRIVATE CodeAssemblerState {
   void PopExceptionHandler();
 
   std::unique_ptr<RawMachineAssembler> raw_assembler_;
-  Code::Kind kind_;
+  CodeKind kind_;
   const char* name_;
   int32_t builtin_index_;
   bool code_generated_;
@@ -1445,6 +1480,9 @@ class V8_EXPORT_PRIVATE CodeAssemblerState {
   using VariableId = uint32_t;
   VariableId next_variable_id_ = 0;
   JSGraph* jsgraph_;
+
+  // Only used by CodeStubAssembler builtins.
+  std::vector<FileAndLine> macro_call_stack_;
 
   VariableId NextVariableId() { return next_variable_id_++; }
 

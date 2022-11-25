@@ -28,10 +28,15 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Host from '../host/host.js';
+import * as Root from '../root/root.js';
 
 import {Action, Events as ActionEvents} from './Action.js';  // eslint-disable-line no-unused-vars
+import {ActionRegistry} from './ActionRegistry.js';
 import * as ARIAUtils from './ARIAUtils.js';
 import {ContextMenu} from './ContextMenu.js';
 import {GlassPane, PointerEventsBehavior} from './GlassPane.js';
@@ -253,7 +258,7 @@ export class Toolbar {
    * @return {!ToolbarButton}
    */
   static createActionButtonForId(actionId, options = TOOLBAR_BUTTON_DEFAULT_OPTIONS) {
-    const action = self.UI.actionRegistry.action(actionId);
+    const action = ActionRegistry.instance().action(actionId);
     return Toolbar.createActionButton(/** @type {!Action} */ (action), options);
   }
 
@@ -393,10 +398,10 @@ export class Toolbar {
 
   /**
    * @param {string} location
-   * @return {!Promise}
+   * @return {!Promise<void>}
    */
   async appendItemsAtLocation(location) {
-    const extensions = self.runtime.extensions(Provider);
+    const extensions = Root.Runtime.Runtime.instance().extensions(Provider);
     const filtered = extensions.filter(e => e.descriptor()['location'] === location);
     const items = await Promise.all(filtered.map(extension => {
       const descriptor = extension.descriptor();
@@ -443,14 +448,15 @@ export class ToolbarItem extends Common.ObjectWrapper.ObjectWrapper {
 
   /**
    * @param {string} title
+   * @param {string | undefined} actionId
    */
-  setTitle(title) {
+  setTitle(title, actionId = undefined) {
     if (this._title === title) {
       return;
     }
     this._title = title;
     ARIAUtils.setAccessibleName(this.element, title);
-    Tooltip.install(this.element, title, undefined, {
+    Tooltip.install(this.element, title, actionId, {
       anchorTooltipAtElement: true,
     });
   }
@@ -507,7 +513,9 @@ export class ToolbarText extends ToolbarItem {
    * @param {string=} text
    */
   constructor(text) {
-    super(createElementWithClass('div', 'toolbar-text'));
+    const element = document.createElement('div');
+    element.classList.add('toolbar-text');
+    super(element);
     this.element.classList.add('toolbar-text');
     this.setText(text || '');
   }
@@ -537,7 +545,9 @@ export class ToolbarButton extends ToolbarItem {
    * @param {string=} text
    */
   constructor(title, glyph, text) {
-    super(createElementWithClass('button', 'toolbar-button'));
+    const element = document.createElement('button');
+    element.classList.add('toolbar-button');
+    super(element);
     this.element.addEventListener('click', this._clicked.bind(this), false);
     this.element.addEventListener('mousedown', this._mouseDown.bind(this), false);
 
@@ -593,16 +603,10 @@ export class ToolbarButton extends ToolbarItem {
     this.element.classList.add('dark-text');
   }
 
-  /**
-   * @param {number=} width
-   */
-  turnIntoSelect(width) {
+  turnIntoSelect() {
     this.element.classList.add('toolbar-has-dropdown');
     const dropdownArrowIcon = Icon.create('smallicon-triangle-down', 'toolbar-dropdown-arrow');
     this.element.appendChild(dropdownArrowIcon);
-    if (width) {
-      this.element.style.width = width + 'px';
-    }
   }
 
   /**
@@ -642,7 +646,9 @@ export class ToolbarInput extends ToolbarItem {
    * @param {(function(string, string, boolean=):!Promise<!Suggestions>)=} completions
    */
   constructor(placeholder, accessiblePlaceholder, growFactor, shrinkFactor, tooltip, completions) {
-    super(createElementWithClass('div', 'toolbar-input'));
+    const element = document.createElement('div');
+    element.classList.add('toolbar-input');
+    super(element);
 
     const internalPromptElement = this.element.createChild('div', 'toolbar-input-prompt');
     internalPromptElement.addEventListener('focus', () => this.element.classList.add('focused'));
@@ -791,7 +797,7 @@ export class ToolbarToggle extends ToolbarButton {
  */
 export class ToolbarMenuButton extends ToolbarButton {
   /**
-   * @param {function(!ContextMenu)} contextMenuHandler
+   * @param {function(!ContextMenu):void} contextMenuHandler
    * @param {boolean=} useSoftMenu
    */
   constructor(contextMenuHandler, useSoftMenu) {
@@ -852,7 +858,7 @@ export class ToolbarMenuButton extends ToolbarButton {
  */
 export class ToolbarSettingToggle extends ToolbarToggle {
   /**
-   * @param {!Common.Settings.Setting} setting
+   * @param {!Common.Settings.Setting<boolean>} setting
    * @param {string} glyph
    * @param {string} title
    */
@@ -888,7 +894,9 @@ export class ToolbarSeparator extends ToolbarItem {
    * @param {boolean=} spacer
    */
   constructor(spacer) {
-    super(createElementWithClass('div', spacer ? 'toolbar-spacer' : 'toolbar-divider'));
+    const element = document.createElement('div');
+    element.classList.add(spacer ? 'toolbar-spacer' : 'toolbar-divider');
+    super(element);
   }
 }
 
@@ -917,12 +925,14 @@ export class ItemsProvider {
  */
 export class ToolbarComboBox extends ToolbarItem {
   /**
-   * @param {?function(!Event)} changeHandler
+   * @param {?function(!Event):void} changeHandler
    * @param {string} title
    * @param {string=} className
    */
   constructor(changeHandler, title, className) {
-    super(createElementWithClass('span', 'toolbar-select-container'));
+    const element = document.createElement('span');
+    element.classList.add('toolbar-select-container');
+    super(element);
 
     this._selectElement = this.element.createChild('select', 'toolbar-item');
     const dropdownArrowIcon = Icon.create('smallicon-triangle-down', 'toolbar-dropdown-arrow');
@@ -1051,7 +1061,7 @@ export class ToolbarComboBox extends ToolbarItem {
 export class ToolbarSettingComboBox extends ToolbarComboBox {
   /**
    * @param {!Array<!{value: string, label: string}>} options
-   * @param {!Common.Settings.Setting} setting
+   * @param {!Common.Settings.Setting<*>} setting
    * @param {string} accessibleName
    */
   constructor(options, setting, accessibleName) {
@@ -1118,14 +1128,19 @@ export class ToolbarCheckbox extends ToolbarItem {
   /**
    * @param {string} text
    * @param {string=} tooltip
-   * @param {function()=} listener
+   * @param {function():void=} listener
    */
   constructor(text, tooltip, listener) {
     super(CheckboxLabel.create(text));
     this.element.classList.add('checkbox');
     this.inputElement = this.element.checkboxElement;
     if (tooltip) {
-      Tooltip.install(this.element, tooltip, undefined, {
+      // install on the checkbox
+      Tooltip.install(this.inputElement, tooltip, undefined, {
+        anchorTooltipAtElement: true,
+      });
+      // install on the checkbox label
+      Tooltip.install(this.element.textElement, tooltip, undefined, {
         anchorTooltipAtElement: true,
       });
     }
@@ -1160,7 +1175,7 @@ export class ToolbarCheckbox extends ToolbarItem {
 
 export class ToolbarSettingCheckbox extends ToolbarCheckbox {
   /**
-   * @param {!Common.Settings.Setting} setting
+   * @param {!Common.Settings.Setting<boolean>} setting
    * @param {string=} tooltip
    * @param {string=} alternateTitle
    */

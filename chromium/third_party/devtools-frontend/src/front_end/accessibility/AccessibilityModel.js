@@ -4,6 +4,22 @@
 
 import * as SDK from '../sdk/sdk.js';
 
+/** @enum {string} */
+export const CoreAxPropertyName = {
+  Name: 'name',
+  Description: 'description',
+  Value: 'value',
+  Role: 'role',
+};
+
+/** @typedef {{
+ *   name: (CoreAxPropertyName | Protocol.Accessibility.AXPropertyName),
+ *   value: Protocol.Accessibility.AXValue
+ * }}
+ */
+// @ts-ignore typedef
+export let CoreOrProtocolAxProperty;
+
 /**
  * @unrestricted
  */
@@ -69,20 +85,20 @@ export class AccessibilityNode {
   }
 
   /**
-   * @return {!Array<!Protocol.Accessibility.AXProperty>}
+   * @return {!Array<!CoreOrProtocolAxProperty>}
    */
   coreProperties() {
+    /** @type {!Array<!CoreOrProtocolAxProperty>} */
     const properties = [];
 
     if (this._name) {
-      properties.push(/** @type {!Protocol.Accessibility.AXProperty} */ ({name: 'name', value: this._name}));
+      properties.push({name: CoreAxPropertyName.Name, value: this._name});
     }
     if (this._description) {
-      properties.push(
-          /** @type {!Protocol.Accessibility.AXProperty} */ ({name: 'description', value: this._description}));
+      properties.push({name: CoreAxPropertyName.Description, value: this._description});
     }
     if (this._value) {
-      properties.push(/** @type {!Protocol.Accessibility.AXProperty} */ ({name: 'value', value: this._value}));
+      properties.push({name: CoreAxPropertyName.Value, value: this._value});
     }
 
     return properties;
@@ -152,23 +168,23 @@ export class AccessibilityNode {
   }
 
   highlightDOMNode() {
-    if (!this.deferredDOMNode()) {
+    const deferredNode = this.deferredDOMNode();
+    if (!deferredNode) {
       return;
     }
-
     // Highlight node in page.
-    this.deferredDOMNode().highlight();
+    deferredNode.highlight();
   }
 
   /**
    * @return {!Array<!AccessibilityNode>}
    */
   children() {
-    const children = [];
     if (!this._childIds) {
-      return children;
+      return [];
     }
 
+    const children = [];
     for (const childId of this._childIds) {
       const child = this._accessibilityModel.axNodeForId(childId);
       if (child) {
@@ -199,33 +215,6 @@ export class AccessibilityNode {
 
     return !this._childIds.some(id => this._accessibilityModel.axNodeForId(id) !== undefined);
   }
-
-  /**
-   * TODO(aboxhall): Remove once protocol is stable.
-   * @param {!AccessibilityNode} inspectedNode
-   * @param {string=} leadingSpace
-   * @return {string}
-   */
-  printSelfAndChildren(inspectedNode, leadingSpace) {
-    let string = leadingSpace || '';
-    if (this._role) {
-      string += this._role.value;
-    } else {
-      string += '<no role>';
-    }
-    string += (this._name ? ' ' + this._name.value : '');
-    string += ' ' + this._id;
-    if (this._domNode) {
-      string += ' (' + this._domNode.nodeName() + ')';
-    }
-    if (this === inspectedNode) {
-      string += ' *';
-    }
-    for (const child of this.children()) {
-      string += '\n' + child.printSelfAndChildren(inspectedNode, (leadingSpace || '') + '  ');
-    }
-    return string;
-  }
 }
 
 /**
@@ -250,15 +239,16 @@ export class AccessibilityModel extends SDK.SDKModel.SDKModel {
 
   /**
    * @param {!SDK.DOMModel.DOMNode} node
-   * @return {!Promise}
+   * @return {!Promise<void>}
    */
   async requestPartialAXTree(node) {
-    const payloads = await this._agent.getPartialAXTree(node.id, undefined, undefined, true);
-    if (!payloads) {
+    const {nodes} = await this._agent.invoke_getPartialAXTree(
+        {nodeId: node.id, backendNodeId: undefined, objectId: undefined, fetchRelatives: true});
+    if (!nodes) {
       return;
     }
 
-    for (const payload of payloads) {
+    for (const payload of nodes) {
       new AccessibilityNode(this, payload);
     }
 
@@ -274,7 +264,7 @@ export class AccessibilityModel extends SDK.SDKModel.SDKModel {
    * @return {?AccessibilityNode}
    */
   axNodeForId(axId) {
-    return this._axIdToAXNode.get(axId);
+    return this._axIdToAXNode.get(axId) || null;
   }
 
   /**
@@ -302,18 +292,6 @@ export class AccessibilityModel extends SDK.SDKModel.SDKModel {
    */
   _setAXNodeForBackendDOMNodeId(backendDOMNodeId, axNode) {
     this._backendDOMNodeIdToAXNode.set(backendDOMNodeId, axNode);
-  }
-
-  // TODO(aboxhall): Remove once protocol is stable.
-  /**
-   * @param {!SDK.DOMModel.DOMNode} inspectedNode
-   */
-  logTree(inspectedNode) {
-    let rootNode = inspectedNode;
-    while (rootNode.parentNode()) {
-      rootNode = rootNode.parentNode();
-    }
-    console.log(rootNode.printSelfAndChildren(inspectedNode));  // eslint-disable-line no-console
   }
 }
 

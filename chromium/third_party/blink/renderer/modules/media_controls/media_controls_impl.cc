@@ -237,7 +237,7 @@ class MediaControlsImpl::MediaControlsResizeObserverDelegate final
     controls_->NotifyElementSizeChanged(entries[0]->contentRect());
   }
 
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     visitor->Trace(controls_);
     ResizeObserver::Delegate::Trace(visitor);
   }
@@ -263,7 +263,7 @@ class MediaControlsImpl::MediaElementMutationCallback
   }
 
   ExecutionContext* GetExecutionContext() const override {
-    return controls_->GetDocument().ToExecutionContext();
+    return controls_->GetDocument().GetExecutionContext();
   }
 
   void Deliver(const MutationRecordVector& records,
@@ -297,7 +297,7 @@ class MediaControlsImpl::MediaElementMutationCallback
 
   void Disconnect() { observer_->disconnect(); }
 
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     visitor->Trace(controls_);
     visitor->Trace(observer_);
     MutationObserver::Delegate::Trace(visitor);
@@ -354,7 +354,7 @@ MediaControlsImpl::MediaControlsImpl(HTMLMediaElement& media_element)
       is_mouse_over_controls_(false),
       is_paused_for_scrubbing_(false),
       resize_observer_(ResizeObserver::Create(
-          media_element.GetDocument(),
+          media_element.GetDocument().domWindow(),
           MakeGarbageCollected<MediaControlsResizeObserverDelegate>(this))),
       element_size_changed_timer_(
           media_element.GetDocument().GetTaskRunner(TaskType::kInternalMedia),
@@ -669,7 +669,7 @@ Node::InsertionNotificationRequest MediaControlsImpl::InsertedInto(
 
   if (!resize_observer_) {
     resize_observer_ = ResizeObserver::Create(
-        MediaElement().GetDocument(),
+        MediaElement().GetDocument().domWindow(),
         MakeGarbageCollected<MediaControlsResizeObserverDelegate>(this));
     HTMLMediaElement& html_media_element = MediaElement();
     resize_observer_->observe(&html_media_element);
@@ -2128,7 +2128,7 @@ HTMLVideoElement& MediaControlsImpl::VideoElement() {
   return *To<HTMLVideoElement>(&MediaElement());
 }
 
-void MediaControlsImpl::Trace(Visitor* visitor) {
+void MediaControlsImpl::Trace(Visitor* visitor) const {
   visitor->Trace(element_mutation_callback_);
   visitor->Trace(resize_observer_);
   visitor->Trace(panel_);

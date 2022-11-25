@@ -5,9 +5,9 @@
 syntax = "proto2";
 
 option optimize_for = LITE_RUNTIME;
+option java_package = "org.chromium.components.metrics";
 
 option java_outer_classname = "ExecutionContextProtos";
-option java_package = "org.chromium.components.metrics";
 
 package metrics;
 
@@ -25,6 +25,8 @@ enum Process {
   SANDBOX_HELPER_PROCESS = 6;
   PPAPI_PLUGIN_PROCESS = 7;
   PPAPI_BROKER_PROCESS = 8;
+  NETWORK_SERVICE_PROCESS = 10;
+
   // A Chrome process not identified by any other enum. Defined for the benefit
   // of Chrome OS. Do not use for the Chrome sampling profiler; define a new
   // enum instead.

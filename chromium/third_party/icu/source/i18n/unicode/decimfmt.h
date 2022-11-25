@@ -53,10 +53,10 @@ class CompactDecimalFormat;
 
 namespace number {
 class LocalizedNumberFormatter;
-class FormattedNumber;
 namespace impl {
 class DecimalQuantity;
 struct DecimalFormatFields;
+class UFormattedNumberData;
 }
 }
 
@@ -1283,14 +1283,13 @@ class U_I18N_API DecimalFormat : public NumberFormat {
      */
     virtual void setNegativeSuffix(const UnicodeString& newValue);
 
-#ifndef U_HIDE_DRAFT_API
     /**
      * Whether to show the plus sign on positive (non-negative) numbers; for example, "+12"
      *
      * For more control over sign display, use NumberFormatter.
      *
      * @return Whether the sign is shown on positive numbers and zero.
-     * @draft ICU 64
+     * @stable ICU 64
      */
     UBool isSignAlwaysShown() const;
 
@@ -1300,10 +1299,9 @@ class U_I18N_API DecimalFormat : public NumberFormat {
      * For more control over sign display, use NumberFormatter.
      *
      * @param value true to always show a sign; false to hide the sign on positive numbers and zero.
-     * @draft ICU 64
+     * @stable ICU 64
      */
     void setSignAlwaysShown(UBool value);
-#endif  /* U_HIDE_DRAFT_API */
 
     /**
      * Get the multiplier for use in percent, permill, etc.
@@ -1650,7 +1648,6 @@ class U_I18N_API DecimalFormat : public NumberFormat {
      */
     virtual void setSecondaryGroupingSize(int32_t newValue);
 
-#ifndef U_HIDE_DRAFT_API
     /**
      * Returns the minimum number of grouping digits.
      * Grouping separators are output if there are at least this many
@@ -1672,23 +1669,28 @@ class U_I18N_API DecimalFormat : public NumberFormat {
      *
      * @see setMinimumGroupingDigits
      * @see getGroupingSize
-     * @draft ICU 64
+     * @stable ICU 64
      */
     int32_t getMinimumGroupingDigits() const;
 
     /**
-     * Sets the minimum grouping digits. Setting to a value less than or
-     * equal to 1 turns off minimum grouping digits.
+     * Sets the minimum grouping digits. Setting the value to
+     *  - 1: Turns off minimum grouping digits.
+     *  - 0 or -1: The behavior is undefined.
+     *  - UNUM_MINIMUM_GROUPING_DIGITS_AUTO: Display grouping using the default
+     *      strategy for all locales.
+     *  - UNUM_MINIMUM_GROUPING_DIGITS_MIN2: Display grouping using locale
+     *      defaults, except do not show grouping on values smaller than 10000
+     *      (such that there is a minimum of two digits before the first
+     *      separator).
      *
      * For more control over grouping strategies, use NumberFormatter.
      *
      * @param newValue the new value of minimum grouping digits.
      * @see getMinimumGroupingDigits
-     * @draft ICU 64
+     * @stable ICU 64
      */
     void setMinimumGroupingDigits(int32_t newValue);
-#endif  /* U_HIDE_DRAFT_API */
-
 
     /**
      * Allows you to get the behavior of the decimal separator with integers.
@@ -1729,13 +1731,12 @@ class U_I18N_API DecimalFormat : public NumberFormat {
      */
     virtual void setDecimalPatternMatchRequired(UBool newValue);
 
-#ifndef U_HIDE_DRAFT_API
     /**
      * Returns whether to ignore exponents when parsing.
      *
      * @return Whether to ignore exponents when parsing.
      * @see #setParseNoExponent
-     * @draft ICU 64
+     * @stable ICU 64
      */
     UBool isParseNoExponent() const;
 
@@ -1745,7 +1746,7 @@ class U_I18N_API DecimalFormat : public NumberFormat {
      * 5).
      *
      * @param value true to prevent exponents from being parsed; false to allow them to be parsed.
-     * @draft ICU 64
+     * @stable ICU 64
      */
     void setParseNoExponent(UBool value);
 
@@ -1754,7 +1755,7 @@ class U_I18N_API DecimalFormat : public NumberFormat {
      *
      * @return Whether parsing is case-sensitive.
      * @see #setParseCaseSensitive
-     * @draft ICU 64
+     * @stable ICU 64
      */
     UBool isParseCaseSensitive() const;
 
@@ -1767,7 +1768,7 @@ class U_I18N_API DecimalFormat : public NumberFormat {
      *
      * @param value true to enable case-sensitive parsing (the default); false to force
      *              case-sensitive parsing behavior.
-     * @draft ICU 64
+     * @stable ICU 64
      */
     void setParseCaseSensitive(UBool value);
 
@@ -1777,7 +1778,7 @@ class U_I18N_API DecimalFormat : public NumberFormat {
      *
      * @return Whether an error code is set if high-order digits are truncated.
      * @see setFormatFailIfMoreThanMaxDigits
-     * @draft ICU 64
+     * @stable ICU 64
      */
     UBool isFormatFailIfMoreThanMaxDigits() const;
 
@@ -1786,11 +1787,9 @@ class U_I18N_API DecimalFormat : public NumberFormat {
      * By default, setMaximumIntegerDigits truncates high-order digits silently.
      *
      * @param value Whether to set an error code if high-order digits are truncated.
-     * @draft ICU 64
+     * @stable ICU 64
      */
     void setFormatFailIfMoreThanMaxDigits(UBool value);
-#endif  /* U_HIDE_DRAFT_API */
-
 
     /**
      * Synthesizes a pattern string that represents the current state
@@ -2067,7 +2066,6 @@ class U_I18N_API DecimalFormat : public NumberFormat {
 
 #endif  /* U_HIDE_INTERNAL_API */
 
-#ifndef U_HIDE_DRAFT_API
     /**
      * Converts this DecimalFormat to a (Localized)NumberFormatter. Starting
      * in ICU 60, NumberFormatter is the recommended way to format numbers.
@@ -2111,10 +2109,9 @@ class U_I18N_API DecimalFormat : public NumberFormat {
      * @param status Set on failure, like U_MEMORY_ALLOCATION_ERROR.
      * @return A pointer to an internal object, or nullptr on failure.
      *         Do not delete the return value!
-     * @draft ICU 64
+     * @stable ICU 64
      */
     const number::LocalizedNumberFormatter* toNumberFormatter(UErrorCode& status) const;
-#endif  /* U_HIDE_DRAFT_API */
 
     /**
      * Return the class ID for this class.  This is useful only for
@@ -2168,11 +2165,17 @@ class U_I18N_API DecimalFormat : public NumberFormat {
 
     const numparse::impl::NumberParserImpl* getCurrencyParser(UErrorCode& status) const;
 
-    static void fieldPositionHelper(const number::FormattedNumber& formatted, FieldPosition& fieldPosition,
-                                    int32_t offset, UErrorCode& status);
+    static void fieldPositionHelper(
+        const number::impl::UFormattedNumberData& formatted,
+        FieldPosition& fieldPosition,
+        int32_t offset,
+        UErrorCode& status);
 
-    static void fieldPositionIteratorHelper(const number::FormattedNumber& formatted,
-                                            FieldPositionIterator* fpi, int32_t offset, UErrorCode& status);
+    static void fieldPositionIteratorHelper(
+        const number::impl::UFormattedNumberData& formatted,
+        FieldPositionIterator* fpi,
+        int32_t offset,
+        UErrorCode& status);
 
     void setupFastFormat();
 

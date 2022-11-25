@@ -230,7 +230,7 @@ int HandshakeWithFakeServer(QuicConfig* server_quic_config,
                             PacketSavingConnection* client_conn,
                             QuicCryptoClientStream* client,
                             std::string alpn) {
-  PacketSavingConnection* server_conn = new PacketSavingConnection(
+  auto* server_conn = new testing::NiceMock<PacketSavingConnection>(
       helper, alarm_factory, Perspective::IS_SERVER,
       ParsedVersionOfIndex(client_conn->supported_versions(), 0));
 
@@ -242,13 +242,20 @@ int HandshakeWithFakeServer(QuicConfig* server_quic_config,
   TestQuicSpdyServerSession server_session(
       server_conn, *server_quic_config, client_conn->supported_versions(),
       crypto_config, &compressed_certs_cache);
+  // Call SetServerApplicationStateForResumption so that the fake server
+  // supports 0-RTT in TLS.
   server_session.Initialize();
+  server_session.GetMutableCryptoStream()
+      ->SetServerApplicationStateForResumption(
+          std::make_unique<ApplicationState>());
   EXPECT_CALL(*server_session.helper(),
               CanAcceptClientHello(testing::_, testing::_, testing::_,
                                    testing::_, testing::_))
       .Times(testing::AnyNumber());
   EXPECT_CALL(*server_conn, OnCanWrite()).Times(testing::AnyNumber());
   EXPECT_CALL(*client_conn, OnCanWrite()).Times(testing::AnyNumber());
+  EXPECT_CALL(*server_conn, SendCryptoData(_, _, _))
+      .Times(testing::AnyNumber());
   EXPECT_CALL(server_session, SelectAlpn(_))
       .WillRepeatedly(
           [alpn](const std::vector<quiche::QuicheStringPiece>& alpns) {
@@ -260,7 +267,9 @@ int HandshakeWithFakeServer(QuicConfig* server_quic_config,
 
   CommunicateHandshakeMessages(client_conn, client, server_conn,
                                server_session.GetMutableCryptoStream());
-  CompareClientAndServerKeys(client, server_session.GetMutableCryptoStream());
+  if (client_conn->connected() && server_conn->connected()) {
+    CompareClientAndServerKeys(client, server_session.GetMutableCryptoStream());
+  }
 
   return client->num_sent_client_hellos();
 }
@@ -362,8 +371,9 @@ void CommunicateHandshakeMessages(PacketSavingConnection* client_conn,
                                   PacketSavingConnection* server_conn,
                                   QuicCryptoStream* server) {
   size_t client_i = 0, server_i = 0;
-  while (!client->one_rtt_keys_available() ||
-         !server->one_rtt_keys_available()) {
+  while (client_conn->connected() && server_conn->connected() &&
+         (!client->one_rtt_keys_available() ||
+          !server->one_rtt_keys_available())) {
     ASSERT_GT(client_conn->encrypted_packets_.size(), client_i);
     QUIC_LOG(INFO) << "Processing "
                    << client_conn->encrypted_packets_.size() - client_i
@@ -399,9 +409,6 @@ std::pair<size_t, size_t> AdvanceHandshake(PacketSavingConnection* client_conn,
   QUIC_LOG(INFO) << "Processing "
                  << server_conn->encrypted_packets_.size() - server_i
                  << " packets server->client";
-  if (server_conn->encrypted_packets_.size() - server_i == 2) {
-    QUIC_LOG(INFO) << "here";
-  }
   MovePackets(server_conn, &server_i, client, client_conn,
               Perspective::IS_CLIENT);
 
@@ -419,6 +426,7 @@ std::string GetValueForTag(const CryptoHandshakeMessage& message, QuicTag tag) {
 uint64_t LeafCertHashForTesting() {
   QuicReferenceCountedPointer<ProofSource::Chain> chain;
   QuicSocketAddress server_address(QuicIpAddress::Any4(), 42);
+  QuicSocketAddress client_address(QuicIpAddress::Any4(), 43);
   QuicCryptoProof proof;
   std::unique_ptr<ProofSource> proof_source(ProofSourceForTesting());
 
@@ -443,7 +451,8 @@ uint64_t LeafCertHashForTesting() {
   // Note: relies on the callback being invoked synchronously
   bool ok = false;
   proof_source->GetProof(
-      server_address, "", "", AllSupportedTransportVersions().front(), "",
+      server_address, client_address, "", "",
+      AllSupportedTransportVersions().front(), "",
       std::unique_ptr<ProofSource::Callback>(new Callback(&ok, &chain)));
   if (!ok || chain->certs.empty()) {
     DCHECK(false) << "Proof generation failed";
@@ -567,7 +576,7 @@ void CompareCrypters(const QuicEncrypter* encrypter,
                      std::string label) {
   if (encrypter == nullptr || decrypter == nullptr) {
     ADD_FAILURE() << "Expected non-null crypters; have " << encrypter << " and "
-                  << decrypter;
+                  << decrypter << " for " << label;
     return;
   }
   quiche::QuicheStringPiece encrypter_key = encrypter->GetKey();
@@ -598,7 +607,8 @@ void CompareClientAndServerKeys(QuicCryptoClientStream* client,
     const QuicDecrypter* server_decrypter(
         QuicFramerPeer::GetDecrypter(server_framer, level));
     if (level == ENCRYPTION_FORWARD_SECURE ||
-        !((level == ENCRYPTION_HANDSHAKE || client_encrypter == nullptr) &&
+        !((level == ENCRYPTION_HANDSHAKE || level == ENCRYPTION_ZERO_RTT ||
+           client_encrypter == nullptr) &&
           server_decrypter == nullptr)) {
       CompareCrypters(client_encrypter, server_decrypter,
                       "client " + EncryptionLevelString(level) + " write");
@@ -609,7 +619,8 @@ void CompareClientAndServerKeys(QuicCryptoClientStream* client,
         QuicFramerPeer::GetDecrypter(client_framer, level));
     if (level == ENCRYPTION_FORWARD_SECURE ||
         !(server_encrypter == nullptr &&
-          (level == ENCRYPTION_HANDSHAKE || client_decrypter == nullptr))) {
+          (level == ENCRYPTION_HANDSHAKE || level == ENCRYPTION_ZERO_RTT ||
+           client_decrypter == nullptr))) {
       CompareCrypters(server_encrypter, client_decrypter,
                       "server " + EncryptionLevelString(level) + " write");
     }
@@ -741,9 +752,11 @@ void MovePackets(PacketSavingConnection* source_conn,
     QuicConnectionPeer::AddBytesReceived(
         dest_conn, source_conn->encrypted_packets_[index]->length());
     if (!framer.ProcessPacket(*source_conn->encrypted_packets_[index])) {
-      // The framer will be unable to decrypt forward-secure packets sent after
-      // the handshake is complete. Don't treat them as handshake packets.
-      break;
+      // The framer will be unable to decrypt zero-rtt packets sent during
+      // handshake or forward-secure packets sent after the handshake is
+      // complete. Don't treat them as handshake packets.
+      QuicConnectionPeer::SwapCrypters(dest_conn, framer.framer());
+      continue;
     }
     QuicConnectionPeer::SwapCrypters(dest_conn, framer.framer());
     dest_conn->OnDecryptedPacket(framer.last_decrypted_level());
@@ -755,6 +768,8 @@ void MovePackets(PacketSavingConnection* source_conn,
       // packets should ever be encrypted with the NullEncrypter, instead
       // they're encrypted with an obfuscation cipher based on QUIC version and
       // connection ID.
+      QUIC_LOG(INFO) << "Attempting to decrypt with NullDecrypter: "
+                        "expect a decryption failure on the next log line.";
       ASSERT_FALSE(null_encryption_framer.ProcessPacket(
           *source_conn->encrypted_packets_[index]))
           << "No TLS packets should be encrypted with the NullEncrypter";
@@ -846,7 +861,7 @@ void GenerateFullCHLO(
       ParsedQuicVersion(PROTOCOL_QUIC_CRYPTO, transport_version), signed_config,
       compressed_certs_cache, out);
   crypto_config->ValidateClientHello(
-      inchoate_chlo, client_addr.host(), server_addr, transport_version, clock,
+      inchoate_chlo, client_addr, server_addr, transport_version, clock,
       signed_config, generator.GetValidateClientHelloCallback());
 }
 

@@ -62,7 +62,7 @@ protected:
             } else {
                 size_t bytes = that.size();
                 SkASSERT(SkIsAlign4(bytes));
-                fKey.reset(SkToInt(bytes / sizeof(uint32_t)));
+                fKey.reset(bytes / sizeof(uint32_t));
                 memcpy(fKey.get(), that.fKey.get(), bytes);
                 this->validate();
             }
@@ -91,8 +91,9 @@ protected:
             SkDebugf("hash: %d ", this->hash());
             SkDebugf("domain: %d ", this->domain());
             SkDebugf("size: %dB ", this->internalSize());
-            for (size_t i = 0; i < this->internalSize(); ++i) {
-                SkDebugf("%d ", fKey[SkTo<int>(i)]);
+            size_t dataCount = this->internalSize() / sizeof(uint32_t) - kMetaDataCnt;
+            for (size_t i = 0; i < dataCount; ++i) {
+                SkDebugf("%d ", fKey[SkTo<int>(kMetaDataCnt+i)]);
             }
             SkDebugf("\n");
         }
@@ -103,10 +104,10 @@ protected:
     class Builder {
     public:
         Builder(GrResourceKey* key, uint32_t domain, int data32Count) : fKey(key) {
-            SkASSERT(data32Count >= 0);
+            size_t count = SkToSizeT(data32Count);
             SkASSERT(domain != kInvalidDomain);
-            key->fKey.reset(kMetaDataCnt + data32Count);
-            int size = (data32Count + kMetaDataCnt) * sizeof(uint32_t);
+            key->fKey.reset(kMetaDataCnt + count);
+            size_t size = (count + kMetaDataCnt) * sizeof(uint32_t);
             SkASSERT(SkToU16(size) == size);
             SkASSERT(SkToU16(domain) == domain);
             key->fKey[kDomainAndSize_MetaDataIdx] = domain | (size << 16);
@@ -128,7 +129,7 @@ protected:
             SkASSERT(fKey);
             SkDEBUGCODE(size_t dataCount = fKey->internalSize() / sizeof(uint32_t) - kMetaDataCnt;)
             SkASSERT(SkToU32(dataIdx) < dataCount);
-            return fKey->fKey[kMetaDataCnt + dataIdx];
+            return fKey->fKey[(int)kMetaDataCnt + dataIdx];
         }
 
     private:
@@ -184,7 +185,7 @@ private:
  */
 class GrScratchKey : public GrResourceKey {
 private:
-    typedef GrResourceKey INHERITED;
+    using INHERITED = GrResourceKey;
 
 public:
     /** Uniquely identifies the type of resource that is cached as scratch. */
@@ -236,7 +237,7 @@ public:
  */
 class GrUniqueKey : public GrResourceKey {
 private:
-    typedef GrResourceKey INHERITED;
+    using INHERITED = GrResourceKey;
 
 public:
     typedef uint32_t Domain;

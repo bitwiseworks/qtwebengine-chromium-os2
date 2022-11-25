@@ -350,6 +350,9 @@ MediaTrackConstraintSetPlatform::MediaTrackConstraintSetPlatform()
       channel_count("channelCount"),
       device_id("deviceId"),
       disable_local_echo("disableLocalEcho"),
+      pan("pan"),
+      tilt("tilt"),
+      zoom("zoom"),
       group_id("groupId"),
       video_kind("videoKind"),
       media_stream_source("mediaStreamSource"),
@@ -409,6 +412,9 @@ Vector<const BaseConstraint*> MediaTrackConstraintSetPlatform::AllConstraints()
           &video_kind,
           &media_stream_source,
           &disable_local_echo,
+          &pan,
+          &tilt,
+          &zoom,
           &render_to_associated_sink,
           &goog_echo_cancellation,
           &goog_experimental_echo_cancellation,
@@ -492,7 +498,7 @@ String MediaTrackConstraintSetPlatform::ToString() const {
   StringBuilder builder;
   bool first = true;
   for (auto* const constraint : AllConstraints()) {
-    if (!constraint->IsEmpty()) {
+    if (constraint->IsPresent()) {
       if (!first)
         builder.Append(", ");
       builder.Append(constraint->GetName());

@@ -1,12 +1,12 @@
-//
-//  Copyright (c) 2020 The WebRTC project authors. All Rights Reserved.
-//
-//  Use of this source code is governed by a BSD-style license
-//  that can be found in the LICENSE file in the root of the source
-//  tree. An additional intellectual property rights grant can be found
-//  in the file PATENTS.  All contributing project authors may
-//  be found in the AUTHORS file in the root of the source tree.
-//
+/*
+ *  Copyright (c) 2020 The WebRTC project authors. All Rights Reserved.
+ *
+ *  Use of this source code is governed by a BSD-style license
+ *  that can be found in the LICENSE file in the root of the source
+ *  tree. An additional intellectual property rights grant can be found
+ *  in the file PATENTS.  All contributing project authors may
+ *  be found in the AUTHORS file in the root of the source tree.
+ */
 
 #ifndef AUDIO_VOIP_AUDIO_EGRESS_H_
 #define AUDIO_VOIP_AUDIO_EGRESS_H_
@@ -20,8 +20,9 @@
 #include "call/audio_sender.h"
 #include "modules/audio_coding/include/audio_coding_module.h"
 #include "modules/rtp_rtcp/include/report_block_data.h"
-#include "modules/rtp_rtcp/include/rtp_rtcp.h"
+#include "modules/rtp_rtcp/source/rtp_rtcp_interface.h"
 #include "modules/rtp_rtcp/source/rtp_sender_audio.h"
+#include "rtc_base/synchronization/mutex.h"
 #include "rtc_base/task_queue.h"
 #include "rtc_base/thread_checker.h"
 #include "rtc_base/time_utils.h"
@@ -34,17 +35,16 @@ namespace webrtc {
 // encoded payload will be packetized by the RTP stack, resulting in ready to
 // send RTP packet to remote endpoint.
 //
-// This class enforces single worker thread access by caller via SequenceChecker
-// in debug mode as expected thread usage pattern. In order to minimize the hold
-// on audio input thread from OS, TaskQueue is employed to encode and send RTP
-// asynchrounously.
+// TaskQueue is used to encode and send RTP asynchrounously as some OS platform
+// uses the same thread for both audio input and output sample deliveries which
+// can affect audio quality.
 //
 // Note that this class is originally based on ChannelSend in
 // audio/channel_send.cc with non-audio related logic trimmed as aimed for
 // smaller footprint.
 class AudioEgress : public AudioSender, public AudioPacketizationCallback {
  public:
-  AudioEgress(RtpRtcp* rtp_rtcp,
+  AudioEgress(RtpRtcpInterface* rtp_rtcp,
               Clock* clock,
               TaskQueueFactory* task_queue_factory);
   ~AudioEgress() override;
@@ -59,8 +59,9 @@ class AudioEgress : public AudioSender, public AudioPacketizationCallback {
 
   // Start or stop sending operation of AudioEgress. This will start/stop
   // the RTP stack also causes encoder queue thread to start/stop
-  // processing input audio samples.
-  void StartSend();
+  // processing input audio samples. StartSend will return false if
+  // a send codec has not been set.
+  bool StartSend();
   void StopSend();
 
   // Query the state of the RTP stack. This returns true if StartSend()
@@ -72,7 +73,10 @@ class AudioEgress : public AudioSender, public AudioPacketizationCallback {
 
   // Retrieve current encoder format info. This returns encoder format set
   // by SetEncoder() and if encoder is not set, this will return nullopt.
-  absl::optional<SdpAudioFormat> GetEncoderFormat() const;
+  absl::optional<SdpAudioFormat> GetEncoderFormat() const {
+    MutexLock lock(&lock_);
+    return encoder_format_;
+  }
 
   // Register the payload type and sample rate for DTMF (RFC 4733) payload.
   void RegisterTelephoneEventType(int rtp_payload_type, int sample_rate_hz);
@@ -96,15 +100,18 @@ class AudioEgress : public AudioSender, public AudioPacketizationCallback {
                    size_t payload_size) override;
 
  private:
-  // Ensure that single worker thread access.
-  SequenceChecker worker_thread_checker_;
+  void SetEncoderFormat(const SdpAudioFormat& encoder_format) {
+    MutexLock lock(&lock_);
+    encoder_format_ = encoder_format;
+  }
+
+  mutable Mutex lock_;
 
   // Current encoder format selected by caller.
-  absl::optional<SdpAudioFormat> encoder_format_
-      RTC_GUARDED_BY(worker_thread_checker_);
+  absl::optional<SdpAudioFormat> encoder_format_ RTC_GUARDED_BY(lock_);
 
   // Synchronization is handled internally by RtpRtcp.
-  RtpRtcp* const rtp_rtcp_;
+  RtpRtcpInterface* const rtp_rtcp_;
 
   // Synchronization is handled internally by RTPSenderAudio.
   RTPSenderAudio rtp_sender_audio_;

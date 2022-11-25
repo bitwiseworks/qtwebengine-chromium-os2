@@ -283,12 +283,13 @@ struct sctp_assoc_change {
 #define SCTP_CANT_STR_ASSOC 0x0005
 
 /* sac_info values */
-#define SCTP_ASSOC_SUPPORTS_PR        0x01
-#define SCTP_ASSOC_SUPPORTS_AUTH      0x02
-#define SCTP_ASSOC_SUPPORTS_ASCONF    0x03
-#define SCTP_ASSOC_SUPPORTS_MULTIBUF  0x04
-#define SCTP_ASSOC_SUPPORTS_RE_CONFIG 0x05
-#define SCTP_ASSOC_SUPPORTS_MAX       0x05
+#define SCTP_ASSOC_SUPPORTS_PR           0x01
+#define SCTP_ASSOC_SUPPORTS_AUTH         0x02
+#define SCTP_ASSOC_SUPPORTS_ASCONF       0x03
+#define SCTP_ASSOC_SUPPORTS_MULTIBUF     0x04
+#define SCTP_ASSOC_SUPPORTS_RE_CONFIG    0x05
+#define SCTP_ASSOC_SUPPORTS_INTERLEAVING 0x06
+#define SCTP_ASSOC_SUPPORTS_MAX          0x06
 
 /* Address event */
 struct sctp_paddr_change {
@@ -905,7 +906,7 @@ struct socket *
 usrsctp_socket(int domain, int type, int protocol,
                int (*receive_cb)(struct socket *sock, union sctp_sockstore addr, void *data,
                                  size_t datalen, struct sctp_rcvinfo, int flags, void *ulp_info),
-               int (*send_cb)(struct socket *sock, uint32_t sb_free),
+               int (*send_cb)(struct socket *sock, uint32_t sb_free, void *ulp_info),
                uint32_t sb_threshold,
                void *ulp_info);
 
@@ -1035,6 +1036,9 @@ int
 usrsctp_set_ulpinfo(struct socket *, void *);
 
 int
+usrsctp_get_ulpinfo(struct socket *, void **);
+
+int
 usrsctp_set_upcall(struct socket *so,
                    void (*upcall)(struct socket *, void *, int),
                    void *arg);
@@ -1044,7 +1048,7 @@ usrsctp_get_events(struct socket *so);
 
 
 void
-usrsctp_handle_timers(uint32_t delta);
+usrsctp_handle_timers(uint32_t elapsed_milliseconds);
 
 #define SCTP_DUMP_OUTBOUND 1
 #define SCTP_DUMP_INBOUND  0

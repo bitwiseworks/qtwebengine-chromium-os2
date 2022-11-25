@@ -45,7 +45,7 @@ constexpr int kInnerHeaderHeight = kHeaderHeight - kHeaderOuterPadding.height();
 
 // Default paddings of the views of texts. Adjusted on Windows.
 // Top: 9px = 11px (from the mock) - 2px (outer padding).
-// Buttom: 6px from the mock.
+// Bottom: 6px from the mock.
 constexpr gfx::Insets kTextViewPaddingDefault(9, 0, 6, 0);
 
 // Paddings of the app icon (small image).
@@ -70,8 +70,8 @@ constexpr int kHeaderTextFontSize = 12;
 // Minimum spacing before the control buttons.
 constexpr int kControlButtonSpacing = 16;
 
-// ExpandButtton forwards all mouse and key events to NotificationHeaderView,
-// but takes tab focus for accessibility purpose.
+// ExpandButton forwards all mouse and key events to NotificationHeaderView, but
+// takes tab focus for accessibility purpose.
 class ExpandButton : public views::ImageView {
  public:
   ExpandButton();
@@ -81,6 +81,7 @@ class ExpandButton : public views::ImageView {
   void OnPaint(gfx::Canvas* canvas) override;
   void OnFocus() override;
   void OnBlur() override;
+  void OnThemeChanged() override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
  private:
@@ -88,8 +89,6 @@ class ExpandButton : public views::ImageView {
 };
 
 ExpandButton::ExpandButton() {
-  focus_painter_ = views::Painter::CreateSolidFocusPainter(
-      kFocusBorderColor, gfx::Insets(0, 0, 1, 1));
   SetFocusBehavior(FocusBehavior::ALWAYS);
 }
 
@@ -110,6 +109,14 @@ void ExpandButton::OnFocus() {
 void ExpandButton::OnBlur() {
   views::ImageView::OnBlur();
   SchedulePaint();
+}
+
+void ExpandButton::OnThemeChanged() {
+  ImageView::OnThemeChanged();
+  focus_painter_ = views::Painter::CreateSolidFocusPainter(
+      GetNativeTheme()->GetSystemColor(
+          ui::NativeTheme::kColorId_FocusedBorderColor),
+      gfx::Insets(0, 0, 1, 1));
 }
 
 void ExpandButton::GetAccessibleNodeData(ui::AXNodeData* node_data) {
@@ -143,7 +150,6 @@ gfx::Insets CalculateTopPadding(int font_list_height) {
   }
 #endif
 
-  DCHECK_EQ(15, font_list_height);
   return kTextViewPaddingDefault;
 }
 
@@ -186,7 +192,6 @@ NotificationHeaderView::NotificationHeaderView(views::ButtonListener* listener)
     label->SetLineHeight(font_list_height);
     label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
     label->SetBorder(views::CreateEmptyBorder(text_view_padding));
-    DCHECK_EQ(kInnerHeaderHeight, label->GetPreferredSize().height());
     return label;
   };
 
@@ -243,7 +248,6 @@ NotificationHeaderView::NotificationHeaderView(views::ButtonListener* listener)
   spacer->SetProperty(views::kFlexBehaviorKey, kSpacerFlex);
   AddChildView(spacer);
 
-  SetAccentColor(accent_color_);
   SetPreferredSize(gfx::Size(kNotificationWidth, kHeaderHeight));
 }
 
@@ -255,9 +259,8 @@ void NotificationHeaderView::SetAppIcon(const gfx::ImageSkia& img) {
 }
 
 void NotificationHeaderView::ClearAppIcon() {
-  app_icon_view_->SetImage(
-      gfx::CreateVectorIcon(kProductIcon, kSmallImageSizeMD, accent_color_));
   using_default_app_icon_ = true;
+  UpdateColors();
 }
 
 void NotificationHeaderView::SetAppName(const base::string16& name) {
@@ -302,6 +305,11 @@ void NotificationHeaderView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
     node_data->AddState(ax::mojom::State::kExpanded);
 }
 
+void NotificationHeaderView::OnThemeChanged() {
+  Button::OnThemeChanged();
+  UpdateColors();
+}
+
 void NotificationHeaderView::SetTimestamp(base::Time timestamp) {
   base::string16 relative_time;
   base::TimeDelta next_update;
@@ -336,28 +344,16 @@ void NotificationHeaderView::SetExpandButtonEnabled(bool enabled) {
 
 void NotificationHeaderView::SetExpanded(bool expanded) {
   is_expanded_ = expanded;
-  expand_button_->SetImage(gfx::CreateVectorIcon(
-      expanded ? kNotificationExpandLessIcon : kNotificationExpandMoreIcon,
-      kExpandIconSize, accent_color_));
-  expand_button_->set_tooltip_text(l10n_util::GetStringUTF16(
+  UpdateColors();
+  expand_button_->SetTooltipText(l10n_util::GetStringUTF16(
       expanded ? IDS_MESSAGE_CENTER_COLLAPSE_NOTIFICATION
                : IDS_MESSAGE_CENTER_EXPAND_NOTIFICATION));
   NotifyAccessibilityEvent(ax::mojom::Event::kStateChanged, true);
 }
 
-void NotificationHeaderView::SetAccentColor(SkColor color) {
-  accent_color_ = color;
-  app_name_view_->SetEnabledColor(accent_color_);
-  summary_text_view_->SetEnabledColor(accent_color_);
-  summary_text_divider_->SetEnabledColor(accent_color_);
-  timestamp_divider_->SetEnabledColor(kRegularTextColorMD);
-  timestamp_view_->SetEnabledColor(kRegularTextColorMD);
-  SetExpanded(is_expanded_);
-
-  // If we are using the default app icon we should clear it so we refresh it
-  // with the new accent color.
-  if (using_default_app_icon_)
-    ClearAppIcon();
+void NotificationHeaderView::SetAccentColor(base::Optional<SkColor> color) {
+  accent_color_ = std::move(color);
+  UpdateColors();
 }
 
 void NotificationHeaderView::SetBackgroundColor(SkColor color) {
@@ -366,6 +362,7 @@ void NotificationHeaderView::SetBackgroundColor(SkColor color) {
   summary_text_view_->SetBackgroundColor(color);
   timestamp_divider_->SetBackgroundColor(color);
   timestamp_view_->SetBackgroundColor(color);
+  UpdateColors();
 }
 
 void NotificationHeaderView::SetSubpixelRenderingEnabled(bool enabled) {
@@ -399,6 +396,26 @@ void NotificationHeaderView::UpdateSummaryTextVisibility() {
 
   // TODO(crbug.com/991492): this should not be necessary.
   detail_views_->InvalidateLayout();
+}
+
+void NotificationHeaderView::UpdateColors() {
+  SkColor color = accent_color_.value_or(GetNativeTheme()->GetSystemColor(
+      ui::NativeTheme::kColorId_NotificationDefaultAccentColor));
+  app_name_view_->SetEnabledColor(color);
+  summary_text_view_->SetEnabledColor(color);
+  summary_text_divider_->SetEnabledColor(color);
+
+  // Get actual color based on readablility requirements.
+  SkColor actual_color = app_name_view_->GetEnabledColor();
+
+  expand_button_->SetImage(gfx::CreateVectorIcon(
+      is_expanded_ ? kNotificationExpandLessIcon : kNotificationExpandMoreIcon,
+      kExpandIconSize, actual_color));
+
+  if (using_default_app_icon_) {
+    app_icon_view_->SetImage(
+        gfx::CreateVectorIcon(kProductIcon, kSmallImageSizeMD, actual_color));
+  }
 }
 
 }  // namespace message_center

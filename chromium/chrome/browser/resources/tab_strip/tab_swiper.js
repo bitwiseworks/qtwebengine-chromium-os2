@@ -34,7 +34,7 @@ export const SWIPE_FINISH_THRESHOLD_PX = 200;
  * register the set of pointer events as an intended swipe.
  * @const {number}
  */
-const SWIPE_VELOCITY_THRESHOLD = 0.1;
+const SWIPE_VELOCITY_THRESHOLD = 0.2;
 
 export class TabSwiper {
   /** @param {!HTMLElement} element */
@@ -133,7 +133,7 @@ export class TabSwiper {
    * @private
    */
   onPointerDown_(event) {
-    if (this.currentPointerDownEvent_) {
+    if (this.currentPointerDownEvent_ || event.pointerType !== 'touch') {
       return;
     }
 

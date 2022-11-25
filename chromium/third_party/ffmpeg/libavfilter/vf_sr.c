@@ -81,7 +81,7 @@ static av_cold int init(AVFilterContext *context)
         av_log(context, AV_LOG_ERROR, "load_model for network was not specified\n");
         return AVERROR(EIO);
     }
-    sr_context->model = (sr_context->dnn_module->load_model)(sr_context->model_filename);
+    sr_context->model = (sr_context->dnn_module->load_model)(sr_context->model_filename, NULL);
     if (!sr_context->model){
         av_log(context, AV_LOG_ERROR, "could not load DNN model\n");
         return AVERROR(EIO);
@@ -124,13 +124,13 @@ static int config_props(AVFilterLink *inlink)
     sr_context->input.height = inlink->h * sr_context->scale_factor;
     sr_context->input.channels = 1;
 
-    result = (sr_context->model->set_input_output)(sr_context->model->model, &sr_context->input, "x", &model_output_name, 1);
+    result = (sr_context->model->set_input)(sr_context->model->model, &sr_context->input, "x");
     if (result != DNN_SUCCESS){
         av_log(context, AV_LOG_ERROR, "could not set input and output for the model\n");
         return AVERROR(EIO);
     }
 
-    result = (sr_context->dnn_module->execute_model)(sr_context->model, &sr_context->output, 1);
+    result = (sr_context->dnn_module->execute_model)(sr_context->model, &sr_context->output, &model_output_name, 1);
     if (result != DNN_SUCCESS){
         av_log(context, AV_LOG_ERROR, "failed to execute loaded model\n");
         return AVERROR(EIO);
@@ -139,12 +139,12 @@ static int config_props(AVFilterLink *inlink)
     if (sr_context->input.height != sr_context->output.height || sr_context->input.width != sr_context->output.width){
         sr_context->input.width = inlink->w;
         sr_context->input.height = inlink->h;
-        result = (sr_context->model->set_input_output)(sr_context->model->model, &sr_context->input, "x", &model_output_name, 1);
+        result = (sr_context->model->set_input)(sr_context->model->model, &sr_context->input, "x");
         if (result != DNN_SUCCESS){
             av_log(context, AV_LOG_ERROR, "could not set input and output for the model\n");
             return AVERROR(EIO);
         }
-        result = (sr_context->dnn_module->execute_model)(sr_context->model, &sr_context->output, 1);
+        result = (sr_context->dnn_module->execute_model)(sr_context->model, &sr_context->output, &model_output_name, 1);
         if (result != DNN_SUCCESS){
             av_log(context, AV_LOG_ERROR, "failed to execute loaded model\n");
             return AVERROR(EIO);
@@ -176,40 +176,12 @@ static int config_props(AVFilterLink *inlink)
         sr_context->sws_slice_h = inlink->h;
     } else {
         if (inlink->format != AV_PIX_FMT_GRAY8){
-            sws_src_h = sr_context->input.height;
-            sws_src_w = sr_context->input.width;
-            sws_dst_h = sr_context->output.height;
-            sws_dst_w = sr_context->output.width;
+            const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(inlink->format);
+            sws_src_h = AV_CEIL_RSHIFT(sr_context->input.height, desc->log2_chroma_h);
+            sws_src_w = AV_CEIL_RSHIFT(sr_context->input.width, desc->log2_chroma_w);
+            sws_dst_h = AV_CEIL_RSHIFT(sr_context->output.height, desc->log2_chroma_h);
+            sws_dst_w = AV_CEIL_RSHIFT(sr_context->output.width, desc->log2_chroma_w);
 
-            switch (inlink->format){
-            case AV_PIX_FMT_YUV420P:
-                sws_src_h = AV_CEIL_RSHIFT(sws_src_h, 1);
-                sws_src_w = AV_CEIL_RSHIFT(sws_src_w, 1);
-                sws_dst_h = AV_CEIL_RSHIFT(sws_dst_h, 1);
-                sws_dst_w = AV_CEIL_RSHIFT(sws_dst_w, 1);
-                break;
-            case AV_PIX_FMT_YUV422P:
-                sws_src_w = AV_CEIL_RSHIFT(sws_src_w, 1);
-                sws_dst_w = AV_CEIL_RSHIFT(sws_dst_w, 1);
-                break;
-            case AV_PIX_FMT_YUV444P:
-                break;
-            case AV_PIX_FMT_YUV410P:
-                sws_src_h = AV_CEIL_RSHIFT(sws_src_h, 2);
-                sws_src_w = AV_CEIL_RSHIFT(sws_src_w, 2);
-                sws_dst_h = AV_CEIL_RSHIFT(sws_dst_h, 2);
-                sws_dst_w = AV_CEIL_RSHIFT(sws_dst_w, 2);
-                break;
-            case AV_PIX_FMT_YUV411P:
-                sws_src_w = AV_CEIL_RSHIFT(sws_src_w, 2);
-                sws_dst_w = AV_CEIL_RSHIFT(sws_dst_w, 2);
-                break;
-            default:
-                av_log(context, AV_LOG_ERROR,
-                       "could not create SwsContext for scaling for given input pixel format: %s\n",
-                       av_get_pix_fmt_name(inlink->format));
-                return AVERROR(EIO);
-            }
             sr_context->sws_contexts[0] = sws_getContext(sws_src_w, sws_src_h, AV_PIX_FMT_GRAY8,
                                                          sws_dst_w, sws_dst_h, AV_PIX_FMT_GRAY8,
                                                          SWS_BICUBIC, NULL, NULL, NULL);
@@ -231,6 +203,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     AVFilterLink *outlink = context->outputs[0];
     AVFrame *out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
     DNNReturnType dnn_result;
+    const char *model_output_name = "y";
 
     if (!out){
         av_log(context, AV_LOG_ERROR, "could not allocate memory for output frame\n");
@@ -261,7 +234,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     }
     av_frame_free(&in);
 
-    dnn_result = (sr_context->dnn_module->execute_model)(sr_context->model, &sr_context->output, 1);
+    dnn_result = (sr_context->dnn_module->execute_model)(sr_context->model, &sr_context->output, &model_output_name, 1);
     if (dnn_result != DNN_SUCCESS){
         av_log(context, AV_LOG_ERROR, "failed to execute loaded model\n");
         return AVERROR(EIO);

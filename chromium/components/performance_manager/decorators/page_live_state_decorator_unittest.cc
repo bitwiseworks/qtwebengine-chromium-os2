@@ -4,8 +4,9 @@
 
 #include "components/performance_manager/public/decorators/page_live_state_decorator.h"
 
-#include "components/performance_manager/performance_manager_test_harness.h"
 #include "components/performance_manager/test_support/decorators_utils.h"
+#include "components/performance_manager/test_support/performance_manager_test_harness.h"
+#include "content/public/browser/web_contents.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace performance_manager {
@@ -60,10 +61,16 @@ TEST_F(PageLiveStateDecoratorTest, OnIsBeingMirroredChanged) {
       &PageLiveStateDecorator::OnIsBeingMirroredChanged);
 }
 
-TEST_F(PageLiveStateDecoratorTest, OnIsCapturingDesktopChanged) {
+TEST_F(PageLiveStateDecoratorTest, OnIsCapturingWindowChanged) {
   testing::EndToEndBooleanPropertyTest(
-      web_contents(), &PageLiveStateDecorator::Data::IsCapturingDesktop,
-      &PageLiveStateDecorator::OnIsCapturingDesktopChanged);
+      web_contents(), &PageLiveStateDecorator::Data::IsCapturingWindow,
+      &PageLiveStateDecorator::OnIsCapturingWindowChanged);
+}
+
+TEST_F(PageLiveStateDecoratorTest, OnIsCapturingDisplayChanged) {
+  testing::EndToEndBooleanPropertyTest(
+      web_contents(), &PageLiveStateDecorator::Data::IsCapturingDisplay,
+      &PageLiveStateDecorator::OnIsCapturingDisplayChanged);
 }
 
 TEST_F(PageLiveStateDecoratorTest, SetIsAutoDiscardable) {

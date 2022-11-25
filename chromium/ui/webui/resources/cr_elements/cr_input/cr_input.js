@@ -75,7 +75,13 @@ Polymer({
     errorMessage: {
       type: String,
       value: '',
-      observer: 'errorMessageChanged_',
+      observer: 'onInvalidOrErrorMessageChanged_',
+    },
+
+    /** @private */
+    displayErrorMessage_: {
+      type: String,
+      value: '',
     },
 
     /**
@@ -94,6 +100,7 @@ Polymer({
       value: false,
       notify: true,
       reflectToAttribute: true,
+      observer: 'onInvalidOrErrorMessageChanged_',
     },
 
     max: {
@@ -121,11 +128,14 @@ Polymer({
       reflectToAttribute: true,
     },
 
+    inputmode: String,
+
     label: {
       type: String,
       value: '',
     },
 
+    /** @type {?string} */
     placeholder: {
       type: String,
       value: null,
@@ -226,13 +236,22 @@ Polymer({
     }
   },
 
-  /**
-   * Uses IronA11yAnnouncer to notify screen readers that an error is set.
-   * @private
-   */
-  errorMessageChanged_() {
-    Polymer.IronA11yAnnouncer.requestAvailability();
-    this.fire('iron-announce', {text: this.errorMessage});
+  /** @private */
+  onInvalidOrErrorMessageChanged_() {
+    this.displayErrorMessage_ = this.invalid ? this.errorMessage : '';
+
+    // On VoiceOver role="alert" is not consistently announced when its content
+    // changes. Adding and removing the |role| attribute every time there
+    // is an error, triggers VoiceOver to consistently announce.
+    const ERROR_ID = 'error';
+    const errorElement = this.$$(`#${ERROR_ID}`);
+    if (this.invalid) {
+      errorElement.setAttribute('role', 'alert');
+      this.inputElement.setAttribute('aria-errormessage', ERROR_ID);
+    } else {
+      errorElement.removeAttribute('role');
+      this.inputElement.removeAttribute('aria-errormessage');
+    }
   },
 
   /**

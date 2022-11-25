@@ -15,7 +15,6 @@
 namespace views {
 class ButtonControllerDelegate;
 class MenuButton;
-class ButtonListener;
 
 // A controller that contains the logic for showing a menu when the left mouse
 // is pushed.
@@ -41,6 +40,9 @@ class VIEWS_EXPORT MenuButtonController : public ButtonController {
   };
 
   MenuButtonController(Button* button,
+                       Button::PressedCallback callback,
+                       std::unique_ptr<ButtonControllerDelegate> delegate);
+  MenuButtonController(Button* button,
                        ButtonListener* listener,
                        std::unique_ptr<ButtonControllerDelegate> delegate);
   ~MenuButtonController() override;
@@ -55,7 +57,6 @@ class VIEWS_EXPORT MenuButtonController : public ButtonController {
   bool OnKeyReleased(const ui::KeyEvent& event) override;
   void OnGestureEvent(ui::GestureEvent* event) override;
   void UpdateAccessibleNodeData(ui::AXNodeData* node_data) override;
-  void OnStateChanged(Button::ButtonState old_state) override;
   bool IsTriggerableEvent(const ui::Event& event) override;
 
   // Calls TakeLock with is_sibling_menu_show as false and a nullptr to the
@@ -88,8 +89,11 @@ class VIEWS_EXPORT MenuButtonController : public ButtonController {
 
   void DecrementPressedLocked();
 
-  // Our listener. Not owned.
-  ButtonListener* const listener_;
+  // Called if the button state changes while pressed lock is engaged.
+  void OnButtonStateChangedWhilePressedLocked();
+
+  // Our callback.
+  Button::PressedCallback callback_;
 
   // We use a time object in order to keep track of when the menu was closed.
   // The time is used for simulating menu behavior for the menu button; that
@@ -112,6 +116,9 @@ class VIEWS_EXPORT MenuButtonController : public ButtonController {
   // should return to it once the press is complete. This can happen if, e.g.,
   // we programmatically show a menu on a disabled button.
   bool should_disable_after_press_ = false;
+
+  // Subscribes to state changes on the button while pressed lock is engaged.
+  views::PropertyChangedSubscription state_changed_subscription_;
 
   base::WeakPtrFactory<MenuButtonController> weak_factory_{this};
 

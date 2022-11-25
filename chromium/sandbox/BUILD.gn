@@ -27,14 +27,17 @@ group("sandbox") {
       "//sandbox/mac:system_services",
       "//sandbox/mac/mojom",
     ]
-  } else if (is_linux || is_android) {
+  } else if (is_linux || is_chromeos || is_android) {
     public_deps = [ "//sandbox/linux:sandbox" ]
   }
 }
 
 buildflag_header("sandbox_buildflags") {
   header = "sandbox_buildflags.h"
-  flags = [ "USE_SECCOMP_BPF=$use_seccomp_bpf" ]
+  flags = [
+    "USE_SECCOMP_BPF=$use_seccomp_bpf",
+    "DISABLE_SECCOMP_SSBD=$disable_seccomp_ssbd",
+  ]
 }
 
 # This target must be here and not in win/ otherwise it would require a full
@@ -53,7 +56,10 @@ fuzzer_test("sandbox_ipc_fuzzer") {
   if (!is_win) {
     defines = [ "SANDBOX_FUZZ_TARGET" ]
   }
-  deps = [ "//base" ]
+  deps = [
+    ":sandbox",
+    "//base",
+  ]
   dict = "ipc.dict"
   libfuzzer_options = [ "max_len=1024" ]
 }

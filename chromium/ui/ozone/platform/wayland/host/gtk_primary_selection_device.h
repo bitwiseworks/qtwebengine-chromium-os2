@@ -12,7 +12,8 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "ui/ozone/platform/wayland/common/wayland_object.h"
-#include "ui/ozone/platform/wayland/host/internal/wayland_data_device_base.h"
+#include "ui/ozone/platform/wayland/host/wayland_data_device_base.h"
+#include "ui/ozone/platform/wayland/host/wayland_data_source.h"
 
 struct gtk_primary_selection_device;
 
@@ -21,7 +22,7 @@ namespace ui {
 class WaylandConnection;
 
 // This class provides access to primary selection clipboard available on GTK.
-class GtkPrimarySelectionDevice : public internal::WaylandDataDeviceBase {
+class GtkPrimarySelectionDevice : public WaylandDataDeviceBase {
  public:
   GtkPrimarySelectionDevice(WaylandConnection* connection,
                             gtk_primary_selection_device* data_device);
@@ -30,6 +31,8 @@ class GtkPrimarySelectionDevice : public internal::WaylandDataDeviceBase {
   gtk_primary_selection_device* data_device() const {
     return data_device_.get();
   }
+
+  void SetSelectionSource(GtkPrimarySelectionSource* source);
 
  private:
   // gtk_primary_selection_device_listener callbacks

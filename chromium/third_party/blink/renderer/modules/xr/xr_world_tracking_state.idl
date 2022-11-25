@@ -7,10 +7,9 @@
 [
     SecureContext,
     Exposed=Window,
-    RuntimeEnabled=WebXRIncubations
+    RuntimeEnabled=WebXRPlaneDetection
 ]
 interface XRWorldTrackingState {
    readonly attribute XRPlaneDetectionState planeDetectionState;
-   readonly attribute XRLightEstimationState lightEstimationState;
 };
 

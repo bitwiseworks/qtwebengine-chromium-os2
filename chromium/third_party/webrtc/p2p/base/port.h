@@ -150,6 +150,8 @@ struct CandidatePairChangeEvent {
   CandidatePair selected_candidate_pair;
   int64_t last_data_received_ms;
   std::string reason;
+  // How long do we estimate that we've been disconnected.
+  int64_t estimated_disconnected_time_ms;
 };
 
 typedef std::set<rtc::SocketAddress> ServerAddresses;
@@ -158,7 +160,7 @@ typedef std::set<rtc::SocketAddress> ServerAddresses;
 // connections to similar mechanisms of the other client.  Subclasses of this
 // one add support for specific mechanisms like local UDP ports.
 class Port : public PortInterface,
-             public rtc::MessageHandler,
+             public rtc::MessageHandlerAutoCleanup,
              public sigslot::has_slots<> {
  public:
   // INIT: The state when a port is just created.
@@ -369,19 +371,6 @@ class Port : public PortInterface,
   virtual void UpdateNetworkCost();
 
   void set_type(const std::string& type) { type_ = type; }
-
-  // Deprecated. Use the AddAddress() method below with "url" instead.
-  // TODO(zhihuang): Remove this after downstream applications stop using it.
-  void AddAddress(const rtc::SocketAddress& address,
-                  const rtc::SocketAddress& base_address,
-                  const rtc::SocketAddress& related_address,
-                  const std::string& protocol,
-                  const std::string& relay_protocol,
-                  const std::string& tcptype,
-                  const std::string& type,
-                  uint32_t type_preference,
-                  uint32_t relay_preference,
-                  bool is_final);
 
   void AddAddress(const rtc::SocketAddress& address,
                   const rtc::SocketAddress& base_address,

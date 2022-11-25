@@ -7,8 +7,8 @@
 #include <memory>
 
 #include "base/bind.h"
-#include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notreached.h"
 #include "base/time/time.h"
 #include "chrome/browser/gcm/instance_id/instance_id_profile_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -61,17 +61,7 @@ ExtensionFunction::ResponseAction InstanceIDApiFunction::Run() {
     return RespondNow(Error(
         "chrome.instanceID not supported in incognito mode"));
   }
-
-  if (!IsEnabled()) {
-    return RespondNow(Error(
-        InstanceIDResultToError(instance_id::InstanceID::DISABLED)));
-  }
-
   return DoWork();
-}
-
-bool InstanceIDApiFunction::IsEnabled() const {
-  return instance_id::InstanceIDProfileService::IsInstanceIDEnabled();
 }
 
 instance_id::InstanceID* InstanceIDApiFunction::GetInstanceID() const {

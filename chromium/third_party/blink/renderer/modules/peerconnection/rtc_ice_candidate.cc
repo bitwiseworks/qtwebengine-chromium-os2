@@ -48,18 +48,17 @@ RTCIceCandidate* RTCIceCandidate::Create(
     ExecutionContext* context,
     const RTCIceCandidateInit* candidate_init,
     ExceptionState& exception_state) {
-  if (!candidate_init->hasSdpMid() && !candidate_init->hasSdpMLineIndex()) {
+  if (candidate_init->sdpMid().IsNull() &&
+      !candidate_init->hasSdpMLineIndexNonNull()) {
     exception_state.ThrowTypeError("sdpMid and sdpMLineIndex are both null.");
     return nullptr;
   }
 
-  String sdp_mid;
-  if (candidate_init->hasSdpMid())
-    sdp_mid = candidate_init->sdpMid();
+  String sdp_mid = candidate_init->sdpMid();
 
   base::Optional<uint16_t> sdp_m_line_index;
-  if (candidate_init->hasSdpMLineIndex()) {
-    sdp_m_line_index = candidate_init->sdpMLineIndex();
+  if (candidate_init->hasSdpMLineIndexNonNull()) {
+    sdp_m_line_index = candidate_init->sdpMLineIndexNonNull();
   } else {
     UseCounter::Count(context,
                       WebFeature::kRTCIceCandidateDefaultSdpMLineIndex);
@@ -91,16 +90,11 @@ base::Optional<uint16_t> RTCIceCandidate::sdpMLineIndex() const {
   return platform_candidate_->SdpMLineIndex();
 }
 
-uint16_t RTCIceCandidate::sdpMLineIndex(bool& is_null) const {
-  is_null = !platform_candidate_->SdpMLineIndex().has_value();
-  return platform_candidate_->SdpMLineIndex().value_or(0);
-}
-
 RTCIceCandidatePlatform* RTCIceCandidate::PlatformCandidate() const {
   return platform_candidate_;
 }
 
-void RTCIceCandidate::Trace(Visitor* visitor) {
+void RTCIceCandidate::Trace(Visitor* visitor) const {
   visitor->Trace(platform_candidate_);
   ScriptWrappable::Trace(visitor);
 }
@@ -117,11 +111,6 @@ base::Optional<uint32_t> RTCIceCandidate::priority() const {
   return platform_candidate_->Priority();
 }
 
-uint32_t RTCIceCandidate::priority(bool& is_null) const {
-  is_null = !platform_candidate_->Priority().has_value();
-  return platform_candidate_->Priority().value_or(0);
-}
-
 String RTCIceCandidate::address() const {
   return platform_candidate_->Address();
 }
@@ -134,16 +123,11 @@ base::Optional<uint16_t> RTCIceCandidate::port() const {
   return platform_candidate_->Port();
 }
 
-uint16_t RTCIceCandidate::port(bool& is_null) const {
-  is_null = !platform_candidate_->Port().has_value();
-  return platform_candidate_->Port().value_or(0);
-}
-
 String RTCIceCandidate::type() const {
   return platform_candidate_->Type();
 }
 
-String RTCIceCandidate::tcpType() const {
+base::Optional<String> RTCIceCandidate::tcpType() const {
   return platform_candidate_->TcpType();
 }
 
@@ -153,11 +137,6 @@ String RTCIceCandidate::relatedAddress() const {
 
 base::Optional<uint16_t> RTCIceCandidate::relatedPort() const {
   return platform_candidate_->RelatedPort();
-}
-
-uint16_t RTCIceCandidate::relatedPort(bool& is_null) const {
-  is_null = !platform_candidate_->RelatedPort().has_value();
-  return platform_candidate_->RelatedPort().value_or(0);
 }
 
 String RTCIceCandidate::usernameFragment() const {

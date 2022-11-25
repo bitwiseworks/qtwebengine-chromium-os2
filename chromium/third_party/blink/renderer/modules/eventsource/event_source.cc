@@ -75,13 +75,14 @@ inline EventSource::EventSource(ExecutionContext* context,
       connect_timer_(context->GetTaskRunner(TaskType::kRemoteEvent),
                      this,
                      &EventSource::ConnectTimerFired),
-      reconnect_delay_(kDefaultReconnectDelay) {}
+      reconnect_delay_(kDefaultReconnectDelay),
+      world_(context->GetCurrentWorld()) {}
 
 EventSource* EventSource::Create(ExecutionContext* context,
                                  const String& url,
                                  const EventSourceInit* event_source_init,
                                  ExceptionState& exception_state) {
-  UseCounter::Count(context, context->IsDocument()
+  UseCounter::Count(context, context->IsWindow()
                                  ? WebFeature::kEventSourceDocument
                                  : WebFeature::kEventSourceWorker);
 
@@ -136,7 +137,7 @@ void EventSource::Connect() {
                         : network::mojom::CredentialsMode::kSameOrigin);
   request.SetCacheMode(blink::mojom::FetchCacheMode::kNoStore);
   request.SetExternalRequestStateFromRequestorAddressSpace(
-      execution_context.GetSecurityContext().AddressSpace());
+      execution_context.AddressSpace());
   request.SetCorsPreflightPolicy(
       network::mojom::CorsPreflightPolicy::kPreventPreflight);
   if (parser_ && !parser_->LastEventId().IsEmpty()) {
@@ -151,13 +152,13 @@ void EventSource::Connect() {
                      last_event_id_utf8.length()));
   }
 
-  ResourceLoaderOptions resource_loader_options;
+  ResourceLoaderOptions resource_loader_options(world_);
   resource_loader_options.data_buffering_policy = kDoNotBufferData;
 
   probe::WillSendEventSourceRequest(&execution_context);
   loader_ = MakeGarbageCollected<ThreadableLoader>(execution_context, this,
                                                    resource_loader_options);
-  loader_->Start(request);
+  loader_->Start(std::move(request));
 }
 
 void EventSource::NetworkRequestEnded() {
@@ -359,7 +360,7 @@ bool EventSource::HasPendingActivity() const {
   return state_ != kClosed;
 }
 
-void EventSource::Trace(Visitor* visitor) {
+void EventSource::Trace(Visitor* visitor) const {
   visitor->Trace(parser_);
   visitor->Trace(loader_);
   EventTargetWithInlineData::Trace(visitor);

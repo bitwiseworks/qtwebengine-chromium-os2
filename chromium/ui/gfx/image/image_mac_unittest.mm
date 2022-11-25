@@ -5,7 +5,6 @@
 #include <Cocoa/Cocoa.h>
 #include <stddef.h>
 
-#include "base/logging.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -200,10 +199,10 @@ TEST_F(ImageMacTest, MultiResolutionPNGToNSImage) {
   // Convert to ImageSkia to check pixel contents of NSImageReps.
   gfx::ImageSkia image_skia = gfx::ImageSkiaFromNSImage(ns_image);
   EXPECT_TRUE(gt::ArePNGBytesCloseToBitmap(
-      bytes1x, image_skia.GetRepresentation(1.0f).GetBitmap(),
+      *bytes1x, image_skia.GetRepresentation(1.0f).GetBitmap(),
       gt::MaxColorSpaceConversionColorShift()));
   EXPECT_TRUE(gt::ArePNGBytesCloseToBitmap(
-      bytes2x, image_skia.GetRepresentation(2.0f).GetBitmap(),
+      *bytes2x, image_skia.GetRepresentation(2.0f).GetBitmap(),
       gt::MaxColorSpaceConversionColorShift()));
 }
 

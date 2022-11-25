@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
 #include "media/base/media_util.h"
@@ -16,6 +17,7 @@
 #include "media/mojo/mojom/audio_decoder.mojom.h"
 #include "media/mojo/mojom/content_decryption_module.mojom.h"
 #include "media/mojo/mojom/decryptor.mojom.h"
+#include "media/mojo/mojom/frame_interface_factory.mojom.h"
 #include "media/mojo/mojom/interface_factory.mojom.h"
 #include "media/mojo/mojom/renderer.mojom.h"
 #include "media/mojo/mojom/video_decoder.mojom.h"
@@ -26,11 +28,6 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/bindings/unique_receiver_set.h"
-#include "services/service_manager/public/mojom/interface_provider.mojom.h"
-
-#if BUILDFLAG(ENABLE_CDM_PROXY)
-#include "media/mojo/mojom/cdm_proxy.mojom.h"
-#endif  // BUILDFLAG(ENABLE_CDM_PROXY)
 
 namespace media {
 
@@ -40,8 +37,7 @@ class MojoMediaClient;
 class InterfaceFactoryImpl : public DeferredDestroy<mojom::InterfaceFactory> {
  public:
   InterfaceFactoryImpl(
-      mojo::PendingRemote<service_manager::mojom::InterfaceProvider>
-          host_interfaces,
+      mojo::PendingRemote<mojom::FrameInterfaceFactory> frame_interfaces,
       MojoMediaClient* mojo_media_client);
   ~InterfaceFactoryImpl() final;
 
@@ -71,15 +67,9 @@ class InterfaceFactoryImpl : public DeferredDestroy<mojom::InterfaceFactory> {
           client_extension,
       mojo::PendingReceiver<mojom::Renderer> receiver) final;
 #endif  // defined(OS_ANDROID)
-  void CreateCdm(
-      const std::string& key_system,
-      mojo::PendingReceiver<mojom::ContentDecryptionModule> receiver) final;
-  void CreateDecryptor(int cdm_id,
-                       mojo::PendingReceiver<mojom::Decryptor> receiver) final;
-#if BUILDFLAG(ENABLE_CDM_PROXY)
-  void CreateCdmProxy(const base::Token& cdm_guid,
-                      mojo::PendingReceiver<mojom::CdmProxy> receiver) final;
-#endif  // BUILDFLAG(ENABLE_CDM_PROXY)
+  void CreateCdm(const std::string& key_system,
+                 const CdmConfig& cdm_config,
+                 CreateCdmCallback callback) final;
 
   // DeferredDestroy<mojom::InterfaceFactory> implemenation.
   void OnDestroyPending(base::OnceClosure destroy_cb) final;
@@ -94,6 +84,10 @@ class InterfaceFactoryImpl : public DeferredDestroy<mojom::InterfaceFactory> {
 
 #if BUILDFLAG(ENABLE_MOJO_CDM)
   CdmFactory* GetCdmFactory();
+  void OnCdmServiceCreated(CreateCdmCallback callback,
+                           std::unique_ptr<MojoCdmService> cdm_service,
+                           mojo::PendingRemote<mojom::Decryptor> decryptor,
+                           const std::string& error_message);
 #endif  // BUILDFLAG(ENABLE_MOJO_CDM)
 
   // Must be declared before the receivers below because the bound objects might
@@ -120,16 +114,15 @@ class InterfaceFactoryImpl : public DeferredDestroy<mojom::InterfaceFactory> {
   mojo::UniqueReceiverSet<mojom::ContentDecryptionModule> cdm_receivers_;
 #endif  // BUILDFLAG(ENABLE_MOJO_CDM)
 
-#if BUILDFLAG(ENABLE_CDM_PROXY)
-  mojo::UniqueReceiverSet<mojom::CdmProxy> cdm_proxy_receivers_;
-#endif  // BUILDFLAG(ENABLE_CDM_PROXY)
-
-  mojo::Remote<service_manager::mojom::InterfaceProvider> host_interfaces_;
+  mojo::Remote<mojom::FrameInterfaceFactory> frame_interfaces_;
 
   mojo::UniqueReceiverSet<mojom::Decryptor> decryptor_receivers_;
 
   MojoMediaClient* mojo_media_client_;
   base::OnceClosure destroy_cb_;
+
+  // NOTE: Weak pointers must be invalidated before all other member variables.
+  base::WeakPtrFactory<InterfaceFactoryImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(InterfaceFactoryImpl);
 };

@@ -27,6 +27,7 @@
 #include "third_party/blink/renderer/core/html/forms/html_text_area_element.h"
 
 #include "third_party/blink/public/strings/grit/blink_strings.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_focus_options.h"
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/css_value_keywords.h"
 #include "third_party/blink/renderer/core/dom/document.h"
@@ -46,7 +47,8 @@
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
 #include "third_party/blink/renderer/core/html/shadow/shadow_element_names.h"
 #include "third_party/blink/renderer/core/html_names.h"
-#include "third_party/blink/renderer/core/layout/layout_text_control_multi_line.h"
+#include "third_party/blink/renderer/core/layout/layout_object.h"
+#include "third_party/blink/renderer/core/layout/layout_object_factory.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
@@ -212,9 +214,11 @@ void HTMLTextAreaElement::ParseAttribute(
   }
 }
 
-LayoutObject* HTMLTextAreaElement::CreateLayoutObject(const ComputedStyle&,
-                                                      LegacyLayout) {
-  return new LayoutTextControlMultiLine(this);
+LayoutObject* HTMLTextAreaElement::CreateLayoutObject(
+    const ComputedStyle& style,
+    LegacyLayout legacy) {
+  UseCounter::Count(GetDocument(), WebFeature::kLegacyLayoutByTextControl);
+  return LayoutObjectFactory::CreateTextControlMultiLine(*this, style, legacy);
 }
 
 void HTMLTextAreaElement::AppendToFormData(FormData& form_data) {
@@ -608,7 +612,7 @@ void HTMLTextAreaElement::UpdatePlaceholderText() {
     placeholder = new_element;
     placeholder->SetShadowPseudoId(AtomicString("-webkit-input-placeholder"));
     placeholder->setAttribute(html_names::kIdAttr,
-                              shadow_element_names::Placeholder());
+                              shadow_element_names::kIdPlaceholder);
     placeholder->SetInlineStyleProperty(
         CSSPropertyID::kDisplay,
         IsPlaceholderVisible() ? CSSValueID::kBlock : CSSValueID::kNone, true);

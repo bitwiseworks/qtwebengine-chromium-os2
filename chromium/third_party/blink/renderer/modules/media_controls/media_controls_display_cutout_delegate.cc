@@ -57,12 +57,15 @@ void MediaControlsDisplayCutoutDelegate::Detach() {
                                     this, true);
 }
 
-void MediaControlsDisplayCutoutDelegate::Trace(Visitor* visitor) {
+void MediaControlsDisplayCutoutDelegate::Trace(Visitor* visitor) const {
   NativeEventListener::Trace(visitor);
   visitor->Trace(video_element_);
 }
 
 void MediaControlsDisplayCutoutDelegate::DidEnterFullscreen() {
+  if (RuntimeEnabledFeatures::MediaControlsUseCutOutByDefaultEnabled())
+    GetDocument().GetViewportData().SetExpandIntoDisplayCutout(true);
+
   video_element_->addEventListener(event_type_names::kTouchstart, this, true);
   video_element_->addEventListener(event_type_names::kTouchend, this, true);
   video_element_->addEventListener(event_type_names::kTouchmove, this, true);

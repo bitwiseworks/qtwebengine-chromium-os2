@@ -16,8 +16,6 @@ class Navigator;
 // Represents a supplement to Navigator, implementing the Contacts Selector.
 class NavigatorContacts final : public GarbageCollected<NavigatorContacts>,
                                 public Supplement<Navigator> {
-  USING_GARBAGE_COLLECTED_MIXIN(NavigatorContacts);
-
  public:
   static const char kSupplementName[];
 
@@ -29,7 +27,7 @@ class NavigatorContacts final : public GarbageCollected<NavigatorContacts>,
 
   explicit NavigatorContacts(Navigator& navigator);
 
-  void Trace(Visitor* visitor) override;
+  void Trace(Visitor* visitor) const override;
 
  private:
   Member<ContactsManager> contacts_manager_;

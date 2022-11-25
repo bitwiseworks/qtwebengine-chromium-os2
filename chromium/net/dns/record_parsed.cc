@@ -62,8 +62,8 @@ std::unique_ptr<const RecordParsed> RecordParsed::CreateFrom(
     case OptRecordRdata::kType:
       rdata = OptRecordRdata::Create(record.rdata, *parser);
       break;
-    case EsniRecordRdata::kType:
-      rdata = EsniRecordRdata::Create(record.rdata, *parser);
+    case IntegrityRecordRdata::kType:
+      rdata = IntegrityRecordRdata::Create(record.rdata);
       break;
     default:
       DVLOG(1) << "Unknown RData type for received record: " << record.type;

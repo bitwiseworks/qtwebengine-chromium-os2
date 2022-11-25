@@ -35,6 +35,7 @@ struct Modifiers {
         kPLSIn_Flag          = 1 << 14,
         kPLSOut_Flag         = 1 << 15,
         kVarying_Flag        = 1 << 16,
+        kInline_Flag         = 1 << 17,
     };
 
     Modifiers()
@@ -115,6 +116,6 @@ struct Modifiers {
     int fFlags;
 };
 
-} // namespace
+}  // namespace SkSL
 
 #endif

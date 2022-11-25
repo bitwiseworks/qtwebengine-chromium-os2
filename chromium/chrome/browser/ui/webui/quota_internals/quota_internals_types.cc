@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/values.h"
 #include "net/base/url_util.h"
 
@@ -73,7 +73,7 @@ PerOriginStorageInfo::PerOriginStorageInfo(const GURL& origin,
                                            blink::mojom::StorageType type)
     : origin_(origin),
       type_(type),
-      host_(net::GetHostOrSpecFromURL(origin)),
+      host_(origin.host()),
       in_use_(-1),
       used_count_(-1) {}
 

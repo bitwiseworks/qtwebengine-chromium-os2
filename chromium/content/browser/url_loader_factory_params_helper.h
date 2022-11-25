@@ -5,14 +5,16 @@
 #ifndef CONTENT_BROWSER_URL_LOADER_FACTORY_PARAMS_HELPER_H_
 #define CONTENT_BROWSER_URL_LOADER_FACTORY_PARAMS_HELPER_H_
 
+#include "base/strings/string_piece.h"
+#include "content/common/content_export.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
-#include "net/base/network_isolation_key.h"
 #include "services/network/public/mojom/cross_origin_embedder_policy.mojom-forward.h"
 #include "services/network/public/mojom/network_context.mojom.h"
+#include "services/network/public/mojom/url_loader.mojom-shared.h"
 #include "url/origin.h"
 
 namespace net {
-class NetworkIsolationKey;
+class IsolationInfo;
 }  // namespace net
 
 namespace content {
@@ -41,13 +43,16 @@ class URLLoaderFactoryParamsHelper {
   // |process| is exposed as a separate parameter, to accommodate creating
   // factories for dedicated workers (where the |process| hosting the worker
   // might be different from the process hosting the |frame|).
-  static network::mojom::URLLoaderFactoryParamsPtr CreateForFrame(
+  CONTENT_EXPORT static network::mojom::URLLoaderFactoryParamsPtr
+  CreateForFrame(
       RenderFrameHostImpl* frame,
       const url::Origin& origin,
       network::mojom::ClientSecurityStatePtr client_security_state,
       mojo::PendingRemote<network::mojom::CrossOriginEmbedderPolicyReporter>
           coep_reporter,
-      RenderProcessHost* process);
+      RenderProcessHost* process,
+      network::mojom::TrustTokenRedemptionPolicy trust_token_redemption_policy,
+      base::StringPiece debug_tag);
 
   // Creates URLLoaderFactoryParams to be used by |isolated_world_origin| hosted
   // within the |frame|.
@@ -55,7 +60,8 @@ class URLLoaderFactoryParamsHelper {
       RenderFrameHostImpl* frame,
       const url::Origin& isolated_world_origin,
       const url::Origin& main_world_origin,
-      network::mojom::ClientSecurityStatePtr client_security_state);
+      network::mojom::ClientSecurityStatePtr client_security_state,
+      network::mojom::TrustTokenRedemptionPolicy trust_token_redemption_policy);
 
   static network::mojom::URLLoaderFactoryParamsPtr CreateForPrefetch(
       RenderFrameHostImpl* frame,
@@ -66,11 +72,12 @@ class URLLoaderFactoryParamsHelper {
   static network::mojom::URLLoaderFactoryParamsPtr CreateForWorker(
       RenderProcessHost* process,
       const url::Origin& request_initiator,
-      const net::NetworkIsolationKey& network_isolation_key,
+      const net::IsolationInfo& isolation_info,
       mojo::PendingRemote<network::mojom::CrossOriginEmbedderPolicyReporter>
-          coep_reporter);
+          coep_reporter,
+      base::StringPiece debug_tag);
 
-  // TODO(kinuko, lukasza): https://crbug.com/891872: Remove, once all
+  // TODO(kinuko, lukasza): https://crbug.com/1114822: Remove, once all
   // URLLoaderFactories vended to a renderer process are associated with a
   // specific origin and an execution context (e.g. a frame, a service worker or
   // any other kind of worker).

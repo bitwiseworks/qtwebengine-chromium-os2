@@ -25,14 +25,15 @@
 #include "components/prefs/pref_service.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver.h"
+#include "url/gurl.h"
 
 namespace {
 
 const char kFeedHistogramPrefix[] = "ContentSuggestions.Feed.";
 
-feed_internals::mojom::TimePtr ToMojoTime(base::Time time) {
-  return time.is_null() ? nullptr
-                        : feed_internals::mojom::Time::New(time.ToJsTime());
+// Converts |t| to a delta from the JS epoch, or 0 if |t| is null.
+base::TimeDelta ToJsTimeDelta(base::Time t) {
+  return t.is_null() ? base::TimeDelta() : t - base::Time::UnixEpoch();
 }
 
 std::string TriggerTypeToString(feed::TriggerType* trigger) {
@@ -65,8 +66,7 @@ void FeedInternalsPageHandler::GetGeneralProperties(
     GetGeneralPropertiesCallback callback) {
   auto properties = feed_internals::mojom::Properties::New();
 
-  properties->is_feed_enabled =
-      base::FeatureList::IsEnabled(feed::kInterestFeedContentSuggestions);
+  properties->is_feed_enabled = true;
   properties->is_feed_visible =
       pref_service_->GetBoolean(feed::prefs::kArticlesListVisible);
   properties->is_feed_allowed = IsFeedAllowed();
@@ -103,9 +103,9 @@ void FeedInternalsPageHandler::GetLastFetchProperties(
   properties->last_fetch_trigger = TriggerTypeToString(
       feed_scheduler_host_->GetLastFetchTriggerTypeForDebugging());
   properties->last_fetch_time =
-      ToMojoTime(pref_service_->GetTime(feed::prefs::kLastFetchAttemptTime));
-  properties->refresh_suppress_time =
-      ToMojoTime(feed_scheduler_host_->GetSuppressRefreshesUntilForDebugging());
+      ToJsTimeDelta(pref_service_->GetTime(feed::prefs::kLastFetchAttemptTime));
+  properties->refresh_suppress_time = ToJsTimeDelta(
+      feed_scheduler_host_->GetSuppressRefreshesUntilForDebugging());
   properties->last_bless_nonce =
       pref_service_->GetString(feed::prefs::kHostOverrideBlessNonce);
 
@@ -173,6 +173,12 @@ void FeedInternalsPageHandler::GetFeedHistograms(
   std::move(callback).Run(log);
 }
 
-void FeedInternalsPageHandler::OverrideFeedHost(const std::string& host) {
-  return pref_service_->SetString(feed::prefs::kHostOverrideHost, host);
+void FeedInternalsPageHandler::OverrideFeedHost(const GURL& host) {
+  pref_service_->SetString(feed::prefs::kHostOverrideHost,
+                           host.is_valid() ? host.spec() : std::string());
+}
+
+void FeedInternalsPageHandler::OverrideActionUploadEndpoint(
+    const GURL& endpoint_url) {
+  // Not implemented for Feed v1.
 }

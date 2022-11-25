@@ -47,6 +47,7 @@ typedef unsigned int     GLuint;
 namespace viz {
 
 class ContextProvider;
+class ScopedAllowGpuAccessForDisplayResourceProvider;
 class SharedBitmapManager;
 
 // This class provides abstractions for receiving and using resources from other
@@ -86,19 +87,6 @@ class VIZ_SERVICE_EXPORT DisplayResourceProvider
   // base::trace_event::MemoryDumpProvider implementation.
   bool OnMemoryDump(const base::trace_event::MemoryDumpArgs& args,
                     base::trace_event::ProcessMemoryDump* pmd) override;
-
-  // Send an overlay promotion hint to all resources that requested it via
-  // |requestor_set|.  |promotable_hints| contains all the resources that should
-  // be told that they're promotable.  Others will be told that they're not.
-  //
-  // We don't use |wants_promotion_hints_set_| in place of |requestor_set|,
-  // since we might have resources that aren't used for drawing.  Sending a hint
-  // for a resource that wasn't even considered for overlay would be misleading
-  // to the requestor; the resource might be overlayable except that nobody
-  // tried to do it.
-  void SendPromotionHints(
-      const std::map<ResourceId, gfx::RectF>& promotion_hints,
-      const ResourceIdSet& requestor_set);
 
 #if defined(OS_ANDROID)
   // Indicates if this resource is backed by an Android SurfaceTexture, and thus
@@ -157,6 +145,23 @@ class VIZ_SERVICE_EXPORT DisplayResourceProvider
     GLenum target_;
     gfx::Size size_;
     gfx::ColorSpace color_space_;
+  };
+
+  class VIZ_SERVICE_EXPORT ScopedOverlayLockGL {
+   public:
+    ScopedOverlayLockGL(DisplayResourceProvider* resource_provider,
+                        ResourceId resource_id);
+    ~ScopedOverlayLockGL();
+
+    ScopedOverlayLockGL(const ScopedOverlayLockGL&) = delete;
+    ScopedOverlayLockGL& operator=(const ScopedOverlayLockGL&) = delete;
+
+    GLuint texture_id() const { return texture_id_; }
+
+   private:
+    DisplayResourceProvider* const resource_provider_;
+    const ResourceId resource_id_;
+    GLuint texture_id_ = 0;
   };
 
   class VIZ_SERVICE_EXPORT ScopedSamplerGL {
@@ -254,9 +259,11 @@ class VIZ_SERVICE_EXPORT DisplayResourceProvider
         delete;
 
     // Lock a resource for external use. The return value was created by
-    // |client| at some point in the past.
-    ExternalUseClient::ImageContext* LockResource(ResourceId resource_id,
-                                                  bool is_video_plane);
+    // |client| at some point in the past. The resource color space will be set
+    // on the SkImage if |use_skia_color_conversion| is true.
+    ExternalUseClient::ImageContext* LockResource(
+        ResourceId resource_id,
+        bool use_skia_color_conversion);
 
     // Unlock all locked resources with a |sync_token|.  The |sync_token| should
     // be waited on before reusing the resource's backing to ensure that any
@@ -274,11 +281,13 @@ class VIZ_SERVICE_EXPORT DisplayResourceProvider
   class VIZ_SERVICE_EXPORT ScopedBatchReturnResources {
    public:
     explicit ScopedBatchReturnResources(
-        DisplayResourceProvider* resource_provider);
+        DisplayResourceProvider* resource_provider,
+        bool allow_access_to_gpu_thread = false);
     ~ScopedBatchReturnResources();
 
    private:
     DisplayResourceProvider* const resource_provider_;
+    const bool was_access_to_gpu_thread_allowed_;
   };
 
   class VIZ_SERVICE_EXPORT SynchronousFence : public ResourceFence {
@@ -343,7 +352,12 @@ class VIZ_SERVICE_EXPORT DisplayResourceProvider
   // Returns the mailbox corresponding to a resource id.
   gpu::Mailbox GetMailbox(int resource_id);
 
+  // Sets if the GPU thread is available (it always is for Chrome, but for
+  // WebView it happens only when Android calls us on RenderThread.
+  void SetAllowAccessToGPUThread(bool allow);
+
  private:
+  friend class ScopedAllowGpuAccessForDisplayResourceProvider;
   enum DeleteStyle {
     NORMAL,
     FOR_SHUTDOWN,
@@ -482,18 +496,6 @@ class VIZ_SERVICE_EXPORT DisplayResourceProvider
     gpu::SyncToken sync_token_;
   };
 
-  // Class to do Scoped Begin/End read access on a batch of shared images.
-  class ScopedBatchReadAccess {
-   public:
-    explicit ScopedBatchReadAccess(gpu::gles2::GLES2Interface* gl);
-    ~ScopedBatchReadAccess();
-
-   private:
-    gpu::gles2::GLES2Interface* gl_ = nullptr;
-
-    DISALLOW_COPY_AND_ASSIGN(ScopedBatchReadAccess);
-  };
-
   using ChildMap = std::unordered_map<int, Child>;
   using ResourceMap = std::unordered_map<ResourceId, ChildResource>;
 
@@ -515,8 +517,8 @@ class VIZ_SERVICE_EXPORT DisplayResourceProvider
   // Returns null if we do not have a ContextProvider.
   gpu::gles2::GLES2Interface* ContextGL() const;
 
-  const ChildResource* LockForRead(ResourceId id);
-  void UnlockForRead(ResourceId id);
+  const ChildResource* LockForRead(ResourceId id, bool overlay_only);
+  void UnlockForRead(ResourceId id, bool overlay_only);
 
   void TryReleaseResource(ResourceId id, ChildResource* resource);
   // Binds the given GL resource to a texture target for sampling using the
@@ -535,6 +537,7 @@ class VIZ_SERVICE_EXPORT DisplayResourceProvider
   void DestroyChildInternal(ChildMap::iterator it, DeleteStyle style);
 
   void SetBatchReturnResources(bool aggregate);
+  void TryFlushBatchedResources();
 
   THREAD_CHECKER(thread_checker_);
   const Mode mode_;
@@ -570,7 +573,11 @@ class VIZ_SERVICE_EXPORT DisplayResourceProvider
 #endif
 
   bool enable_shared_images_;
-  std::unique_ptr<ScopedBatchReadAccess> scoped_batch_read_access_;
+
+  // Indicates that gpu thread is available and calls like
+  // ReleaseImageContexts() are expected to finish in finite time. It's always
+  // true for Chrome, but on WebView we need to have access to RenderThread.
+  bool can_access_gpu_thread_ = true;
 };
 
 }  // namespace viz

@@ -10,6 +10,7 @@
 #include "ui/compositor/layer.h"
 #include "ui/events/event.h"
 #include "ui/gfx/color_palette.h"
+#include "ui/gfx/color_utils.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/message_center/public/cpp/message_center_constants.h"
 #include "ui/message_center/vector_icons.h"
@@ -28,85 +29,82 @@ NotificationControlButtonsView::NotificationControlButtonsView(
     MessageView* message_view)
     : message_view_(message_view), icon_color_(gfx::kChromeIconGrey) {
   DCHECK(message_view);
-  SetLayoutManager(std::make_unique<views::BoxLayout>(
+  auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal));
+  // Do not stretch buttons as that would stretch their focus indicator.
+  layout->set_cross_axis_alignment(
+      views::BoxLayout::CrossAxisAlignment::kStart);
 
   // Use layer to change the opacity.
   SetPaintToLayer();
   layer()->SetFillsBoundsOpaquely(false);
-
-  SetBackground(views::CreateSolidBackground(kControlButtonBackgroundColor));
 }
 
 NotificationControlButtonsView::~NotificationControlButtonsView() = default;
 
 void NotificationControlButtonsView::ShowCloseButton(bool show) {
   if (show && !close_button_) {
-    close_button_ = std::make_unique<PaddedButton>(this);
-    close_button_->set_owned_by_client();
-    close_button_->SetImage(
-        views::Button::STATE_NORMAL,
-        gfx::CreateVectorIcon(kNotificationCloseButtonIcon, icon_color_));
+    close_button_ = AddChildView(std::make_unique<PaddedButton>(this));
+    close_button_->SetImage(views::Button::STATE_NORMAL,
+                            gfx::CreateVectorIcon(kNotificationCloseButtonIcon,
+                                                  DetermineButtonIconColor()));
     close_button_->SetAccessibleName(l10n_util::GetStringUTF16(
         IDS_MESSAGE_CENTER_CLOSE_NOTIFICATION_BUTTON_ACCESSIBLE_NAME));
     close_button_->SetTooltipText(l10n_util::GetStringUTF16(
         IDS_MESSAGE_CENTER_CLOSE_NOTIFICATION_BUTTON_TOOLTIP));
     close_button_->SetBackground(
         views::CreateSolidBackground(SK_ColorTRANSPARENT));
-
-    // Add the button at the last.
-    AddChildView(close_button_.get());
     Layout();
   } else if (!show && close_button_) {
-    DCHECK(Contains(close_button_.get()));
-    close_button_.reset();
+    DCHECK(Contains(close_button_));
+    RemoveChildViewT(close_button_);
+    close_button_ = nullptr;
   }
 }
 
 void NotificationControlButtonsView::ShowSettingsButton(bool show) {
   if (show && !settings_button_) {
-    settings_button_ = std::make_unique<PaddedButton>(this);
-    settings_button_->set_owned_by_client();
+    // Add the button next right to the snooze button.
+    const int position = snooze_button_ ? 1 : 0;
+    settings_button_ =
+        AddChildViewAt(std::make_unique<PaddedButton>(this), position);
     settings_button_->SetImage(
         views::Button::STATE_NORMAL,
-        gfx::CreateVectorIcon(kNotificationSettingsButtonIcon, icon_color_));
+        gfx::CreateVectorIcon(kNotificationSettingsButtonIcon,
+                              DetermineButtonIconColor()));
     settings_button_->SetAccessibleName(l10n_util::GetStringUTF16(
         IDS_MESSAGE_NOTIFICATION_SETTINGS_BUTTON_ACCESSIBLE_NAME));
     settings_button_->SetTooltipText(l10n_util::GetStringUTF16(
         IDS_MESSAGE_NOTIFICATION_SETTINGS_BUTTON_ACCESSIBLE_NAME));
     settings_button_->SetBackground(
         views::CreateSolidBackground(SK_ColorTRANSPARENT));
-
-    // Add the button next right to the snooze button.
-    int position = snooze_button_ ? 1 : 0;
-    AddChildViewAt(settings_button_.get(), position);
     Layout();
   } else if (!show && settings_button_) {
-    DCHECK(Contains(settings_button_.get()));
-    settings_button_.reset();
+    DCHECK(Contains(settings_button_));
+    RemoveChildViewT(settings_button_);
+    settings_button_ = nullptr;
   }
 }
 
 void NotificationControlButtonsView::ShowSnoozeButton(bool show) {
   if (show && !snooze_button_) {
-    snooze_button_ = std::make_unique<PaddedButton>(this);
-    snooze_button_->set_owned_by_client();
+    // Snooze button should appear as the first child.
+    snooze_button_ = AddChildViewAt(std::make_unique<PaddedButton>(this), 0);
     snooze_button_->SetImage(
         views::Button::STATE_NORMAL,
-        gfx::CreateVectorIcon(kNotificationSnoozeButtonIcon, icon_color_));
+        gfx::CreateVectorIcon(kNotificationSnoozeButtonIcon,
+                              DetermineButtonIconColor()));
     snooze_button_->SetAccessibleName(l10n_util::GetStringUTF16(
         IDS_MESSAGE_CENTER_NOTIFICATION_SNOOZE_BUTTON_TOOLTIP));
     snooze_button_->SetTooltipText(l10n_util::GetStringUTF16(
         IDS_MESSAGE_CENTER_NOTIFICATION_SNOOZE_BUTTON_TOOLTIP));
     snooze_button_->SetBackground(
         views::CreateSolidBackground(SK_ColorTRANSPARENT));
-
-    // Add the button at the first.
-    AddChildViewAt(snooze_button_.get(), 0);
     Layout();
   } else if (!show && snooze_button_) {
-    DCHECK(Contains(snooze_button_.get()));
-    snooze_button_.reset();
+    DCHECK(Contains(snooze_button_));
+    RemoveChildViewT(snooze_button_);
+    snooze_button_ = nullptr;
   }
 }
 
@@ -115,7 +113,7 @@ void NotificationControlButtonsView::ShowButtons(bool show) {
   // Manipulate the opacity instead of changing the visibility to keep the tab
   // order even when the view is invisible.
   layer()->SetOpacity(show ? 1. : 0.);
-  set_can_process_events_within_subtree(show);
+  SetCanProcessEventsWithinSubtree(show);
 }
 
 bool NotificationControlButtonsView::IsAnyButtonFocused() const {
@@ -128,49 +126,63 @@ void NotificationControlButtonsView::SetButtonIconColors(SkColor color) {
   if (color == icon_color_)
     return;
   icon_color_ = color;
-
-  if (close_button_) {
-    close_button_->SetImage(
-        views::Button::STATE_NORMAL,
-        gfx::CreateVectorIcon(kNotificationCloseButtonIcon, icon_color_));
-  }
-  if (settings_button_) {
-    settings_button_->SetImage(
-        views::Button::STATE_NORMAL,
-        gfx::CreateVectorIcon(kNotificationSettingsButtonIcon, icon_color_));
-  }
-  if (snooze_button_) {
-    snooze_button_->SetImage(
-        views::Button::STATE_NORMAL,
-        gfx::CreateVectorIcon(kNotificationSnoozeButtonIcon, icon_color_));
-  }
+  UpdateButtonIconColors();
 }
 
-views::Button* NotificationControlButtonsView::close_button() const {
-  return close_button_.get();
-}
-
-views::Button* NotificationControlButtonsView::settings_button() const {
-  return settings_button_.get();
-}
-
-views::Button* NotificationControlButtonsView::snooze_button() const {
-  return snooze_button_.get();
+void NotificationControlButtonsView::SetBackgroundColor(SkColor color) {
+  if (color == background_color_)
+    return;
+  background_color_ = color;
+  UpdateButtonIconColors();
 }
 
 const char* NotificationControlButtonsView::GetClassName() const {
   return kViewClassName;
 }
 
+#if defined(OS_CHROMEOS)
+void NotificationControlButtonsView::OnThemeChanged() {
+  View::OnThemeChanged();
+  SetBackground(views::CreateSolidBackground(GetNativeTheme()->GetSystemColor(
+      ui::NativeTheme::kColorId_NotificationButtonBackground)));
+}
+#endif
+
 void NotificationControlButtonsView::ButtonPressed(views::Button* sender,
                                                    const ui::Event& event) {
-  if (close_button_ && sender == close_button_.get()) {
+  if (close_button_ && sender == close_button_) {
     message_view_->OnCloseButtonPressed();
-  } else if (settings_button_ && sender == settings_button_.get()) {
+  } else if (settings_button_ && sender == settings_button_) {
     message_view_->OnSettingsButtonPressed(event);
-  } else if (snooze_button_ && sender == snooze_button_.get()) {
+  } else if (snooze_button_ && sender == snooze_button_) {
     message_view_->OnSnoozeButtonPressed(event);
   }
+}
+
+void NotificationControlButtonsView::UpdateButtonIconColors() {
+  SkColor icon_color = DetermineButtonIconColor();
+  if (close_button_) {
+    close_button_->SetImage(
+        views::Button::STATE_NORMAL,
+        gfx::CreateVectorIcon(kNotificationCloseButtonIcon, icon_color));
+  }
+  if (settings_button_) {
+    settings_button_->SetImage(
+        views::Button::STATE_NORMAL,
+        gfx::CreateVectorIcon(kNotificationSettingsButtonIcon, icon_color));
+  }
+  if (snooze_button_) {
+    snooze_button_->SetImage(
+        views::Button::STATE_NORMAL,
+        gfx::CreateVectorIcon(kNotificationSnoozeButtonIcon, icon_color));
+  }
+}
+
+SkColor NotificationControlButtonsView::DetermineButtonIconColor() const {
+  if (SkColorGetA(background_color_) != SK_AlphaOPAQUE)
+    return icon_color_;
+
+  return color_utils::BlendForMinContrast(icon_color_, background_color_).color;
 }
 
 }  // namespace message_center

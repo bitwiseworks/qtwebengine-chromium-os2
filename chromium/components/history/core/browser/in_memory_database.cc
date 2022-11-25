@@ -5,8 +5,8 @@
 #include "components/history/core/browser/in_memory_database.h"
 
 #include "base/files/file_path.h"
-#include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -94,9 +94,8 @@ bool InMemoryDatabase::InitFromDisk(const base::FilePath& history_name) {
     // Unable to get data from the history database. This is OK, the file may
     // just not exist yet.
   }
-  base::TimeTicks end_load = base::TimeTicks::Now();
   UMA_HISTOGRAM_MEDIUM_TIMES("History.InMemoryDBPopulate",
-                             end_load - begin_load);
+                             base::TimeTicks::Now() - begin_load);
   UMA_HISTOGRAM_COUNTS_1M("History.InMemoryDBItemCount",
                           db_.GetLastChangeCount());
 
@@ -109,9 +108,6 @@ bool InMemoryDatabase::InitFromDisk(const base::FilePath& history_name) {
     // Unable to get data from the history database. This is OK, the file may
     // just not exist yet.
   }
-  end_load = base::TimeTicks::Now();
-  UMA_HISTOGRAM_MEDIUM_TIMES("History.InMemoryDBKeywordURLPopulate",
-                             end_load - begin_load);
   UMA_HISTOGRAM_COUNTS_1M("History.InMemoryDBKeywordURLItemCount",
                           db_.GetLastChangeCount());
 
@@ -123,9 +119,6 @@ bool InMemoryDatabase::InitFromDisk(const base::FilePath& history_name) {
     // Unable to get data from the history database. This is OK, the file may
     // just not exist yet.
   }
-  end_load = base::TimeTicks::Now();
-  UMA_HISTOGRAM_MEDIUM_TIMES("History.InMemoryDBKeywordTermsPopulate",
-                             end_load - begin_load);
   UMA_HISTOGRAM_COUNTS_1M("History.InMemoryDBKeywordTermsCount",
                           db_.GetLastChangeCount());
 

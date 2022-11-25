@@ -53,7 +53,7 @@ def WriteIncludes(headers, include):
         contents.append(stripped_line)
         if stripped_line == PROTOC_INCLUDE_POINT:
           if include_point_found:
-            raise RuntimeException("Multiple include points found.")
+            raise RuntimeError("Multiple include points found.")
           include_point_found = True
           extra_statement = "#include \"{0}\"".format(include)
           contents.append(extra_statement)
@@ -69,18 +69,23 @@ def WriteIncludes(headers, include):
 
 def main(argv):
   parser = argparse.ArgumentParser()
-  parser.add_argument("--protoc",
+  parser.add_argument("--protoc", required=True,
                       help="Relative path to compiler.")
 
-  parser.add_argument("--proto-in-dir",
+  parser.add_argument("--proto-in-dir", required=True,
                       help="Base directory with source protos.")
   parser.add_argument("--cc-out-dir",
                       help="Output directory for standard C++ generator.")
   parser.add_argument("--py-out-dir",
                       help="Output directory for standard Python generator.")
+  parser.add_argument("--js-out-dir",
+                      help="Output directory for standard JS generator.")
   parser.add_argument("--plugin-out-dir",
                       help="Output directory for custom generator plugin.")
 
+  parser.add_argument('--enable-kythe-annotations', action='store_true',
+                      help='Enable generation of Kythe kzip, used for '
+                      'codesearch.')
   parser.add_argument("--plugin",
                       help="Relative path to custom generator plugin.")
   parser.add_argument("--plugin-options",
@@ -92,10 +97,12 @@ def main(argv):
   parser.add_argument("--import-dir", action="append", default=[],
                       help="Extra import directory for protos, can be repeated."
   )
+  parser.add_argument("--descriptor-set-out",
+                      help="Path to write a descriptor.")
   parser.add_argument("protos", nargs="+",
                       help="Input protobuf definition file(s).")
 
-  options = parser.parse_args()
+  options = parser.parse_args(argv)
 
   proto_dir = os.path.relpath(options.proto_in_dir)
   protoc_cmd = [os.path.realpath(options.protoc)]
@@ -107,9 +114,27 @@ def main(argv):
   if options.py_out_dir:
     protoc_cmd += ["--python_out", options.py_out_dir]
 
+  if options.js_out_dir:
+    protoc_cmd += [
+        "--js_out",
+        "one_output_file_per_input_file,binary:" + options.js_out_dir
+    ]
+
   if options.cc_out_dir:
     cc_out_dir = options.cc_out_dir
-    cc_options = FormatGeneratorOptions(options.cc_options)
+    cc_options_list = []
+    if options.enable_kythe_annotations:
+      cc_options_list.extend([
+          'annotate_headers', 'annotation_pragma_name=kythe_metadata',
+          'annotation_guard_name=KYTHE_IS_RUNNING'
+      ])
+
+    # cc_options will likely have trailing colon so needs to be inserted at the
+    # end.
+    if options.cc_options:
+      cc_options_list.append(options.cc_options)
+
+    cc_options = FormatGeneratorOptions(','.join(cc_options_list))
     protoc_cmd += ["--cpp_out", cc_options + cc_out_dir]
     for filename in protos:
       stripped_name = StripProtoExtension(filename)
@@ -127,6 +152,9 @@ def main(argv):
     protoc_cmd += ["--proto_path", path]
 
   protoc_cmd += [os.path.join(proto_dir, name) for name in protos]
+
+  if options.descriptor_set_out:
+    protoc_cmd += ["--descriptor_set_out", options.descriptor_set_out]
 
   ret = subprocess.call(protoc_cmd)
   if ret != 0:
@@ -146,7 +174,7 @@ def main(argv):
 
 if __name__ == "__main__":
   try:
-    main(sys.argv)
+    main(sys.argv[1:])
   except RuntimeError as e:
     print(e, file=sys.stderr)
     sys.exit(1)

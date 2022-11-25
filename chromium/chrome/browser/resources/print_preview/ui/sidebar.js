@@ -35,7 +35,6 @@ import {loadTimeData} from 'chrome://resources/js/load_time_data.m.js';
 import {WebUIListenerBehavior} from 'chrome://resources/js/web_ui_listener_behavior.m.js';
 import {html, Polymer} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {CloudPrintInterface} from '../cloud_print_interface.js';
 import {DarkModeBehavior} from '../dark_mode_behavior.js';
 import {Destination} from '../data/destination.js';
 import {Error, State} from '../data/state.js';
@@ -64,9 +63,6 @@ Polymer({
 
   properties: {
     cloudPrintErrorMessage: String,
-
-    /** @type {CloudPrintInterface} */
-    cloudPrintInterface: Object,
 
     controlsManaged: Boolean,
 
@@ -103,6 +99,8 @@ Polymer({
       type: Boolean,
       computed: 'computeControlsDisabled_(state)',
     },
+
+    maxSheets: Number,
 
     /** @private {number} */
     sheetCount_: {
@@ -150,14 +148,19 @@ Polymer({
    * @param {?Array<string>} userAccounts The signed in user accounts.
    * @param {boolean} syncAvailable
    * @param {boolean} pdfPrinterDisabled Whether the PDF printer is disabled.
+   * @param {boolean} isDriveMounted Whether Google Drive is mounted. Only used
+        on Chrome OS.
    */
   init(
       appKioskMode, defaultPrinter, serializedDestinationSelectionRulesStr,
-      userAccounts, syncAvailable, pdfPrinterDisabled) {
+      userAccounts, syncAvailable, pdfPrinterDisabled, isDriveMounted) {
     this.isInAppKioskMode_ = appKioskMode;
-    const saveAsPdfDisabled = this.isInAppKioskMode_ || pdfPrinterDisabled;
+    pdfPrinterDisabled = this.isInAppKioskMode_ || pdfPrinterDisabled;
+    // If PDF printing is disabled, then Save to Drive also needs to be disabled
+    // on Chrome OS.
+    isDriveMounted = !pdfPrinterDisabled && isDriveMounted;
     this.$.destinationSettings.init(
-        defaultPrinter, saveAsPdfDisabled,
+        defaultPrinter, pdfPrinterDisabled, isDriveMounted,
         serializedDestinationSelectionRulesStr, userAccounts, syncAvailable);
   },
 

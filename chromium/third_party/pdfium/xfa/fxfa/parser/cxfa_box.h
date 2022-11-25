@@ -7,7 +7,6 @@
 #ifndef XFA_FXFA_PARSER_CXFA_BOX_H_
 #define XFA_FXFA_PARSER_CXFA_BOX_H_
 
-#include <memory>
 #include <tuple>
 #include <vector>
 
@@ -23,6 +22,7 @@ class CXFA_Stroke;
 
 class CXFA_Box : public CXFA_Node {
  public:
+  CONSTRUCT_VIA_MAKE_GARBAGE_COLLECTED;
   ~CXFA_Box() override;
 
   XFA_AttributeValue GetPresence();
@@ -47,7 +47,7 @@ class CXFA_Box : public CXFA_Node {
            XFA_Element eType,
            pdfium::span<const PropertyData> properties,
            pdfium::span<const AttributeData> attributes,
-           std::unique_ptr<CJX_Object> js_node);
+           CJX_Object* js_node);
 
   XFA_AttributeValue GetHand();
 

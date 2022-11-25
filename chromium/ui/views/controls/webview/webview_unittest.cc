@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/command_line.h"
@@ -159,8 +160,8 @@ class WebViewUnitTest : public views::test::WidgetTest {
     // child.
     top_level_widget_ = CreateTopLevelFramelessPlatformWidget();
     top_level_widget_->SetBounds(gfx::Rect(0, 10, 100, 100));
-    View* const contents_view = new View();
-    top_level_widget_->SetContentsView(contents_view);
+    View* const contents_view =
+        top_level_widget_->SetContentsView(std::make_unique<View>());
     web_view_ = new WebView(browser_context_.get());
     web_view_->SetBoundsRect(gfx::Rect(contents_view->size()));
     contents_view->AddChildView(web_view_);
@@ -297,8 +298,7 @@ TEST_F(WebViewUnitTest, TestWebViewAttachDetachWebContents) {
   // Note: that reparenting the windows directly, after the windows have been
   // created, e.g., Widget::ReparentNativeView(widget, parent2), is not a
   // supported use case. Instead, move the WebView over.
-  web_view()->parent()->RemoveChildView(web_view());
-  parent2->SetContentsView(web_view());
+  parent2->SetContentsView(web_view()->parent()->RemoveChildViewT(web_view()));
   EXPECT_EQ(3, observer1.shown_count());
   parent2->Close();
 }
@@ -564,6 +564,25 @@ TEST_F(WebViewUnitTest, CrashedOverlayViewOwnedbyClient) {
 
   // This shouldn't crash, we still own this.
   delete crashed_overlay_view;
+}
+
+// Tests to make sure we can default construct the WebView class and set the
+// BrowserContext after construction.
+TEST_F(WebViewUnitTest, DefaultConstructability) {
+  auto browser_context = std::make_unique<content::TestBrowserContext>();
+  auto web_view = std::make_unique<WebView>();
+
+  // Test to make sure the WebView returns a nullptr in the absence of an
+  // explicitly supplied WebContents and BrowserContext.
+  EXPECT_EQ(nullptr, web_view->GetWebContents());
+
+  web_view->SetBrowserContext(browser_context.get());
+
+  // WebView should be able to create a WebContents object from the previously
+  // set |browser_context|.
+  auto* web_contents = web_view->GetWebContents();
+  EXPECT_NE(nullptr, web_contents);
+  EXPECT_EQ(browser_context.get(), web_contents->GetBrowserContext());
 }
 
 #if defined(USE_AURA)

@@ -26,7 +26,6 @@ class GURL;
 
 namespace content {
 
-class BrowserContext;
 class PageState;
 struct FaviconStatus;
 struct ReplacedNavigationEntryData;
@@ -41,16 +40,6 @@ class NavigationEntry : public base::SupportsUserData {
   ~NavigationEntry() override {}
 
   CONTENT_EXPORT static std::unique_ptr<NavigationEntry> Create();
-
-  // Performs initialization of a restored NavigationEntry.
-  //
-  // An example of work performed by this method is recomputing SiteInstance
-  // information in some scenarios (see also https://crbug.com/1026474).
-  //
-  // This method needs to be called after |this| entry has been fully populated
-  // during session restore.  In particular, the SetURL and SetPageState calls
-  // should have already happened before calling InitRestoredEntry.
-  virtual void InitRestoredEntry(BrowserContext* browser_context) = 0;
 
   // Page-related stuff --------------------------------------------------------
 
@@ -184,7 +173,7 @@ class NavigationEntry : public base::SupportsUserData {
   virtual const GURL& GetOriginalRequestURL() = 0;
 
   // Store whether or not we're overriding the user agent.
-  virtual void SetIsOverridingUserAgent(bool override) = 0;
+  virtual void SetIsOverridingUserAgent(bool override_ua) = 0;
   virtual bool GetIsOverridingUserAgent() = 0;
 
   // The time at which the last known local navigation has

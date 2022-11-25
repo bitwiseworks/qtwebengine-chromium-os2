@@ -231,7 +231,10 @@ class CONTENT_EXPORT DownloadManagerImpl
                                DownloadTargetCallback callback) override;
   bool ShouldCompleteDownload(download::DownloadItemImpl* item,
                               base::OnceClosure complete_callback) override;
-  bool ShouldOpenFileBasedOnExtension(const base::FilePath& path) override;
+  bool ShouldAutomaticallyOpenFile(const GURL& url,
+                                   const base::FilePath& path) override;
+  bool ShouldAutomaticallyOpenFileByPolicy(const GURL& url,
+                                           const base::FilePath& path) override;
   bool ShouldOpenDownload(download::DownloadItemImpl* item,
                           ShouldOpenDownloadCallback callback) override;
   void CheckForFileRemoval(download::DownloadItemImpl* download_item) override;
@@ -261,7 +264,7 @@ class CONTENT_EXPORT DownloadManagerImpl
       const GURL& site_url);
 
   void InterceptNavigationOnChecksComplete(
-      WebContents::Getter web_contents_getter,
+      int frame_tree_node_id,
       std::unique_ptr<network::ResourceRequest> resource_request,
       std::vector<GURL> url_chain,
       net::CertStatus cert_status,

@@ -10,6 +10,13 @@ if (is_android) {
   import("//build/config/android/rules.gni")
 }
 
+# This file depends on the legacy global sources assignment filter. It should
+# be converted to check target platform before assigning source files to the
+# sources variable. Remove this import and set_sources_assignment_filter call
+# when the file has been converted. See https://crbug.com/1018739 for details.
+import("//build/config/deprecated_default_sources_assignment_filter.gni")
+set_sources_assignment_filter(deprecated_default_sources_assignment_filter)
+
 declare_args() {
   # Denotes the type of Cast product. This is #defined as CAST_PRODUCT_TYPE in
   # version.h. See //third_party/metrics_proto/cast_logs.proto for valid values.
@@ -244,7 +251,10 @@ if (is_android) {
 
     deps = [
       ":cast_sys_info_util",
+      ":chromecast_switches",
       ":dummy_cast_sys_info",
+      ":init_shlib",
+      "//base",
       "//chromecast/public",
     ]
   }
@@ -352,6 +362,7 @@ if (is_android) {
     deps = [
       "//base:base_java",
       "//base:jni_java",
+      "//third_party/android_deps:androidx_annotation_annotation_java",
     ]
     annotation_processor_deps = [ "//base/android/jni_generator:jni_processor" ]
   }
@@ -391,6 +402,7 @@ if (is_android) {
     deps = [
       ":base_java",
       ":cast_base_test_utils_java",
+      "//base:base_java",
       "//base:base_junit_test_support",
       "//third_party/hamcrest:hamcrest_java",
     ]

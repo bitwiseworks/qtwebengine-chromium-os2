@@ -380,7 +380,10 @@
     Show Log
   </message>
   <message desc="Keyboard shortcut to show the ChromeVox log." name="IDS_CHROMEVOX_OPTIONS_SHOW_LOG_KEY">
-    Search + O + W
+    Search + O, then W
+  </message>
+  <message desc="Keyboard shortcut to show the TTS settings page." name="IDS_CHROMEVOX_OPTIONS_SHOW_TTS_SETTINGS">
+    Search + O, then S. Use to install, manage, and customize voices.
   </message>
   <message desc="Show event stream filters options for event stream logging." name="IDS_CHROMEVOX_OPTIONS_SHOW_EVENT_STREAM_FILTERS">
     Show event stream filters
@@ -429,6 +432,12 @@
   </message>
   <message desc="Describes a HTML radio button named 'name' in the unselected state." name="IDS_CHROMEVOX_DESCRIBE_RADIO_UNSELECTED">
     <ph name="name">$1</ph>, radio button unselected
+  </message>
+  <message desc="Describes a HTML menu item radio button named 'name' in the selected state." name="IDS_CHROMEVOX_DESCRIBE_MENU_ITEM_RADIO_SELECTED">
+    <ph name="name">$1</ph>, menu item radio button selected
+  </message>
+  <message desc="Describes a HTML menu item radio button named 'name' in the unselected state." name="IDS_CHROMEVOX_DESCRIBE_MENU_ITEM_RADIO_UNSELECTED">
+    <ph name="name">$1</ph>, menu item radio button unselected
   </message>
   <message desc="Describes a window named 'name'." name="IDS_CHROMEVOX_DESCRIBE_WINDOW">
     <ph name="name">$1</ph>, window
@@ -1492,6 +1501,15 @@
   <message desc="Describes columns within tables on the web." name="IDS_CHROMEVOX_ROLE_COLUMN_BRL">
     col
   </message>
+  <message desc="A message spoken when the user switches to the form field control granularity, which allows users to navigate the page one form field control at a time." name="IDS_CHROMEVOX_FORM_FIELD_CONTROL_GRANULARITY">
+    Form field control
+  </message>
+  <message desc="A message spoken when the user switches to the link granularity, which allows users to navigate the page one link at a time." name="IDS_CHROMEVOX_LINK_GRANULARITY">
+    Link
+  </message>
+  <message desc="A message spoken when the user switches to the heading granularity, which allows users to navigate the page one heading at a time." name="IDS_CHROMEVOX_HEADING_GRANULARITY">
+    Heading
+  </message>
   <message desc="A message spoken when the user switches to the line granularity, which allows users to navigate the page one line at a time." name="IDS_CHROMEVOX_LINE_GRANULARITY">
     Line
   </message>
@@ -1503,6 +1521,9 @@
   </message>
   <message desc="Spoken when the search widget first shows." name="IDS_CHROMEVOX_SEARCH_WIDGET_INTRO">
     Find in page
+  </message>
+  <message desc="Instructions on how to use the ChromeVox find in page text input." name="IDS_CHROMEVOX_SEARCH_WIDGET_DESCRIPTION">
+    Type to search the page. Press enter to jump to the result, up or down arrows to browse results, keep typing to change your search, or escape to cancel.
   </message>
   <message desc="Category displayed in the options page under keyboard commands." name="IDS_CHROMEVOX_MODIFIER_KEYS">
     Modifier Keys
@@ -2287,17 +2308,8 @@
   <message desc="Hint for how to start editing a text field while exploring the screen using touch exploration." name="IDS_CHROMEVOX_HINT_DOUBLE_TAP_TO_EDIT">
     Double tap to start editing
   </message>
-  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_TAP2_GESTURE">
-    Tap with two fingers
-  </message>
-  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_TAP4_GESTURE">
-    Tap with four fingers
-  </message>
-  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_CLICK_GESTURE">
-    Double tap with one finger
-  </message>
-  <message desc="Describes Learn Mode when the mode is initially entered." name="IDS_CHROMEVOX_LEARN_MODE_INTRO">
-    Starting Learn Mode. Press a qwerty key, refreshable braille key, or touch gesture to learn its function. Press control with w or escape to exit.
+  <message desc="Describes Learn Mode when the mode is initially entered with text-to-speech." name="IDS_CHROMEVOX_LEARN_MODE_INTRO" is_accessibility_with_no_ui="true">
+    Press a qwerty key, refreshable braille key, or touch gesture to learn its function. Press control with w or escape to exit.
   </message>
   <message desc="Output when leaving Learn Mode." name="IDS_CHROMEVOX_LEARN_MODE_OUTTRO">
     Stopping Learn Mode
@@ -2879,8 +2891,11 @@
   <message desc="Used to describe capital letters" name="IDS_CHROMEVOX_ANNOUNCE_CAPITAL_LETTER">
     Cap <ph name="letter">$1<ex>A</ex></ph>
   </message>
-  <message desc="The hint text and label for the search bar in the ChromeVox menus" name="IDS_CHROMEVOX_SEARCH_CHROMEVOX_MENUS">
+  <message desc="The placeholder text for the search bar in the ChromeVox menus" name="IDS_CHROMEVOX_SEARCH_CHROMEVOX_MENUS_PLACEHOLDER">
     Search the menus
+  </message>
+  <message desc="The aria-description text for the search bar in the ChromeVox menus" name="IDS_CHROMEVOX_SEARCH_CHROMEVOX_MENUS_DESCRIPTION">
+    Type to search the menus. Use the up and down arrows to cycle through results. Use the left and right arrows to adjust the text caret, and to move between menus.
   </message>
   <message desc="Title displayed in the panel for the search menu." name="IDS_CHROMEVOX_PANEL_SEARCH_MENU">
     Search
@@ -2903,6 +2918,18 @@
   <message desc="Describes an option for ChromeVox to read numbers as digits." name="IDS_CHROMEVOX_OPTIONS_NUMBER_READING_STYLE_DIGITS">
     Digits
   </message>
+  <message desc="Labels the select for choosing how ChromeVox reads punctuation." name="IDS_CHROMEVOX_OPTIONS_PUNCTUATION_ECHO_SELECT_LABEL">
+    Punctuation echo:
+  </message>
+  <message desc="Describes an option for ChromeVox to echo (speak) no punctuation." name="IDS_CHROMEVOX_OPTIONS_PUNCTUATION_ECHO_NONE">
+    None
+  </message>
+  <message desc="Describes an option for ChromeVox to echo (speak) some punctuation." name="IDS_CHROMEVOX_OPTIONS_PUNCTUATION_ECHO_SOME">
+    Some
+  </message>
+  <message desc="Describes an option for ChromeVox to echo (speak) all punctuation." name="IDS_CHROMEVOX_OPTIONS_PUNCTUATION_ECHO_ALL">
+    All
+  </message>
   <message desc="Labels the checkbox on the options page that enables displaying Perkins Brailler commands in the ChromeVox menus." name="IDS_CHROMEVOX_OPTIONS_MENU_BRAILLE_COMMANDS">
     Show braille commands in the ChromeVox menus
   </message>
@@ -2911,6 +2938,99 @@
   </message>
   <message desc="Announced to alert the user that ChromeVox has no current focus." name="IDS_CHROMEVOX_NO_FOCUS">
     No current ChromeVox focus. Press Alt+Shift+L to go to the launcher.
+  </message>
+  <message desc="Announced to alert the user that ChromeVox has no current focus when using a touch screen." name="IDS_CHROMEVOX_NO_FOCUS_TOUCH">
+    No current ChromeVox focus. Touch explore to find items.
+  </message>
+  <message desc="Labels the checkbox on the options page that enables or disables Smart Sticky Mode. The label explains how the feature works." name="IDS_CHROMEVOX_OPTIONS_SMART_STICKY_MODE">
+    Turn off sticky mode when editing text (Smart Sticky Mode)
+  </message>
+  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_SWIPEUP1_GESTURE">
+    Swipe one finger up
+  </message>
+  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_SWIPEDOWN1_GESTURE">
+    Swipe one finger down
+  </message>
+  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_SWIPELEFT1_GESTURE">
+    Swipe one finger left
+  </message>
+  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_SWIPERIGHT1_GESTURE">
+    Swipe one finger right
+  </message>
+  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_SWIPEUP2_GESTURE">
+    Swipe two fingers up
+  </message>
+  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_SWIPEDOWN2_GESTURE">
+    Swipe two fingers down
+  </message>
+  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_SWIPELEFT2_GESTURE">
+    Swipe two fingers left
+  </message>
+  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_SWIPERIGHT2_GESTURE">
+    Swipe two fingers right
+  </message>
+  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_SWIPEUP3_GESTURE">
+    Swipe three fingers up
+  </message>
+  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_SWIPEDOWN3_GESTURE">
+    Swipe three fingers down
+  </message>
+  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_SWIPELEFT3_GESTURE">
+    Swipe three fingers left
+  </message>
+  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_SWIPERIGHT3_GESTURE">
+    Swipe three fingers right
+  </message>
+  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_SWIPELEFT4_GESTURE" is_accessibility_with_no_ui="true">
+    Swipe four fingers left
+  </message>
+  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_SWIPERIGHT4_GESTURE" is_accessibility_with_no_ui="true">
+    Swipe four fingers right
+  </message>
+  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_TAP2_GESTURE">
+    Tap with two fingers
+  </message>
+  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_TAP4_GESTURE">
+    Tap with four fingers
+  </message>
+  <message desc="Describes a gesture to be performed on a touch screen." name="IDS_CHROMEVOX_CLICK_GESTURE">
+    Double tap with one finger
+  </message>
+  <message desc="The text label for the use pitch changes checkbox." name="IDS_CHROMEVOX_OPTIONS_USE_PITCH_CHANGES_CHECKBOX_LABEL">
+    Change pitch when speaking element types and quoted, deleted, bolded, parenthesized, or capitalized text.
+  </message>
+  <message desc="Describes the current web page position of the ChromeVox focus." is_accessibility_with_no_ui="true" name="IDS_CHROMEVOX_DESCRIBE_POS_BY_PAGE">
+    Page <ph name="currentPage">$1<ex>1</ex></ph> of <ph name="totalPages">$2<ex>10</ex></ph>
+  </message>
+  <message desc="Describes a gesture to be performed on a touch screen. The gesture is to touch and drag with one finger and have items under the finger read using text-to-speech. No associated UI with this string which is spoken using text-to-speech." name="IDS_CHROMEVOX_TOUCH_EXPLORE_GESTURE" is_accessibility_with_no_ui="true">
+    Touch explore
+  </message>
+  <message desc="Describes the media play/pause key on a Chromebook. No associated UI with this string which is spoken using text-to-speech." name="IDS_CHROMEVOX_MEDIA_PLAY_PAUSE" is_accessibility_with_no_ui="true">
+    Media Play/Pause
+  </message>
+  <message desc="Describes a table header sorted in ascending order. No associated UI with this string which is spoken using text-to-speech." name="IDS_CHROMEVOX_SORT_ASCENDING" is_accessibility_with_no_ui="true">
+    Ascending sort
+  </message>
+  <message desc="Describes a table header sorted in descending order. No associated UI with this string which is spoken using text-to-speech." name="IDS_CHROMEVOX_SORT_DESCENDING" is_accessibility_with_no_ui="true">
+    Descending sort
+  </message>
+  <message desc="Describes scrolling up by a page using a gesture. No associated UI with this string which is spoken using text-to-speech." name="IDS_CHROMEVOX_PREVIOUS_PAGE_GESTURE_DESCRIPTION" is_accessibility_with_no_ui="true">
+    Scroll to previous page
+  </message>
+  <message desc="Describes scrolling down by a page using a gesture. No associated UI with this string which is spoken using text-to-speech." name="IDS_CHROMEVOX_NEXT_PAGE_GESTURE_DESCRIPTION" is_accessibility_with_no_ui="true">
+    Scroll to next page
+  </message>
+  <message desc="Describes gesture that simulates pressing the escape key. No associated UI with this string which is spoken using text-to-speech." name="IDS_CHROMEVOX_ESCAPE_GESTURE_DESCRIPTION" is_accessibility_with_no_ui="true">
+    Escape
+  </message>
+  <message desc="Describes gesture that simulates pressing the enter key. No associated UI with this string which is spoken using text-to-speech." name="IDS_CHROMEVOX_ENTER_GESTURE_DESCRIPTION" is_accessibility_with_no_ui="true">
+    Enter
+  </message>
+  <message desc="Describes gesture that movees to the previous important section on the screen (e.g. the Launcher, Status Tray, etc). No associated UI with this string which is spoken using text-to-speech." name="IDS_CHROMEVOX_PREVIOUS_PANE_GESTURE_DESCRIPTION" is_accessibility_with_no_ui="true">
+    Move to previous section. Examples include the Status Tray and Launcher.
+  </message>
+  <message desc="Describes gesture that movees to the next important section on the screen (e.g. the Launcher, Status Tray, etc). No associated UI with this string which is spoken using text-to-speech." name="IDS_CHROMEVOX_NEXT_PANE_GESTURE_DESCRIPTION" is_accessibility_with_no_ui="true">
+    Move to next section. Examples include the Status Tray and Launcher.
   </message>
 
 </grit-part>

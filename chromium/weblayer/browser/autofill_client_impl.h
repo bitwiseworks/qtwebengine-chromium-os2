@@ -35,19 +35,21 @@ class AutofillClientImpl
   ukm::UkmRecorder* GetUkmRecorder() override;
   ukm::SourceId GetUkmSourceId() override;
   autofill::AddressNormalizer* GetAddressNormalizer() override;
+  const GURL& GetLastCommittedURL() override;
   security_state::SecurityLevel GetSecurityLevelForUmaHistograms() override;
+  const translate::LanguageState* GetLanguageState() override;
+
   void ShowAutofillSettings(bool show_credit_card_settings) override;
-
-#if !defined(OS_ANDROID)
-  std::vector<std::string> GetMerchantWhitelistForVirtualCards() override;
-  std::vector<std::string> GetBinRangeWhitelistForVirtualCards() override;
-#endif
-
   void ShowUnmaskPrompt(
       const autofill::CreditCard& card,
       UnmaskCardReason reason,
       base::WeakPtr<autofill::CardUnmaskDelegate> delegate) override;
   void OnUnmaskVerificationResult(PaymentsRpcResult result) override;
+
+#if !defined(OS_ANDROID)
+  std::vector<std::string> GetAllowedMerchantsForVirtualCards() override;
+  std::vector<std::string> GetAllowedBinRangesForVirtualCards() override;
+
   void ShowLocalCardMigrationDialog(
       base::OnceClosure show_migration_dialog_closure) override;
   void ConfirmMigrateLocalCardToCloud(
@@ -62,8 +64,6 @@ class AutofillClientImpl
       const std::vector<autofill::MigratableCreditCard>&
           migratable_credit_cards,
       MigrationDeleteCardCallback delete_local_card_callback) override;
-
-#if !defined(OS_ANDROID)
   void ShowWebauthnOfferDialog(
       WebauthnDialogCallback offer_dialog_callback) override;
   void ShowWebauthnVerifyPendingDialog(
@@ -76,15 +76,7 @@ class AutofillClientImpl
   void OfferVirtualCardOptions(
       const std::vector<autofill::CreditCard*>& candidates,
       base::OnceCallback<void(const std::string&)> callback) override;
-#endif
-
-  void ConfirmSaveAutofillProfile(const autofill::AutofillProfile& profile,
-                                  base::OnceClosure callback) override;
-  void ConfirmSaveCreditCardLocally(
-      const autofill::CreditCard& card,
-      SaveCreditCardOptions options,
-      LocalSaveCardPromptCallback callback) override;
-#if defined(OS_ANDROID)
+#else  // if defined(OS_ANDROID)
   void ConfirmAccountNameFixFlow(
       base::OnceCallback<void(const base::string16&)> callback) override;
   void ConfirmExpirationDateFixFlow(
@@ -92,6 +84,10 @@ class AutofillClientImpl
       base::OnceCallback<void(const base::string16&, const base::string16&)>
           callback) override;
 #endif
+  void ConfirmSaveCreditCardLocally(
+      const autofill::CreditCard& card,
+      SaveCreditCardOptions options,
+      LocalSaveCardPromptCallback callback) override;
   void ConfirmSaveCreditCardToCloud(
       const autofill::CreditCard& card,
       const autofill::LegalMessageLines& legal_message_lines,
@@ -103,17 +99,14 @@ class AutofillClientImpl
   bool HasCreditCardScanFeature() override;
   void ScanCreditCard(CreditCardScanCallback callback) override;
   void ShowAutofillPopup(
-      const gfx::RectF& element_bounds,
-      base::i18n::TextDirection text_direction,
-      const std::vector<autofill::Suggestion>& suggestions,
-      bool /*unused_autoselect_first_suggestion*/,
-      autofill::PopupType popup_type,
+      const autofill::AutofillClient::PopupOpenArgs& open_args,
       base::WeakPtr<autofill::AutofillPopupDelegate> delegate) override;
   void UpdateAutofillPopupDataListValues(
       const std::vector<base::string16>& values,
       const std::vector<base::string16>& labels) override;
   base::span<const autofill::Suggestion> GetPopupSuggestions() const override;
   void PinPopupView() override;
+  autofill::AutofillClient::PopupOpenArgs GetReopenPopupArgs() const override;
   void UpdatePopup(const std::vector<autofill::Suggestion>& suggestions,
                    autofill::PopupType popup_type) override;
   void HideAutofillPopup(autofill::PopupHidingReason reason) override;

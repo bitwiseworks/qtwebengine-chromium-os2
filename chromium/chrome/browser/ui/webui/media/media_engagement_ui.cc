@@ -25,10 +25,10 @@
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_controller.h"
 #include "content/public/browser/web_ui_data_source.h"
-#include "content/public/common/web_preferences.h"
 #include "media/base/media_switches.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver.h"
+#include "third_party/blink/public/common/web_preferences/web_preferences.h"
 
 #if !defined(OS_ANDROID)
 #include "chrome/common/pref_names.h"
@@ -93,14 +93,13 @@ class MediaEngagementScoreDetailsProviderImpl
  private:
   const std::string GetAppliedAutoplayPolicy() {
     switch (web_ui_->GetWebContents()
-                ->GetRenderViewHost()
-                ->GetWebkitPreferences()
+                ->GetOrCreateWebPreferences()
                 .autoplay_policy) {
-      case content::AutoplayPolicy::kNoUserGestureRequired:
+      case blink::web_pref::AutoplayPolicy::kNoUserGestureRequired:
         return "no-user-gesture-required";
-      case content::AutoplayPolicy::kUserGestureRequired:
+      case blink::web_pref::AutoplayPolicy::kUserGestureRequired:
         return "user-gesture-required";
-      case content::AutoplayPolicy::kDocumentUserActivationRequired:
+      case blink::web_pref::AutoplayPolicy::kDocumentUserActivationRequired:
         return "document-user-activation-required";
     }
   }

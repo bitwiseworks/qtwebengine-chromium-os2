@@ -29,11 +29,11 @@ BluetoothGattApplicationServiceProviderImpl::
   exported_object_->ExportMethod(
       dbus::kDBusObjectManagerInterface,
       dbus::kDBusObjectManagerGetManagedObjects,
-      base::Bind(
+      base::BindRepeating(
           &BluetoothGattApplicationServiceProviderImpl::GetManagedObjects,
           weak_ptr_factory_.GetWeakPtr()),
-      base::Bind(&BluetoothGattApplicationServiceProviderImpl::OnExported,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&BluetoothGattApplicationServiceProviderImpl::OnExported,
+                     weak_ptr_factory_.GetWeakPtr()));
 
   CreateAttributeServiceProviders(bus, services);
 }

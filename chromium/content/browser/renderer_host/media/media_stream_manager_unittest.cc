@@ -38,7 +38,7 @@
 #include "media/audio/alsa/audio_manager_alsa.h"
 #elif defined(OS_ANDROID)
 #include "media/audio/android/audio_manager_android.h"
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
 #include "media/audio/mac/audio_manager_mac.h"
 #elif defined(OS_WIN)
 #include "media/audio/win/audio_manager_win.h"
@@ -56,7 +56,7 @@ namespace content {
 
 #if defined(USE_ALSA)
 typedef media::AudioManagerAlsa AudioManagerPlatform;
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
 typedef media::AudioManagerMac AudioManagerPlatform;
 #elif defined(OS_WIN)
 typedef media::AudioManagerWin AudioManagerPlatform;
@@ -325,7 +325,8 @@ class MediaStreamManagerTest : public ::testing::Test {
       blink::mojom::MediaStreamRequestResult result,
       const std::string& label,
       const blink::MediaStreamDevices& audio_devices,
-      const blink::MediaStreamDevices& video_devices) {
+      const blink::MediaStreamDevices& video_devices,
+      bool pan_tilt_zoom_allowed) {
     if (request_audio) {
       EXPECT_EQ(1u, audio_devices.size());
       *audio_device = audio_devices[0];
@@ -375,7 +376,7 @@ class MediaStreamManagerTest : public ::testing::Test {
   }
 
   // media_stream_manager_ needs to outlive task_environment_ because it is a
-  // MessageLoopCurrent::DestructionObserver. audio_manager_ needs to outlive
+  // CurrentThread::DestructionObserver. audio_manager_ needs to outlive
   // task_environment_ because it uses the underlying message loop.
   std::unique_ptr<MediaStreamManager> media_stream_manager_;
   std::unique_ptr<MockMediaObserver> media_observer_;
@@ -697,7 +698,8 @@ TEST_F(MediaStreamManagerTest, GetDisplayMediaRequestCallsUIProxy) {
       base::BindOnce([](blink::mojom::MediaStreamRequestResult result,
                         const std::string& label,
                         const blink::MediaStreamDevices& audio_devices,
-                        const blink::MediaStreamDevices& video_devices) {});
+                        const blink::MediaStreamDevices& video_devices,
+                        bool pan_tilt_zoom_allowed) {});
   EXPECT_CALL(
       *media_observer_,
       OnMediaRequestStateChanged(

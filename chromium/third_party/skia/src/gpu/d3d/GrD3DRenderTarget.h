@@ -14,18 +14,13 @@
 
 #include "include/gpu/d3d/GrD3DTypes.h"
 #include "src/gpu/GrGpu.h"
+#include "src/gpu/d3d/GrD3DDescriptorHeap.h"
 #include "src/gpu/d3d/GrD3DResourceProvider.h"
 
 class GrD3DGpu;
 class GrD3DRenderTarget;
 
 struct GrD3DTextureResourceInfo;
-
-#ifdef SK_BUILD_FOR_WIN
-// Windows gives bogus warnings about inheriting asTexture/asRenderTarget via dominance.
-#pragma warning(push)
-#pragma warning(disable: 4250)
-#endif
 
 class GrD3DRenderTarget: public GrRenderTarget, public virtual GrD3DTextureResource {
 public:
@@ -36,13 +31,22 @@ public:
 
     GrBackendFormat backendFormat() const override { return this->getBackendFormat(); }
 
-    GrD3DTextureResource* msaaTextureResource() { return fMSAATextureResource.get(); }
+    GrD3DTextureResource* msaaTextureResource() const { return fMSAATextureResource.get(); }
 
     bool canAttemptStencilAttachment() const override {
-        return false; // For now
+        return true;
     }
 
     GrBackendRenderTarget getBackendRenderTarget() const override;
+
+    D3D12_CPU_DESCRIPTOR_HANDLE colorRenderTargetView() const {
+        return fColorRenderTargetView.fHandle;
+    }
+
+    DXGI_FORMAT stencilDxgiFormat() const;
+
+    // Key used for the program desc
+    void genKey(GrProcessorKeyBuilder* b) const;
 
 protected:
     GrD3DRenderTarget(GrD3DGpu* gpu,
@@ -51,12 +55,15 @@ protected:
                       const GrD3DTextureResourceInfo& info,
                       sk_sp<GrD3DResourceState> state,
                       const GrD3DTextureResourceInfo& msaaInfo,
-                      sk_sp<GrD3DResourceState> msaaState);
+                      sk_sp<GrD3DResourceState> msaaState,
+                      const GrD3DDescriptorHeap::CPUHandle& colorRenderTargetView,
+                      const GrD3DDescriptorHeap::CPUHandle& resolveRenderTargetView);
 
     GrD3DRenderTarget(GrD3DGpu* gpu,
                       SkISize dimensions,
                       const GrD3DTextureResourceInfo& info,
-                      sk_sp<GrD3DResourceState> state);
+                      sk_sp<GrD3DResourceState> state,
+                      const GrD3DDescriptorHeap::CPUHandle& renderTargetView);
 
     void onAbandon() override;
     void onRelease() override;
@@ -70,7 +77,7 @@ protected:
         }
         const GrCaps& caps = *this->getGpu()->caps();
         return GrSurface::ComputeSize(caps, this->backendFormat(), this->dimensions(),
-                                      numColorSamples, GrMipMapped::kNo);
+                                      numColorSamples, GrMipmapped::kNo);
     }
 
 private:
@@ -83,17 +90,20 @@ private:
                       sk_sp<GrD3DResourceState> state,
                       const GrD3DTextureResourceInfo& msaaInfo,
                       sk_sp<GrD3DResourceState> msaaState,
+                      const GrD3DDescriptorHeap::CPUHandle& colorRenderTargetView,
+                      const GrD3DDescriptorHeap::CPUHandle& resolveRenderTargetView,
                       Wrapped);
 
     GrD3DRenderTarget(GrD3DGpu* gpu,
                       SkISize dimensions,
                       const GrD3DTextureResourceInfo& info,
                       sk_sp<GrD3DResourceState> state,
+                      const GrD3DDescriptorHeap::CPUHandle& renderTargetView,
                       Wrapped);
 
     GrD3DGpu* getD3DGpu() const;
 
-    bool completeStencilAttachment() override { /* TODO */ return false; }
+    bool completeStencilAttachment() override { return true; }
 
     // In Direct3D we call the release proc after we are finished with the underlying
     // GrD3DTextureResource::Resource object (which occurs after the GPU finishes all work on it).
@@ -105,6 +115,9 @@ private:
     void releaseInternalObjects();
 
     std::unique_ptr<GrD3DTextureResource> fMSAATextureResource;
+
+    GrD3DDescriptorHeap::CPUHandle fColorRenderTargetView;
+    GrD3DDescriptorHeap::CPUHandle fResolveRenderTargetView;
 };
 
 #endif

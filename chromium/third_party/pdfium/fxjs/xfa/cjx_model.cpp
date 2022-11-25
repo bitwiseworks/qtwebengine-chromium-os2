@@ -24,7 +24,7 @@ CJX_Model::CJX_Model(CXFA_Node* node) : CJX_Node(node) {
   DefineMethods(MethodSpecs);
 }
 
-CJX_Model::~CJX_Model() {}
+CJX_Model::~CJX_Model() = default;
 
 bool CJX_Model::DynamicTypeIs(TypeTag eType) const {
   return eType == static_type__ || ParentType__::DynamicTypeIs(eType);
@@ -60,8 +60,8 @@ CJS_Result CJX_Model::createNode(
     if (!pNewNode->HasAttribute(XFA_Attribute::Name))
       return CJS_Result::Failure(JSMessage::kParamError);
 
-    pNewNode->JSObject()->SetAttribute(XFA_Attribute::Name, name.AsStringView(),
-                                       true);
+    pNewNode->JSObject()->SetAttributeByEnum(XFA_Attribute::Name,
+                                             name.AsStringView(), true);
     if (pNewNode->GetPacketType() == XFA_PacketType::Datasets)
       pNewNode->CreateXMLMappingNode();
   }

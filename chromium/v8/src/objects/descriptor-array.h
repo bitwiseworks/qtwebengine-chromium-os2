@@ -50,13 +50,13 @@ class EnumCache : public TorqueGeneratedEnumCache<EnumCache, Struct> {
 // The "value" fields store either values or field types. A field type is either
 // FieldType::None(), FieldType::Any() or a weak reference to a Map. All other
 // references are strong.
-class DescriptorArray : public HeapObject {
+class DescriptorArray
+    : public TorqueGeneratedDescriptorArray<DescriptorArray, HeapObject> {
  public:
   DECL_INT16_ACCESSORS(number_of_all_descriptors)
   DECL_INT16_ACCESSORS(number_of_descriptors)
   inline int16_t number_of_slack_descriptors() const;
   inline int number_of_entries() const;
-  DECL_ACCESSORS(enum_cache, EnumCache)
 
   void ClearEnumCache();
   inline void CopyEnumCacheFrom(DescriptorArray array);
@@ -113,11 +113,15 @@ class DescriptorArray : public HeapObject {
       int slack = 0);
 
   // Sort the instance descriptors by the hash codes of their keys.
-  void Sort();
+  V8_EXPORT_PRIVATE void Sort();
 
-  // Search the instance descriptors for given name.
-  V8_INLINE InternalIndex Search(Name name, int number_of_own_descriptors);
-  V8_INLINE InternalIndex Search(Name name, Map map);
+  // Search the instance descriptors for given name. {concurrent_search} signals
+  // if we are doing the search on a background thread. If so, we will sacrifice
+  // speed for thread-safety.
+  V8_INLINE InternalIndex Search(Name name, int number_of_own_descriptors,
+                                 bool concurrent_search = false);
+  V8_INLINE InternalIndex Search(Name name, Map map,
+                                 bool concurrent_search = false);
 
   // As the above, but uses DescriptorLookupCache and updates it when
   // necessary.
@@ -135,14 +139,9 @@ class DescriptorArray : public HeapObject {
   void Initialize(EnumCache enum_cache, HeapObject undefined_value,
                   int nof_descriptors, int slack);
 
-  DECL_CAST(DescriptorArray)
-
   // Constant for denoting key was not found.
   static const int kNotFound = -1;
 
-  // Layout description.
-  DEFINE_FIELD_OFFSET_CONSTANTS(HeapObject::kHeaderSize,
-                                TORQUE_GENERATED_DESCRIPTOR_ARRAY_FIELDS)
   STATIC_ASSERT(IsAligned(kStartOfWeakFieldsOffset, kTaggedSize));
   STATIC_ASSERT(IsAligned(kHeaderSize, kTaggedSize));
 
@@ -194,7 +193,7 @@ class DescriptorArray : public HeapObject {
 
 #ifdef DEBUG
   // Is the descriptor array sorted and without duplicates?
-  V8_EXPORT_PRIVATE bool IsSortedNoDuplicates(int valid_descriptors = -1);
+  V8_EXPORT_PRIVATE bool IsSortedNoDuplicates();
 
   // Are two DescriptorArrays equal?
   bool IsEqualTo(DescriptorArray other);
@@ -234,7 +233,7 @@ class DescriptorArray : public HeapObject {
   // Swap first and second descriptor.
   inline void SwapSortedKeys(int first, int second);
 
-  OBJECT_CONSTRUCTORS(DescriptorArray, HeapObject);
+  TQ_OBJECT_CONSTRUCTORS(DescriptorArray)
 };
 
 class NumberOfMarkedDescriptors {

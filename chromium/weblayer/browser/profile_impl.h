@@ -5,11 +5,17 @@
 #ifndef WEBLAYER_BROWSER_PROFILE_IMPL_H_
 #define WEBLAYER_BROWSER_PROFILE_IMPL_H_
 
+#include <set>
+#include <vector>
+
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/task/cancelable_task_tracker.h"
 #include "build/build_config.h"
+#include "weblayer/browser/browser_list_observer.h"
 #include "weblayer/browser/i18n_util.h"
+#include "weblayer/browser/profile_disk_operations.h"
 #include "weblayer/public/profile.h"
 
 #if defined(OS_ANDROID)
@@ -19,11 +25,13 @@
 
 namespace content {
 class BrowserContext;
+class WebContents;
 }
 
 namespace weblayer {
 class BrowserContextImpl;
 class CookieManagerImpl;
+class PrerenderControllerImpl;
 
 class ProfileImpl : public Profile {
  public:
@@ -34,14 +42,38 @@ class ProfileImpl : public Profile {
   // |context| must not be null.
   static base::FilePath GetCachePath(content::BrowserContext* context);
 
-  explicit ProfileImpl(const std::string& name);
+  static std::unique_ptr<ProfileImpl> DestroyAndDeleteDataFromDisk(
+      std::unique_ptr<ProfileImpl> profile,
+      base::OnceClosure done_callback);
+
+  ProfileImpl(const std::string& name, bool is_incognito);
   ~ProfileImpl() override;
 
   // Returns the ProfileImpl from the specified BrowserContext.
   static ProfileImpl* FromBrowserContext(
       content::BrowserContext* browser_context);
 
-  content::BrowserContext* GetBrowserContext();
+  static std::set<ProfileImpl*> GetAllProfiles();
+
+  // Allows getting notified when profiles are created or destroyed.
+  class ProfileObserver {
+   public:
+    virtual void ProfileCreated(ProfileImpl* profile) {}
+    virtual void ProfileDestroyed(ProfileImpl* profile) {}
+
+   protected:
+    virtual ~ProfileObserver() = default;
+  };
+
+  static void AddProfileObserver(ProfileObserver* observer);
+  static void RemoveProfileObserver(ProfileObserver* observer);
+
+  // Deletes |web_contents| after a delay. This is used if the owning Tab is
+  // deleted and it's not safe to delete the WebContents.
+  void DeleteWebContentsSoon(
+      std::unique_ptr<content::WebContents> web_contents);
+
+  BrowserContextImpl* GetBrowserContext();
 
   // Called when the download subsystem has finished initializing. By this point
   // information about downloads that were interrupted by a previous crash would
@@ -49,11 +81,13 @@ class ProfileImpl : public Profile {
   void DownloadsInitialized();
 
   // Path data is stored at, empty if off-the-record.
-  const base::FilePath& data_path() const { return data_path_; }
+  const base::FilePath& data_path() const { return info_.data_path; }
+  const std::string& name() const { return info_.name; }
   DownloadDelegate* download_delegate() { return download_delegate_; }
 
+  void MarkAsDeleted();
+
   // Profile implementation:
-  bool DeleteDataFromDisk(base::OnceClosure done_callback) override;
   void ClearBrowsingData(const std::vector<BrowsingDataType>& data_types,
                          base::Time from_time,
                          base::Time to_time,
@@ -61,13 +95,28 @@ class ProfileImpl : public Profile {
   void SetDownloadDirectory(const base::FilePath& directory) override;
   void SetDownloadDelegate(DownloadDelegate* delegate) override;
   CookieManager* GetCookieManager() override;
+  PrerenderController* GetPrerenderController() override;
+  void GetBrowserPersistenceIds(
+      base::OnceCallback<void(base::flat_set<std::string>)> callback) override;
+  void RemoveBrowserPersistenceStorage(
+      base::OnceCallback<void(bool)> done_callback,
+      base::flat_set<std::string> ids) override;
+  void SetBooleanSetting(SettingType type, bool value) override;
+  bool GetBooleanSetting(SettingType type) override;
+  void GetCachedFaviconForPageUrl(
+      const GURL& page_url,
+      base::OnceCallback<void(gfx::Image)> callback) override;
+  void PrepareForPossibleCrossOriginNavigation() override;
 
 #if defined(OS_ANDROID)
   ProfileImpl(JNIEnv* env,
               const base::android::JavaParamRef<jstring>& path,
-              const base::android::JavaParamRef<jobject>& java_profile);
+              const base::android::JavaParamRef<jobject>& java_profile,
+              bool is_incognito);
 
-  jboolean DeleteDataFromDisk(
+  jint GetNumBrowserImpl(JNIEnv* env);
+  jlong GetBrowserContext(JNIEnv* env);
+  void DestroyAndDeleteDataFromDisk(
       JNIEnv* env,
       const base::android::JavaRef<jobject>& j_completion_callback);
   void ClearBrowsingData(
@@ -80,11 +129,25 @@ class ProfileImpl : public Profile {
       JNIEnv* env,
       const base::android::JavaParamRef<jstring>& directory);
   jlong GetCookieManager(JNIEnv* env);
+  jlong GetPrerenderController(JNIEnv* env);
   void EnsureBrowserContextInitialized(JNIEnv* env);
+  void SetBooleanSetting(JNIEnv* env, jint j_type, jboolean j_value);
+  jboolean GetBooleanSetting(JNIEnv* env, jint j_type);
+  void GetBrowserPersistenceIds(
+      JNIEnv* env,
+      const base::android::JavaRef<jobject>& j_callback);
+  void RemoveBrowserPersistenceStorage(
+      JNIEnv* env,
+      const base::android::JavaRef<jobjectArray>& j_ids,
+      const base::android::JavaRef<jobject>& j_callback);
+  void PrepareForPossibleCrossOriginNavigation(JNIEnv* env);
+  void GetCachedFaviconForPageUrl(
+      JNIEnv* env,
+      const base::android::JavaRef<jstring>& j_page_url,
+      const base::android::JavaRef<jobject>& j_callback);
+  void MarkAsDeleted(JNIEnv* env) { MarkAsDeleted(); }
 #endif
 
-  void IncrementBrowserImplCount();
-  void DecrementBrowserImplCount();
   const base::FilePath& download_directory() { return download_directory_; }
 
   // Get the directory where BrowserPersister stores tab state data. This will
@@ -94,14 +157,23 @@ class ProfileImpl : public Profile {
  private:
   class DataClearer;
 
+  static void OnProfileMarked(std::unique_ptr<ProfileImpl> profile,
+                              base::OnceClosure done_callback);
+  static void NukeDataAfterRemovingData(std::unique_ptr<ProfileImpl> profile,
+                                        base::OnceClosure done_callback);
+  static void DoNukeData(std::unique_ptr<ProfileImpl> profile,
+                         base::OnceClosure done_callback);
   void ClearRendererCache();
 
   // Callback when the system locale has been updated.
   void OnLocaleChanged();
 
-  const std::string name_;
+  // Returns the number of Browsers with this profile.
+  int GetNumberOfBrowsers();
 
-  base::FilePath data_path_;
+  void DeleteScheduleWebContents();
+
+  ProfileInfo info_;
 
   std::unique_ptr<BrowserContextImpl> browser_context_;
 
@@ -112,12 +184,21 @@ class ProfileImpl : public Profile {
   std::unique_ptr<i18n::LocaleChangeSubscription> locale_change_subscription_;
 
   std::unique_ptr<CookieManagerImpl> cookie_manager_;
-
-  size_t num_browser_impl_ = 0u;
+  std::unique_ptr<PrerenderControllerImpl> prerender_controller_;
 
 #if defined(OS_ANDROID)
   base::android::ScopedJavaGlobalRef<jobject> java_profile_;
 #endif
+
+  // The typical pattern for CancelableTaskTrackers is to have the caller
+  // supply one. This code is predominantly called from the Java side, where
+  // CancelableTaskTracker isn't applicable. Because of this, the
+  // CancelableTaskTracker is owned by Profile.
+  base::CancelableTaskTracker cancelable_task_tracker_;
+
+  std::vector<std::unique_ptr<content::WebContents>> web_contents_to_delete_;
+
+  base::WeakPtrFactory<ProfileImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ProfileImpl);
 };

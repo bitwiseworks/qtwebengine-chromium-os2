@@ -11,6 +11,7 @@
 #include <limits>
 #include <utility>
 
+#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/aligned_memory.h"
 #include "base/memory/ptr_util.h"
@@ -20,7 +21,7 @@
 #include "mojo/core/configuration.h"
 #include "mojo/core/core.h"
 
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MAC)
 #include "base/mac/mach_logging.h"
 #elif defined(OS_WIN)
 #include "base/win/win_util.h"
@@ -49,8 +50,6 @@ static_assert(offsetof(Channel::Message::LegacyHeader, message_type) ==
               "message_type should be at the same offset in both Header "
               "structs.");
 
-}  // namespace
-
 const size_t kReadBufferSize = 4096;
 const size_t kMaxUnusedReadBufferCapacity = 4096;
 
@@ -58,6 +57,13 @@ const size_t kMaxUnusedReadBufferCapacity = 4096;
 // Linux: The platform imposes a limit of 253 handles per sendmsg().
 // Fuchsia: The zx_channel_write() API supports up to 64 handles.
 const size_t kMaxAttachedHandles = 64;
+
+Channel::AlignedBuffer MakeAlignedBuffer(size_t size) {
+  return Channel::AlignedBuffer(
+      static_cast<char*>(base::AlignedAlloc(size, kChannelMessageAlignment)));
+}
+
+}  // namespace
 
 Channel::Message::Message() = default;
 
@@ -100,7 +106,7 @@ Channel::Message::Message(size_t capacity,
 #elif defined(OS_FUCHSIA)
   // On Fuchsia we serialize handle types into the extra header space.
   extra_header_size = max_handles_ * sizeof(HandleInfoEntry);
-#elif defined(OS_MACOSX) && !defined(OS_IOS)
+#elif defined(OS_MAC)
   // On OSX, some of the platform handles may be mach ports, which are
   // serialised into the message buffer. Since there could be a mix of fds and
   // mach ports, we store the mach ports as an <index, port> pair (of uint32_t),
@@ -122,14 +128,13 @@ Channel::Message::Message(size_t capacity,
 
   capacity_ = header_size + extra_header_size + capacity;
   size_ = header_size + extra_header_size + payload_size;
-  data_ = static_cast<char*>(
-      base::AlignedAlloc(capacity_, kChannelMessageAlignment));
+  data_ = MakeAlignedBuffer(capacity_);
   // Only zero out the header and not the payload. Since the payload is going to
   // be memcpy'd, zeroing the payload is unnecessary work and a significant
   // performance issue when dealing with large messages. Any sanitizer errors
   // complaining about an uninitialized read in the payload area should be
   // treated as an error and fixed.
-  memset(data_, 0, header_size + extra_header_size);
+  memset(data_.get(), 0, header_size + extra_header_size);
 
   DCHECK(base::IsValueInRangeForNumericType<uint32_t>(size_));
   legacy_header()->num_bytes = static_cast<uint32_t>(size_);
@@ -153,7 +158,7 @@ Channel::Message::Message(size_t capacity,
       handles_[i].handle = base::win::HandleToUint32(INVALID_HANDLE_VALUE);
 #elif defined(OS_OS2)
     // All handle data is already initialized to zeroes in memset above.
-#elif defined(OS_MACOSX) && !defined(OS_IOS)
+#elif defined(OS_MAC)
     mach_ports_header_ =
         reinterpret_cast<MachPortsExtraHeader*>(mutable_extra_header());
     mach_ports_header_->num_ports = 0;
@@ -165,9 +170,7 @@ Channel::Message::Message(size_t capacity,
   }
 }
 
-Channel::Message::~Message() {
-  base::AlignedFree(data_);
-}
+Channel::Message::~Message() = default;
 
 // static
 Channel::MessagePtr Channel::Message::CreateRawForFuzzing(
@@ -175,9 +178,8 @@ Channel::MessagePtr Channel::Message::CreateRawForFuzzing(
   auto message = base::WrapUnique(new Message);
   message->size_ = data.size();
   if (data.size()) {
-    message->data_ = static_cast<char*>(
-        base::AlignedAlloc(data.size(), kChannelMessageAlignment));
-    std::copy(data.begin(), data.end(), message->data_);
+    message->data_ = MakeAlignedBuffer(data.size());
+    std::copy(data.begin(), data.end(), message->data_.get());
   }
   return message;
 }
@@ -236,7 +238,7 @@ Channel::MessagePtr Channel::Message::Deserialize(
       (extra_header_size - sizeof(OS2ExtraHeader)) / sizeof(HandleEntry) : 0;
 #elif defined(OS_FUCHSIA)
   uint32_t max_handles = extra_header_size / sizeof(HandleInfoEntry);
-#elif defined(OS_MACOSX) && !defined(OS_IOS)
+#elif defined(OS_MAC)
   if (extra_header_size > 0 &&
       extra_header_size < sizeof(MachPortsExtraHeader)) {
     DLOG(ERROR) << "Decoding invalid message: " << extra_header_size << " < "
@@ -334,10 +336,9 @@ void Channel::Message::ExtendPayload(size_t new_payload_size) {
   if (new_payload_size > capacity_without_header) {
     size_t new_capacity =
         std::max(capacity_without_header * 2, new_payload_size) + header_size;
-    void* new_data = base::AlignedAlloc(new_capacity, kChannelMessageAlignment);
-    memcpy(new_data, data_, capacity_);
-    base::AlignedFree(data_);
-    data_ = static_cast<char*>(new_data);
+    AlignedBuffer new_data = MakeAlignedBuffer(new_capacity);
+    memcpy(new_data.get(), data_.get(), capacity_);
+    data_ = std::move(new_data);
     capacity_ = new_capacity;
 
     if (max_handles_ > 0) {
@@ -345,7 +346,7 @@ void Channel::Message::ExtendPayload(size_t new_payload_size) {
 // payload buffer has been relocated.
 #if defined(OS_WIN)
       handles_ = reinterpret_cast<HandleEntry*>(mutable_extra_header());
-#elif defined(OS_MACOSX) && !defined(OS_IOS)
+#elif defined(OS_MAC)
       mach_ports_header_ =
           reinterpret_cast<MachPortsExtraHeader*>(mutable_extra_header());
 #endif
@@ -358,12 +359,12 @@ void Channel::Message::ExtendPayload(size_t new_payload_size) {
 
 const void* Channel::Message::extra_header() const {
   DCHECK(!is_legacy_message());
-  return data_ + sizeof(Header);
+  return data_.get() + sizeof(Header);
 }
 
 void* Channel::Message::mutable_extra_header() {
   DCHECK(!is_legacy_message());
-  return data_ + sizeof(Header);
+  return data_.get() + sizeof(Header);
 }
 
 size_t Channel::Message::extra_header_size() const {
@@ -373,13 +374,13 @@ size_t Channel::Message::extra_header_size() const {
 void* Channel::Message::mutable_payload() {
   if (is_legacy_message())
     return static_cast<void*>(legacy_header() + 1);
-  return data_ + header()->num_header_bytes;
+  return data_.get() + header()->num_header_bytes;
 }
 
 const void* Channel::Message::payload() const {
   if (is_legacy_message())
     return static_cast<const void*>(legacy_header() + 1);
-  return data_ + header()->num_header_bytes;
+  return data_.get() + header()->num_header_bytes;
 }
 
 size_t Channel::Message::payload_size() const {
@@ -403,12 +404,12 @@ bool Channel::Message::is_legacy_message() const {
 }
 
 Channel::Message::LegacyHeader* Channel::Message::legacy_header() const {
-  return reinterpret_cast<LegacyHeader*>(data_);
+  return reinterpret_cast<LegacyHeader*>(data_.get());
 }
 
 Channel::Message::Header* Channel::Message::header() const {
   DCHECK(!is_legacy_message());
-  return reinterpret_cast<Header*>(data_);
+  return reinterpret_cast<Header*>(data_.get());
 }
 
 void Channel::Message::SetHandles(std::vector<PlatformHandle> new_handles) {
@@ -458,7 +459,7 @@ void Channel::Message::SetHandles(
   }
 #endif  // defined(OS_OS2)
 
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MAC)
   if (mach_ports_header_) {
     for (size_t i = 0; i < max_handles_; ++i) {
       mach_ports_header_->entries[i] = {0};
@@ -474,6 +475,10 @@ void Channel::Message::SetHandles(
 
 std::vector<PlatformHandleInTransit> Channel::Message::TakeHandles() {
   return std::move(handle_vector_);
+}
+
+size_t Channel::Message::NumHandlesForTransit() const {
+  return handle_vector_.size();
 }
 
 // Helper class for managing a Channel's read buffer allocations. This maintains
@@ -501,16 +506,16 @@ class Channel::ReadBuffer {
  public:
   ReadBuffer() {
     size_ = kReadBufferSize;
-    data_ =
-        static_cast<char*>(base::AlignedAlloc(size_, kChannelMessageAlignment));
+    data_ = MakeAlignedBuffer(size_);
   }
 
   ~ReadBuffer() {
     DCHECK(data_);
-    base::AlignedFree(data_);
   }
 
-  const char* occupied_bytes() const { return data_ + num_discarded_bytes_; }
+  const char* occupied_bytes() const {
+    return data_.get() + num_discarded_bytes_;
+  }
 
   size_t num_occupied_bytes() const {
     return num_occupied_bytes_ - num_discarded_bytes_;
@@ -521,13 +526,12 @@ class Channel::ReadBuffer {
   char* Reserve(size_t num_bytes) {
     if (num_occupied_bytes_ + num_bytes > size_) {
       size_ = std::max(size_ * 2, num_occupied_bytes_ + num_bytes);
-      void* new_data = base::AlignedAlloc(size_, kChannelMessageAlignment);
-      memcpy(new_data, data_, num_occupied_bytes_);
-      base::AlignedFree(data_);
-      data_ = static_cast<char*>(new_data);
+      AlignedBuffer new_data = MakeAlignedBuffer(size_);
+      memcpy(new_data.get(), data_.get(), num_occupied_bytes_);
+      data_ = std::move(new_data);
     }
 
-    return data_ + num_occupied_bytes_;
+    return data_.get() + num_occupied_bytes_;
   }
 
   // Marks the first |num_bytes| unoccupied bytes as occupied.
@@ -554,11 +558,10 @@ class Channel::ReadBuffer {
       // front of the buffer, simply move remaining data to a smaller buffer.
       size_t num_preserved_bytes = num_occupied_bytes_ - num_discarded_bytes_;
       size_ = std::max(num_preserved_bytes, kReadBufferSize);
-      char* new_data = static_cast<char*>(
-          base::AlignedAlloc(size_, kChannelMessageAlignment));
-      memcpy(new_data, data_ + num_discarded_bytes_, num_preserved_bytes);
-      base::AlignedFree(data_);
-      data_ = new_data;
+      AlignedBuffer new_data = MakeAlignedBuffer(size_);
+      memcpy(new_data.get(), data_.get() + num_discarded_bytes_,
+             num_preserved_bytes);
+      data_ = std::move(new_data);
       num_discarded_bytes_ = 0;
       num_occupied_bytes_ = num_preserved_bytes;
     }
@@ -569,21 +572,19 @@ class Channel::ReadBuffer {
       // unconsumed bytes in the buffer to avoid copies in most the common
       // cases.
       size_ = kMaxUnusedReadBufferCapacity;
-      base::AlignedFree(data_);
-      data_ = static_cast<char*>(
-          base::AlignedAlloc(size_, kChannelMessageAlignment));
+      data_ = MakeAlignedBuffer(size_);
     }
   }
 
   void Realign() {
     size_t num_bytes = num_occupied_bytes();
-    memmove(data_, occupied_bytes(), num_bytes);
+    memmove(data_.get(), occupied_bytes(), num_bytes);
     num_discarded_bytes_ = 0;
     num_occupied_bytes_ = num_bytes;
   }
 
  private:
-  char* data_ = nullptr;
+  AlignedBuffer data_;
 
   // The total size of the allocated buffer.
   size_t size_ = 0;
@@ -606,7 +607,7 @@ Channel::Channel(Delegate* delegate,
                        ? new ReadBuffer
                        : nullptr) {}
 
-Channel::~Channel() {}
+Channel::~Channel() = default;
 
 void Channel::ShutDown() {
   ShutDownImpl();
@@ -663,9 +664,7 @@ Channel::DispatchResult Channel::TryDispatchMessage(
   const Message::LegacyHeader* legacy_header =
       reinterpret_cast<const Message::LegacyHeader*>(buffer.data());
 
-  const size_t kMaxMessageSize = GetConfiguration().max_message_num_bytes;
-  if (legacy_header->num_bytes < sizeof(Message::LegacyHeader) ||
-      legacy_header->num_bytes > kMaxMessageSize) {
+  if (legacy_header->num_bytes < sizeof(Message::LegacyHeader)) {
     LOG(ERROR) << "Invalid message size: " << legacy_header->num_bytes;
     return DispatchResult::kError;
   }

@@ -14,7 +14,7 @@
 #include "components/download/public/common/download_features.h"
 #include "components/download/public/common/download_item.h"
 #include "components/download/public/common/download_stats.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "net/http/http_response_info.h"
 
 namespace download {
 
@@ -92,7 +92,6 @@ bool IsParallelizableDownload(const DownloadCreateInfo& create_info,
                            has_content_length && satisfy_min_file_size &&
                            satisfy_connection_type && http_get_method &&
                            can_support_parallel_requests;
-  RecordDownloadConnectionInfo(create_info.connection_info);
 
   if (!IsParallelDownloadEnabled())
     return is_parallelizable;

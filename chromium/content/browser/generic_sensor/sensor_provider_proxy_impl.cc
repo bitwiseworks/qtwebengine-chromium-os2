@@ -10,8 +10,8 @@
 
 #include "base/bind.h"
 #include "base/no_destructor.h"
-#include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/browser/permissions/permission_controller_impl.h"
+#include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/device_service.h"
 #include "content/public/browser/permission_type.h"
@@ -76,15 +76,12 @@ void SensorProviderProxyImpl::GetSensor(SensorType type,
       GetDeviceService().BindSensorProvider(std::move(receiver));
   }
 
-  // TODO(shalamov): base::BindOnce should be used (https://crbug.com/714018),
-  // however, PermissionController::RequestPermission enforces use of repeating
-  // callback.
   permission_controller_->RequestPermission(
       PermissionType::SENSORS, render_frame_host_,
       render_frame_host_->GetLastCommittedURL().GetOrigin(), false,
-      base::BindRepeating(
-          &SensorProviderProxyImpl::OnPermissionRequestCompleted,
-          weak_factory_.GetWeakPtr(), type, base::Passed(std::move(callback))));
+      base::BindOnce(&SensorProviderProxyImpl::OnPermissionRequestCompleted,
+                     weak_factory_.GetWeakPtr(), type,
+                     base::Passed(std::move(callback))));
 }
 
 void SensorProviderProxyImpl::OnPermissionRequestCompleted(

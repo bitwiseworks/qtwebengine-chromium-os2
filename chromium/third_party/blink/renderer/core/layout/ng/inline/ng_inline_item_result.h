@@ -6,6 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_INLINE_NG_INLINE_ITEM_RESULT_H_
 
 #include "third_party/blink/renderer/core/layout/ng/geometry/ng_box_strut.h"
+#include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_item.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_physical_text_fragment.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_layout_result.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_positioned_float.h"
@@ -31,10 +32,10 @@ struct CORE_EXPORT NGInlineItemResult {
   DISALLOW_NEW();
 
  public:
-  unsigned Length() const {
-    DCHECK_GT(end_offset, start_offset);
-    return end_offset - start_offset;
-  }
+  const NGTextOffset& TextOffset() const { return text_offset; }
+  unsigned StartOffset() const { return text_offset.start; }
+  unsigned EndOffset() const { return text_offset.end; }
+  unsigned Length() const { return text_offset.Length(); }
 
   LayoutUnit HyphenInlineSize() const {
     return hyphen_shape_result->SnappedWidth().ClampNegativeToZero();
@@ -50,11 +51,17 @@ struct CORE_EXPORT NGInlineItemResult {
   unsigned item_index;
 
   // The range of text content for this item.
-  unsigned start_offset;
-  unsigned end_offset;
+  NGTextOffset text_offset;
+
+  // Indicates the limits of the trailing space run.
+  base::Optional<unsigned> non_hangable_run_end;
 
   // Inline size of this item.
   LayoutUnit inline_size;
+
+  // Pending inline-end overhang amount for RubyRun.
+  // This is committed if a following item meets conditions.
+  LayoutUnit pending_end_overhang;
 
   // ShapeResult for text items. Maybe different from NGInlineItem if re-shape
   // is needed in the line breaker.
@@ -127,8 +134,7 @@ struct CORE_EXPORT NGInlineItemResult {
   NGInlineItemResult();
   NGInlineItemResult(const NGInlineItem*,
                      unsigned index,
-                     unsigned start,
-                     unsigned end,
+                     const NGTextOffset& text_offset,
                      bool break_anywhere_if_overflow,
                      bool should_create_line_box,
                      bool has_unpositioned_floats);
@@ -210,6 +216,12 @@ class CORE_EXPORT NGLineInfo {
   // without clamping.
   LayoutUnit ComputeWidth() const;
 
+#if DCHECK_IS_ON()
+  // Returns width in float. This function is used for avoiding |LayoutUnit|
+  // saturated addition of items in line.
+  float ComputeWidthInFloat() const;
+#endif
+
   bool HasTrailingSpaces() const { return has_trailing_spaces_; }
   void SetHasTrailingSpaces() { has_trailing_spaces_ = true; }
   bool ShouldHangTrailingSpaces() const;
@@ -251,6 +263,7 @@ class CORE_EXPORT NGLineInfo {
   bool NeedsAccurateEndPosition() const { return needs_accurate_end_position_; }
 
  private:
+  ETextAlign GetTextAlign(bool is_last_line = false) const;
   bool ComputeNeedsAccurateEndPosition() const;
 
   // The width of preserved trailing spaces.
@@ -281,6 +294,8 @@ class CORE_EXPORT NGLineInfo {
   bool has_overflow_ = false;
   bool has_trailing_spaces_ = false;
   bool needs_accurate_end_position_ = false;
+  bool is_ruby_base_ = false;
+  bool is_ruby_text_ = false;
 };
 
 }  // namespace blink

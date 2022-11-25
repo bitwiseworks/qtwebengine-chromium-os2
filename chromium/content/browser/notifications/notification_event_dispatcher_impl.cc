@@ -9,7 +9,6 @@
 #include "base/callback.h"
 #include "base/callback_helpers.h"
 #include "base/optional.h"
-#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "content/browser/notifications/devtools_event_logging.h"
 #include "content/browser/notifications/platform_notification_context_impl.h"
@@ -149,14 +148,14 @@ void DispatchNotificationEventOnRegistration(
       break;
   }
 
-  base::PostTask(FROM_HERE, {BrowserThread::UI},
-                 base::BindOnce(std::move(dispatch_complete_callback), status));
+  GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindOnce(std::move(dispatch_complete_callback), status));
 }
 
 // Finds the ServiceWorkerRegistration associated with the |origin| and
 // |service_worker_registration_id|. Must be called on the UI thread.
 void FindServiceWorkerRegistration(
-    const GURL& origin,
+    const url::Origin& origin,
     const scoped_refptr<ServiceWorkerContextWrapper>& service_worker_context,
     NotificationOperationCallback notification_action_callback,
     NotificationDispatchCompleteCallback dispatch_complete_callback,
@@ -200,8 +199,8 @@ void ReadNotificationDatabaseData(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   notification_context->ReadNotificationDataAndRecordInteraction(
       notification_id, origin, interaction,
-      base::BindOnce(&FindServiceWorkerRegistration, origin,
-                     service_worker_context,
+      base::BindOnce(&FindServiceWorkerRegistration,
+                     url::Origin::Create(origin), service_worker_context,
                      std::move(notification_read_callback),
                      std::move(dispatch_complete_callback)));
 }

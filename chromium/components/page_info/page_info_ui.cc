@@ -12,6 +12,7 @@
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "components/page_info/features.h"
 #include "components/page_info/page_info_ui_delegate.h"
 #include "components/permissions/permission_manager.h"
 #include "components/permissions/permission_result.h"
@@ -173,13 +174,22 @@ base::span<const PermissionsUIInfo> GetContentSettingsUIInfo() {
     {ContentSettingsType::SERIAL_GUARD, IDS_PAGE_INFO_TYPE_SERIAL},
 #endif
     {ContentSettingsType::BLUETOOTH_GUARD, IDS_PAGE_INFO_TYPE_BLUETOOTH},
-    {ContentSettingsType::NATIVE_FILE_SYSTEM_WRITE_GUARD,
+    {ContentSettingsType::FILE_SYSTEM_WRITE_GUARD,
      IDS_PAGE_INFO_TYPE_NATIVE_FILE_SYSTEM_WRITE},
     {ContentSettingsType::BLUETOOTH_SCANNING,
      IDS_PAGE_INFO_TYPE_BLUETOOTH_SCANNING},
     {ContentSettingsType::NFC, IDS_PAGE_INFO_TYPE_NFC},
     {ContentSettingsType::VR, IDS_PAGE_INFO_TYPE_VR},
     {ContentSettingsType::AR, IDS_PAGE_INFO_TYPE_AR},
+    {ContentSettingsType::CAMERA_PAN_TILT_ZOOM,
+     IDS_PAGE_INFO_TYPE_CAMERA_PAN_TILT_ZOOM},
+    {ContentSettingsType::WINDOW_PLACEMENT,
+     IDS_PAGE_INFO_TYPE_WINDOW_PLACEMENT},
+    {ContentSettingsType::FONT_ACCESS, IDS_PAGE_INFO_TYPE_FONT_ACCESS},
+#if !defined(OS_ANDROID)
+    {ContentSettingsType::HID_GUARD, IDS_PAGE_INFO_TYPE_HID},
+#endif
+    {ContentSettingsType::IDLE_DETECTION, IDS_PAGE_INFO_TYPE_IDLE_DETECTION},
   };
   return kPermissionsUIInfo;
 }
@@ -189,19 +199,21 @@ std::unique_ptr<PageInfoUI::SecurityDescription> CreateSecurityDescription(
     int summary_id,
     int details_id,
     PageInfoUI::SecurityDescriptionType type) {
-  std::unique_ptr<PageInfoUI::SecurityDescription> security_description(
-      new PageInfoUI::SecurityDescription());
+  auto security_description =
+      std::make_unique<PageInfoUI::SecurityDescription>();
   security_description->summary_style = style;
-  security_description->summary = l10n_util::GetStringUTF16(summary_id);
-  security_description->details = l10n_util::GetStringUTF16(details_id);
+  if (summary_id)
+    security_description->summary = l10n_util::GetStringUTF16(summary_id);
+  if (details_id)
+    security_description->details = l10n_util::GetStringUTF16(details_id);
   security_description->type = type;
   return security_description;
 }
 
 std::unique_ptr<PageInfoUI::SecurityDescription>
 CreateSecurityDescriptionForLookalikeSafetyTip(const GURL& safe_url) {
-  std::unique_ptr<PageInfoUI::SecurityDescription> security_description(
-      new PageInfoUI::SecurityDescription());
+  auto security_description =
+      std::make_unique<PageInfoUI::SecurityDescription>();
   security_description->summary_style = PageInfoUI::SecuritySummaryColor::RED;
 
   const base::string16 safe_host =
@@ -209,8 +221,8 @@ CreateSecurityDescriptionForLookalikeSafetyTip(const GURL& safe_url) {
           safe_url);
   security_description->summary = l10n_util::GetStringFUTF16(
       IDS_PAGE_INFO_SAFETY_TIP_LOOKALIKE_TITLE, safe_host);
-  security_description->details = l10n_util::GetStringFUTF16(
-      IDS_PAGE_INFO_SAFETY_TIP_LOOKALIKE_DESCRIPTION, safe_host);
+  security_description->details =
+      l10n_util::GetStringUTF16(IDS_PAGE_INFO_SAFETY_TIP_LOOKALIKE_DESCRIPTION);
   security_description->type = PageInfoUI::SecurityDescriptionType::SAFETY_TIP;
   return security_description;
 }
@@ -236,19 +248,12 @@ ContentSetting GetEffectiveSetting(ContentSettingsType type,
 
 PageInfoUI::CookieInfo::CookieInfo() : allowed(-1), blocked(-1) {}
 
-PageInfoUI::PermissionInfo::PermissionInfo()
-    : type(ContentSettingsType::DEFAULT),
-      setting(CONTENT_SETTING_DEFAULT),
-      default_setting(CONTENT_SETTING_DEFAULT),
-      source(content_settings::SETTING_SOURCE_NONE),
-      is_incognito(false) {}
-
 PageInfoUI::ChosenObjectInfo::ChosenObjectInfo(
     const PageInfo::ChooserUIInfo& ui_info,
     std::unique_ptr<permissions::ChooserContextBase::Object> chooser_object)
     : ui_info(ui_info), chooser_object(std::move(chooser_object)) {}
 
-PageInfoUI::ChosenObjectInfo::~ChosenObjectInfo() {}
+PageInfoUI::ChosenObjectInfo::~ChosenObjectInfo() = default;
 
 PageInfoUI::IdentityInfo::IdentityInfo()
     : identity_status(PageInfo::SITE_IDENTITY_STATUS_UNKNOWN),
@@ -258,16 +263,13 @@ PageInfoUI::IdentityInfo::IdentityInfo()
       show_ssl_decision_revoke_button(false),
       show_change_password_buttons(false) {}
 
-PageInfoUI::IdentityInfo::~IdentityInfo() {}
+PageInfoUI::IdentityInfo::~IdentityInfo() = default;
 
 PageInfoUI::PageFeatureInfo::PageFeatureInfo()
     : is_vr_presentation_in_headset(false) {}
 
 std::unique_ptr<PageInfoUI::SecurityDescription>
 PageInfoUI::GetSecurityDescription(const IdentityInfo& identity_info) const {
-  std::unique_ptr<PageInfoUI::SecurityDescription> security_description(
-      new PageInfoUI::SecurityDescription());
-
   switch (identity_info.safe_browsing_status) {
     case PageInfo::SAFE_BROWSING_STATUS_NONE:
       break;
@@ -311,11 +313,9 @@ PageInfoUI::GetSecurityDescription(const IdentityInfo& identity_info) const {
   switch (identity_info.identity_status) {
     case PageInfo::SITE_IDENTITY_STATUS_INTERNAL_PAGE:
 #if defined(OS_ANDROID)
-      // We provide identical summary and detail strings for Android, which
-      // deduplicates them in the UI code.
-      return CreateSecurityDescription(
-          SecuritySummaryColor::GREEN, IDS_PAGE_INFO_INTERNAL_PAGE,
-          IDS_PAGE_INFO_INTERNAL_PAGE, SecurityDescriptionType::INTERNAL);
+      return CreateSecurityDescription(SecuritySummaryColor::GREEN, 0,
+                                       IDS_PAGE_INFO_INTERNAL_PAGE,
+                                       SecurityDescriptionType::INTERNAL);
 #else
       // Internal pages on desktop have their own UI implementations which
       // should never call this function.
@@ -349,10 +349,16 @@ PageInfoUI::GetSecurityDescription(const IdentityInfo& identity_info) const {
                                            IDS_PAGE_INFO_LEGACY_TLS_DETAILS,
                                            SecurityDescriptionType::CONNECTION);
         default:
-          return CreateSecurityDescription(SecuritySummaryColor::GREEN,
-                                           IDS_PAGE_INFO_SECURE_SUMMARY,
-                                           IDS_PAGE_INFO_SECURE_DETAILS,
-                                           SecurityDescriptionType::CONNECTION);
+          int secure_details = IDS_PAGE_INFO_SECURE_DETAILS;
+#if defined(OS_ANDROID)
+          if (base::FeatureList::IsEnabled(page_info::kPageInfoV2)) {
+            // Do not show details for secure connections.
+            secure_details = 0;
+          }
+#endif
+          return CreateSecurityDescription(
+              SecuritySummaryColor::GREEN, IDS_PAGE_INFO_SECURE_SUMMARY,
+              secure_details, SecurityDescriptionType::CONNECTION);
       }
     case PageInfo::SITE_IDENTITY_STATUS_DEPRECATED_SIGNATURE_ALGORITHM:
     case PageInfo::SITE_IDENTITY_STATUS_UNKNOWN:
@@ -365,7 +371,7 @@ PageInfoUI::GetSecurityDescription(const IdentityInfo& identity_info) const {
   }
 }
 
-PageInfoUI::~PageInfoUI() {}
+PageInfoUI::~PageInfoUI() = default;
 
 // static
 base::string16 PageInfoUI::PermissionTypeToUIString(ContentSettingsType type) {
@@ -386,7 +392,7 @@ base::string16 PageInfoUI::PermissionActionToUIString(
     content_settings::SettingSource source) {
   ContentSetting effective_setting =
       GetEffectiveSetting(type, setting, default_setting);
-  const int* button_text_ids = NULL;
+  const int* button_text_ids = nullptr;
   switch (source) {
     case content_settings::SETTING_SOURCE_USER:
       if (setting == CONTENT_SETTING_DEFAULT) {
@@ -424,7 +430,7 @@ base::string16 PageInfoUI::PermissionActionToUIString(
 
       button_text_ids = kPermissionButtonTextIDUserManaged;
       break;
-    case content_settings::SETTING_SOURCE_WHITELIST:
+    case content_settings::SETTING_SOURCE_ALLOWLIST:
     case content_settings::SETTING_SOURCE_NONE:
     default:
       NOTREACHED();
@@ -438,7 +444,7 @@ base::string16 PageInfoUI::PermissionActionToUIString(
 // static
 base::string16 PageInfoUI::PermissionDecisionReasonToUIString(
     PageInfoUiDelegate* delegate,
-    const PageInfoUI::PermissionInfo& permission,
+    const PageInfo::PermissionInfo& permission,
     const GURL& url) {
   ContentSetting effective_setting = GetEffectiveSetting(
       permission.type, permission.setting, permission.default_setting);
@@ -454,7 +460,7 @@ base::string16 PageInfoUI::PermissionDecisionReasonToUIString(
       break;
   }
 
-  // TODO(crbug.com/1063023): PermissionInfo should be modified
+  // TODO(crbug.com/1063023): PageInfo::PermissionInfo should be modified
   // to contain all needed information regarding Automatically Blocked flag.
   if (permission.setting == CONTENT_SETTING_BLOCK &&
       permissions::PermissionUtil::IsPermission(permission.type)) {
@@ -543,8 +549,9 @@ int PageInfoUI::GetConnectionIconID(PageInfo::SiteConnectionStatus status) {
 }
 #else  // !defined(OS_ANDROID)
 // static
-const gfx::ImageSkia PageInfoUI::GetPermissionIcon(const PermissionInfo& info,
-                                                   SkColor related_text_color) {
+const gfx::ImageSkia PageInfoUI::GetPermissionIcon(
+    const PageInfo::PermissionInfo& info,
+    SkColor related_text_color) {
   const gfx::VectorIcon* icon = &gfx::kNoneIcon;
   switch (info.type) {
     case ContentSettingsType::COOKIES:
@@ -574,6 +581,7 @@ const gfx::ImageSkia PageInfoUI::GetPermissionIcon(const PermissionInfo& info,
       icon = &vector_icons::kMicIcon;
       break;
     case ContentSettingsType::MEDIASTREAM_CAMERA:
+    case ContentSettingsType::CAMERA_PAN_TILT_ZOOM:
       icon = &vector_icons::kVideocamIcon;
       break;
     case ContentSettingsType::AUTOMATIC_DOWNLOADS:
@@ -614,12 +622,24 @@ const gfx::ImageSkia PageInfoUI::GetPermissionIcon(const PermissionInfo& info,
     case ContentSettingsType::BLUETOOTH_SCANNING:
       icon = &vector_icons::kBluetoothScanningIcon;
       break;
-    case ContentSettingsType::NATIVE_FILE_SYSTEM_WRITE_GUARD:
+    case ContentSettingsType::FILE_SYSTEM_WRITE_GUARD:
       icon = &vector_icons::kSaveOriginalFileIcon;
       break;
     case ContentSettingsType::VR:
     case ContentSettingsType::AR:
       icon = &vector_icons::kVrHeadsetIcon;
+      break;
+    case ContentSettingsType::WINDOW_PLACEMENT:
+      icon = &vector_icons::kWindowPlacementIcon;
+      break;
+    case ContentSettingsType::FONT_ACCESS:
+      icon = &vector_icons::kFontDownloadIcon;
+      break;
+    case ContentSettingsType::HID_GUARD:
+      icon = &vector_icons::kVideogameAssetIcon;
+      break;
+    case ContentSettingsType::IDLE_DETECTION:
+      icon = &vector_icons::kPersonIcon;
       break;
     default:
       // All other |ContentSettingsType|s do not have icons on desktop or are
@@ -661,6 +681,9 @@ const gfx::ImageSkia PageInfoUI::GetChosenObjectIcon(
       break;
     case ContentSettingsType::BLUETOOTH_CHOOSER_DATA:
       icon = &vector_icons::kBluetoothIcon;
+      break;
+    case ContentSettingsType::HID_CHOOSER_DATA:
+      icon = &vector_icons::kVideogameAssetIcon;
       break;
     default:
       // All other content settings types do not represent chosen object

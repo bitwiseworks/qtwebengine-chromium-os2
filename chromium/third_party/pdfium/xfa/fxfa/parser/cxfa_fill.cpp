@@ -6,10 +6,9 @@
 
 #include "xfa/fxfa/parser/cxfa_fill.h"
 
-#include "core/fxge/render_defines.h"
 #include "fxjs/xfa/cjx_node.h"
-#include "third_party/base/ptr_util.h"
 #include "xfa/fxfa/parser/cxfa_color.h"
+#include "xfa/fxfa/parser/cxfa_document.h"
 #include "xfa/fxfa/parser/cxfa_linear.h"
 #include "xfa/fxfa/parser/cxfa_node.h"
 #include "xfa/fxfa/parser/cxfa_pattern.h"
@@ -47,7 +46,9 @@ CXFA_Fill::CXFA_Fill(CXFA_Document* doc, XFA_PacketType packet)
                 XFA_Element::Fill,
                 kFillPropertyData,
                 kFillAttributeData,
-                pdfium::MakeUnique<CJX_Node>(this)) {}
+                cppgc::MakeGarbageCollected<CJX_Node>(
+                    doc->GetHeap()->GetAllocationHandle(),
+                    this)) {}
 
 CXFA_Fill::~CXFA_Fill() = default;
 
@@ -107,7 +108,8 @@ void CXFA_Fill::Draw(CXFA_Graphics* pGS,
       break;
     default:
       pGS->SetFillColor(CXFA_GEColor(GetColor(false)));
-      pGS->FillPath(fillPath, FXFILL_WINDING, &matrix);
+      pGS->FillPath(fillPath, CFX_FillRenderOptions::FillType::kWinding,
+                    &matrix);
       break;
   }
 

@@ -9,11 +9,12 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/check.h"
 #include "base/lazy_instance.h"
-#include "base/logging.h"
 #include "base/metrics/histogram_base.h"
 #include "base/metrics/statistics_recorder.h"
 #include "base/metrics/user_metrics.h"
+#include "base/notreached.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -63,6 +64,8 @@ constexpr base::FilePath::CharType kBluetoothLogsFilePathOld[] =
 
 constexpr char kBluetoothLogsAttachmentName[] = "bluetooth_logs.bz2";
 constexpr char kBluetoothLogsAttachmentNameOld[] = "bluetooth_logs.old.bz2";
+
+constexpr int kKaleidoscopeProductId = 5192933;
 
 // Getting the filename of a blob prepends a "C:\fakepath" to the filename.
 // This is undesirable, strip it if it exists.
@@ -125,7 +128,8 @@ void FeedbackPrivateAPI::RequestFeedbackForFlow(
     const GURL& page_url,
     api::feedback_private::FeedbackFlow flow,
     bool from_assistant,
-    bool include_bluetooth_logs) {
+    bool include_bluetooth_logs,
+    bool from_kaleidoscope) {
   if (browser_context_ && EventRouter::Get(browser_context_)) {
     FeedbackInfo info;
     info.description = description_template;
@@ -153,13 +157,19 @@ void FeedbackPrivateAPI::RequestFeedbackForFlow(
       info.trace_id = std::make_unique<int>(manager->RequestTrace());
     }
     info.flow = flow;
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
     const bool use_system_window_frame = true;
 #else
     const bool use_system_window_frame = false;
 #endif
     info.use_system_window_frame =
         std::make_unique<bool>(use_system_window_frame);
+
+    // If the feedback is from Kaleidoscope then this should use a custom
+    // product ID.
+    if (from_kaleidoscope) {
+      info.product_id = std::make_unique<int>(kKaleidoscopeProductId);
+    }
 
     std::unique_ptr<base::ListValue> args =
         feedback_private::OnFeedbackRequested::Create(info);
@@ -213,7 +223,7 @@ FeedbackPrivateGetSystemInformationFunction::Run() {
       ExtensionsAPIClient::Get()
           ->GetFeedbackPrivateDelegate()
           ->CreateSystemLogsFetcher(browser_context());
-  fetcher->Fetch(base::Bind(
+  fetcher->Fetch(base::BindOnce(
       &FeedbackPrivateGetSystemInformationFunction::OnCompleted, this));
 
   return RespondLater();
@@ -262,8 +272,8 @@ ExtensionFunction::ResponseAction FeedbackPrivateReadLogSourceFunction::Run() {
 
   if (!log_source_manager->FetchFromSource(
           api_params->params, extension_id(),
-          base::Bind(&FeedbackPrivateReadLogSourceFunction::OnCompleted,
-                     this))) {
+          base::BindOnce(&FeedbackPrivateReadLogSourceFunction::OnCompleted,
+                         this))) {
     return RespondNow(Error(base::StringPrintf(
         "Unable to initiate fetch from log source %s.",
         feedback_private::ToString(api_params->params.source))));
@@ -324,11 +334,6 @@ ExtensionFunction::ResponseAction FeedbackPrivateSendFeedbackFunction::Run() {
     feedback_data->set_screenshot_uuid(*feedback_info.screenshot_blob_uuid);
   }
 
-  const bool send_histograms =
-      feedback_info.send_histograms && *feedback_info.send_histograms;
-  const bool send_bluetooth_logs =
-      feedback_info.send_bluetooth_logs && *feedback_info.send_bluetooth_logs;
-
 #if defined(OS_CHROMEOS)
   feedback_data->set_from_assistant(feedback_info.from_assistant &&
                                     *feedback_info.from_assistant);
@@ -337,6 +342,13 @@ ExtensionFunction::ResponseAction FeedbackPrivateSendFeedbackFunction::Run() {
       *feedback_info.assistant_debug_info_allowed);
 #endif  // defined(OS_CHROMEOS)
 
+  const bool send_histograms =
+      feedback_info.send_histograms && *feedback_info.send_histograms;
+  const bool send_bluetooth_logs =
+      feedback_info.send_bluetooth_logs && *feedback_info.send_bluetooth_logs;
+  const bool send_tab_titles =
+      feedback_info.send_tab_titles && *feedback_info.send_tab_titles;
+
   if (params->feedback.system_information) {
     for (SystemInformation& info : *params->feedback.system_information)
       feedback_data->AddLog(std::move(info.key), std::move(info.value));
@@ -344,12 +356,14 @@ ExtensionFunction::ResponseAction FeedbackPrivateSendFeedbackFunction::Run() {
     delegate->FetchExtraLogs(
         feedback_data,
         base::BindOnce(&FeedbackPrivateSendFeedbackFunction::OnAllLogsFetched,
-                       this, send_histograms, send_bluetooth_logs));
+                       this, send_histograms, send_bluetooth_logs,
+                       send_tab_titles));
     return RespondLater();
 #endif  // defined(OS_CHROMEOS)
   }
 
-  OnAllLogsFetched(send_histograms, send_bluetooth_logs, feedback_data);
+  OnAllLogsFetched(send_histograms, send_bluetooth_logs, send_tab_titles,
+                   feedback_data);
 
   return RespondLater();
 }
@@ -357,8 +371,12 @@ ExtensionFunction::ResponseAction FeedbackPrivateSendFeedbackFunction::Run() {
 void FeedbackPrivateSendFeedbackFunction::OnAllLogsFetched(
     bool send_histograms,
     bool send_bluetooth_logs,
+    bool send_tab_titles,
     scoped_refptr<feedback::FeedbackData> feedback_data) {
-
+  if (!send_tab_titles) {
+    feedback_data->RemoveLog(
+        feedback::FeedbackReport::kMemUsageWithTabTitlesKey);
+  }
   feedback_data->CompressSystemInfo();
 
   if (send_histograms) {

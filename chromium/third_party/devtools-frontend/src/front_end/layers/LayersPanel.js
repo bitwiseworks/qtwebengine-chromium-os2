@@ -28,6 +28,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as LayerViewer from '../layer_viewer/layer_viewer.js';
 import * as SDK from '../sdk/sdk.js';  // eslint-disable-line no-unused-vars
@@ -43,7 +46,6 @@ import {Events, LayerTreeModel} from './LayerTreeModel.js';
 export class LayersPanel extends UI.Panel.PanelWithSidebar {
   constructor() {
     super('layers', 225);
-
     /** @type {?LayerTreeModel} */
     this._model = null;
 
@@ -147,6 +149,9 @@ export class LayersPanel extends UI.Panel.PanelWithSidebar {
   _update() {
     if (this._model) {
       this._layerViewHost.setLayerTree(this._model.layerTree());
+      const url = this._model.target().model(SDK.ResourceTreeModel.ResourceTreeModel).mainFrame.url;
+      // Add the currently visualized url as an attribute to make it accessibles to e2e tests
+      this.element.setAttribute('test-current-url', url);
     }
     return Promise.resolve();
   }

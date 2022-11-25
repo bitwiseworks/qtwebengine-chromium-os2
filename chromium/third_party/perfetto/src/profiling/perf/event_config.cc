@@ -79,6 +79,8 @@ base::Optional<TargetFilter> ParseTargetFilter(
   for (auto it = cfg.exclude_pid(); it; ++it) {
     filter.exclude_pids.insert(*it);
   }
+
+  filter.additional_cmdline_count = cfg.additional_cmdline_count();
   return base::make_optional(std::move(filter));
 }
 
@@ -160,8 +162,9 @@ EventConfig::EventConfig(const protos::pbzero::PerfEventConfig::Decoder& cfg,
       ring_buffer_pages_(ring_buffer_pages),
       read_tick_period_ms_(read_tick_period_ms),
       samples_per_tick_limit_(samples_per_tick_limit),
+      target_filter_(std::move(target_filter)),
       remote_descriptor_timeout_ms_(remote_descriptor_timeout_ms),
-      target_filter_(std::move(target_filter)) {
+      unwind_state_clear_period_ms_(cfg.unwind_state_clear_period_ms()) {
   auto& pe = perf_event_attr_;
   pe.size = sizeof(perf_event_attr);
 
@@ -180,7 +183,10 @@ EventConfig::EventConfig(const protos::pbzero::PerfEventConfig::Decoder& cfg,
   pe.use_clockid = true;
   // PERF_SAMPLE_STACK_USER:
   // Needs to be < ((u16)(~0u)), and have bottom 8 bits clear.
-  pe.sample_stack_user = (1u << 15);
+  // Note that the kernel still needs to make space for the other parts of the
+  // sample (up to the max record size of 64k), so the effective maximum
+  // can be lower than this.
+  pe.sample_stack_user = (1u << 16) - 256;
   // PERF_SAMPLE_REGS_USER:
   pe.sample_regs_user =
       PerfUserRegsMaskForArch(unwindstack::Regs::CurrentArch());

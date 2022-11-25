@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #if defined(DAWN_COMPILER_MSVC)
 #    include <intrin.h>
@@ -97,14 +98,6 @@ bool IsAligned(uint32_t value, size_t alignment) {
     return (value & (alignment32 - 1)) == 0;
 }
 
-uint32_t Align(uint32_t value, size_t alignment) {
-    ASSERT(alignment <= UINT32_MAX);
-    ASSERT(IsPowerOfTwo(alignment));
-    ASSERT(alignment != 0);
-    uint32_t alignment32 = static_cast<uint32_t>(alignment);
-    return (value + (alignment32 - 1)) & ~(alignment32 - 1);
-}
-
 uint16_t Float32ToFloat16(float fp32) {
     uint32_t fp32i = BitCast<uint32_t>(fp32);
     uint32_t sign16 = (fp32i & 0x80000000) >> 16;
@@ -151,4 +144,11 @@ float SRGBToLinear(float srgb) {
     } else {
         return std::pow((srgb + 0.055f) / 1.055f, 2.4f);
     }
+}
+
+uint64_t RoundUp(uint64_t n, uint64_t m) {
+    ASSERT(m > 0);
+    ASSERT(n > 0);
+    ASSERT(m <= std::numeric_limits<uint64_t>::max() - n);
+    return ((n + m - 1) / m) * m;
 }

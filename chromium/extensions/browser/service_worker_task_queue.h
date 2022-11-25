@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/memory/weak_ptr.h"
+#include "base/strings/string_util.h"
 #include "base/version.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "extensions/browser/lazy_context_id.h"
@@ -149,6 +150,7 @@ class ServiceWorkerTaskQueue : public KeyedService,
 
   static void DidStartWorkerForScopeOnCoreThread(
       const SequencedContextId& context_id,
+      base::Time start_time,
       base::WeakPtr<ServiceWorkerTaskQueue> task_queue,
       int64_t version_id,
       int process_id,
@@ -164,11 +166,14 @@ class ServiceWorkerTaskQueue : public KeyedService,
   void RunTasksAfterStartWorker(const SequencedContextId& context_id);
 
   void DidRegisterServiceWorker(const SequencedContextId& context_id,
+                                base::Time start_time,
                                 bool success);
   void DidUnregisterServiceWorker(const ExtensionId& extension_id,
+                                  ActivationSequence sequence,
                                   bool success);
 
   void DidStartWorkerForScope(const SequencedContextId& context_id,
+                              base::Time start_time,
                               int64_t version_id,
                               int process_id,
                               int thread_id);

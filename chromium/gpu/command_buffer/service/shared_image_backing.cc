@@ -6,8 +6,13 @@
 
 #include "gpu/command_buffer/service/memory_tracking.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
+#include "gpu/command_buffer/service/shared_image_factory.h"
 #include "gpu/command_buffer/service/shared_image_representation.h"
 #include "gpu/command_buffer/service/texture_manager.h"
+
+#if defined(OS_ANDROID)
+#include "base/android/scoped_hardware_buffer_fence_sync.h"
+#endif
 
 namespace gpu {
 
@@ -15,6 +20,8 @@ SharedImageBacking::SharedImageBacking(const Mailbox& mailbox,
                                        viz::ResourceFormat format,
                                        const gfx::Size& size,
                                        const gfx::ColorSpace& color_space,
+                                       GrSurfaceOrigin surface_origin,
+                                       SkAlphaType alpha_type,
                                        uint32_t usage,
                                        size_t estimated_size,
                                        bool is_thread_safe)
@@ -22,8 +29,12 @@ SharedImageBacking::SharedImageBacking(const Mailbox& mailbox,
       format_(format),
       size_(size),
       color_space_(color_space),
+      surface_origin_(surface_origin),
+      alpha_type_(alpha_type),
       usage_(usage),
       estimated_size_(estimated_size) {
+  DCHECK_CALLED_ON_VALID_THREAD(factory_thread_checker_);
+
   if (is_thread_safe)
     lock_.emplace();
 }
@@ -78,6 +89,13 @@ SharedImageBacking::ProduceOverlay(SharedImageManager* manager,
   return nullptr;
 }
 
+std::unique_ptr<SharedImageRepresentationVaapi>
+SharedImageBacking::ProduceVASurface(SharedImageManager* manager,
+                                     MemoryTypeTracker* tracker,
+                                     VaapiDependenciesFactory* dep_factory) {
+  return nullptr;
+}
+
 void SharedImageBacking::AddRef(SharedImageRepresentation* representation) {
   AutoLock auto_lock(this);
 
@@ -110,6 +128,19 @@ void SharedImageBacking::ReleaseRef(SharedImageRepresentation* representation) {
     refs_[0]->tracker()->TrackMemAlloc(estimated_size_);
     return;
   }
+}
+
+void SharedImageBacking::RegisterImageFactory(SharedImageFactory* factory) {
+  DCHECK_CALLED_ON_VALID_THREAD(factory_thread_checker_);
+  DCHECK(!factory_);
+
+  factory_ = factory;
+}
+
+void SharedImageBacking::UnregisterImageFactory() {
+  DCHECK_CALLED_ON_VALID_THREAD(factory_thread_checker_);
+
+  factory_ = nullptr;
 }
 
 bool SharedImageBacking::HasAnyRefs() const {
@@ -158,6 +189,8 @@ ClearTrackingSharedImageBacking::ClearTrackingSharedImageBacking(
     viz::ResourceFormat format,
     const gfx::Size& size,
     const gfx::ColorSpace& color_space,
+    GrSurfaceOrigin surface_origin,
+    SkAlphaType alpha_type,
     uint32_t usage,
     size_t estimated_size,
     bool is_thread_safe)
@@ -165,6 +198,8 @@ ClearTrackingSharedImageBacking::ClearTrackingSharedImageBacking(
                          format,
                          size,
                          color_space,
+                         surface_origin,
+                         alpha_type,
                          usage,
                          estimated_size,
                          is_thread_safe) {}
@@ -192,5 +227,12 @@ void ClearTrackingSharedImageBacking::SetClearedRectInternal(
 scoped_refptr<gfx::NativePixmap> SharedImageBacking::GetNativePixmap() {
   return nullptr;
 }
+
+#if defined(OS_ANDROID)
+std::unique_ptr<base::android::ScopedHardwareBufferFenceSync>
+SharedImageBacking::GetAHardwareBuffer() {
+  return nullptr;
+}
+#endif
 
 }  // namespace gpu

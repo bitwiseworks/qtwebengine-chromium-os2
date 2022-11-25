@@ -16,14 +16,13 @@ class SingleThreadTaskRunner;
 }
 
 namespace blink {
-class Document;
+class ExecutionContext;
 class WebSchedulingTaskQueue;
 
 class MODULES_EXPORT DOMTaskSignal final
     : public AbortSignal,
       public ExecutionContextLifecycleObserver {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(DOMTaskSignal);
 
  public:
   enum class Type { kCreatedByController, kImplicit };
@@ -37,7 +36,7 @@ class MODULES_EXPORT DOMTaskSignal final
     kMaxValue = kPriorityHasChanged
   };
 
-  DOMTaskSignal(Document*, WebSchedulingPriority, Type);
+  DOMTaskSignal(ExecutionContext*, WebSchedulingPriority, Type);
   ~DOMTaskSignal() override;
 
   // task_signal.idl
@@ -51,7 +50,7 @@ class MODULES_EXPORT DOMTaskSignal final
 
   bool IsTaskSignal() const override { return true; }
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   PriorityChangeStatus GetPriorityChangeStatus() const {
     return priority_change_status_;

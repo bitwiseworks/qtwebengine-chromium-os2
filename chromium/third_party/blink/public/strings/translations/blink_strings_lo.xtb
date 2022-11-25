@@ -13,9 +13,12 @@
 <translation id="1211441953136645838">ໝາຍເຫດທ້າຍເລື່ອງ</translation>
 <translation id="1281252709823657822">ກ່ອງໂຕ້ຕອບ</translation>
 <translation id="1306460908038601864">ປິດ</translation>
+<translation id="1311894908970423688">ຄ່າຕ້ອງເປັນ <ph name="VALUE_DATE_OR_TIME" />.</translation>
 <translation id="1335095011850992622">ເຄຣດິດ</translation>
 <translation id="1342835525016946179">ບົດ​ຄວາມ</translation>
 <translation id="1359897965706325498">ປ້າຍ​ໂຄ​ສະ​ນາ</translation>
+<translation id="145015347812617860"><ph name="COUNT" /> ລາຍ​ການ</translation>
+<translation id="1480676835519562650">ເລືອກໄດ້ຫຼາຍລາຍການ, ເລືອກ <ph name="SELECTED" /> ຈາກທັງໝົດ <ph name="COUNT" /> ແລ້ວ.</translation>
 <translation id="1589122976691792535">ພາກພື້ນ</translation>
 <translation id="1591562245178063882">ເດືອນ​ນີ້</translation>
 <translation id="1637811476055996098">ເລືອກ​ໄຟລ​໌</translation>
@@ -35,6 +38,7 @@
 <translation id="1938124657309484470">ຄ່າ​ຈະ​ຕ້ອງ <ph name="MAXIMUM_DATE_OR_TIME" /> ຫຼື​ໄວກ່ອນ​ນັ້ນ​.</translation>
 <translation id="1946271899482435442">ສະແດງຕົວເລືອກວັນທີ</translation>
 <translation id="1993104285338243655">ປ່ຽນເປັນການສະທ້ອນພາບແລ້ວ</translation>
+<translation id="2031987842108996681">ຊ່ອງສີແດງ</translation>
 <translation id="2060505056492490888">'<ph name="DOT" />' ຖືກໃຊ້ຢູ່ຜິດຕໍາແໜ່ງ​ໃນ '<ph name="INVALIDDOMAIN" />'.</translation>
 <translation id="2148716181193084225">ມື້​ນີ້</translation>
 <translation id="2158401438286456825">ລາຍການໜ້າ</translation>
@@ -43,15 +47,19 @@
 <translation id="2247351761944213033">ອາ​ທິດ <ph name="WEEKNUMBER" />, <ph name="YEAR" /></translation>
 <translation id="2277199496770840904">ແທຣັກ <ph name="NUMBER" /></translation>
 <translation id="2291999235780842123">ກ່ອງໝາຍເອົາ</translation>
+<translation id="2307576640803031502">ຢູ່ໃນລາຍຊື່, ລາຍການ <ph name="INDEX" /> ຈາກທັງໝົດ <ph name="COUNT" /></translation>
 <translation id="2311842470354187719">ແບ່ງໜ້າ</translation>
 <translation id="2335594187091864976">ຕົວເລືອກວັນທີ ແລະ ເວລາ</translation>
+<translation id="2393030564806080191">ຄ່າສີແບບຖານສິບຫົກ</translation>
 <translation id="245932805758469625">ຈໍານວນວິນາທີຂອງວິດີໂອທີ່ຍັງເຫຼືອ</translation>
 <translation id="248395913932153421">ວັນ</translation>
 <translation id="2507943997699731163">ກະລຸນາຕື່ມຂໍ້ມູນໃສ່ປ່ອງນີ້.</translation>
 <translation id="2508569020611168319">ລາຍການແຖບ</translation>
+<translation id="2530182415807757784">ເລືອກໄດ້ຫຼາຍລາຍການ, ບໍ່ໄດ້ເລືອກລາຍການໃດເລີຍ.</translation>
 <translation id="2561842179657104141">ສະແດງການຄວບຄຸມສື່ເພີ່ມເຕີມ</translation>
 <translation id="2572483411312390101">ຫຼິ້ນ</translation>
 <translation id="2613802280814924224">ກະ​ລຸ​ນາ​ປ້ອນຄ່າທີ່ໃຊ້ໄດ້ເຂົ້າໄປ​. ຄ່າໃຊ້ໄດ້ໃກ້ທີ່ສຸດແມ່ນ <ph name="VALID_VALUE" />.</translation>
+<translation id="2634240155926812724">ຊ່ອງສີຂຽວ</translation>
 <translation id="2653659639078652383">ສົ່ງ</translation>
 <translation id="2657045182931379222">ວັດຖຸກຣາຟິກ</translation>
 <translation id="2674318244760992338">ຂໍ້ຄວາມທ້າຍໜ້າ</translation>
@@ -72,6 +80,7 @@
 <translation id="310520048233152454">ກະລຸນາປ້ອນ URL.</translation>
 <translation id="3175736971608411871">ໂມງນັບຖອຍຫຼັງ</translation>
 <translation id="3199563858620722075">ກ່ອງຄອມໂບ</translation>
+<translation id="3329013043687509092">ການອີ່ມຕົວ</translation>
 <translation id="3450233048674729344">ຄ່າຕ້ອງນ້ອຍກ່ວາ ຫຼືເທົ່າກັບ <ph name="MAXIMUM" />.</translation>
 <translation id="3486220673238053218">ຄໍາ​ນິ​ຍາມ</translation>
 <translation id="3557673793733683882">ຫົວຂໍ້ <ph name="HEADING_LEVEL" /></translation>
@@ -98,7 +107,6 @@
 <translation id="4248100235867064564">ແຖບເມນູ</translation>
 <translation id="4360991593054037559">ກະ​ລຸ​ນາ​ປ້ອນຄ່າທີ່ໃຊ້ໄດ້ເຂົ້າໄປ​. ຄ່າທີ່ໃຊ້ໄດ້ຢູ່ໃກ້ທີ່ສຸດທັງສອງ​ແມ່ນ <ph name="VALID_VALUE_LOW" /> ແລະ <ph name="VALID_VALUE_HIGHER" /> .</translation>
 <translation id="4384583879834880242">ຖາມ-ຕອບ</translation>
-<translation id="4413860115965805769">ປຸ່ມເມນູ</translation>
 <translation id="4444765639179266822">ປາກົດວ່າຈະເວົ້າ: <ph name="OCR_TEXT" /></translation>
 <translation id="4446524499724042288">ການອ້າງອີງປະມວນຄຳສັບ</translation>
 <translation id="4522570452068850558">ລາຍ​ລະ​ອຽດ</translation>
@@ -126,6 +134,7 @@
 <translation id="5034860022980953847">ຕົວຊີ້ວັດຄວາມຄືບໜ້າ</translation>
 <translation id="5090250355906949916">ຕົວຄວບຄຸມເວລາຂອງວິດີໂອ</translation>
 <translation id="5093189678851173835">ຄຳກ່າວນຳໜ້າ</translation>
+<translation id="509897012892853729">ຊ່ອງສີຟ້າ</translation>
 <translation id="5117590920725113268">ສະ​ແດງ​ເດືອນ​ຕໍ່​ໄປ</translation>
 <translation id="512758898067543763">ຫົວແຖວ</translation>
 <translation id="5143125788380636750">ຄຳກ່າວສົ່ງທ້າຍ</translation>
@@ -149,9 +158,11 @@
 <translation id="5677946354068040947">ຕົວເລືອກເພີ່ມເຕີມ</translation>
 <translation id="576709008726043716">ການນຳສະເໜີ</translation>
 <translation id="57838592816432529">ປິດສຽງ</translation>
+<translation id="5860033963881614850">ປິດ</translation>
 <translation id="588258955323874662">ເຕັມໜ້າຈໍ</translation>
 <translation id="5888666972993069672">ຕອນນີ້ກຳລັງສົ່ງສັນຍານໃສ່ <ph name="DEVICE_FRIENDLY_NAME" /></translation>
 <translation id="591047860372322273">ກ່ອງຊອກຫາ</translation>
+<translation id="5916664084637901428">ເປີດ</translation>
 <translation id="5939518447894949180">ຕັ້ງຄ່າຄືນໃໝ່</translation>
 <translation id="5966707198760109579">ອາທິດ</translation>
 <translation id="5987525920412732405">ປຸ່ມໝຸນ</translation>
@@ -163,6 +174,7 @@
 <translation id="6166809985690652833">ຄຳກ່າວທ້າຍບົດ</translation>
 <translation id="6209276755895393898">ປາກົດວ່າເປັນ: <ph name="DESCRIPTION" /></translation>
 <translation id="6213469881011901533">ປະມວນຄຳສັບ</translation>
+<translation id="6281588256137006900">ຄວາມສະຫວ່າງ</translation>
 <translation id="6281763101136022427">url</translation>
 <translation id="6310801910862476708">ອອກຈາກໂໝດສະແດງຜົນຊ້ອນກັນ</translation>
 <translation id="6398862346408813489">ສະແດງແຜງເລືອກເດືອນ</translation>
@@ -178,11 +190,13 @@
 <translation id="6643016212128521049">ລຶບ</translation>
 <translation id="668171684555832681">ອື່ນໆ...</translation>
 <translation id="6692633176391053278">ຄື້ນຂຶ້ນລົງ</translation>
+<translation id="6709093583001123835">ຄ່າຕ້ອງເປັນ <ph name="VALUE" />.</translation>
 <translation id="6709570249143506788">ຄຸນນະພາບການຫຼິ້ນບໍ່ດີ</translation>
 <translation id="6755330956360078551">ເຄັດລັບເຄື່ອງມື</translation>
 <translation id="6790428901817661496">​ຫຼິ້ນ</translation>
 <translation id="6820355525329141109">ບໍ່ສາມາດໂຫຼດປລັກອິນໄດ້.</translation>
 <translation id="6820615603175220800">ການອ້າງອີງບັນນານຸກົມ</translation>
+<translation id="6831465880655513317">ໃສ່ສີຕາມຕ້ອງການດ້ວຍແຖບເລື່ອນສອງມິຕິສຳລັບການເລືອກຄວາມເຂັ້ມຂອງສີ ແລະ ຄວາມສະຫວ່າງ</translation>
 <translation id="6843725295806269523">ປິດສຽງ</translation>
 <translation id="6885760532393684712">ແຟ້ມ</translation>
 <translation id="689129560213475294">ຂໍ້ມູນບັນນານຸກົມ</translation>
@@ -200,6 +214,7 @@
 <translation id="7263440858009898357">ກະລຸນາເລືອກລາຍການຢູ່ໃນລາຍຊື່.</translation>
 <translation id="727747134524199931">ຫົວຖັນ</translation>
 <translation id="7320576522385648310">ກຳລັງບັບເຟີ້</translation>
+<translation id="7341556277900466204">ໃສ່ສີຕາມຕ້ອງການ</translation>
 <translation id="7353453495576941748">ເຄຣດິດ</translation>
 <translation id="7364796246159120393">ເລືອກ​ໄຟລ​໌</translation>
 <translation id="739024184232394898">ອື່ນ...</translation>
@@ -220,6 +235,7 @@
 <translation id="775297008183122718">ປ້ອນຂໍ້ມູນບໍ່ຖືກຕ້ອງ</translation>
 <translation id="7789962463072032349">ຢຸດຊົ່ວຄາວ</translation>
 <translation id="7802800022689234070">ສາມຫຼ່ຽມການເປີດເຜີຍ</translation>
+<translation id="7852167693871241274">ແຖບເລື່ອນໂທນສີ</translation>
 <translation id="7888071071722539607">ກະລຸນາເອົາ '<ph name="ATSIGN" />' ເຂົ້າຢູ່ໃນທີ່ຢູ່ອີເມວ. '<ph name="INVALIDADDRESS" />' ຂາດ '<ph name="ATSIGN" />' ໄປ.</translation>
 <translation id="7891486169920085145">ຕົວແຍກ</translation>
 <translation id="795667975304826397">ບໍ່ມີໄຟລ໌ເລືອກໄວ້</translation>
@@ -260,7 +276,9 @@
 <translation id="8845239796550121995">ດຽວນີ້ກຳລັງສົ່ງສັນຍານຫາໂທລະພາບຂອງທ່ານ</translation>
 <translation id="8851136666856101339">ຕົ້ນ​ຕໍ</translation>
 <translation id="8875657656876809964">ການຫຼິ້ນວິດີໂອມີຂໍ້ຜິດພາດ</translation>
+<translation id="8889402386540077796">ສີສັນ</translation>
 <translation id="8901569739625249689"><ph name="QUANTITY" /> KB</translation>
+<translation id="894736920926684893">ປຸ່ມສະຫຼັບຮູບແບບ</translation>
 <translation id="8987927404178983737">ເດືອນ</translation>
 <translation id="901493112792887934">ເວ​ລາ​ປະຈຸ​ບັນ​ເປັນ​ວິ​ນາ​ທີ</translation>
 <translation id="901834265349196618">ອີເມວ</translation>
@@ -273,6 +291,7 @@
 <translation id="9155987714137265666"><ph name="WEEK" />, ເລີ່ມຕົ້ນໃນວັນທີ <ph name="WEEK_START_DATE" /></translation>
 <translation id="916607977885256133">ສະແດງຜົນຫຼາຍຢ່າງພ້ອມກັນ</translation>
 <translation id="9168329111483466115">ໝາຍເຫດຕີນເຈ້ຍ</translation>
+<translation id="945780513535800434">ໝາຍເລືອກບາງສ່ວນ</translation>
 <translation id="954003015749068518">ເຂົ້າໂໝດສະແດງຜົນຊ້ອນກັນ</translation>
 <translation id="966787709310836684">ເມນູ</translation>
 </translationbundle>

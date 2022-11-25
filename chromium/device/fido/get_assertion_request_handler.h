@@ -19,6 +19,10 @@
 #include "device/fido/fido_request_handler_base.h"
 #include "device/fido/fido_transport_protocol.h"
 
+namespace base {
+class ElapsedTimer;
+}
+
 namespace device {
 
 class FidoAuthenticator;
@@ -58,6 +62,7 @@ class COMPONENT_EXPORT(DEVICE_FIDO) GetAssertionRequestHandler
       FidoDiscoveryFactory* fido_discovery_factory,
       const base::flat_set<FidoTransportProtocol>& supported_transports,
       CtapGetAssertionRequest request_parameter,
+      CtapGetAssertionOptions request_options,
       bool allow_skipping_pin_touch,
       CompletionCallback completion_callback);
   ~GetAssertionRequestHandler() override;
@@ -74,6 +79,10 @@ class COMPONENT_EXPORT(DEVICE_FIDO) GetAssertionRequestHandler
   };
 
   // FidoRequestHandlerBase:
+  void OnBluetoothAdapterEnumerated(bool is_present,
+                                    bool is_powered_on,
+                                    bool can_power_on,
+                                    bool is_peripheral_role_supported) override;
   void DispatchRequest(FidoAuthenticator* authenticator) override;
   void AuthenticatorAdded(FidoDiscoveryBase* discovery,
                           FidoAuthenticator* authenticator) override;
@@ -82,6 +91,7 @@ class COMPONENT_EXPORT(DEVICE_FIDO) GetAssertionRequestHandler
 
   void HandleResponse(
       FidoAuthenticator* authenticator,
+      base::ElapsedTimer request_timer,
       CtapDeviceResponseCode response_code,
       base::Optional<AuthenticatorGetAssertionResponse> response);
   void HandleNextResponse(
@@ -96,6 +106,9 @@ class COMPONENT_EXPORT(DEVICE_FIDO) GetAssertionRequestHandler
   void OnHavePIN(std::string pin);
   void OnHavePINToken(CtapDeviceResponseCode status,
                       base::Optional<pin::TokenResponse> response);
+  void OnStartUvTokenOrFallback(FidoAuthenticator* authenticator,
+                                CtapDeviceResponseCode status,
+                                base::Optional<pin::RetriesResponse> response);
   void OnUvRetriesResponse(CtapDeviceResponseCode status,
                            base::Optional<pin::RetriesResponse> response);
   void OnHaveUvToken(FidoAuthenticator* authenticator,
@@ -106,6 +119,7 @@ class COMPONENT_EXPORT(DEVICE_FIDO) GetAssertionRequestHandler
   CompletionCallback completion_callback_;
   State state_ = State::kWaitingForTouch;
   CtapGetAssertionRequest request_;
+  CtapGetAssertionOptions options_;
   base::Optional<AndroidClientDataExtensionInput> android_client_data_ext_;
   // If true, and if at the time the request is dispatched to the first
   // authenticator no other authenticators are available, the request handler

@@ -5,7 +5,9 @@
 #include "components/viz/common/frame_sinks/copy_output_request.h"
 
 #include "base/bind.h"
-#include "base/logging.h"
+#include "base/check_op.h"
+#include "base/task/task_traits.h"
+#include "base/task/thread_pool.h"
 #include "base/trace_event/trace_event.h"
 #include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -19,7 +21,7 @@ CopyOutputRequest::CopyOutputRequest(ResultFormat result_format,
       scale_from_(1, 1),
       scale_to_(1, 1) {
   DCHECK(!result_callback_.is_null());
-  TRACE_EVENT_ASYNC_BEGIN0("viz", "CopyOutputRequest", this);
+  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0("viz", "CopyOutputRequest", this);
 }
 
 CopyOutputRequest::~CopyOutputRequest() {
@@ -53,20 +55,24 @@ void CopyOutputRequest::SetUniformScaleRatio(int scale_from, int scale_to) {
 }
 
 void CopyOutputRequest::SendResult(std::unique_ptr<CopyOutputResult> result) {
-  TRACE_EVENT_ASYNC_END1("viz", "CopyOutputRequest", this, "success",
-                         !result->IsEmpty());
-  if (result_task_runner_) {
-    result_task_runner_->PostTask(
-        FROM_HERE,
-        base::BindOnce(std::move(result_callback_), std::move(result)));
-    result_task_runner_ = nullptr;
-  } else {
-    std::move(result_callback_).Run(std::move(result));
-  }
+  TRACE_EVENT_NESTABLE_ASYNC_END2(
+      "viz", "CopyOutputRequest", this, "success", !result->IsEmpty(),
+      "has_provided_task_runner", !!result_task_runner_);
+  // Serializing the result requires an expensive copy, so to not block the
+  // any important thread we PostTask onto the threadpool by default, but if the
+  // user has provided a task runner use that instead.
+  auto runner =
+      result_task_runner_
+          ? result_task_runner_
+          : base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()});
+  runner->PostTask(FROM_HERE, base::BindOnce(std::move(result_callback_),
+                                             std::move(result)));
+  // Remove the reference to the task runner (no-op if we didn't have one).
+  result_task_runner_ = nullptr;
 }
 
 bool CopyOutputRequest::SendsResultsInCurrentSequence() const {
-  return !result_task_runner_ ||
+  return result_task_runner_ &&
          result_task_runner_->RunsTasksInCurrentSequence();
 }
 

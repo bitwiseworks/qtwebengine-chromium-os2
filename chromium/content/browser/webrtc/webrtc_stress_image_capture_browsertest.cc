@@ -8,6 +8,7 @@
 #include "content/browser/webrtc/webrtc_webcam_browsertest.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -104,8 +105,8 @@ IN_PROC_BROWSER_TEST_P(WebRtcImageCaptureStressBrowserTest,
 // API has already been implemented.
 // Note, these tests must be run sequentially, since multiple parallel test runs
 // competing for a single physical webcam typically causes failures.
-#if defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_ANDROID) || \
-    defined(OS_WIN)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_MAC) || \
+    defined(OS_ANDROID) || defined(OS_WIN)
 
 const TargetVideoCaptureImplementation
     kTargetVideoCaptureImplementationsForRealWebcam[] = {

@@ -7,7 +7,6 @@
 #include "fpdfsdk/cpdfsdk_widgethandler.h"
 
 #include <memory>
-#include <vector>
 
 #include "constants/access_permissions.h"
 #include "constants/form_flags.h"
@@ -20,6 +19,7 @@
 #include "fpdfsdk/cpdfsdk_pageview.h"
 #include "fpdfsdk/cpdfsdk_widget.h"
 #include "fpdfsdk/formfiller/cffl_formfiller.h"
+#include "third_party/base/stl_util.h"
 
 CPDFSDK_WidgetHandler::CPDFSDK_WidgetHandler() = default;
 
@@ -61,7 +61,7 @@ std::unique_ptr<CPDFSDK_Annot> CPDFSDK_WidgetHandler::NewAnnot(
   if (!pCtrl)
     return nullptr;
 
-  auto pWidget = pdfium::MakeUnique<CPDFSDK_Widget>(pAnnot, pPageView, pForm);
+  auto pWidget = std::make_unique<CPDFSDK_Widget>(pAnnot, pPageView, pForm);
   pForm->AddMap(pCtrl, pWidget.get());
   if (pPDFForm->NeedConstructAP())
     pWidget->ResetAppearance(pdfium::nullopt, false);
@@ -141,10 +141,10 @@ bool CPDFSDK_WidgetHandler::OnMouseMove(CPDFSDK_PageView* pPageView,
 bool CPDFSDK_WidgetHandler::OnMouseWheel(CPDFSDK_PageView* pPageView,
                                          ObservedPtr<CPDFSDK_Annot>* pAnnot,
                                          uint32_t nFlags,
-                                         short zDelta,
-                                         const CFX_PointF& point) {
+                                         const CFX_PointF& point,
+                                         const CFX_Vector& delta) {
   return !(*pAnnot)->IsSignatureWidget() &&
-         m_pFormFiller->OnMouseWheel(pPageView, pAnnot, nFlags, zDelta, point);
+         m_pFormFiller->OnMouseWheel(pPageView, pAnnot, nFlags, point, delta);
 }
 
 bool CPDFSDK_WidgetHandler::OnRButtonDown(CPDFSDK_PageView* pPageView,
@@ -222,12 +222,18 @@ void CPDFSDK_WidgetHandler::OnLoad(CPDFSDK_Annot* pAnnot) {
 
 bool CPDFSDK_WidgetHandler::OnSetFocus(ObservedPtr<CPDFSDK_Annot>* pAnnot,
                                        uint32_t nFlag) {
+  if (!IsFocusableAnnot((*pAnnot)->GetPDFAnnot()->GetSubtype()))
+    return false;
+
   return (*pAnnot)->IsSignatureWidget() ||
          m_pFormFiller->OnSetFocus(pAnnot, nFlag);
 }
 
 bool CPDFSDK_WidgetHandler::OnKillFocus(ObservedPtr<CPDFSDK_Annot>* pAnnot,
                                         uint32_t nFlag) {
+  if (!IsFocusableAnnot((*pAnnot)->GetPDFAnnot()->GetSubtype()))
+    return false;
+
   return (*pAnnot)->IsSignatureWidget() ||
          m_pFormFiller->OnKillFocus(pAnnot, nFlag);
 }
@@ -270,6 +276,10 @@ void CPDFSDK_WidgetHandler::ReplaceSelection(CPDFSDK_Annot* pAnnot,
     m_pFormFiller->ReplaceSelection(pAnnot, text);
 }
 
+bool CPDFSDK_WidgetHandler::SelectAllText(CPDFSDK_Annot* pAnnot) {
+  return !pAnnot->IsSignatureWidget() && m_pFormFiller->SelectAllText(pAnnot);
+}
+
 bool CPDFSDK_WidgetHandler::CanUndo(CPDFSDK_Annot* pAnnot) {
   return !pAnnot->IsSignatureWidget() && m_pFormFiller->CanUndo(pAnnot);
 }
@@ -292,4 +302,12 @@ bool CPDFSDK_WidgetHandler::HitTest(CPDFSDK_PageView* pPageView,
   ASSERT(pPageView);
   ASSERT(pAnnot);
   return GetViewBBox(pPageView, pAnnot).Contains(point);
+}
+
+bool CPDFSDK_WidgetHandler::IsFocusableAnnot(
+    const CPDF_Annot::Subtype& annot_type) const {
+  ASSERT(annot_type == CPDF_Annot::Subtype::WIDGET);
+
+  return pdfium::Contains(m_pFormFillEnv->GetFocusableAnnotSubtypes(),
+                          annot_type);
 }

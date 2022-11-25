@@ -7,7 +7,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/logging.h"
+#include "base/check_op.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -20,9 +21,9 @@
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/appcache_interfaces.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/url_constants.h"
-#include "net/url_request/url_request.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
 #include "third_party/blink/public/mojom/appcache/appcache.mojom.h"
@@ -82,10 +83,12 @@ AppCacheHost::AppCacheHost(
     const base::UnguessableToken& host_id,
     int process_id,
     int render_frame_id,
+    SecurityPolicyHandle security_policy_handle,
     mojo::PendingRemote<blink::mojom::AppCacheFrontend> frontend_remote,
     AppCacheServiceImpl* service)
     : host_id_(host_id),
       process_id_(process_id),
+      security_policy_handle_(std::move(security_policy_handle)),
       pending_main_resource_cache_id_(blink::mojom::kAppCacheNoCacheId),
       pending_selected_cache_id_(blink::mojom::kAppCacheNoCacheId),
       was_select_cache_called_(false),
@@ -99,11 +102,12 @@ AppCacheHost::AppCacheHost(
       main_resource_blocked_(false),
       associated_cache_info_pending_(false) {
   service_->AddObserver(this);
-  if (process_id_ != ChildProcessHost::kInvalidUniqueID) {
-    security_policy_handle_ =
-        ChildProcessSecurityPolicyImpl::GetInstance()->CreateHandle(
-            process_id_);
+  if (process_id_ != ChildProcessHost::kInvalidUniqueID &&
+      !security_policy_handle_.is_valid()) {
+    base::debug::DumpWithoutCrashing();
   }
+  is_origin_trial_required_ =
+      service_->appcache_policy()->IsOriginTrialRequiredForAppCache();
 }
 
 AppCacheHost::~AppCacheHost() {
@@ -215,7 +219,8 @@ void AppCacheHost::SelectCache(const GURL& document_url,
 
     AppCachePolicy* policy = service()->appcache_policy();
     if (policy && !policy->CanCreateAppCache(
-                      manifest_url, site_for_cookies_.RepresentativeUrl())) {
+                      manifest_url, site_for_cookies_.RepresentativeUrl(),
+                      top_frame_origin_)) {
       FinishCacheSelection(nullptr, nullptr, mojo::ReportBadMessageCallback());
       frontend()->EventRaised(
           blink::mojom::AppCacheEventID::APPCACHE_CHECKING_EVENT);
@@ -404,6 +409,7 @@ std::unique_ptr<AppCacheRequestHandler> AppCacheHost::CreateRequestHandler(
     // for checking whether the creation of the appcache is allowed.
     site_for_cookies_ = request->GetSiteForCookies();
     site_for_cookies_initialized_ = true;
+    top_frame_origin_ = request->GetTopFrameOrigin();
     return base::WrapUnique(new AppCacheRequestHandler(
         this, resource_type, should_reset_appcache, std::move(request)));
   }
@@ -629,6 +635,8 @@ void AppCacheHost::SetProcessId(int process_id) {
   process_id_ = process_id;
   security_policy_handle_ =
       ChildProcessSecurityPolicyImpl::GetInstance()->CreateHandle(process_id_);
+  if (!security_policy_handle_.is_valid())
+    base::debug::DumpWithoutCrashing();
 }
 
 base::WeakPtr<AppCacheHost> AppCacheHost::GetWeakPtr() {
@@ -649,6 +657,7 @@ void AppCacheHost::MaybePassSubresourceFactory() {
         rfh->GetProcess()->GetBrowserContext(), rfh, process_id_,
         ContentBrowserClient::URLLoaderFactoryType::kDocumentSubResource,
         origin_for_url_loader_factory_, base::nullopt /* navigation_id */,
+        base::UkmSourceId::FromInt64(rfh->GetPageUkmSourceId()),
         &factory_receiver, nullptr /* header_client */,
         nullptr /* bypass_redirect_checks */, nullptr /* disable_secure_dns */,
         nullptr /* factory_override */);
@@ -712,6 +721,10 @@ void AppCacheHost::OnContentBlocked(const GURL& manifest_url) {
   OnAppCacheAccessed(manifest_url, /*blocked=*/true);
 }
 
+bool AppCacheHost::IsOriginTrialRequiredForAppCache() {
+  return is_origin_trial_required_;
+}
+
 void AppCacheHost::OnAppCacheAccessed(const GURL& manifest_url, bool blocked) {
   if (!blocked && manifest_url.is_empty())
     return;
@@ -720,8 +733,8 @@ void AppCacheHost::OnAppCacheAccessed(const GURL& manifest_url, bool blocked) {
   // informing WebContents about this access.
   if (render_frame_id_ != MSG_ROUTING_NONE &&
       BrowserThread::IsThreadInitialized(BrowserThread::UI)) {
-    base::PostTask(
-        FROM_HERE, {BrowserThread::UI},
+    GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE,
         base::BindOnce(
             [](int process_id, int render_frame_id, const GURL& manifest_url,
                bool blocked) {

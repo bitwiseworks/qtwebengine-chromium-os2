@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as PerfUI from '../perf_ui/perf_ui.js';
 import * as Platform from '../platform/platform.js';
 import * as UI from '../ui/ui.js';
@@ -173,7 +176,7 @@ export class HeapTimelineOverview extends UI.Widget.VBox {
     context.closePath();
 
     if (gridValue) {
-      const label = Number.bytesToString(gridValue);
+      const label = Platform.NumberUtilities.bytesToString(gridValue);
       const labelPadding = 4;
       const labelX = 0;
       const labelY = gridY - 0.5;

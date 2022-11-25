@@ -4,9 +4,8 @@
 
 import("../../../third_party/typescript/typescript.gni")
 
-ts_library("host") {
-  testonly = true
-  sources = [ "user-metrics.ts" ]
+node_ts_library("host") {
+  sources = [ "user-metrics_test.ts" ]
 
   deps = [
     "../../shared",

@@ -16,6 +16,8 @@
 #include "content/public/test/browser_test.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "net/cookies/cookie_access_result.h"
+#include "net/cookies/cookie_util.h"
 #include "net/extras/sqlite/cookie_crypto_delegate.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/mojom/network_service.mojom.h"
@@ -49,11 +51,10 @@ void SetCookie(
                               net::COOKIE_PRIORITY_DEFAULT);
   base::RunLoop run_loop;
   cookie_manager->SetCanonicalCookie(
-      cookie, "https", net::CookieOptions(),
+      cookie, net::cookie_util::SimulatedCookieSource(cookie, "https"),
+      net::CookieOptions(),
       base::BindLambdaForTesting(
-          [&](net::CanonicalCookie::CookieInclusionStatus status) {
-            run_loop.Quit();
-          }));
+          [&](net::CookieAccessResult result) { run_loop.Quit(); }));
   run_loop.Run();
 }
 
@@ -87,6 +88,8 @@ class ChromeNetworkServiceBrowserTest
     context_params->enable_encrypted_cookies = enable_encrypted_cookies;
     context_params->cookie_path =
         browser()->profile()->GetPath().Append(FILE_PATH_LITERAL("cookies"));
+    context_params->cert_verifier_params = content::GetCertVerifierParams(
+        network::mojom::CertVerifierCreationParams::New());
     GetNetworkService()->CreateNetworkContext(
         network_context.InitWithNewPipeAndPassReceiver(),
         std::move(context_params));
@@ -117,7 +120,7 @@ IN_PROC_BROWSER_TEST_P(ChromeNetworkServiceBrowserTest, PRE_EncryptedCookies) {
 }
 
 // This flakes on Mac10.12 and Windows: http://crbug.com/868667
-#if defined(OS_MACOSX) || defined(OS_WIN)
+#if defined(OS_MAC) || defined(OS_WIN)
 #define MAYBE_EncryptedCookies DISABLED_EncryptedCookies
 #else
 #define MAYBE_EncryptedCookies EncryptedCookies

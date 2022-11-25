@@ -79,10 +79,8 @@ class PerfProducer : public Producer,
   void Flush(FlushRequestID flush_id,
              const DataSourceInstanceID* data_source_ids,
              size_t num_data_sources) override;
-
-  // TODO(rsavitski): clear ds->interning_output, then re-emit fixed internings.
-  void ClearIncrementalState(const DataSourceInstanceID* /*data_source_ids*/,
-                             size_t /*num_data_sources*/) override {}
+  void ClearIncrementalState(const DataSourceInstanceID* data_source_ids,
+                             size_t num_data_sources) override;
 
   // ProcDescriptorDelegate impl:
   void OnProcDescriptors(pid_t pid,
@@ -140,6 +138,10 @@ class PerfProducer : public Producer,
     // in the |Unwinder|, which needs to track whether the necessary unwinding
     // inputs for a given process' samples are ready.
     std::map<pid_t, ProcessTrackingStatus> process_states;
+
+    // Command lines we have decided to unwind, up to a total of
+    // additional_cmdline_count values.
+    base::FlatSet<std::string> additional_cmdlines;
   };
 
   // For |EmitSkippedSample|.

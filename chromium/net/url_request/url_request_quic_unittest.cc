@@ -11,11 +11,15 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/bind_test_util.h"
+#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "net/base/features.h"
 #include "net/base/isolation_info.h"
 #include "net/base/load_timing_info.h"
 #include "net/base/network_delegate.h"
+#include "net/base/network_isolation_key.h"
+#include "net/cert/ct_policy_enforcer.h"
+#include "net/cert/ct_policy_status.h"
 #include "net/cert/mock_cert_verifier.h"
 #include "net/dns/mapped_host_resolver.h"
 #include "net/dns/mock_host_resolver.h"
@@ -64,6 +68,53 @@ const char kIndexPath[] = "/index2.html";
 const char kIndexBodyValue[] = "Hello from QUIC Server";
 const int kIndexStatus = 200;
 
+class MockCTPolicyEnforcerNonCompliant : public CTPolicyEnforcer {
+ public:
+  MockCTPolicyEnforcerNonCompliant() = default;
+  ~MockCTPolicyEnforcerNonCompliant() override = default;
+
+  ct::CTPolicyCompliance CheckCompliance(
+      X509Certificate* cert,
+      const ct::SCTList& verified_scts,
+      const NetLogWithSource& net_log) override {
+    return ct::CTPolicyCompliance::CT_POLICY_NOT_DIVERSE_SCTS;
+  }
+};
+
+// An ExpectCTReporter that records the number of times OnExpectCTFailed() was
+// called.
+class MockExpectCTReporter : public TransportSecurityState::ExpectCTReporter {
+ public:
+  MockExpectCTReporter() = default;
+  ~MockExpectCTReporter() override = default;
+
+  void OnExpectCTFailed(
+      const HostPortPair& host_port_pair,
+      const GURL& report_uri,
+      base::Time expiration,
+      const X509Certificate* validated_certificate_chain,
+      const X509Certificate* served_certificate_chain,
+      const SignedCertificateTimestampAndStatusList&
+          signed_certificate_timestamps,
+      const NetworkIsolationKey& network_isolation_key) override {
+    num_failures_++;
+    report_uri_ = report_uri;
+    network_isolation_key_ = network_isolation_key;
+  }
+
+  int num_failures() const { return num_failures_; }
+  const GURL& report_uri() const { return report_uri_; }
+  const NetworkIsolationKey& network_isolation_key() const {
+    return network_isolation_key_;
+  }
+
+ private:
+  int num_failures_ = 0;
+
+  GURL report_uri_;
+  NetworkIsolationKey network_isolation_key_;
+};
+
 class URLRequestQuicTest
     : public TestWithTaskEnvironment,
       public ::testing::WithParamInterface<quic::ParsedQuicVersion> {
@@ -78,8 +129,7 @@ class URLRequestQuicTest
     verify_result.verified_cert = ImportCertFromFile(
         GetTestCertsDirectory(), "quic-chain.pem");
     cert_verifier_.AddResultForCertAndHost(verify_result.verified_cert.get(),
-                                           "test.example.com", verify_result,
-                                           OK);
+                                           kTestServerHost, verify_result, OK);
     // To simplify the test, and avoid the race with the HTTP request, we force
     // QUIC for these requests.
     context_->set_quic_context(&quic_context_);
@@ -92,6 +142,8 @@ class URLRequestQuicTest
     context_->set_http_network_session_params(std::move(params));
     context_->set_cert_verifier(&cert_verifier_);
     context_->set_net_log(&net_log_);
+    transport_security_state_.SetExpectCTReporter(&expect_ct_reporter_);
+    context_->set_transport_security_state(&transport_security_state_);
   }
 
   void TearDown() override {
@@ -107,6 +159,10 @@ class URLRequestQuicTest
   void SetNetworkDelegate(NetworkDelegate* network_delegate) {
     context_->set_network_delegate(network_delegate);
   }
+
+  // Can be used to modify |context_|. Only safe to modify before Init() is
+  // called.
+  TestURLRequestContext* context() { return context_.get(); }
 
   // Initializes the TestURLRequestContext |context_|.
   void Init() { context_->Init(); }
@@ -154,6 +210,12 @@ class URLRequestQuicTest
   }
 
   quic::ParsedQuicVersion version() { return GetParam(); }
+
+  MockExpectCTReporter* expect_ct_reporter() { return &expect_ct_reporter_; }
+
+  TransportSecurityState* transport_security_state() {
+    return &transport_security_state_;
+  }
 
  protected:
   // Returns a fully-qualified URL for |path| on the test server.
@@ -219,6 +281,9 @@ class URLRequestQuicTest
     return path.MaybeAsASCII();
   }
 
+  MockExpectCTReporter expect_ct_reporter_;
+  TransportSecurityState transport_security_state_;
+
   std::unique_ptr<MappedHostResolver> host_resolver_;
   std::unique_ptr<QuicSimpleServer> server_;
   std::unique_ptr<TestURLRequestContext> context_;
@@ -276,20 +341,21 @@ class CheckLoadTimingDelegate : public TestDelegate {
 class WaitForCompletionNetworkDelegate : public net::TestNetworkDelegate {
  public:
   WaitForCompletionNetworkDelegate(
-      const base::Closure& all_requests_completed_callback,
+      base::OnceClosure all_requests_completed_callback,
       size_t num_expected_requests)
-      : all_requests_completed_callback_(all_requests_completed_callback),
+      : all_requests_completed_callback_(
+            std::move(all_requests_completed_callback)),
         num_expected_requests_(num_expected_requests) {}
 
   void OnCompleted(URLRequest* request, bool started, int net_error) override {
     net::TestNetworkDelegate::OnCompleted(request, started, net_error);
     num_expected_requests_--;
     if (num_expected_requests_ == 0)
-      all_requests_completed_callback_.Run();
+      std::move(all_requests_completed_callback_).Run();
   }
 
  private:
-  const base::Closure all_requests_completed_callback_;
+  base::OnceClosure all_requests_completed_callback_;
   size_t num_expected_requests_;
   DISALLOW_COPY_AND_ASSIGN(WaitForCompletionNetworkDelegate);
 };
@@ -307,12 +373,6 @@ INSTANTIATE_TEST_SUITE_P(Version,
                          ::testing::PrintToStringParamName());
 
 TEST_P(URLRequestQuicTest, TestGetRequest) {
-  if (version().handshake_protocol == quic::PROTOCOL_TLS1_3) {
-    // TODO(crbug.com/1032263): Make this work with TLS.
-    Init();
-    return;
-  }
-
   Init();
   CheckLoadTimingDelegate delegate(false);
   std::unique_ptr<URLRequest> request =
@@ -328,12 +388,6 @@ TEST_P(URLRequestQuicTest, TestGetRequest) {
 }
 
 TEST_P(URLRequestQuicTest, CancelPushIfCached_SomeCached) {
-  if (version().handshake_protocol == quic::PROTOCOL_TLS1_3) {
-    // TODO(crbug.com/1032263): Make this work with TLS.
-    Init();
-    return;
-  }
-
   if (VersionUsesHttp3(version().transport_version)) {
     Init();
     return;
@@ -416,9 +470,10 @@ TEST_P(URLRequestQuicTest, CancelPushIfCached_SomeCached) {
   EXPECT_TRUE(end_entry_2->HasParams());
   EXPECT_EQ(-400, GetNetErrorCodeFromParams(*end_entry_2));
 
-#if !defined(OS_FUCHSIA) && !defined(OS_IOS)
+#if !defined(OS_FUCHSIA) && !defined(OS_IOS) && !defined(OS_APPLE)
   // TODO(crbug.com/813631): Make this work on Fuchsia.
   // TODO(crbug.com/1032568): Make this work on iOS.
+  // TODO(crbug.com/1128459): Turn this on for ARM mac.
 
   // Wait until the server has processed all errors which is
   // happening asynchronously
@@ -429,12 +484,6 @@ TEST_P(URLRequestQuicTest, CancelPushIfCached_SomeCached) {
 }
 
 TEST_P(URLRequestQuicTest, CancelPushIfCached_AllCached) {
-  if (version().handshake_protocol == quic::PROTOCOL_TLS1_3) {
-    // TODO(crbug.com/1032263): Make this work with TLS.
-    Init();
-    return;
-  }
-
   if (VersionUsesHttp3(version().transport_version)) {
     Init();
     return;
@@ -531,21 +580,16 @@ TEST_P(URLRequestQuicTest, CancelPushIfCached_AllCached) {
   EXPECT_FALSE(end_entry_2->HasParams());
   EXPECT_FALSE(GetOptionalNetErrorCodeFromParams(*end_entry_2));
 
-#if !defined(OS_FUCHSIA) && !defined(OS_IOS)
+#if !defined(OS_FUCHSIA) && !defined(OS_APPLE)
   // TODO(crbug.com/813631): Make this work on Fuchsia.
   // TODO(crbug.com/1032568): Make this work on iOS.
+  // TODO(crbug.com/1087378): Flaky on Mac.
   // Verify the reset error count received on the server side.
   EXPECT_LE(2u, GetRstErrorCountReceivedByServer(quic::QUIC_STREAM_CANCELLED));
 #endif
 }
 
 TEST_P(URLRequestQuicTest, DoNotCancelPushIfNotFoundInCache) {
-  if (version().handshake_protocol == quic::PROTOCOL_TLS1_3) {
-    // TODO(crbug.com/1032263): Make this work with TLS.
-    Init();
-    return;
-  }
-
   if (VersionUsesHttp3(version().transport_version)) {
     Init();
     return;
@@ -571,7 +615,7 @@ TEST_P(URLRequestQuicTest, DoNotCancelPushIfNotFoundInCache) {
   auto entries = net_log_.GetEntriesWithType(
       NetLogEventType::SERVER_PUSH_LOOKUP_TRANSACTION);
 
-  EXPECT_EQ(4u, entries.size());
+  ASSERT_EQ(4u, entries.size());
 
   std::string value;
   std::string push_url_1 = UrlFromPath(kKittenPath);
@@ -597,12 +641,6 @@ TEST_P(URLRequestQuicTest, DoNotCancelPushIfNotFoundInCache) {
 // Tests that if two requests use the same QUIC session, the second request
 // should not have |LoadTimingInfo::connect_timing|.
 TEST_P(URLRequestQuicTest, TestTwoRequests) {
-  if (version().handshake_protocol == quic::PROTOCOL_TLS1_3) {
-    // TODO(crbug.com/1032263): Make this work with TLS.
-    Init();
-    return;
-  }
-
   base::RunLoop run_loop;
   WaitForCompletionNetworkDelegate network_delegate(
       run_loop.QuitClosure(), /*num_expected_requests=*/2);
@@ -630,12 +668,6 @@ TEST_P(URLRequestQuicTest, TestTwoRequests) {
 }
 
 TEST_P(URLRequestQuicTest, RequestHeadersCallback) {
-  if (version().handshake_protocol == quic::PROTOCOL_TLS1_3) {
-    // TODO(crbug.com/1032263): Make this work with TLS.
-    Init();
-    return;
-  }
-
   Init();
   HttpRawRequestHeaders raw_headers;
   TestDelegate delegate;
@@ -670,6 +702,44 @@ TEST_P(URLRequestQuicTest, RequestHeadersCallback) {
   ASSERT_TRUE(request->is_pending());
   delegate.RunUntilComplete();
   EXPECT_EQ(OK, delegate.request_status());
+}
+
+// Tests that if there's an Expect-CT failure at the QUIC layer, a report is
+// generated.
+TEST_P(URLRequestQuicTest, ExpectCT) {
+  TransportSecurityState::SetRequireCTForTesting(true);
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      // enabled_features
+      {features::kPartitionConnectionsByNetworkIsolationKey,
+       features::kPartitionHttpServerPropertiesByNetworkIsolationKey,
+       features::kPartitionSSLSessionsByNetworkIsolationKey},
+      // disabled_features
+      {});
+
+  MockCTPolicyEnforcerNonCompliant ct_enforcer;
+  context()->set_ct_policy_enforcer(&ct_enforcer);
+  Init();
+
+  GURL report_uri("https://report.test/");
+  IsolationInfo isolation_info = IsolationInfo::CreateTransient();
+  transport_security_state()->AddExpectCT(
+      kTestServerHost, base::Time::Now() + base::TimeDelta::FromDays(1),
+      true /* enforce */, report_uri, isolation_info.network_isolation_key());
+
+  base::RunLoop run_loop;
+  TestDelegate delegate;
+  std::unique_ptr<URLRequest> request =
+      CreateRequest(GURL(UrlFromPath(kHelloPath)), DEFAULT_PRIORITY, &delegate);
+  request->set_isolation_info(isolation_info);
+  request->Start();
+  delegate.RunUntilComplete();
+
+  EXPECT_EQ(ERR_QUIC_PROTOCOL_ERROR, delegate.request_status());
+  ASSERT_EQ(1, expect_ct_reporter()->num_failures());
+  EXPECT_EQ(report_uri, expect_ct_reporter()->report_uri());
+  EXPECT_EQ(isolation_info.network_isolation_key(),
+            expect_ct_reporter()->network_isolation_key());
 }
 
 }  // namespace net
