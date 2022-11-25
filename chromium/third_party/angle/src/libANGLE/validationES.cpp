@@ -167,19 +167,12 @@ bool ValidReadPixelsUnsignedNormalizedDepthType(const Context *context,
 {
     bool supportsReadDepthNV = (context->getExtensions().readDepthNV && (info->depthBits > 0) &&
                                 (info->componentCount == 1));
-    bool isGLES31            = (context->getClientVersion() >= ES_3_1);
     switch (type)
     {
         case GL_UNSIGNED_SHORT:
-            return supportsReadDepthNV ||
-                   (isGLES31 && (info->sizedInternalFormat == GL_DEPTH_COMPONENT16));
         case GL_UNSIGNED_INT:
-            return supportsReadDepthNV ||
-                   (isGLES31 && ((info->sizedInternalFormat == GL_DEPTH_COMPONENT16) ||
-                                 (info->internalFormat == GL_DEPTH_COMPONENT24)));
         case GL_UNSIGNED_INT_24_8:
-            return supportsReadDepthNV ||
-                   (isGLES31 && (info->sizedInternalFormat == GL_DEPTH24_STENCIL8));
+            return supportsReadDepthNV;
         default:
             return false;
     }
@@ -394,6 +387,29 @@ bool ValidateTextureSRGBDecodeValue(const Context *context, const ParamType *par
     return true;
 }
 
+template <typename ParamType>
+bool ValidateTextureSRGBOverrideValue(const Context *context, const ParamType *params)
+{
+    if (!context->getExtensions().textureSRGBOverride)
+    {
+        context->validationError(GL_INVALID_ENUM, kExtensionNotEnabled);
+        return false;
+    }
+
+    switch (ConvertToGLenum(params[0]))
+    {
+        case GL_SRGB:
+        case GL_NONE:
+            break;
+
+        default:
+            context->validationError(GL_INVALID_ENUM, kUnknownParameter);
+            return false;
+    }
+
+    return true;
+}
+
 bool ValidateTextureMaxAnisotropyExtensionEnabled(const Context *context)
 {
     if (!context->getExtensions().textureFilterAnisotropic)
@@ -425,7 +441,7 @@ bool ValidateTextureMaxAnisotropyValue(const Context *context, GLfloat paramValu
 
 bool ValidateFragmentShaderColorBufferMaskMatch(const Context *context)
 {
-    const Program *program         = context->getState().getLinkedProgram(context);
+    const Program *program         = context->getActiveLinkedProgram();
     const Framebuffer *framebuffer = context->getState().getDrawFramebuffer();
 
     auto drawBufferMask     = framebuffer->getDrawBufferMask().to_ulong();
@@ -436,7 +452,7 @@ bool ValidateFragmentShaderColorBufferMaskMatch(const Context *context)
 
 bool ValidateFragmentShaderColorBufferTypeMatch(const Context *context)
 {
-    const Program *program         = context->getState().getLinkedProgram(context);
+    const Program *program         = context->getActiveLinkedProgram();
     const Framebuffer *framebuffer = context->getState().getDrawFramebuffer();
 
     return ValidateComponentTypeMasks(program->getDrawBufferTypeMask().to_ulong(),
@@ -448,8 +464,13 @@ bool ValidateFragmentShaderColorBufferTypeMatch(const Context *context)
 bool ValidateVertexShaderAttributeTypeMatch(const Context *context)
 {
     const auto &glState    = context->getState();
-    const Program *program = context->getState().getLinkedProgram(context);
+    const Program *program = context->getActiveLinkedProgram();
     const VertexArray *vao = context->getState().getVertexArray();
+
+    if (!program)
+    {
+        return false;
+    }
 
     unsigned long stateCurrentValuesTypeBits = glState.getCurrentValuesTypeMask().to_ulong();
     unsigned long vaoAttribTypeBits          = vao->getAttributesTypeMask().to_ulong();
@@ -459,9 +480,10 @@ bool ValidateVertexShaderAttributeTypeMatch(const Context *context)
     vaoAttribTypeBits = (vaoAttribEnabledMask & vaoAttribTypeBits);
     vaoAttribTypeBits |= (~vaoAttribEnabledMask & stateCurrentValuesTypeBits);
 
-    return ValidateComponentTypeMasks(
-        program->getExecutable().getAttributesTypeMask().to_ulong(), vaoAttribTypeBits,
-        program->getExecutable().getAttributesMask().to_ulong(), 0xFFFF);
+    const ProgramExecutable &executable = program->getExecutable();
+    return ValidateComponentTypeMasks(executable.getAttributesTypeMask().to_ulong(),
+                                      vaoAttribTypeBits, executable.getAttributesMask().to_ulong(),
+                                      0xFFFF);
 }
 
 bool IsCompatibleDrawModeWithGeometryShader(PrimitiveMode drawMode,
@@ -515,6 +537,64 @@ unsigned int GetSamplerParameterCount(GLenum pname)
     return pname == GL_TEXTURE_BORDER_COLOR ? 4 : 1;
 }
 
+ANGLE_INLINE const char *ValidateProgramDrawStates(const State &state,
+                                                   const Extensions &extensions,
+                                                   Program *program)
+{
+    if (extensions.multiview || extensions.multiview2)
+    {
+        const int programNumViews     = program->usesMultiview() ? program->getNumViews() : 1;
+        Framebuffer *framebuffer      = state.getDrawFramebuffer();
+        const int framebufferNumViews = framebuffer->getNumViews();
+
+        if (framebufferNumViews != programNumViews)
+        {
+            return gl::err::kMultiviewMismatch;
+        }
+
+        if (state.isTransformFeedbackActiveUnpaused() && framebufferNumViews > 1)
+        {
+            return gl::err::kMultiviewTransformFeedback;
+        }
+
+        if (extensions.disjointTimerQuery && framebufferNumViews > 1 &&
+            state.isQueryActive(QueryType::TimeElapsed))
+        {
+            return gl::err::kMultiviewTimerQuery;
+        }
+    }
+
+    // Uniform buffer validation
+    for (unsigned int uniformBlockIndex = 0;
+         uniformBlockIndex < program->getActiveUniformBlockCount(); uniformBlockIndex++)
+    {
+        const InterfaceBlock &uniformBlock = program->getUniformBlockByIndex(uniformBlockIndex);
+        GLuint blockBinding                = program->getUniformBlockBinding(uniformBlockIndex);
+        const OffsetBindingPointer<Buffer> &uniformBuffer =
+            state.getIndexedUniformBuffer(blockBinding);
+
+        if (uniformBuffer.get() == nullptr)
+        {
+            // undefined behaviour
+            return gl::err::kUniformBufferUnbound;
+        }
+
+        size_t uniformBufferSize = GetBoundBufferAvailableSize(uniformBuffer);
+        if (uniformBufferSize < uniformBlock.dataSize)
+        {
+            // undefined behaviour
+            return gl::err::kUniformBufferTooSmall;
+        }
+
+        if (extensions.webglCompatibility &&
+            uniformBuffer->isBoundForTransformFeedbackAndOtherUse())
+        {
+            return gl::err::kUniformBufferBoundForTransformFeedback;
+        }
+    }
+
+    return nullptr;
+}
 }  // anonymous namespace
 
 void SetRobustLengthParam(const GLsizei *length, GLsizei value)
@@ -552,6 +632,10 @@ bool ValidTextureTarget(const Context *context, TextureType type)
         case TextureType::_2DMultisampleArray:
             return context->getExtensions().textureStorageMultisample2DArrayOES;
 
+        case TextureType::CubeMapArray:
+            return (context->getClientVersion() >= Version(3, 2) ||
+                    context->getExtensions().textureCubeMapArrayAny());
+
         case TextureType::VideoImage:
             return context->getExtensions().webglVideoTexture;
 
@@ -583,6 +667,10 @@ bool ValidTexture3DTarget(const Context *context, TextureType target)
         case TextureType::_3D:
         case TextureType::_2DArray:
             return (context->getClientMajorVersion() >= 3);
+
+        case TextureType::CubeMapArray:
+            return (context->getClientVersion() >= Version(3, 2) ||
+                    context->getExtensions().textureCubeMapArrayAny());
 
         default:
             return false;
@@ -666,7 +754,7 @@ bool ValidateDrawElementsInstancedBase(const Context *context,
                                        PrimitiveMode mode,
                                        GLsizei count,
                                        DrawElementsType type,
-                                       const GLvoid *indices,
+                                       const void *indices,
                                        GLsizei primcount)
 {
     if (primcount <= 0)
@@ -733,6 +821,16 @@ bool ValidateDrawInstancedANGLE(const Context *context)
     const State &state                  = context->getState();
     const ProgramExecutable *executable = state.getProgramExecutable();
 
+    if (!executable)
+    {
+        // No executable means there is no Program/PPO bound, which is undefined behavior, but isn't
+        // an error.
+        context->getState().getDebug().insertMessage(
+            GL_DEBUG_SOURCE_API, GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR, 0, GL_DEBUG_SEVERITY_HIGH,
+            std::string("Attempting to draw without a program"), gl::LOG_WARN);
+        return true;
+    }
+
     const auto &attribs  = state.getVertexArray()->getVertexAttributes();
     const auto &bindings = state.getVertexArray()->getVertexBindings();
     for (size_t attributeIndex = 0; attributeIndex < MAX_VERTEX_ATTRIBS; attributeIndex++)
@@ -755,6 +853,7 @@ bool ValidTexture3DDestinationTarget(const Context *context, TextureTarget targe
     {
         case TextureTarget::_3D:
         case TextureTarget::_2DArray:
+        case TextureTarget::CubeMapArray:
             return true;
         default:
             return false;
@@ -771,6 +870,9 @@ bool ValidTexLevelDestinationTarget(const Context *context, TextureType type)
         case TextureType::CubeMap:
         case TextureType::_3D:
             return true;
+        case TextureType::CubeMapArray:
+            return (context->getClientVersion() >= Version(3, 2) ||
+                    context->getExtensions().textureCubeMapArrayAny());
         case TextureType::Rectangle:
             return context->getExtensions().textureRectangle;
         case TextureType::_2DMultisampleArray:
@@ -817,6 +919,7 @@ bool ValidMipLevel(const Context *context, TextureType type, GLint level)
             break;
 
         case TextureType::CubeMap:
+        case TextureType::CubeMapArray:
             maxDimension = caps.maxCubeMapTextureSize;
             break;
 
@@ -869,10 +972,9 @@ bool ValidImageSizeParameters(const Context *context,
     return true;
 }
 
-bool ValidCompressedDimension(GLsizei size, GLuint blockSize, bool smallerThanBlockSizeAllowed)
+bool ValidCompressedDimension(GLsizei size, GLuint blockSize, GLint level)
 {
-    return (smallerThanBlockSizeAllowed && (size > 0) && (blockSize % size == 0)) ||
-           (size % blockSize == 0);
+    return (level > 0) || (size % blockSize == 0);
 }
 
 bool ValidCompressedImageSize(const Context *context,
@@ -895,17 +997,9 @@ bool ValidCompressedImageSize(const Context *context,
 
     if (CompressedTextureFormatRequiresExactSize(internalFormat))
     {
-        // The ANGLE extensions allow specifying compressed textures with sizes smaller than the
-        // block size for level 0 but WebGL disallows this.
-        bool smallerThanBlockSizeAllowed =
-            level > 0 || !context->getExtensions().webglCompatibility;
-
-        if (!ValidCompressedDimension(width, formatInfo.compressedBlockWidth,
-                                      smallerThanBlockSizeAllowed) ||
-            !ValidCompressedDimension(height, formatInfo.compressedBlockHeight,
-                                      smallerThanBlockSizeAllowed) ||
-            !ValidCompressedDimension(depth, formatInfo.compressedBlockDepth,
-                                      smallerThanBlockSizeAllowed))
+        if (!ValidCompressedDimension(width, formatInfo.compressedBlockWidth, level) ||
+            !ValidCompressedDimension(height, formatInfo.compressedBlockHeight, level) ||
+            !ValidCompressedDimension(depth, formatInfo.compressedBlockDepth, level))
         {
             return false;
         }
@@ -1374,7 +1468,7 @@ bool ValidateBlitFramebufferParameters(const Context *context,
     }
 
     // Not allow blitting to MS buffers, therefore if renderToTextureSamples exist,
-    // consider it MS. needResourceSamples = false
+    // consider it MS. checkReadBufferResourceSamples = false
     if (!ValidateFramebufferNotMultisampled(context, drawFramebuffer, false))
     {
         return false;
@@ -1457,7 +1551,7 @@ bool ValidateBlitFramebufferParameters(const Context *context,
                         return false;
                     }
 
-                    if (readColorBuffer->getSamples() > 0 &&
+                    if (readColorBuffer->getResourceSamples() > 0 &&
                         (!Format::EquivalentForBlit(readFormat, drawFormat) || !sameBounds))
                     {
                         context->validationError(GL_INVALID_OPERATION,
@@ -1511,7 +1605,7 @@ bool ValidateBlitFramebufferParameters(const Context *context,
                     return false;
                 }
 
-                if (readBuffer->getSamples() > 0 && !sameBounds)
+                if (readBuffer->getResourceSamples() > 0 && !sameBounds)
                 {
                     context->validationError(GL_INVALID_OPERATION, kBlitMultisampledBoundsMismatch);
                     return false;
@@ -2268,7 +2362,7 @@ bool ValidateUniform(const Context *context,
                      GLsizei count)
 {
     const LinkedUniform *uniform = nullptr;
-    Program *programObject       = context->getState().getLinkedProgram(context);
+    Program *programObject       = context->getActiveLinkedProgram();
     return ValidateUniformCommonBase(context, programObject, location, count, &uniform) &&
            ValidateUniformValue(context, valueType, uniform->type);
 }
@@ -2279,7 +2373,7 @@ bool ValidateUniform1iv(const Context *context,
                         const GLint *value)
 {
     const LinkedUniform *uniform = nullptr;
-    Program *programObject       = context->getState().getLinkedProgram(context);
+    Program *programObject       = context->getActiveLinkedProgram();
     return ValidateUniformCommonBase(context, programObject, location, count, &uniform) &&
            ValidateUniform1ivValue(context, uniform->type, count, value);
 }
@@ -2297,7 +2391,7 @@ bool ValidateUniformMatrix(const Context *context,
     }
 
     const LinkedUniform *uniform = nullptr;
-    Program *programObject       = context->getState().getLinkedProgram(context);
+    Program *programObject       = context->getActiveLinkedProgram();
     return ValidateUniformCommonBase(context, programObject, location, count, &uniform) &&
            ValidateUniformMatrixValue(context, valueType, uniform->type);
 }
@@ -2556,8 +2650,8 @@ bool ValidateCopyTexImageParametersBase(const Context *context,
         return false;
     }
 
-    // needResourceSamples = true. Treat renderToTexture textures as single sample since they will
-    // be resolved before copying
+    // checkReadBufferResourceSamples = true. Treat renderToTexture textures as single sample since
+    // they will be resolved before copying.
     if (!readFramebuffer->isDefault() &&
         !ValidateFramebufferNotMultisampled(context, readFramebuffer, true))
     {
@@ -2602,6 +2696,7 @@ bool ValidateCopyTexImageParametersBase(const Context *context,
             break;
 
         case TextureType::CubeMap:
+        case TextureType::CubeMapArray:
             maxDimension = caps.maxCubeMapTextureSize;
             break;
 
@@ -2657,7 +2752,8 @@ bool ValidateCopyTexImageParametersBase(const Context *context,
     }
     else
     {
-        if (texType == TextureType::CubeMap && width != height)
+        if ((texType == TextureType::CubeMap || texType == TextureType::CubeMapArray) &&
+            width != height)
         {
             context->validationError(GL_INVALID_VALUE, kCubemapIncomplete);
             return false;
@@ -2694,6 +2790,52 @@ bool ValidateCopyTexImageParametersBase(const Context *context,
     }
 
     return true;
+}
+
+const char *ValidateProgramPipelineDrawStates(const State &state,
+                                              const Extensions &extensions,
+                                              ProgramPipeline *programPipeline)
+{
+    for (const ShaderType shaderType : gl::AllShaderTypes())
+    {
+        Program *program = programPipeline->getShaderProgram(shaderType);
+        if (program)
+        {
+            const char *errorMsg = ValidateProgramDrawStates(state, extensions, program);
+            if (errorMsg)
+            {
+                return errorMsg;
+            }
+        }
+    }
+
+    return nullptr;
+}
+
+const char *ValidateProgramPipelineAttachedPrograms(ProgramPipeline *programPipeline)
+{
+    // An INVALID_OPERATION error is generated by any command that transfers vertices to the
+    // GL or launches compute work if the current set of active
+    // program objects cannot be executed, for reasons including:
+    // - A program object is active for at least one, but not all of the shader
+    // stages that were present when the program was linked.
+    for (const ShaderType shaderType : gl::AllShaderTypes())
+    {
+        Program *shaderProgram = programPipeline->getShaderProgram(shaderType);
+        if (shaderProgram)
+        {
+            ProgramExecutable &executable = shaderProgram->getExecutable();
+            for (const ShaderType programShaderType : executable.getLinkedShaderStages())
+            {
+                if (shaderProgram != programPipeline->getShaderProgram(programShaderType))
+                {
+                    return gl::err::kNotAllStagesOfSeparableProgramUsed;
+                }
+            }
+        }
+    }
+
+    return nullptr;
 }
 
 // Note all errors returned from this function are INVALID_OPERATION except for the draw framebuffer
@@ -2806,78 +2948,55 @@ const char *ValidateDrawStates(const Context *context)
     // If we are running GLES1, there is no current program.
     if (context->getClientVersion() >= Version(2, 0))
     {
-        Program *program = state.getLinkedProgram(context);
-        if (!program)
-        {
-            return kProgramNotBound;
-        }
+        Program *program                 = state.getLinkedProgram(context);
+        ProgramPipeline *programPipeline = state.getProgramPipeline();
 
-        // In OpenGL ES spec for UseProgram at section 7.3, trying to render without
-        // vertex shader stage or fragment shader stage is a undefined behaviour.
-        // But ANGLE should clearly generate an INVALID_OPERATION error instead of
-        // produce undefined result.
-        if (!program->getExecutable().hasLinkedShaderStage(ShaderType::Vertex) ||
-            !program->getExecutable().hasLinkedShaderStage(ShaderType::Fragment))
+        if (program)
         {
-            return kNoActiveGraphicsShaderStage;
-        }
-
-        if (!program->validateSamplers(nullptr, context->getCaps()))
-        {
-            return kTextureTypeConflict;
-        }
-
-        if (extensions.multiview || extensions.multiview2)
-        {
-            const int programNumViews     = program->usesMultiview() ? program->getNumViews() : 1;
-            const int framebufferNumViews = framebuffer->getNumViews();
-            if (framebufferNumViews != programNumViews)
+            if (!program->validateSamplers(nullptr, context->getCaps()))
             {
-                return kMultiviewMismatch;
+                return kTextureTypeConflict;
             }
 
-            if (state.isTransformFeedbackActiveUnpaused() && framebufferNumViews > 1)
+            const char *errorMsg = ValidateProgramDrawStates(state, extensions, program);
+            if (errorMsg)
             {
-                return kMultiviewTransformFeedback;
-            }
-
-            if (extensions.disjointTimerQuery && framebufferNumViews > 1 &&
-                state.isQueryActive(QueryType::TimeElapsed))
-            {
-                return kMultiviewTimerQuery;
+                return errorMsg;
             }
         }
-
-        // Uniform buffer validation
-        for (unsigned int uniformBlockIndex = 0;
-             uniformBlockIndex < program->getActiveUniformBlockCount(); uniformBlockIndex++)
+        else if (programPipeline)
         {
-            const InterfaceBlock &uniformBlock = program->getUniformBlockByIndex(uniformBlockIndex);
-            GLuint blockBinding                = program->getUniformBlockBinding(uniformBlockIndex);
-            const OffsetBindingPointer<Buffer> &uniformBuffer =
-                state.getIndexedUniformBuffer(blockBinding);
-
-            if (uniformBuffer.get() == nullptr)
+            const char *errorMsg = ValidateProgramPipelineAttachedPrograms(programPipeline);
+            if (errorMsg)
             {
-                // undefined behaviour
-                return kUniformBufferUnbound;
+                return errorMsg;
             }
 
-            size_t uniformBufferSize = GetBoundBufferAvailableSize(uniformBuffer);
-            if (uniformBufferSize < uniformBlock.dataSize)
+            if (!programPipeline->validateSamplers(nullptr, context->getCaps()))
             {
-                // undefined behaviour
-                return kUniformBufferTooSmall;
+                return kTextureTypeConflict;
             }
 
-            if (extensions.webglCompatibility &&
-                uniformBuffer->isBoundForTransformFeedbackAndOtherUse())
+            errorMsg = ValidateProgramPipelineDrawStates(state, extensions, programPipeline);
+            if (errorMsg)
             {
-                return kUniformBufferBoundForTransformFeedback;
+                return errorMsg;
+            }
+
+            bool goodResult = programPipeline->link(context) == angle::Result::Continue;
+
+            //  If there is no active program for the vertex or fragment shader stages, the results
+            //  of vertex and fragment shader execution will respectively be undefined. However,
+            //  this is not an error, so ANGLE only signals PPO link failures if both VS and FS
+            //  stages are present.
+            const ProgramExecutable &executable = programPipeline->getExecutable();
+            if (!goodResult && executable.hasVertexAndFragmentShader())
+            {
+                return err::kProgramPipelineLinkFailed;
             }
         }
 
-        // Do some additonal WebGL-specific validation
+        // Do some additional WebGL-specific validation
         if (extensions.webglCompatibility)
         {
             if (!state.validateSamplerFormats())
@@ -2893,7 +3012,7 @@ const char *ValidateDrawStates(const Context *context)
             }
 
             // Detect rendering feedback loops for WebGL.
-            if (framebuffer->hasRenderingFeedbackLoop())
+            if (framebuffer->formsRenderingFeedbackLoopWith(context))
             {
                 return kFeedbackLoop;
             }
@@ -2924,6 +3043,12 @@ const char *ValidateDrawStates(const Context *context)
             if (vao->hasTransformFeedbackBindingConflict(context))
             {
                 return kVertexBufferBoundForTransformFeedback;
+            }
+
+            // Validate that we are rendering with a linked program.
+            if (!program->isLinked())
+            {
+                return kProgramNotLinked;
             }
         }
     }
@@ -2976,7 +3101,7 @@ void RecordDrawModeError(const Context *context, PrimitiveMode mode)
     // If we are running GLES1, there is no current program.
     if (context->getClientVersion() >= Version(2, 0))
     {
-        Program *program = state.getLinkedProgram(context);
+        Program *program = context->getActiveLinkedProgram();
         ASSERT(program);
 
         // Do geometry shader specific validations
@@ -3429,7 +3554,7 @@ bool ValidateDiscardFramebufferBase(const Context *context,
                     if (!defaultFramebuffer)
                     {
                         context->validationError(GL_INVALID_ENUM,
-                                                 kDefaultFramebufferInvalidAttachment);
+                                                 kDefaultFramebufferAttachmentOnUserFBO);
                         return false;
                     }
                     break;
@@ -3510,6 +3635,13 @@ bool ValidateEGLImageTargetTexture2DOES(const Context *context,
             }
             break;
 
+        case TextureType::_2DArray:
+            if (!context->getExtensions().eglImageArray)
+            {
+                context->validationError(GL_INVALID_ENUM, kEnumNotSupported);
+            }
+            break;
+
         case TextureType::External:
             if (!context->getExtensions().eglImageExternalOES)
             {
@@ -3540,6 +3672,13 @@ bool ValidateEGLImageTargetTexture2DOES(const Context *context,
     if (!imageObject->isTexturable(context))
     {
         context->validationError(GL_INVALID_OPERATION, kEGLImageTextureFormatNotSupported);
+        return false;
+    }
+
+    if (imageObject->isLayered() && type != TextureType::_2DArray)
+    {
+        context->validationError(GL_INVALID_OPERATION,
+                                 "Image has more than 1 layer, target must be TEXTURE_2D_ARRAY");
         return false;
     }
 
@@ -3833,11 +3972,35 @@ bool ValidateMapBufferRangeBase(const Context *context,
     }
 
     // Check for invalid bits in the mask
-    GLbitfield allAccessBits = GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT |
-                               GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_FLUSH_EXPLICIT_BIT |
-                               GL_MAP_UNSYNCHRONIZED_BIT;
+    constexpr GLbitfield kAllAccessBits =
+        GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT |
+        GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_FLUSH_EXPLICIT_BIT | GL_MAP_UNSYNCHRONIZED_BIT;
 
-    if (access & ~(allAccessBits))
+    if (buffer->isImmutable())
+    {
+        // GL_EXT_buffer_storage's additions to glMapBufferRange
+        constexpr GLbitfield kBufferStorageAccessBits =
+            kAllAccessBits | GL_MAP_PERSISTENT_BIT_EXT | GL_MAP_COHERENT_BIT_EXT;
+
+        if ((access & ~kBufferStorageAccessBits) != 0)
+        {
+            context->validationError(GL_INVALID_VALUE, kInvalidAccessBits);
+            return false;
+        }
+
+        // It is invalid if any of bufferStorageMatchedAccessBits bits are included in access,
+        // but the same bits are not included in the buffer's storage flags
+        constexpr GLbitfield kBufferStorageMatchedAccessBits = GL_MAP_READ_BIT | GL_MAP_WRITE_BIT |
+                                                               GL_MAP_PERSISTENT_BIT_EXT |
+                                                               GL_MAP_COHERENT_BIT_EXT;
+        GLbitfield accessFlags = access & kBufferStorageMatchedAccessBits;
+        if ((accessFlags & buffer->getStorageExtUsageFlags()) != accessFlags)
+        {
+            context->validationError(GL_INVALID_OPERATION, kInvalidAccessBits);
+            return false;
+        }
+    }
+    else if ((access & ~kAllAccessBits) != 0)
     {
         context->validationError(GL_INVALID_VALUE, kInvalidAccessBits);
         return false;
@@ -5361,11 +5524,18 @@ bool ValidateGetTexParameterBase(const Context *context,
         case GL_TEXTURE_MAX_LEVEL:
         case GL_TEXTURE_MIN_LOD:
         case GL_TEXTURE_MAX_LOD:
-        case GL_TEXTURE_COMPARE_MODE:
-        case GL_TEXTURE_COMPARE_FUNC:
             if (context->getClientMajorVersion() < 3)
             {
                 context->validationError(GL_INVALID_ENUM, kEnumRequiresGLES30);
+                return false;
+            }
+            break;
+
+        case GL_TEXTURE_COMPARE_MODE:
+        case GL_TEXTURE_COMPARE_FUNC:
+            if (context->getClientMajorVersion() < 3 && !context->getExtensions().shadowSamplersEXT)
+            {
+                context->validationError(GL_INVALID_ENUM, kEnumNotSupported);
                 return false;
             }
             break;
@@ -5611,6 +5781,22 @@ bool ValidatePixelPack(const Context *context,
         *length = static_cast<GLsizei>(endByte);
     }
 
+    if (context->getExtensions().webglCompatibility)
+    {
+        // WebGL 2.0 disallows the scenario:
+        //   GL_PACK_SKIP_PIXELS + width > DataStoreWidth
+        // where:
+        //   DataStoreWidth = (GL_PACK_ROW_LENGTH ? GL_PACK_ROW_LENGTH : width)
+        // Since these two pack parameters can only be set to non-zero values
+        // on WebGL 2.0 contexts, verify them for all WebGL contexts.
+        GLint dataStoreWidth = pack.rowLength ? pack.rowLength : width;
+        if (pack.skipPixels + width > dataStoreWidth)
+        {
+            context->validationError(GL_INVALID_OPERATION, kInvalidPackParametersForWebGL);
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -5733,10 +5919,8 @@ bool ValidateReadPixelsBase(const Context *context,
             // Only rely on ValidReadPixelsFormatType for depth/stencil formats
             break;
         default:
-            ANGLE_VALIDATION_TRY(
-                readFramebuffer->getImplementationColorReadFormat(context, &currentFormat));
-            ANGLE_VALIDATION_TRY(
-                readFramebuffer->getImplementationColorReadType(context, &currentType));
+            currentFormat = readFramebuffer->getImplementationColorReadFormat(context);
+            currentType   = readFramebuffer->getImplementationColorReadType(context);
             break;
     }
 
@@ -6064,6 +6248,13 @@ bool ValidateTexParameterBase(const Context *context,
 
         case GL_TEXTURE_SRGB_DECODE_EXT:
             if (!ValidateTextureSRGBDecodeValue(context, params))
+            {
+                return false;
+            }
+            break;
+
+        case GL_TEXTURE_FORMAT_SRGB_OVERRIDE_EXT:
+            if (!ValidateTextureSRGBOverrideValue(context, params))
             {
                 return false;
             }
@@ -6485,10 +6676,11 @@ bool ValidateGetInternalFormativBase(const Context *context,
 
 bool ValidateFramebufferNotMultisampled(const Context *context,
                                         const Framebuffer *framebuffer,
-                                        bool needResourceSamples)
+                                        bool checkReadBufferResourceSamples)
 {
-    int samples = needResourceSamples ? framebuffer->getResourceSamples(context)
-                                      : framebuffer->getSamples(context);
+    int samples = checkReadBufferResourceSamples
+                      ? framebuffer->getReadBufferResourceSamples(context)
+                      : framebuffer->getSamples(context);
     if (samples != 0)
     {
         context->validationError(GL_INVALID_OPERATION, kInvalidMultisampledFramebufferOperation);

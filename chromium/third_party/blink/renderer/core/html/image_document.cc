@@ -69,7 +69,7 @@ class ImageEventListener : public NativeEventListener {
 
   void Invoke(ExecutionContext*, Event*) override;
 
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     visitor->Trace(doc_);
     NativeEventListener::Trace(visitor);
   }
@@ -93,13 +93,14 @@ struct DowncastTraits<ImageEventListener> {
 class ImageDocumentParser : public RawDataDocumentParser {
  public:
   ImageDocumentParser(ImageDocument* document)
-      : RawDataDocumentParser(document) {}
+      : RawDataDocumentParser(document),
+        world_(document->GetExecutionContext()->GetCurrentWorld()) {}
 
   ImageDocument* GetDocument() const {
     return To<ImageDocument>(RawDataDocumentParser::GetDocument());
   }
 
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     visitor->Trace(image_resource_);
     RawDataDocumentParser::Trace(visitor);
   }
@@ -109,6 +110,7 @@ class ImageDocumentParser : public RawDataDocumentParser {
   void Finish() override;
 
   Member<ImageResource> image_resource_;
+  const scoped_refptr<const DOMWrapperWorld> world_;
 };
 
 // --------
@@ -144,7 +146,7 @@ void ImageDocumentParser::AppendBytes(const char* data, size_t length) {
   if (!image_resource_) {
     ResourceRequest request(GetDocument()->Url());
     request.SetCredentialsMode(network::mojom::CredentialsMode::kOmit);
-    image_resource_ = ImageResource::Create(request);
+    image_resource_ = ImageResource::Create(request, world_);
     image_resource_->NotifyStartLoad();
 
     GetDocument()->CreateDocumentStructure(image_resource_->GetContent());
@@ -206,7 +208,7 @@ ImageDocument::ImageDocument(const DocumentInit& initializer)
       shrink_to_fit_mode_(GetFrame()->GetSettings()->GetViewportEnabled()
                               ? kViewport
                               : kDesktop) {
-  SetCompatibilityMode(kQuirksMode);
+  SetCompatibilityMode(kNoQuirksMode);
   LockCompatibilityMode();
 }
 
@@ -225,6 +227,8 @@ IntSize ImageDocument::ImageSize() const {
 void ImageDocument::CreateDocumentStructure(
     ImageResourceContent* image_content) {
   auto* root_element = MakeGarbageCollected<HTMLHtmlElement>(*this);
+  root_element->SetInlineStyleProperty(
+      CSSPropertyID::kHeight, 100, CSSPrimitiveValue::UnitType::kPercentage);
   AppendChild(root_element);
   root_element->InsertedByParser();
 
@@ -243,7 +247,7 @@ void ImageDocument::CreateDocumentStructure(
   if (ShouldShrinkToFit()) {
     // Display the image prominently centered in the frame.
     body->setAttribute(html_names::kStyleAttr,
-                       "margin: 0px; background: #0e0e0e;");
+                       "margin: 0px; background: #0e0e0e; height: 100%");
 
     // See w3c example on how to center an element:
     // https://www.w3.org/Style/Examples/007/center.en.html
@@ -265,7 +269,7 @@ void ImageDocument::CreateDocumentStructure(
     ShadowRoot& shadow_root = body->EnsureUserAgentShadowRoot();
     shadow_root.AppendChild(div_element_);
   } else {
-    body->setAttribute(html_names::kStyleAttr, "margin: 0px;");
+    body->setAttribute(html_names::kStyleAttr, "margin: 0px; height: 100%");
   }
 
   WillInsertBody();
@@ -562,7 +566,7 @@ bool ImageDocument::ShouldShrinkToFit() const {
   return GetFrame()->IsMainFrame() && !is_wrap_content_web_view;
 }
 
-void ImageDocument::Trace(Visitor* visitor) {
+void ImageDocument::Trace(Visitor* visitor) const {
   visitor->Trace(div_element_);
   visitor->Trace(image_element_);
   HTMLDocument::Trace(visitor);

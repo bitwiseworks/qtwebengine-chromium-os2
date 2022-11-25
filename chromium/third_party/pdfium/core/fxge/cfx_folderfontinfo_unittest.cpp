@@ -4,36 +4,39 @@
 
 #include "core/fxge/cfx_folderfontinfo.h"
 
+#include <utility>
+
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/base/ptr_util.h"
 #include "third_party/base/stl_util.h"
 
 namespace {
+
 constexpr char kArial[] = "Arial";
 constexpr char kTimesNewRoman[] = "TimesNewRoman";
 constexpr char kSymbol[] = "Symbol";
 constexpr char kBookshelfSymbol7[] = "Bookshelf Symbol 7";
 constexpr char kCalibri[] = "Calibri";
 constexpr char kBookshelf[] = "Bookshelf";
+
 }  // namespace
 
 class CFX_FolderFontInfoTest : public ::testing::Test {
  public:
   CFX_FolderFontInfoTest() {
-    auto arial_info = pdfium::MakeUnique<CFX_FolderFontInfo::FontFaceInfo>(
+    auto arial_info = std::make_unique<CFX_FolderFontInfo::FontFaceInfo>(
         /*filePath=*/"", kArial, /*fontTables=*/"",
         /*fontOffset=*/0, /*fileSize=*/0);
     arial_info->m_Charsets = 2;
     auto times_new_roman_info =
-        pdfium::MakeUnique<CFX_FolderFontInfo::FontFaceInfo>(
+        std::make_unique<CFX_FolderFontInfo::FontFaceInfo>(
             /*filePath=*/"", kTimesNewRoman, /*fontTables=*/"",
             /*fontOffset=*/0, /*fileSize=*/0);
     auto bookshelf_symbol7_info =
-        pdfium::MakeUnique<CFX_FolderFontInfo::FontFaceInfo>(
+        std::make_unique<CFX_FolderFontInfo::FontFaceInfo>(
             /*filePath=*/"", kBookshelfSymbol7, /*fontTables=*/"",
             /*fontOffset=*/0, /*fileSize=*/0);
     bookshelf_symbol7_info->m_Charsets = 2;
-    auto symbol_info = pdfium::MakeUnique<CFX_FolderFontInfo::FontFaceInfo>(
+    auto symbol_info = std::make_unique<CFX_FolderFontInfo::FontFaceInfo>(
         /*filePath=*/"", kSymbol, /*fontTables=*/"",
         /*fontOffset=*/0, /*fileSize=*/0);
     symbol_info->m_Charsets = 2;

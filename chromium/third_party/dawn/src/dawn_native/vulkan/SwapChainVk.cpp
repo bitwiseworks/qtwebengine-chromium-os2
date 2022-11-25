@@ -47,18 +47,20 @@ namespace dawn_native { namespace vulkan {
             return nullptr;
         }
 
-        VkImage nativeTexture =
-            VkImage::CreateFromHandle(reinterpret_cast<::VkImage>(next.texture.u64));
-        return new Texture(ToBackend(GetDevice()), descriptor, nativeTexture);
+        ::VkImage image = NativeNonDispatachableHandleFromU64<::VkImage>(next.texture.u64);
+        VkImage nativeTexture = VkImage::CreateFromHandle(image);
+        return Texture::CreateForSwapChain(ToBackend(GetDevice()), descriptor, nativeTexture)
+            .Detach();
     }
 
-    MaybeError SwapChain::OnBeforePresent(TextureBase* texture) {
+    MaybeError SwapChain::OnBeforePresent(TextureViewBase* view) {
         Device* device = ToBackend(GetDevice());
 
         // Perform the necessary pipeline barriers for the texture to be used with the usage
         // requested by the implementation.
         CommandRecordingContext* recordingContext = device->GetPendingRecordingContext();
-        ToBackend(texture)->TransitionUsageNow(recordingContext, mTextureUsage);
+        ToBackend(view->GetTexture())
+            ->TransitionUsageNow(recordingContext, mTextureUsage, view->GetSubresourceRange());
 
         DAWN_TRY(device->SubmitPendingCommands());
 

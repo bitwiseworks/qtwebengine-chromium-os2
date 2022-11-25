@@ -16,6 +16,7 @@
 #include "include/core/SkStream.h"
 #include "include/private/SkTArray.h"
 #include "include/private/SkTo.h"
+#include "modules/skottie/include/ExternalLayer.h"
 #include "modules/skottie/include/SkottieProperty.h"
 #include "modules/skottie/src/Composition.h"
 #include "modules/skottie/src/SkottieJson.h"
@@ -34,6 +35,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <memory>
 
 #include "stdlib.h"
 
@@ -157,7 +159,7 @@ sk_sp<sksg::RenderNode> AnimationBuilder::attachBlendMode(const skjson::ObjectVa
 
 AnimationBuilder::AnimationBuilder(sk_sp<ResourceProvider> rp, sk_sp<SkFontMgr> fontmgr,
                                    sk_sp<PropertyObserver> pobserver, sk_sp<Logger> logger,
-                                   sk_sp<MarkerObserver> mobserver,
+                                   sk_sp<MarkerObserver> mobserver, sk_sp<PrecompInterceptor> pi,
                                    Animation::Builder::Stats* stats,
                                    const SkSize& comp_size, float duration, float framerate,
                                    uint32_t flags)
@@ -166,6 +168,7 @@ AnimationBuilder::AnimationBuilder(sk_sp<ResourceProvider> rp, sk_sp<SkFontMgr> 
     , fPropertyObserver(std::move(pobserver))
     , fLogger(std::move(logger))
     , fMarkerObserver(std::move(mobserver))
+    , fPrecompInterceptor(std::move(pi))
     , fStats(stats)
     , fCompSize(comp_size)
     , fDuration(duration)
@@ -236,7 +239,7 @@ bool AnimationBuilder::dispatchColorProperty(const sk_sp<sksg::Color>& c) const 
         fPropertyObserver->onColorProperty(fPropertyObserverContext,
             [&]() {
                 dispatched = true;
-                return std::unique_ptr<ColorPropertyHandle>(new ColorPropertyHandle(c));
+                return std::make_unique<ColorPropertyHandle>(c);
             });
     }
 
@@ -250,7 +253,7 @@ bool AnimationBuilder::dispatchOpacityProperty(const sk_sp<sksg::OpacityEffect>&
         fPropertyObserver->onOpacityProperty(fPropertyObserverContext,
             [&]() {
                 dispatched = true;
-                return std::unique_ptr<OpacityPropertyHandle>(new OpacityPropertyHandle(o));
+                return std::make_unique<OpacityPropertyHandle>(o);
             });
     }
 
@@ -264,7 +267,7 @@ bool AnimationBuilder::dispatchTextProperty(const sk_sp<TextAdapter>& t) const {
         fPropertyObserver->onTextProperty(fPropertyObserverContext,
             [&]() {
                 dispatched = true;
-                return std::unique_ptr<TextPropertyHandle>(new TextPropertyHandle(t));
+                return std::make_unique<TextPropertyHandle>(t);
             });
     }
 
@@ -278,7 +281,7 @@ bool AnimationBuilder::dispatchTransformProperty(const sk_sp<TransformAdapter2D>
         fPropertyObserver->onTransformProperty(fPropertyObserverContext,
             [&]() {
                 dispatched = true;
-                return std::unique_ptr<TransformPropertyHandle>(new TransformPropertyHandle(t));
+                return std::make_unique<TransformPropertyHandle>(t);
             });
     }
 
@@ -322,6 +325,11 @@ Animation::Builder& Animation::Builder::setLogger(sk_sp<Logger> logger) {
 
 Animation::Builder& Animation::Builder::setMarkerObserver(sk_sp<MarkerObserver> mobserver) {
     fMarkerObserver = std::move(mobserver);
+    return *this;
+}
+
+Animation::Builder& Animation::Builder::setPrecompInterceptor(sk_sp<PrecompInterceptor> pi) {
+    fPrecompInterceptor = std::move(pi);
     return *this;
 }
 
@@ -398,6 +406,7 @@ sk_sp<Animation> Animation::Builder::make(const char* data, size_t data_len) {
                                        std::move(fPropertyObserver),
                                        std::move(fLogger),
                                        std::move(fMarkerObserver),
+                                       std::move(fPrecompInterceptor),
                                        &fStats, size, duration, fps, fFlags);
     auto ainfo = builder.parse(json);
 
@@ -465,7 +474,9 @@ void Animation::render(SkCanvas* canvas, const SkRect* dstR, RenderFlags renderF
         canvas->concat(SkMatrix::MakeRectToRect(srcR, *dstR, SkMatrix::kCenter_ScaleToFit));
     }
 
-    canvas->clipRect(srcR);
+    if (!(renderFlags & RenderFlag::kDisableTopLevelClipping)) {
+        canvas->clipRect(srcR);
+    }
 
     if ((fFlags & Flags::kRequiresTopLevelIsolation) &&
         !(renderFlags & RenderFlag::kSkipTopLevelIsolation)) {

@@ -36,10 +36,6 @@
 #include "sandbox/linux/system_headers/linux_time.h"
 #include "sandbox/linux/tests/unit_tests.h"
 
-#if !defined(OS_ANDROID)
-#include "third_party/lss/linux_syscall_support.h"  // for MAKE_PROCESS_CPUCLOCK
-#endif
-
 namespace sandbox {
 
 namespace {
@@ -58,8 +54,14 @@ class RestrictClockIdPolicy : public bpf_dsl::Policy {
   ResultExpr EvaluateSyscall(int sysno) const override {
     switch (sysno) {
       case __NR_clock_gettime:
+#if defined(__NR_clock_gettime64)
+      case __NR_clock_gettime64:
+#endif
       case __NR_clock_getres:
       case __NR_clock_nanosleep:
+#if defined(__NR_clock_nanosleep_time64)
+      case __NR_clock_nanosleep_time64:
+#endif
         return RestrictClockID();
       default:
         return Allow();

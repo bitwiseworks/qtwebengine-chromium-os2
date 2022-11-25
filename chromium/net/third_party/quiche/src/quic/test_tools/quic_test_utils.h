@@ -15,20 +15,26 @@
 
 #include "net/third_party/quiche/src/quic/core/congestion_control/loss_detection_interface.h"
 #include "net/third_party/quiche/src/quic/core/congestion_control/send_algorithm_interface.h"
+#include "net/third_party/quiche/src/quic/core/crypto/transport_parameters.h"
 #include "net/third_party/quiche/src/quic/core/http/quic_client_push_promise_index.h"
 #include "net/third_party/quiche/src/quic/core/http/quic_server_session_base.h"
 #include "net/third_party/quiche/src/quic/core/http/quic_spdy_session.h"
 #include "net/third_party/quiche/src/quic/core/quic_connection.h"
+#include "net/third_party/quiche/src/quic/core/quic_connection_id.h"
 #include "net/third_party/quiche/src/quic/core/quic_framer.h"
 #include "net/third_party/quiche/src/quic/core/quic_packet_writer.h"
 #include "net/third_party/quiche/src/quic/core/quic_sent_packet_manager.h"
+#include "net/third_party/quiche/src/quic/core/quic_server_id.h"
 #include "net/third_party/quiche/src/quic/core/quic_simple_buffer_allocator.h"
 #include "net/third_party/quiche/src/quic/core/quic_types.h"
+#include "net/third_party/quiche/src/quic/core/quic_utils.h"
 #include "net/third_party/quiche/src/quic/platform/api/quic_mem_slice_storage.h"
 #include "net/third_party/quiche/src/quic/platform/api/quic_test.h"
 #include "net/third_party/quiche/src/quic/test_tools/mock_clock.h"
 #include "net/third_party/quiche/src/quic/test_tools/mock_quic_session_visitor.h"
 #include "net/third_party/quiche/src/quic/test_tools/mock_random.h"
+#include "net/third_party/quiche/src/quic/test_tools/quic_framer_peer.h"
+#include "net/third_party/quiche/src/quic/test_tools/simple_quic_framer.h"
 #include "net/third_party/quiche/src/common/platform/api/quiche_str_cat.h"
 #include "net/third_party/quiche/src/common/platform/api/quiche_string_piece.h"
 
@@ -50,11 +56,29 @@ QuicConnectionId TestConnectionIdNineBytesLong(uint64_t connection_number);
 // Extracts the connection number passed to TestConnectionId().
 uint64_t TestConnectionIdToUInt64(QuicConnectionId connection_id);
 
-static const uint16_t kTestPort = 12345;
-static const uint32_t kInitialStreamFlowControlWindowForTest =
-    1024 * 1024;  // 1 MB
-static const uint32_t kInitialSessionFlowControlWindowForTest =
-    1536 * 1024;  // 1.5 MB
+enum : uint16_t { kTestPort = 12345 };
+enum : uint32_t {
+  kMaxDatagramFrameSizeForTest = 1333,
+  kMaxPacketSizeForTest = 9001,
+  kInitialStreamFlowControlWindowForTest = 1024 * 1024,   // 1 MB
+  kInitialSessionFlowControlWindowForTest = 1536 * 1024,  // 1.5 MB
+};
+
+enum : uint64_t {
+  kAckDelayExponentForTest = 10,
+  kMaxAckDelayForTest = 51,  // ms
+  kActiveConnectionIdLimitForTest = 52,
+  kMinAckDelayUsForTest = 1000
+};
+
+// Create an arbitrary stateless reset token, same across multiple calls.
+std::vector<uint8_t> CreateStatelessResetTokenForTest();
+
+// A hostname useful for testing, returns "test.example.org".
+std::string TestHostname();
+
+// A server ID useful for testing, returns test.example.org:12345.
+QuicServerId TestServerId();
 
 // Returns the test peer IP address.
 QuicIpAddress TestPeerIPAddress();
@@ -64,6 +88,11 @@ ParsedQuicVersion QuicVersionMax();
 
 // Lower limit on versions we support.
 ParsedQuicVersion QuicVersionMin();
+
+// Disables all flags that enable QUIC versions that use TLS.
+// This is only meant as a temporary measure to prevent some broken tests
+// from running with TLS.
+void DisableQuicVersionsWithTls();
 
 // Create an encrypted packet for testing.
 // If versions == nullptr, uses &AllSupportedVersions().
@@ -135,8 +164,13 @@ QuicEncryptedPacket* ConstructEncryptedPacket(
     uint64_t packet_number,
     const std::string& data);
 
-// Constructs a received packet for testing. The caller must take ownership of
-// the returned pointer.
+// Creates a client-to-server ZERO-RTT packet that will fail to decrypt.
+std::unique_ptr<QuicEncryptedPacket> GetUndecryptableEarlyPacket(
+    const ParsedQuicVersion& version,
+    const QuicConnectionId& server_connection_id);
+
+// Constructs a received packet for testing. The caller must take ownership
+// of the returned pointer.
 QuicReceivedPacket* ConstructReceivedPacket(
     const QuicEncryptedPacket& encrypted_packet,
     QuicTime receipt_time);
@@ -251,63 +285,145 @@ class MockFramerVisitor : public QuicFramerVisitorInterface {
   MockFramerVisitor& operator=(const MockFramerVisitor&) = delete;
   ~MockFramerVisitor() override;
 
-  MOCK_METHOD1(OnError, void(QuicFramer* framer));
+  MOCK_METHOD(void, OnError, (QuicFramer*), (override));
   // The constructor sets this up to return false by default.
-  MOCK_METHOD1(OnProtocolVersionMismatch, bool(ParsedQuicVersion version));
-  MOCK_METHOD0(OnPacket, void());
-  MOCK_METHOD1(OnPublicResetPacket, void(const QuicPublicResetPacket& header));
-  MOCK_METHOD1(OnVersionNegotiationPacket,
-               void(const QuicVersionNegotiationPacket& packet));
-  MOCK_METHOD5(OnRetryPacket,
-               void(QuicConnectionId original_connection_id,
-                    QuicConnectionId new_connection_id,
-                    quiche::QuicheStringPiece retry_token,
-                    quiche::QuicheStringPiece retry_integrity_tag,
-                    quiche::QuicheStringPiece retry_without_tag));
+  MOCK_METHOD(bool,
+              OnProtocolVersionMismatch,
+              (ParsedQuicVersion version),
+              (override));
+  MOCK_METHOD(void, OnPacket, (), (override));
+  MOCK_METHOD(void,
+              OnPublicResetPacket,
+              (const QuicPublicResetPacket& header),
+              (override));
+  MOCK_METHOD(void,
+              OnVersionNegotiationPacket,
+              (const QuicVersionNegotiationPacket& packet),
+              (override));
+  MOCK_METHOD(void,
+              OnRetryPacket,
+              (QuicConnectionId original_connection_id,
+               QuicConnectionId new_connection_id,
+               quiche::QuicheStringPiece retry_token,
+               quiche::QuicheStringPiece retry_integrity_tag,
+               quiche::QuicheStringPiece retry_without_tag),
+              (override));
   // The constructor sets this up to return true by default.
-  MOCK_METHOD1(OnUnauthenticatedHeader, bool(const QuicPacketHeader& header));
+  MOCK_METHOD(bool,
+              OnUnauthenticatedHeader,
+              (const QuicPacketHeader& header),
+              (override));
   // The constructor sets this up to return true by default.
-  MOCK_METHOD1(OnUnauthenticatedPublicHeader,
-               bool(const QuicPacketHeader& header));
-  MOCK_METHOD1(OnDecryptedPacket, void(EncryptionLevel level));
-  MOCK_METHOD1(OnPacketHeader, bool(const QuicPacketHeader& header));
-  MOCK_METHOD1(OnCoalescedPacket, void(const QuicEncryptedPacket& packet));
-  MOCK_METHOD3(OnUndecryptablePacket,
-               void(const QuicEncryptedPacket& packet,
-                    EncryptionLevel decryption_level,
-                    bool has_decryption_key));
-  MOCK_METHOD1(OnStreamFrame, bool(const QuicStreamFrame& frame));
-  MOCK_METHOD1(OnCryptoFrame, bool(const QuicCryptoFrame& frame));
-  MOCK_METHOD2(OnAckFrameStart, bool(QuicPacketNumber, QuicTime::Delta));
-  MOCK_METHOD2(OnAckRange, bool(QuicPacketNumber, QuicPacketNumber));
-  MOCK_METHOD2(OnAckTimestamp, bool(QuicPacketNumber, QuicTime));
-  MOCK_METHOD1(OnAckFrameEnd, bool(QuicPacketNumber));
-  MOCK_METHOD1(OnStopWaitingFrame, bool(const QuicStopWaitingFrame& frame));
-  MOCK_METHOD1(OnPaddingFrame, bool(const QuicPaddingFrame& frame));
-  MOCK_METHOD1(OnPingFrame, bool(const QuicPingFrame& frame));
-  MOCK_METHOD1(OnRstStreamFrame, bool(const QuicRstStreamFrame& frame));
-  MOCK_METHOD1(OnConnectionCloseFrame,
-               bool(const QuicConnectionCloseFrame& frame));
-  MOCK_METHOD1(OnNewConnectionIdFrame,
-               bool(const QuicNewConnectionIdFrame& frame));
-  MOCK_METHOD1(OnRetireConnectionIdFrame,
-               bool(const QuicRetireConnectionIdFrame& frame));
-  MOCK_METHOD1(OnNewTokenFrame, bool(const QuicNewTokenFrame& frame));
-  MOCK_METHOD1(OnStopSendingFrame, bool(const QuicStopSendingFrame& frame));
-  MOCK_METHOD1(OnPathChallengeFrame, bool(const QuicPathChallengeFrame& frame));
-  MOCK_METHOD1(OnPathResponseFrame, bool(const QuicPathResponseFrame& frame));
-  MOCK_METHOD1(OnGoAwayFrame, bool(const QuicGoAwayFrame& frame));
-  MOCK_METHOD1(OnMaxStreamsFrame, bool(const QuicMaxStreamsFrame& frame));
-  MOCK_METHOD1(OnStreamsBlockedFrame,
-               bool(const QuicStreamsBlockedFrame& frame));
-  MOCK_METHOD1(OnWindowUpdateFrame, bool(const QuicWindowUpdateFrame& frame));
-  MOCK_METHOD1(OnBlockedFrame, bool(const QuicBlockedFrame& frame));
-  MOCK_METHOD1(OnMessageFrame, bool(const QuicMessageFrame& frame));
-  MOCK_METHOD1(OnHandshakeDoneFrame, bool(const QuicHandshakeDoneFrame& frame));
-  MOCK_METHOD0(OnPacketComplete, void());
-  MOCK_CONST_METHOD1(IsValidStatelessResetToken, bool(QuicUint128));
-  MOCK_METHOD1(OnAuthenticatedIetfStatelessResetPacket,
-               void(const QuicIetfStatelessResetPacket&));
+  MOCK_METHOD(bool,
+              OnUnauthenticatedPublicHeader,
+              (const QuicPacketHeader& header),
+              (override));
+  MOCK_METHOD(void, OnDecryptedPacket, (EncryptionLevel level), (override));
+  MOCK_METHOD(bool,
+              OnPacketHeader,
+              (const QuicPacketHeader& header),
+              (override));
+  MOCK_METHOD(void,
+              OnCoalescedPacket,
+              (const QuicEncryptedPacket& packet),
+              (override));
+  MOCK_METHOD(void,
+              OnUndecryptablePacket,
+              (const QuicEncryptedPacket& packet,
+               EncryptionLevel decryption_level,
+               bool has_decryption_key),
+              (override));
+  MOCK_METHOD(bool, OnStreamFrame, (const QuicStreamFrame& frame), (override));
+  MOCK_METHOD(bool, OnCryptoFrame, (const QuicCryptoFrame& frame), (override));
+  MOCK_METHOD(bool,
+              OnAckFrameStart,
+              (QuicPacketNumber, QuicTime::Delta),
+              (override));
+  MOCK_METHOD(bool,
+              OnAckRange,
+              (QuicPacketNumber, QuicPacketNumber),
+              (override));
+  MOCK_METHOD(bool, OnAckTimestamp, (QuicPacketNumber, QuicTime), (override));
+  MOCK_METHOD(bool, OnAckFrameEnd, (QuicPacketNumber), (override));
+  MOCK_METHOD(bool,
+              OnStopWaitingFrame,
+              (const QuicStopWaitingFrame& frame),
+              (override));
+  MOCK_METHOD(bool,
+              OnPaddingFrame,
+              (const QuicPaddingFrame& frame),
+              (override));
+  MOCK_METHOD(bool, OnPingFrame, (const QuicPingFrame& frame), (override));
+  MOCK_METHOD(bool,
+              OnRstStreamFrame,
+              (const QuicRstStreamFrame& frame),
+              (override));
+  MOCK_METHOD(bool,
+              OnConnectionCloseFrame,
+              (const QuicConnectionCloseFrame& frame),
+              (override));
+  MOCK_METHOD(bool,
+              OnNewConnectionIdFrame,
+              (const QuicNewConnectionIdFrame& frame),
+              (override));
+  MOCK_METHOD(bool,
+              OnRetireConnectionIdFrame,
+              (const QuicRetireConnectionIdFrame& frame),
+              (override));
+  MOCK_METHOD(bool,
+              OnNewTokenFrame,
+              (const QuicNewTokenFrame& frame),
+              (override));
+  MOCK_METHOD(bool,
+              OnStopSendingFrame,
+              (const QuicStopSendingFrame& frame),
+              (override));
+  MOCK_METHOD(bool,
+              OnPathChallengeFrame,
+              (const QuicPathChallengeFrame& frame),
+              (override));
+  MOCK_METHOD(bool,
+              OnPathResponseFrame,
+              (const QuicPathResponseFrame& frame),
+              (override));
+  MOCK_METHOD(bool, OnGoAwayFrame, (const QuicGoAwayFrame& frame), (override));
+  MOCK_METHOD(bool,
+              OnMaxStreamsFrame,
+              (const QuicMaxStreamsFrame& frame),
+              (override));
+  MOCK_METHOD(bool,
+              OnStreamsBlockedFrame,
+              (const QuicStreamsBlockedFrame& frame),
+              (override));
+  MOCK_METHOD(bool,
+              OnWindowUpdateFrame,
+              (const QuicWindowUpdateFrame& frame),
+              (override));
+  MOCK_METHOD(bool,
+              OnBlockedFrame,
+              (const QuicBlockedFrame& frame),
+              (override));
+  MOCK_METHOD(bool,
+              OnMessageFrame,
+              (const QuicMessageFrame& frame),
+              (override));
+  MOCK_METHOD(bool,
+              OnHandshakeDoneFrame,
+              (const QuicHandshakeDoneFrame& frame),
+              (override));
+  MOCK_METHOD(bool,
+              OnAckFrequencyFrame,
+              (const QuicAckFrequencyFrame& frame),
+              (override));
+  MOCK_METHOD(void, OnPacketComplete, (), (override));
+  MOCK_METHOD(bool,
+              IsValidStatelessResetToken,
+              (QuicUint128),
+              (const, override));
+  MOCK_METHOD(void,
+              OnAuthenticatedIetfStatelessResetPacket,
+              (const QuicIetfStatelessResetPacket&),
+              (override));
 };
 
 class NoOpFramerVisitor : public QuicFramerVisitorInterface {
@@ -363,6 +479,7 @@ class NoOpFramerVisitor : public QuicFramerVisitorInterface {
   bool OnBlockedFrame(const QuicBlockedFrame& frame) override;
   bool OnMessageFrame(const QuicMessageFrame& frame) override;
   bool OnHandshakeDoneFrame(const QuicHandshakeDoneFrame& frame) override;
+  bool OnAckFrequencyFrame(const QuicAckFrequencyFrame& frame) override;
   void OnPacketComplete() override {}
   bool IsValidStatelessResetToken(QuicUint128 token) const override;
   void OnAuthenticatedIetfStatelessResetPacket(
@@ -377,44 +494,74 @@ class MockQuicConnectionVisitor : public QuicConnectionVisitorInterface {
       delete;
   ~MockQuicConnectionVisitor() override;
 
-  MOCK_METHOD1(OnStreamFrame, void(const QuicStreamFrame& frame));
-  MOCK_METHOD1(OnCryptoFrame, void(const QuicCryptoFrame& frame));
-  MOCK_METHOD1(OnWindowUpdateFrame, void(const QuicWindowUpdateFrame& frame));
-  MOCK_METHOD1(OnBlockedFrame, void(const QuicBlockedFrame& frame));
-  MOCK_METHOD1(OnRstStream, void(const QuicRstStreamFrame& frame));
-  MOCK_METHOD1(OnGoAway, void(const QuicGoAwayFrame& frame));
-  MOCK_METHOD1(OnMessageReceived, void(quiche::QuicheStringPiece message));
-  MOCK_METHOD0(OnHandshakeDoneReceived, void());
-  MOCK_METHOD2(OnConnectionClosed,
-               void(const QuicConnectionCloseFrame& frame,
-                    ConnectionCloseSource source));
-  MOCK_METHOD0(OnWriteBlocked, void());
-  MOCK_METHOD0(OnCanWrite, void());
-  MOCK_METHOD0(SendProbingData, bool());
-  MOCK_METHOD1(OnCongestionWindowChange, void(QuicTime now));
-  MOCK_METHOD1(OnConnectionMigration, void(AddressChangeType type));
-  MOCK_METHOD0(OnPathDegrading, void());
-  MOCK_CONST_METHOD0(WillingAndAbleToWrite, bool());
-  MOCK_CONST_METHOD0(HasPendingHandshake, bool());
-  MOCK_CONST_METHOD0(ShouldKeepConnectionAlive, bool());
-  MOCK_METHOD1(OnSuccessfulVersionNegotiation,
-               void(const ParsedQuicVersion& version));
-  MOCK_METHOD3(OnPacketReceived,
-               void(const QuicSocketAddress& self_address,
-                    const QuicSocketAddress& peer_address,
-                    bool is_connectivity_probe));
-  MOCK_METHOD0(OnConfigNegotiated, void());
-  MOCK_METHOD0(OnAckNeedsRetransmittableFrame, void());
-  MOCK_METHOD0(SendPing, void());
-  MOCK_CONST_METHOD0(AllowSelfAddressChange, bool());
-  MOCK_CONST_METHOD0(GetHandshakeState, HandshakeState());
-  MOCK_METHOD0(OnForwardProgressConfirmed, void());
-  MOCK_METHOD1(OnMaxStreamsFrame, bool(const QuicMaxStreamsFrame& frame));
-  MOCK_METHOD1(OnStreamsBlockedFrame,
-               bool(const QuicStreamsBlockedFrame& frame));
-  MOCK_METHOD1(OnStopSendingFrame, void(const QuicStopSendingFrame& frame));
-  MOCK_METHOD1(OnPacketDecrypted, void(EncryptionLevel));
-  MOCK_METHOD0(OnOneRttPacketAcknowledged, void());
+  MOCK_METHOD(void, OnStreamFrame, (const QuicStreamFrame& frame), (override));
+  MOCK_METHOD(void, OnCryptoFrame, (const QuicCryptoFrame& frame), (override));
+  MOCK_METHOD(void,
+              OnWindowUpdateFrame,
+              (const QuicWindowUpdateFrame& frame),
+              (override));
+  MOCK_METHOD(void,
+              OnBlockedFrame,
+              (const QuicBlockedFrame& frame),
+              (override));
+  MOCK_METHOD(void, OnRstStream, (const QuicRstStreamFrame& frame), (override));
+  MOCK_METHOD(void, OnGoAway, (const QuicGoAwayFrame& frame), (override));
+  MOCK_METHOD(void,
+              OnMessageReceived,
+              (quiche::QuicheStringPiece message),
+              (override));
+  MOCK_METHOD(void, OnHandshakeDoneReceived, (), (override));
+  MOCK_METHOD(void,
+              OnConnectionClosed,
+              (const QuicConnectionCloseFrame& frame,
+               ConnectionCloseSource source),
+              (override));
+  MOCK_METHOD(void, OnWriteBlocked, (), (override));
+  MOCK_METHOD(void, OnCanWrite, (), (override));
+  MOCK_METHOD(bool, SendProbingData, (), (override));
+  MOCK_METHOD(bool,
+              ValidateStatelessReset,
+              (const quic::QuicSocketAddress&, const quic::QuicSocketAddress&),
+              (override));
+  MOCK_METHOD(void, OnCongestionWindowChange, (QuicTime now), (override));
+  MOCK_METHOD(void,
+              OnConnectionMigration,
+              (AddressChangeType type),
+              (override));
+  MOCK_METHOD(void, OnPathDegrading, (), (override));
+  MOCK_METHOD(void, OnForwardProgressMadeAfterPathDegrading, (), (override));
+  MOCK_METHOD(bool, WillingAndAbleToWrite, (), (const, override));
+  MOCK_METHOD(bool, ShouldKeepConnectionAlive, (), (const, override));
+  MOCK_METHOD(std::string, GetStreamsInfoForLogging, (), (const, override));
+  MOCK_METHOD(void,
+              OnSuccessfulVersionNegotiation,
+              (const ParsedQuicVersion& version),
+              (override));
+  MOCK_METHOD(void,
+              OnPacketReceived,
+              (const QuicSocketAddress& self_address,
+               const QuicSocketAddress& peer_address,
+               bool is_connectivity_probe),
+              (override));
+  MOCK_METHOD(void, OnAckNeedsRetransmittableFrame, (), (override));
+  MOCK_METHOD(void, SendPing, (), (override));
+  MOCK_METHOD(bool, AllowSelfAddressChange, (), (const, override));
+  MOCK_METHOD(HandshakeState, GetHandshakeState, (), (const, override));
+  MOCK_METHOD(bool,
+              OnMaxStreamsFrame,
+              (const QuicMaxStreamsFrame& frame),
+              (override));
+  MOCK_METHOD(bool,
+              OnStreamsBlockedFrame,
+              (const QuicStreamsBlockedFrame& frame),
+              (override));
+  MOCK_METHOD(void,
+              OnStopSendingFrame,
+              (const QuicStopSendingFrame& frame),
+              (override));
+  MOCK_METHOD(void, OnPacketDecrypted, (EncryptionLevel), (override));
+  MOCK_METHOD(void, OnOneRttPacketAcknowledged, (), (override));
+  MOCK_METHOD(void, OnHandshakePacketSent, (), (override));
 };
 
 class MockQuicConnectionHelper : public QuicConnectionHelperInterface {
@@ -499,53 +646,58 @@ class MockQuicConnection : public QuicConnection {
   // will advance the time of the MockClock.
   void AdvanceTime(QuicTime::Delta delta);
 
-  MOCK_METHOD3(ProcessUdpPacket,
-               void(const QuicSocketAddress& self_address,
-                    const QuicSocketAddress& peer_address,
-                    const QuicReceivedPacket& packet));
-  MOCK_METHOD1(SendConnectionClose, void(QuicErrorCode error));
-  MOCK_METHOD3(CloseConnection,
-               void(QuicErrorCode error,
-                    const std::string& details,
-                    ConnectionCloseBehavior connection_close_behavior));
-  MOCK_METHOD2(SendConnectionClosePacket,
-               void(QuicErrorCode error, const std::string& details));
-  MOCK_METHOD3(SendRstStream,
-               void(QuicStreamId id,
-                    QuicRstStreamErrorCode error,
-                    QuicStreamOffset bytes_written));
-  MOCK_METHOD3(SendGoAway,
-               void(QuicErrorCode error,
-                    QuicStreamId last_good_stream_id,
-                    const std::string& reason));
-  MOCK_METHOD1(SendBlocked, void(QuicStreamId id));
-  MOCK_METHOD2(SendWindowUpdate,
-               void(QuicStreamId id, QuicStreamOffset byte_offset));
-  MOCK_METHOD0(OnCanWrite, void());
-  MOCK_METHOD1(SendConnectivityProbingResponsePacket,
-               void(const QuicSocketAddress& peer_address));
-  MOCK_METHOD2(SendConnectivityProbingPacket,
-               bool(QuicPacketWriter* probing_writer,
-                    const QuicSocketAddress& peer_address));
+  MOCK_METHOD(void,
+              ProcessUdpPacket,
+              (const QuicSocketAddress& self_address,
+               const QuicSocketAddress& peer_address,
+               const QuicReceivedPacket& packet),
+              (override));
+  MOCK_METHOD(void,
+              CloseConnection,
+              (QuicErrorCode error,
+               const std::string& details,
+               ConnectionCloseBehavior connection_close_behavior),
+              (override));
+  MOCK_METHOD(void,
+              SendConnectionClosePacket,
+              (QuicErrorCode error, const std::string& details),
+              (override));
+  MOCK_METHOD(void, OnCanWrite, (), (override));
+  MOCK_METHOD(void,
+              SendConnectivityProbingResponsePacket,
+              (const QuicSocketAddress& peer_address),
+              (override));
+  MOCK_METHOD(bool,
+              SendConnectivityProbingPacket,
+              (QuicPacketWriter*, const QuicSocketAddress& peer_address),
+              (override));
 
-  MOCK_METHOD1(OnSendConnectionState, void(const CachedNetworkParameters&));
-  MOCK_METHOD2(ResumeConnectionState,
-               void(const CachedNetworkParameters&, bool));
-  MOCK_METHOD1(SetMaxPacingRate, void(QuicBandwidth));
+  MOCK_METHOD(void,
+              OnSendConnectionState,
+              (const CachedNetworkParameters&),
+              (override));
+  MOCK_METHOD(void,
+              ResumeConnectionState,
+              (const CachedNetworkParameters&, bool),
+              (override));
+  MOCK_METHOD(void, SetMaxPacingRate, (QuicBandwidth), (override));
 
-  MOCK_METHOD2(OnStreamReset, void(QuicStreamId, QuicRstStreamErrorCode));
-  MOCK_METHOD1(SendControlFrame, bool(const QuicFrame& frame));
-  MOCK_METHOD3(SendMessage,
-               MessageStatus(QuicMessageId, QuicMemSliceSpan, bool));
-  MOCK_METHOD3(OnConnectionClosed,
-               void(QuicErrorCode error,
-                    const std::string& error_details,
-                    ConnectionCloseSource source));
+  MOCK_METHOD(void,
+              OnStreamReset,
+              (QuicStreamId, QuicRstStreamErrorCode),
+              (override));
+  MOCK_METHOD(bool, SendControlFrame, (const QuicFrame& frame), (override));
+  MOCK_METHOD(MessageStatus,
+              SendMessage,
+              (QuicMessageId, QuicMemSliceSpan, bool),
+              (override));
 
-  MOCK_METHOD1(OnError, void(QuicFramer* framer));
+  MOCK_METHOD(void, OnError, (QuicFramer*), (override));
   void QuicConnection_OnError(QuicFramer* framer) {
     QuicConnection::OnError(framer);
   }
+
+  void ReallyOnCanWrite() { QuicConnection::OnCanWrite(); }
 
   void ReallyCloseConnection(
       QuicErrorCode error,
@@ -577,10 +729,18 @@ class MockQuicConnection : public QuicConnection {
       const QuicSocketAddress& peer_address) {
     QuicConnection::SendConnectivityProbingResponsePacket(peer_address);
   }
-  MOCK_METHOD1(OnPathResponseFrame, bool(const QuicPathResponseFrame&));
-  MOCK_METHOD1(OnStopSendingFrame, bool(const QuicStopSendingFrame& frame));
-  MOCK_METHOD3(SendCryptoData,
-               size_t(EncryptionLevel, size_t, QuicStreamOffset));
+  MOCK_METHOD(bool,
+              OnPathResponseFrame,
+              (const QuicPathResponseFrame&),
+              (override));
+  MOCK_METHOD(bool,
+              OnStopSendingFrame,
+              (const QuicStopSendingFrame& frame),
+              (override));
+  MOCK_METHOD(size_t,
+              SendCryptoData,
+              (EncryptionLevel, size_t, QuicStreamOffset),
+              (override));
   size_t QuicConnection_SendCryptoData(EncryptionLevel level,
                                        size_t write_length,
                                        QuicStreamOffset offset) {
@@ -603,7 +763,9 @@ class PacketSavingConnection : public MockQuicConnection {
 
   ~PacketSavingConnection() override;
 
-  void SendOrQueuePacket(SerializedPacket* packet) override;
+  void SendOrQueuePacket(SerializedPacket packet) override;
+
+  MOCK_METHOD(void, OnPacketSent, (EncryptionLevel, TransmissionType));
 
   std::vector<std::unique_ptr<QuicEncryptedPacket>> encrypted_packets_;
   MockClock clock_;
@@ -624,41 +786,45 @@ class MockQuicSession : public QuicSession {
   const QuicCryptoStream* GetCryptoStream() const override;
   void SetCryptoStream(QuicCryptoStream* crypto_stream);
 
-  MOCK_METHOD2(OnConnectionClosed,
-               void(const QuicConnectionCloseFrame& frame,
-                    ConnectionCloseSource source));
-  MOCK_METHOD1(CreateIncomingStream, QuicStream*(QuicStreamId id));
-  MOCK_METHOD1(CreateIncomingStream, QuicSpdyStream*(PendingStream* stream));
-  MOCK_METHOD1(ShouldCreateIncomingStream2, bool(QuicStreamId id));
-  MOCK_METHOD0(ShouldCreateOutgoingBidirectionalStream, bool());
-  MOCK_METHOD0(ShouldCreateOutgoingUnidirectionalStream, bool());
-  MOCK_METHOD6(WritevData,
-               QuicConsumedData(QuicStreamId id,
-                                size_t write_length,
-                                QuicStreamOffset offset,
-                                StreamSendingState state,
-                                TransmissionType type,
-                                quiche::QuicheOptional<EncryptionLevel> level));
+  MOCK_METHOD(void,
+              OnConnectionClosed,
+              (const QuicConnectionCloseFrame& frame,
+               ConnectionCloseSource source),
+              (override));
+  MOCK_METHOD(QuicStream*, CreateIncomingStream, (QuicStreamId id), (override));
+  MOCK_METHOD(QuicSpdyStream*,
+              CreateIncomingStream,
+              (PendingStream*),
+              (override));
+  MOCK_METHOD(QuicConsumedData,
+              WritevData,
+              (QuicStreamId id,
+               size_t write_length,
+               QuicStreamOffset offset,
+               StreamSendingState state,
+               TransmissionType type,
+               quiche::QuicheOptional<EncryptionLevel> level),
+              (override));
 
-  MOCK_METHOD3(SendRstStream,
-               void(QuicStreamId stream_id,
-                    QuicRstStreamErrorCode error,
-                    QuicStreamOffset bytes_written));
+  MOCK_METHOD(void,
+              SendRstStream,
+              (QuicStreamId stream_id,
+               QuicRstStreamErrorCode error,
+               QuicStreamOffset bytes_written,
+               bool send_rst_only),
+              (override));
 
-  MOCK_METHOD2(OnStreamHeaders,
-               void(QuicStreamId stream_id,
-                    quiche::QuicheStringPiece headers_data));
-  MOCK_METHOD2(OnStreamHeadersPriority,
-               void(QuicStreamId stream_id, spdy::SpdyPriority priority));
-  MOCK_METHOD3(OnStreamHeadersComplete,
-               void(QuicStreamId stream_id, bool fin, size_t frame_len));
-  MOCK_CONST_METHOD0(ShouldKeepConnectionAlive, bool());
-  MOCK_METHOD2(SendStopSending, void(uint16_t code, QuicStreamId stream_id));
-  MOCK_CONST_METHOD0(GetAlpnsToOffer, std::vector<std::string>());
-  MOCK_CONST_METHOD1(SelectAlpn,
-                     std::vector<quiche::QuicheStringPiece>::const_iterator(
-                         const std::vector<quiche::QuicheStringPiece>&));
-  MOCK_METHOD1(OnAlpnSelected, void(quiche::QuicheStringPiece));
+  MOCK_METHOD(bool, ShouldKeepConnectionAlive, (), (const, override));
+  MOCK_METHOD(void,
+              SendStopSending,
+              (QuicRstStreamErrorCode code, QuicStreamId stream_id),
+              (override));
+  MOCK_METHOD(std::vector<std::string>, GetAlpnsToOffer, (), (const, override));
+  MOCK_METHOD(std::vector<quiche::QuicheStringPiece>::const_iterator,
+              SelectAlpn,
+              (const std::vector<quiche::QuicheStringPiece>&),
+              (const, override));
+  MOCK_METHOD(void, OnAlpnSelected, (quiche::QuicheStringPiece), (override));
 
   using QuicSession::ActivateStream;
 
@@ -673,8 +839,9 @@ class MockQuicSession : public QuicSession {
 
   void ReallySendRstStream(QuicStreamId id,
                            QuicRstStreamErrorCode error,
-                           QuicStreamOffset bytes_written) {
-    QuicSession::SendRstStream(id, error, bytes_written);
+                           QuicStreamOffset bytes_written,
+                           bool send_rst_only) {
+    QuicSession::SendRstStream(id, error, bytes_written, send_rst_only);
   }
 
  private:
@@ -687,6 +854,7 @@ class MockQuicCryptoStream : public QuicCryptoStream {
 
   ~MockQuicCryptoStream() override;
 
+  ssl_early_data_reason_t EarlyDataReason() const override;
   bool encryption_established() const override;
   bool one_rtt_keys_available() const override;
   const QuicCryptoNegotiatedParameters& crypto_negotiated_params()
@@ -694,8 +862,13 @@ class MockQuicCryptoStream : public QuicCryptoStream {
   CryptoMessageParser* crypto_message_parser() override;
   void OnPacketDecrypted(EncryptionLevel /*level*/) override {}
   void OnOneRttPacketAcknowledged() override {}
+  void OnHandshakePacketSent() override {}
   void OnHandshakeDoneReceived() override {}
+  void OnConnectionClosed(QuicErrorCode /*error*/,
+                          ConnectionCloseSource /*source*/) override {}
   HandshakeState GetHandshakeState() const override { return HANDSHAKE_START; }
+  void SetServerApplicationStateForResumption(
+      std::unique_ptr<ApplicationState> /*application_state*/) override {}
 
  private:
   QuicReferenceCountedPointer<QuicCryptoNegotiatedParameters> params_;
@@ -723,62 +896,75 @@ class MockQuicSpdySession : public QuicSpdySession {
   }
 
   // From QuicSession.
-  MOCK_METHOD2(OnConnectionClosed,
-               void(const QuicConnectionCloseFrame& frame,
-                    ConnectionCloseSource source));
-  MOCK_METHOD1(CreateIncomingStream, QuicSpdyStream*(QuicStreamId id));
-  MOCK_METHOD1(CreateIncomingStream, QuicSpdyStream*(PendingStream* stream));
-  MOCK_METHOD0(CreateOutgoingBidirectionalStream, QuicSpdyStream*());
-  MOCK_METHOD0(CreateOutgoingUnidirectionalStream, QuicSpdyStream*());
-  MOCK_METHOD1(ShouldCreateIncomingStream, bool(QuicStreamId id));
-  MOCK_METHOD0(ShouldCreateOutgoingBidirectionalStream, bool());
-  MOCK_METHOD0(ShouldCreateOutgoingUnidirectionalStream, bool());
-  MOCK_METHOD6(WritevData,
-               QuicConsumedData(QuicStreamId id,
-                                size_t write_length,
-                                QuicStreamOffset offset,
-                                StreamSendingState state,
-                                TransmissionType type,
-                                quiche::QuicheOptional<EncryptionLevel> level));
-
-  MOCK_METHOD3(SendRstStream,
-               void(QuicStreamId stream_id,
-                    QuicRstStreamErrorCode error,
-                    QuicStreamOffset bytes_written));
-
-  MOCK_METHOD2(OnStreamHeaders,
-               void(QuicStreamId stream_id,
-                    quiche::QuicheStringPiece headers_data));
-  MOCK_METHOD2(OnStreamHeadersPriority,
-               void(QuicStreamId stream_id,
-                    const spdy::SpdyStreamPrecedence& precedence));
-  MOCK_METHOD3(OnStreamHeadersComplete,
-               void(QuicStreamId stream_id, bool fin, size_t frame_len));
-  MOCK_METHOD4(OnStreamHeaderList,
-               void(QuicStreamId stream_id,
-                    bool fin,
-                    size_t frame_len,
-                    const QuicHeaderList& header_list));
-  MOCK_METHOD2(OnPromiseHeaders,
-               void(QuicStreamId stream_id,
-                    quiche::QuicheStringPiece headers_data));
-  MOCK_METHOD3(OnPromiseHeadersComplete,
-               void(QuicStreamId stream_id,
-                    QuicStreamId promised_stream_id,
-                    size_t frame_len));
-  MOCK_METHOD4(OnPromiseHeaderList,
-               void(QuicStreamId stream_id,
-                    QuicStreamId promised_stream_id,
-                    size_t frame_len,
-                    const QuicHeaderList& header_list));
-  MOCK_METHOD2(OnPriorityFrame,
-               void(QuicStreamId id,
-                    const spdy::SpdyStreamPrecedence& precedence));
-
-  MOCK_METHOD1(OnHeadersHeadOfLineBlocking, void(QuicTime::Delta delta));
-  MOCK_METHOD4(
-      OnStreamFrameData,
-      void(QuicStreamId stream_id, const char* data, size_t len, bool fin));
+  MOCK_METHOD(void,
+              OnConnectionClosed,
+              (const QuicConnectionCloseFrame& frame,
+               ConnectionCloseSource source),
+              (override));
+  MOCK_METHOD(QuicSpdyStream*,
+              CreateIncomingStream,
+              (QuicStreamId id),
+              (override));
+  MOCK_METHOD(QuicSpdyStream*,
+              CreateIncomingStream,
+              (PendingStream*),
+              (override));
+  MOCK_METHOD(QuicSpdyStream*,
+              CreateOutgoingBidirectionalStream,
+              (),
+              (override));
+  MOCK_METHOD(QuicSpdyStream*,
+              CreateOutgoingUnidirectionalStream,
+              (),
+              (override));
+  MOCK_METHOD(bool, ShouldCreateIncomingStream, (QuicStreamId id), (override));
+  MOCK_METHOD(bool, ShouldCreateOutgoingBidirectionalStream, (), (override));
+  MOCK_METHOD(bool, ShouldCreateOutgoingUnidirectionalStream, (), (override));
+  MOCK_METHOD(QuicConsumedData,
+              WritevData,
+              (QuicStreamId id,
+               size_t write_length,
+               QuicStreamOffset offset,
+               StreamSendingState state,
+               TransmissionType type,
+               quiche::QuicheOptional<EncryptionLevel> level),
+              (override));
+  MOCK_METHOD(void,
+              SendRstStream,
+              (QuicStreamId stream_id,
+               QuicRstStreamErrorCode error,
+               QuicStreamOffset bytes_written,
+               bool send_rst_only),
+              (override));
+  MOCK_METHOD(void,
+              SendWindowUpdate,
+              (QuicStreamId id, QuicStreamOffset byte_offset),
+              (override));
+  MOCK_METHOD(void, SendBlocked, (QuicStreamId id), (override));
+  MOCK_METHOD(void,
+              OnStreamHeadersPriority,
+              (QuicStreamId stream_id,
+               const spdy::SpdyStreamPrecedence& precedence),
+              (override));
+  MOCK_METHOD(void,
+              OnStreamHeaderList,
+              (QuicStreamId stream_id,
+               bool fin,
+               size_t frame_len,
+               const QuicHeaderList& header_list),
+              (override));
+  MOCK_METHOD(void,
+              OnPromiseHeaderList,
+              (QuicStreamId stream_id,
+               QuicStreamId promised_stream_id,
+               size_t frame_len,
+               const QuicHeaderList& header_list),
+              (override));
+  MOCK_METHOD(void,
+              OnPriorityFrame,
+              (QuicStreamId id, const spdy::SpdyStreamPrecedence& precedence),
+              (override));
+  MOCK_METHOD(void, OnCongestionWindowChange, (QuicTime now), (override));
 
   // Returns a QuicConsumedData that indicates all of |write_length| (and |fin|
   // if set) has been consumed.
@@ -797,39 +983,79 @@ class MockQuicSpdySession : public QuicSpdySession {
 
 class MockHttp3DebugVisitor : public Http3DebugVisitor {
  public:
-  MOCK_METHOD1(OnControlStreamCreated, void(QuicStreamId));
-  MOCK_METHOD1(OnQpackEncoderStreamCreated, void(QuicStreamId));
-  MOCK_METHOD1(OnQpackDecoderStreamCreated, void(QuicStreamId));
-  MOCK_METHOD1(OnPeerControlStreamCreated, void(QuicStreamId));
-  MOCK_METHOD1(OnPeerQpackEncoderStreamCreated, void(QuicStreamId));
-  MOCK_METHOD1(OnPeerQpackDecoderStreamCreated, void(QuicStreamId));
+  MOCK_METHOD(void, OnControlStreamCreated, (QuicStreamId), (override));
+  MOCK_METHOD(void, OnQpackEncoderStreamCreated, (QuicStreamId), (override));
+  MOCK_METHOD(void, OnQpackDecoderStreamCreated, (QuicStreamId), (override));
+  MOCK_METHOD(void, OnPeerControlStreamCreated, (QuicStreamId), (override));
+  MOCK_METHOD(void,
+              OnPeerQpackEncoderStreamCreated,
+              (QuicStreamId),
+              (override));
+  MOCK_METHOD(void,
+              OnPeerQpackDecoderStreamCreated,
+              (QuicStreamId),
+              (override));
 
-  MOCK_METHOD1(OnCancelPushFrameReceived, void(const CancelPushFrame&));
-  MOCK_METHOD1(OnSettingsFrameReceived, void(const SettingsFrame&));
-  MOCK_METHOD1(OnGoAwayFrameReceived, void(const GoAwayFrame&));
-  MOCK_METHOD1(OnMaxPushIdFrameReceived, void(const MaxPushIdFrame&));
-  MOCK_METHOD1(OnPriorityUpdateFrameReceived, void(const PriorityUpdateFrame&));
+  MOCK_METHOD(void,
+              OnCancelPushFrameReceived,
+              (const CancelPushFrame&),
+              (override));
+  MOCK_METHOD(void,
+              OnSettingsFrameReceived,
+              (const SettingsFrame&),
+              (override));
+  MOCK_METHOD(void, OnGoAwayFrameReceived, (const GoAwayFrame&), (override));
+  MOCK_METHOD(void,
+              OnMaxPushIdFrameReceived,
+              (const MaxPushIdFrame&),
+              (override));
+  MOCK_METHOD(void,
+              OnPriorityUpdateFrameReceived,
+              (const PriorityUpdateFrame&),
+              (override));
 
-  MOCK_METHOD2(OnDataFrameReceived, void(QuicStreamId, QuicByteCount));
-  MOCK_METHOD2(OnHeadersFrameReceived, void(QuicStreamId, QuicByteCount));
-  MOCK_METHOD2(OnHeadersDecoded, void(QuicStreamId, QuicHeaderList));
-  MOCK_METHOD3(OnPushPromiseFrameReceived,
-               void(QuicStreamId, QuicStreamId, QuicByteCount));
-  MOCK_METHOD3(OnPushPromiseDecoded,
-               void(QuicStreamId, QuicStreamId, QuicHeaderList));
-  MOCK_METHOD3(OnUnknownFrameReceived,
-               void(QuicStreamId, uint64_t, QuicByteCount));
+  MOCK_METHOD(void,
+              OnDataFrameReceived,
+              (QuicStreamId, QuicByteCount),
+              (override));
+  MOCK_METHOD(void,
+              OnHeadersFrameReceived,
+              (QuicStreamId, QuicByteCount),
+              (override));
+  MOCK_METHOD(void,
+              OnHeadersDecoded,
+              (QuicStreamId, QuicHeaderList),
+              (override));
+  MOCK_METHOD(void,
+              OnPushPromiseFrameReceived,
+              (QuicStreamId, QuicStreamId, QuicByteCount),
+              (override));
+  MOCK_METHOD(void,
+              OnPushPromiseDecoded,
+              (QuicStreamId, QuicStreamId, QuicHeaderList),
+              (override));
+  MOCK_METHOD(void,
+              OnUnknownFrameReceived,
+              (QuicStreamId, uint64_t, QuicByteCount),
+              (override));
 
-  MOCK_METHOD1(OnSettingsFrameSent, void(const SettingsFrame&));
-  MOCK_METHOD1(OnGoAwayFrameSent, void(QuicStreamId));
-  MOCK_METHOD1(OnMaxPushIdFrameSent, void(const MaxPushIdFrame&));
-  MOCK_METHOD1(OnPriorityUpdateFrameSent, void(const PriorityUpdateFrame&));
+  MOCK_METHOD(void, OnSettingsFrameSent, (const SettingsFrame&), (override));
+  MOCK_METHOD(void, OnGoAwayFrameSent, (QuicStreamId), (override));
+  MOCK_METHOD(void, OnMaxPushIdFrameSent, (const MaxPushIdFrame&), (override));
+  MOCK_METHOD(void,
+              OnPriorityUpdateFrameSent,
+              (const PriorityUpdateFrame&),
+              (override));
 
-  MOCK_METHOD2(OnDataFrameSent, void(QuicStreamId, QuicByteCount));
-  MOCK_METHOD2(OnHeadersFrameSent,
-               void(QuicStreamId, const spdy::SpdyHeaderBlock&));
-  MOCK_METHOD3(OnPushPromiseFrameSent,
-               void(QuicStreamId, QuicStreamId, const spdy::SpdyHeaderBlock&));
+  MOCK_METHOD(void, OnDataFrameSent, (QuicStreamId, QuicByteCount), (override));
+  MOCK_METHOD(void,
+              OnHeadersFrameSent,
+              (QuicStreamId, const spdy::SpdyHeaderBlock&),
+              (override));
+  MOCK_METHOD(void,
+              OnPushPromiseFrameSent,
+              (QuicStreamId, QuicStreamId, const spdy::SpdyHeaderBlock&),
+              (override));
 };
 
 class TestQuicSpdyServerSession : public QuicServerSessionBase {
@@ -845,13 +1071,27 @@ class TestQuicSpdyServerSession : public QuicServerSessionBase {
       delete;
   ~TestQuicSpdyServerSession() override;
 
-  MOCK_METHOD1(CreateIncomingStream, QuicSpdyStream*(QuicStreamId id));
-  MOCK_METHOD1(CreateIncomingStream, QuicSpdyStream*(PendingStream* stream));
-  MOCK_METHOD0(CreateOutgoingBidirectionalStream, QuicSpdyStream*());
-  MOCK_METHOD0(CreateOutgoingUnidirectionalStream, QuicSpdyStream*());
-  MOCK_CONST_METHOD1(SelectAlpn,
-                     std::vector<quiche::QuicheStringPiece>::const_iterator(
-                         const std::vector<quiche::QuicheStringPiece>&));
+  MOCK_METHOD(QuicSpdyStream*,
+              CreateIncomingStream,
+              (QuicStreamId id),
+              (override));
+  MOCK_METHOD(QuicSpdyStream*,
+              CreateIncomingStream,
+              (PendingStream*),
+              (override));
+  MOCK_METHOD(QuicSpdyStream*,
+              CreateOutgoingBidirectionalStream,
+              (),
+              (override));
+  MOCK_METHOD(QuicSpdyStream*,
+              CreateOutgoingUnidirectionalStream,
+              (),
+              (override));
+  MOCK_METHOD(std::vector<quiche::QuicheStringPiece>::const_iterator,
+              SelectAlpn,
+              (const std::vector<quiche::QuicheStringPiece>&),
+              (const, override));
+  MOCK_METHOD(void, OnAlpnSelected, (quiche::QuicheStringPiece), (override));
   std::unique_ptr<QuicCryptoServerStreamBase> CreateQuicCryptoServerStream(
       const QuicCryptoServerConfig* crypto_config,
       QuicCompressedCertsCache* compressed_certs_cache) override;
@@ -904,20 +1144,38 @@ class TestQuicSpdyClientSession : public QuicSpdyClientSessionBase {
   bool IsAuthorized(const std::string& authority) override;
 
   // QuicSpdyClientSessionBase
-  MOCK_METHOD1(OnProofValid,
-               void(const QuicCryptoClientConfig::CachedState& cached));
-  MOCK_METHOD1(OnProofVerifyDetailsAvailable,
-               void(const ProofVerifyDetails& verify_details));
+  MOCK_METHOD(void,
+              OnProofValid,
+              (const QuicCryptoClientConfig::CachedState& cached),
+              (override));
+  MOCK_METHOD(void,
+              OnProofVerifyDetailsAvailable,
+              (const ProofVerifyDetails& verify_details),
+              (override));
 
   // TestQuicSpdyClientSession
-  MOCK_METHOD1(CreateIncomingStream, QuicSpdyStream*(QuicStreamId id));
-  MOCK_METHOD1(CreateIncomingStream, QuicSpdyStream*(PendingStream* stream));
-  MOCK_METHOD0(CreateOutgoingBidirectionalStream, QuicSpdyStream*());
-  MOCK_METHOD0(CreateOutgoingUnidirectionalStream, QuicSpdyStream*());
-  MOCK_METHOD1(ShouldCreateIncomingStream, bool(QuicStreamId id));
-  MOCK_METHOD0(ShouldCreateOutgoingBidirectionalStream, bool());
-  MOCK_METHOD0(ShouldCreateOutgoingUnidirectionalStream, bool());
-  MOCK_CONST_METHOD0(GetAlpnsToOffer, std::vector<std::string>());
+  MOCK_METHOD(QuicSpdyStream*,
+              CreateIncomingStream,
+              (QuicStreamId id),
+              (override));
+  MOCK_METHOD(QuicSpdyStream*,
+              CreateIncomingStream,
+              (PendingStream*),
+              (override));
+  MOCK_METHOD(QuicSpdyStream*,
+              CreateOutgoingBidirectionalStream,
+              (),
+              (override));
+  MOCK_METHOD(QuicSpdyStream*,
+              CreateOutgoingUnidirectionalStream,
+              (),
+              (override));
+  MOCK_METHOD(bool, ShouldCreateIncomingStream, (QuicStreamId id), (override));
+  MOCK_METHOD(bool, ShouldCreateOutgoingBidirectionalStream, (), (override));
+  MOCK_METHOD(bool, ShouldCreateOutgoingUnidirectionalStream, (), (override));
+  MOCK_METHOD(std::vector<std::string>, GetAlpnsToOffer, (), (const, override));
+  MOCK_METHOD(void, OnAlpnSelected, (quiche::QuicheStringPiece), (override));
+  MOCK_METHOD(void, OnConfigNegotiated, (), (override));
 
   QuicCryptoClientStream* GetMutableCryptoStream() override;
   const QuicCryptoClientStream* GetCryptoStream() const override;
@@ -934,6 +1192,10 @@ class TestQuicSpdyClientSession : public QuicSpdyClientSessionBase {
   }
 
  private:
+  // Calls the parent class's OnConfigNegotiated method. Used to set the default
+  // mock behavior for OnConfigNegotiated.
+  void RealOnConfigNegotiated();
+
   std::unique_ptr<QuicCryptoClientStream> crypto_stream_;
   QuicClientPushPromiseIndex push_promise_index_;
   std::vector<CryptoHandshakeMessage> sent_crypto_handshake_messages_;
@@ -946,22 +1208,28 @@ class MockPacketWriter : public QuicPacketWriter {
   MockPacketWriter& operator=(const MockPacketWriter&) = delete;
   ~MockPacketWriter() override;
 
-  MOCK_METHOD5(WritePacket,
-               WriteResult(const char* buffer,
-                           size_t buf_len,
-                           const QuicIpAddress& self_address,
-                           const QuicSocketAddress& peer_address,
-                           PerPacketOptions* options));
-  MOCK_CONST_METHOD0(IsWriteBlocked, bool());
-  MOCK_METHOD0(SetWritable, void());
-  MOCK_CONST_METHOD1(GetMaxPacketSize,
-                     QuicByteCount(const QuicSocketAddress& peer_address));
-  MOCK_CONST_METHOD0(SupportsReleaseTime, bool());
-  MOCK_CONST_METHOD0(IsBatchMode, bool());
-  MOCK_METHOD2(GetNextWriteLocation,
-               char*(const QuicIpAddress& self_address,
-                     const QuicSocketAddress& peer_address));
-  MOCK_METHOD0(Flush, WriteResult());
+  MOCK_METHOD(WriteResult,
+              WritePacket,
+              (const char*,
+               size_t buf_len,
+               const QuicIpAddress& self_address,
+               const QuicSocketAddress& peer_address,
+               PerPacketOptions*),
+              (override));
+  MOCK_METHOD(bool, IsWriteBlocked, (), (const, override));
+  MOCK_METHOD(void, SetWritable, (), (override));
+  MOCK_METHOD(QuicByteCount,
+              GetMaxPacketSize,
+              (const QuicSocketAddress& peer_address),
+              (const, override));
+  MOCK_METHOD(bool, SupportsReleaseTime, (), (const, override));
+  MOCK_METHOD(bool, IsBatchMode, (), (const, override));
+  MOCK_METHOD(QuicPacketBuffer,
+              GetNextWriteLocation,
+              (const QuicIpAddress& self_address,
+               const QuicSocketAddress& peer_address),
+              (override));
+  MOCK_METHOD(WriteResult, Flush, (), (override));
 };
 
 class MockSendAlgorithm : public SendAlgorithmInterface {
@@ -971,45 +1239,59 @@ class MockSendAlgorithm : public SendAlgorithmInterface {
   MockSendAlgorithm& operator=(const MockSendAlgorithm&) = delete;
   ~MockSendAlgorithm() override;
 
-  MOCK_METHOD2(SetFromConfig,
-               void(const QuicConfig& config, Perspective perspective));
-  MOCK_METHOD1(SetInitialCongestionWindowInPackets,
-               void(QuicPacketCount packets));
-  MOCK_METHOD1(SetMaxCongestionWindow,
-               void(QuicByteCount max_congestion_window));
-  MOCK_METHOD5(OnCongestionEvent,
-               void(bool rtt_updated,
-                    QuicByteCount bytes_in_flight,
-                    QuicTime event_time,
-                    const AckedPacketVector& acked_packets,
-                    const LostPacketVector& lost_packets));
-  MOCK_METHOD5(OnPacketSent,
-               void(QuicTime,
-                    QuicByteCount,
-                    QuicPacketNumber,
-                    QuicByteCount,
-                    HasRetransmittableData));
-  MOCK_METHOD1(OnPacketNeutered, void(QuicPacketNumber));
-  MOCK_METHOD1(OnRetransmissionTimeout, void(bool));
-  MOCK_METHOD0(OnConnectionMigration, void());
-  MOCK_METHOD0(RevertRetransmissionTimeout, void());
-  MOCK_METHOD1(CanSend, bool(QuicByteCount));
-  MOCK_CONST_METHOD1(PacingRate, QuicBandwidth(QuicByteCount));
-  MOCK_CONST_METHOD0(BandwidthEstimate, QuicBandwidth(void));
-  MOCK_CONST_METHOD0(HasReliableBandwidthEstimate, bool());
-  MOCK_METHOD1(OnRttUpdated, void(QuicPacketNumber));
-  MOCK_CONST_METHOD0(GetCongestionWindow, QuicByteCount());
-  MOCK_CONST_METHOD0(GetDebugState, std::string());
-  MOCK_CONST_METHOD0(InSlowStart, bool());
-  MOCK_CONST_METHOD0(InRecovery, bool());
-  MOCK_CONST_METHOD0(ShouldSendProbingPacket, bool());
-  MOCK_CONST_METHOD0(GetSlowStartThreshold, QuicByteCount());
-  MOCK_CONST_METHOD0(GetCongestionControlType, CongestionControlType());
-  MOCK_METHOD3(AdjustNetworkParameters,
-               void(QuicBandwidth, QuicTime::Delta, bool));
-  MOCK_METHOD1(AdjustNetworkParameters, void(const NetworkParams&));
-  MOCK_METHOD1(OnApplicationLimited, void(QuicByteCount));
-  MOCK_CONST_METHOD1(PopulateConnectionStats, void(QuicConnectionStats*));
+  MOCK_METHOD(void,
+              SetFromConfig,
+              (const QuicConfig& config, Perspective perspective),
+              (override));
+  MOCK_METHOD(void,
+              ApplyConnectionOptions,
+              (const QuicTagVector& connection_options),
+              (override));
+  MOCK_METHOD(void,
+              SetInitialCongestionWindowInPackets,
+              (QuicPacketCount packets),
+              (override));
+  MOCK_METHOD(void,
+              OnCongestionEvent,
+              (bool rtt_updated,
+               QuicByteCount bytes_in_flight,
+               QuicTime event_time,
+               const AckedPacketVector& acked_packets,
+               const LostPacketVector& lost_packets),
+              (override));
+  MOCK_METHOD(void,
+              OnPacketSent,
+              (QuicTime,
+               QuicByteCount,
+               QuicPacketNumber,
+               QuicByteCount,
+               HasRetransmittableData),
+              (override));
+  MOCK_METHOD(void, OnPacketNeutered, (QuicPacketNumber), (override));
+  MOCK_METHOD(void, OnRetransmissionTimeout, (bool), (override));
+  MOCK_METHOD(void, OnConnectionMigration, (), (override));
+  MOCK_METHOD(bool, CanSend, (QuicByteCount), (override));
+  MOCK_METHOD(QuicBandwidth, PacingRate, (QuicByteCount), (const, override));
+  MOCK_METHOD(QuicBandwidth, BandwidthEstimate, (), (const, override));
+  MOCK_METHOD(QuicByteCount, GetCongestionWindow, (), (const, override));
+  MOCK_METHOD(std::string, GetDebugState, (), (const, override));
+  MOCK_METHOD(bool, InSlowStart, (), (const, override));
+  MOCK_METHOD(bool, InRecovery, (), (const, override));
+  MOCK_METHOD(bool, ShouldSendProbingPacket, (), (const, override));
+  MOCK_METHOD(QuicByteCount, GetSlowStartThreshold, (), (const, override));
+  MOCK_METHOD(CongestionControlType,
+              GetCongestionControlType,
+              (),
+              (const, override));
+  MOCK_METHOD(void,
+              AdjustNetworkParameters,
+              (const NetworkParams&),
+              (override));
+  MOCK_METHOD(void, OnApplicationLimited, (QuicByteCount), (override));
+  MOCK_METHOD(void,
+              PopulateConnectionStats,
+              (QuicConnectionStats*),
+              (const, override));
 };
 
 class MockLossAlgorithm : public LossDetectionInterface {
@@ -1019,24 +1301,35 @@ class MockLossAlgorithm : public LossDetectionInterface {
   MockLossAlgorithm& operator=(const MockLossAlgorithm&) = delete;
   ~MockLossAlgorithm() override;
 
-  MOCK_METHOD6(DetectLosses,
-               void(const QuicUnackedPacketMap& unacked_packets,
-                    QuicTime time,
-                    const RttStats& rtt_stats,
-                    QuicPacketNumber largest_recently_acked,
-                    const AckedPacketVector& packets_acked,
-                    LostPacketVector* packets_lost));
-  MOCK_CONST_METHOD0(GetLossTimeout, QuicTime());
-  MOCK_METHOD5(SpuriousLossDetected,
-               void(const QuicUnackedPacketMap&,
-                    const RttStats&,
-                    QuicTime,
-                    QuicPacketNumber,
-                    QuicPacketNumber));
+  MOCK_METHOD(void,
+              SetFromConfig,
+              (const QuicConfig& config, Perspective perspective),
+              (override));
 
-  MOCK_METHOD0(OnConfigNegotiated, void());
-  MOCK_METHOD0(OnMinRttAvailable, void());
-  MOCK_METHOD0(OnConnectionClosed, void());
+  MOCK_METHOD(DetectionStats,
+              DetectLosses,
+              (const QuicUnackedPacketMap& unacked_packets,
+               QuicTime time,
+               const RttStats& rtt_stats,
+               QuicPacketNumber largest_recently_acked,
+               const AckedPacketVector& packets_acked,
+               LostPacketVector*),
+              (override));
+  MOCK_METHOD(QuicTime, GetLossTimeout, (), (const, override));
+  MOCK_METHOD(void,
+              SpuriousLossDetected,
+              (const QuicUnackedPacketMap&,
+               const RttStats&,
+               QuicTime,
+               QuicPacketNumber,
+               QuicPacketNumber),
+              (override));
+
+  MOCK_METHOD(void, OnConfigNegotiated, (), (override));
+  MOCK_METHOD(void, OnMinRttAvailable, (), (override));
+  MOCK_METHOD(void, OnUserAgentIdKnown, (), (override));
+  MOCK_METHOD(void, OnConnectionClosed, (), (override));
+  MOCK_METHOD(void, OnReorderingDetected, (), (override));
 };
 
 class MockAckListener : public QuicAckListenerInterface {
@@ -1045,10 +1338,15 @@ class MockAckListener : public QuicAckListenerInterface {
   MockAckListener(const MockAckListener&) = delete;
   MockAckListener& operator=(const MockAckListener&) = delete;
 
-  MOCK_METHOD2(OnPacketAcked,
-               void(int acked_bytes, QuicTime::Delta ack_delay_time));
+  MOCK_METHOD(void,
+              OnPacketAcked,
+              (int acked_bytes, QuicTime::Delta ack_delay_time),
+              (override));
 
-  MOCK_METHOD1(OnPacketRetransmitted, void(int retransmitted_bytes));
+  MOCK_METHOD(void,
+              OnPacketRetransmitted,
+              (int retransmitted_bytes),
+              (override));
 
  protected:
   // Object is ref counted.
@@ -1063,8 +1361,8 @@ class MockNetworkChangeVisitor
   MockNetworkChangeVisitor& operator=(const MockNetworkChangeVisitor&) = delete;
   ~MockNetworkChangeVisitor() override;
 
-  MOCK_METHOD0(OnCongestionChange, void());
-  MOCK_METHOD1(OnPathMtuIncreased, void(QuicPacketLength));
+  MOCK_METHOD(void, OnCongestionChange, (), (override));
+  MOCK_METHOD(void, OnPathMtuIncreased, (QuicPacketLength), (override));
 };
 
 class MockQuicConnectionDebugVisitor : public QuicConnectionDebugVisitor {
@@ -1072,66 +1370,122 @@ class MockQuicConnectionDebugVisitor : public QuicConnectionDebugVisitor {
   MockQuicConnectionDebugVisitor();
   ~MockQuicConnectionDebugVisitor() override;
 
-  MOCK_METHOD1(OnFrameAddedToPacket, void(const QuicFrame&));
+  // TODO(wub): Delete when deprecating
+  // --quic_give_sent_packet_to_debug_visitor_after_sent.
+  MOCK_METHOD(void,
+              OnPacketSent,
+              (const SerializedPacket&, TransmissionType, QuicTime),
+              (override));
 
-  MOCK_METHOD3(OnPacketSent,
-               void(const SerializedPacket&, TransmissionType, QuicTime));
+  MOCK_METHOD(void,
+              OnPacketSent,
+              (QuicPacketNumber,
+               QuicPacketLength,
+               bool,
+               TransmissionType,
+               EncryptionLevel,
+               const QuicFrames&,
+               const QuicFrames&,
+               QuicTime),
+              (override));
 
-  MOCK_METHOD2(OnCoalescedPacketSent, void(const QuicCoalescedPacket&, size_t));
+  MOCK_METHOD(void,
+              OnCoalescedPacketSent,
+              (const QuicCoalescedPacket&, size_t),
+              (override));
 
-  MOCK_METHOD0(OnPingSent, void());
+  MOCK_METHOD(void, OnPingSent, (), (override));
 
-  MOCK_METHOD3(OnPacketReceived,
-               void(const QuicSocketAddress&,
-                    const QuicSocketAddress&,
-                    const QuicEncryptedPacket&));
+  MOCK_METHOD(void,
+              OnPacketReceived,
+              (const QuicSocketAddress&,
+               const QuicSocketAddress&,
+               const QuicEncryptedPacket&),
+              (override));
 
-  MOCK_METHOD1(OnIncorrectConnectionId, void(QuicConnectionId));
+  MOCK_METHOD(void, OnIncorrectConnectionId, (QuicConnectionId), (override));
 
-  MOCK_METHOD1(OnProtocolVersionMismatch, void(ParsedQuicVersion));
+  MOCK_METHOD(void, OnProtocolVersionMismatch, (ParsedQuicVersion), (override));
 
-  MOCK_METHOD1(OnPacketHeader, void(const QuicPacketHeader& header));
+  MOCK_METHOD(void,
+              OnPacketHeader,
+              (const QuicPacketHeader& header),
+              (override));
 
-  MOCK_METHOD1(OnSuccessfulVersionNegotiation, void(const ParsedQuicVersion&));
+  MOCK_METHOD(void,
+              OnSuccessfulVersionNegotiation,
+              (const ParsedQuicVersion&),
+              (override));
 
-  MOCK_METHOD1(OnStreamFrame, void(const QuicStreamFrame&));
+  MOCK_METHOD(void, OnStreamFrame, (const QuicStreamFrame&), (override));
 
-  MOCK_METHOD1(OnCryptoFrame, void(const QuicCryptoFrame&));
+  MOCK_METHOD(void, OnCryptoFrame, (const QuicCryptoFrame&), (override));
 
-  MOCK_METHOD1(OnStopWaitingFrame, void(const QuicStopWaitingFrame&));
+  MOCK_METHOD(void,
+              OnStopWaitingFrame,
+              (const QuicStopWaitingFrame&),
+              (override));
 
-  MOCK_METHOD1(OnRstStreamFrame, void(const QuicRstStreamFrame&));
+  MOCK_METHOD(void, OnRstStreamFrame, (const QuicRstStreamFrame&), (override));
 
-  MOCK_METHOD1(OnConnectionCloseFrame, void(const QuicConnectionCloseFrame&));
+  MOCK_METHOD(void,
+              OnConnectionCloseFrame,
+              (const QuicConnectionCloseFrame&),
+              (override));
 
-  MOCK_METHOD1(OnBlockedFrame, void(const QuicBlockedFrame&));
+  MOCK_METHOD(void, OnBlockedFrame, (const QuicBlockedFrame&), (override));
 
-  MOCK_METHOD1(OnNewConnectionIdFrame, void(const QuicNewConnectionIdFrame&));
+  MOCK_METHOD(void,
+              OnNewConnectionIdFrame,
+              (const QuicNewConnectionIdFrame&),
+              (override));
 
-  MOCK_METHOD1(OnRetireConnectionIdFrame,
-               void(const QuicRetireConnectionIdFrame&));
+  MOCK_METHOD(void,
+              OnRetireConnectionIdFrame,
+              (const QuicRetireConnectionIdFrame&),
+              (override));
 
-  MOCK_METHOD1(OnNewTokenFrame, void(const QuicNewTokenFrame&));
+  MOCK_METHOD(void, OnNewTokenFrame, (const QuicNewTokenFrame&), (override));
 
-  MOCK_METHOD1(OnMessageFrame, void(const QuicMessageFrame&));
+  MOCK_METHOD(void, OnMessageFrame, (const QuicMessageFrame&), (override));
 
-  MOCK_METHOD1(OnStopSendingFrame, void(const QuicStopSendingFrame&));
+  MOCK_METHOD(void,
+              OnStopSendingFrame,
+              (const QuicStopSendingFrame&),
+              (override));
 
-  MOCK_METHOD1(OnPathChallengeFrame, void(const QuicPathChallengeFrame&));
+  MOCK_METHOD(void,
+              OnPathChallengeFrame,
+              (const QuicPathChallengeFrame&),
+              (override));
 
-  MOCK_METHOD1(OnPathResponseFrame, void(const QuicPathResponseFrame&));
+  MOCK_METHOD(void,
+              OnPathResponseFrame,
+              (const QuicPathResponseFrame&),
+              (override));
 
-  MOCK_METHOD1(OnPublicResetPacket, void(const QuicPublicResetPacket&));
+  MOCK_METHOD(void,
+              OnPublicResetPacket,
+              (const QuicPublicResetPacket&),
+              (override));
 
-  MOCK_METHOD1(OnVersionNegotiationPacket,
-               void(const QuicVersionNegotiationPacket&));
+  MOCK_METHOD(void,
+              OnVersionNegotiationPacket,
+              (const QuicVersionNegotiationPacket&),
+              (override));
 
-  MOCK_METHOD5(OnRetryPacket,
-               void(QuicConnectionId,
-                    QuicConnectionId,
-                    quiche::QuicheStringPiece,
-                    quiche::QuicheStringPiece,
-                    quiche::QuicheStringPiece));
+  MOCK_METHOD(void,
+              OnTransportParametersSent,
+              (const TransportParameters&),
+              (override));
+
+  MOCK_METHOD(void,
+              OnTransportParametersReceived,
+              (const TransportParameters&),
+              (override));
+
+  MOCK_METHOD(void, OnZeroRttRejected, (int), (override));
+  MOCK_METHOD(void, OnZeroRttPacketAcked, (), (override));
 };
 
 class MockReceivedPacketManager : public QuicReceivedPacketManager {
@@ -1139,14 +1493,17 @@ class MockReceivedPacketManager : public QuicReceivedPacketManager {
   explicit MockReceivedPacketManager(QuicConnectionStats* stats);
   ~MockReceivedPacketManager() override;
 
-  MOCK_METHOD2(RecordPacketReceived,
-               void(const QuicPacketHeader& header, QuicTime receipt_time));
-  MOCK_METHOD1(IsMissing, bool(QuicPacketNumber packet_number));
-  MOCK_CONST_METHOD1(IsAwaitingPacket, bool(QuicPacketNumber packet_number));
-  MOCK_METHOD1(UpdatePacketInformationSentByPeer,
-               void(const QuicStopWaitingFrame& stop_waiting));
-  MOCK_CONST_METHOD0(HasNewMissingPackets, bool(void));
-  MOCK_CONST_METHOD0(ack_frame_updated, bool(void));
+  MOCK_METHOD(void,
+              RecordPacketReceived,
+              (const QuicPacketHeader& header, QuicTime receipt_time),
+              (override));
+  MOCK_METHOD(bool, IsMissing, (QuicPacketNumber packet_number), (override));
+  MOCK_METHOD(bool,
+              IsAwaitingPacket,
+              (QuicPacketNumber packet_number),
+              (const, override));
+  MOCK_METHOD(bool, HasNewMissingPackets, (), (const, override));
+  MOCK_METHOD(bool, ack_frame_updated, (), (const, override));
 };
 
 class MockPacketCreatorDelegate : public QuicPacketCreator::DelegateInterface {
@@ -1157,13 +1514,24 @@ class MockPacketCreatorDelegate : public QuicPacketCreator::DelegateInterface {
       delete;
   ~MockPacketCreatorDelegate() override;
 
-  MOCK_METHOD0(GetPacketBuffer, char*());
-  MOCK_METHOD1(OnSerializedPacket, void(SerializedPacket* packet));
-  MOCK_METHOD2(OnUnrecoverableError, void(QuicErrorCode, const std::string&));
-  MOCK_METHOD2(ShouldGeneratePacket,
-               bool(HasRetransmittableData retransmittable,
-                    IsHandshake handshake));
-  MOCK_METHOD0(MaybeBundleAckOpportunistically, const QuicFrames());
+  MOCK_METHOD(QuicPacketBuffer, GetPacketBuffer, (), (override));
+  MOCK_METHOD(void, OnSerializedPacket, (SerializedPacket), (override));
+  MOCK_METHOD(void,
+              OnUnrecoverableError,
+              (QuicErrorCode, const std::string&),
+              (override));
+  MOCK_METHOD(bool,
+              ShouldGeneratePacket,
+              (HasRetransmittableData retransmittable, IsHandshake handshake),
+              (override));
+  MOCK_METHOD(const QuicFrames,
+              MaybeBundleAckOpportunistically,
+              (),
+              (override));
+  MOCK_METHOD(SerializedPacketFate,
+              GetSerializedPacketFate,
+              (bool, EncryptionLevel),
+              (override));
 };
 
 class MockSessionNotifier : public SessionNotifierInterface {
@@ -1171,14 +1539,30 @@ class MockSessionNotifier : public SessionNotifierInterface {
   MockSessionNotifier();
   ~MockSessionNotifier() override;
 
-  MOCK_METHOD3(OnFrameAcked, bool(const QuicFrame&, QuicTime::Delta, QuicTime));
-  MOCK_METHOD1(OnStreamFrameRetransmitted, void(const QuicStreamFrame&));
-  MOCK_METHOD1(OnFrameLost, void(const QuicFrame&));
-  MOCK_METHOD2(RetransmitFrames,
-               void(const QuicFrames&, TransmissionType type));
-  MOCK_CONST_METHOD1(IsFrameOutstanding, bool(const QuicFrame&));
-  MOCK_CONST_METHOD0(HasUnackedCryptoData, bool());
-  MOCK_CONST_METHOD0(HasUnackedStreamData, bool());
+  MOCK_METHOD(bool,
+              OnFrameAcked,
+              (const QuicFrame&, QuicTime::Delta, QuicTime),
+              (override));
+  MOCK_METHOD(void,
+              OnStreamFrameRetransmitted,
+              (const QuicStreamFrame&),
+              (override));
+  MOCK_METHOD(void, OnFrameLost, (const QuicFrame&), (override));
+  MOCK_METHOD(void,
+              RetransmitFrames,
+              (const QuicFrames&, TransmissionType type),
+              (override));
+  MOCK_METHOD(bool, IsFrameOutstanding, (const QuicFrame&), (const, override));
+  MOCK_METHOD(bool, HasUnackedCryptoData, (), (const, override));
+  MOCK_METHOD(bool, HasUnackedStreamData, (), (const, override));
+};
+
+class QuicCryptoClientStreamPeer {
+ public:
+  QuicCryptoClientStreamPeer() = delete;
+
+  static QuicCryptoClientStream::HandshakerInterface* GetHandshaker(
+      QuicCryptoClientStream* stream);
 };
 
 // Creates a client session for testing.
@@ -1291,7 +1675,7 @@ QuicStreamId GetNthClientInitiatedUnidirectionalStreamId(
     int n);
 
 StreamType DetermineStreamType(QuicStreamId id,
-                               QuicTransportVersion version,
+                               ParsedQuicVersion version,
                                Perspective perspective,
                                bool is_incoming,
                                StreamType default_type);
@@ -1321,12 +1705,12 @@ MATCHER_P2(InRange, min, max, "") {
 
 // A GMock matcher that prints expected and actual QuicErrorCode strings
 // upon failure.  Example usage:
-// EXPECT_THAT(stream_->connection_error()), IsError(QUIC_INTERNAL_ERROR));
+// EXPECT_THAT(stream_->connection_error(), IsError(QUIC_INTERNAL_ERROR));
 MATCHER_P(IsError,
           expected,
           quiche::QuicheStrCat(negation ? "isn't equal to " : "is equal to ",
                                QuicErrorCodeToString(expected))) {
-  *result_listener << QuicErrorCodeToString(arg);
+  *result_listener << QuicErrorCodeToString(static_cast<QuicErrorCode>(arg));
   return arg == expected;
 }
 
@@ -1359,6 +1743,358 @@ MATCHER(IsQuicStreamNoError,
   *result_listener << QuicRstStreamErrorCodeToString(arg);
   return arg == QUIC_STREAM_NO_ERROR;
 }
+
+// TaggingEncrypter appends kTagSize bytes of |tag| to the end of each message.
+class TaggingEncrypter : public QuicEncrypter {
+ public:
+  explicit TaggingEncrypter(uint8_t tag) : tag_(tag) {}
+  TaggingEncrypter(const TaggingEncrypter&) = delete;
+  TaggingEncrypter& operator=(const TaggingEncrypter&) = delete;
+
+  ~TaggingEncrypter() override {}
+
+  // QuicEncrypter interface.
+  bool SetKey(quiche::QuicheStringPiece /*key*/) override { return true; }
+
+  bool SetNoncePrefix(quiche::QuicheStringPiece /*nonce_prefix*/) override {
+    return true;
+  }
+
+  bool SetIV(quiche::QuicheStringPiece /*iv*/) override { return true; }
+
+  bool SetHeaderProtectionKey(quiche::QuicheStringPiece /*key*/) override {
+    return true;
+  }
+
+  bool EncryptPacket(uint64_t packet_number,
+                     quiche::QuicheStringPiece associated_data,
+                     quiche::QuicheStringPiece plaintext,
+                     char* output,
+                     size_t* output_length,
+                     size_t max_output_length) override;
+
+  std::string GenerateHeaderProtectionMask(
+      quiche::QuicheStringPiece /*sample*/) override {
+    return std::string(5, 0);
+  }
+
+  size_t GetKeySize() const override { return 0; }
+  size_t GetNoncePrefixSize() const override { return 0; }
+  size_t GetIVSize() const override { return 0; }
+
+  size_t GetMaxPlaintextSize(size_t ciphertext_size) const override {
+    return ciphertext_size - kTagSize;
+  }
+
+  size_t GetCiphertextSize(size_t plaintext_size) const override {
+    return plaintext_size + kTagSize;
+  }
+
+  quiche::QuicheStringPiece GetKey() const override {
+    return quiche::QuicheStringPiece();
+  }
+
+  quiche::QuicheStringPiece GetNoncePrefix() const override {
+    return quiche::QuicheStringPiece();
+  }
+
+ private:
+  enum {
+    kTagSize = 12,
+  };
+
+  const uint8_t tag_;
+};
+
+// TaggingDecrypter ensures that the final kTagSize bytes of the message all
+// have the same value and then removes them.
+class TaggingDecrypter : public QuicDecrypter {
+ public:
+  ~TaggingDecrypter() override {}
+
+  // QuicDecrypter interface
+  bool SetKey(quiche::QuicheStringPiece /*key*/) override { return true; }
+
+  bool SetNoncePrefix(quiche::QuicheStringPiece /*nonce_prefix*/) override {
+    return true;
+  }
+
+  bool SetIV(quiche::QuicheStringPiece /*iv*/) override { return true; }
+
+  bool SetHeaderProtectionKey(quiche::QuicheStringPiece /*key*/) override {
+    return true;
+  }
+
+  bool SetPreliminaryKey(quiche::QuicheStringPiece /*key*/) override {
+    QUIC_BUG << "should not be called";
+    return false;
+  }
+
+  bool SetDiversificationNonce(const DiversificationNonce& /*key*/) override {
+    return true;
+  }
+
+  bool DecryptPacket(uint64_t packet_number,
+                     quiche::QuicheStringPiece associated_data,
+                     quiche::QuicheStringPiece ciphertext,
+                     char* output,
+                     size_t* output_length,
+                     size_t max_output_length) override;
+
+  std::string GenerateHeaderProtectionMask(
+      QuicDataReader* /*sample_reader*/) override {
+    return std::string(5, 0);
+  }
+
+  size_t GetKeySize() const override { return 0; }
+  size_t GetNoncePrefixSize() const override { return 0; }
+  size_t GetIVSize() const override { return 0; }
+  quiche::QuicheStringPiece GetKey() const override {
+    return quiche::QuicheStringPiece();
+  }
+  quiche::QuicheStringPiece GetNoncePrefix() const override {
+    return quiche::QuicheStringPiece();
+  }
+  // Use a distinct value starting with 0xFFFFFF, which is never used by TLS.
+  uint32_t cipher_id() const override { return 0xFFFFFFF0; }
+
+ protected:
+  virtual uint8_t GetTag(quiche::QuicheStringPiece ciphertext) {
+    return ciphertext.data()[ciphertext.size() - 1];
+  }
+
+ private:
+  enum {
+    kTagSize = 12,
+  };
+
+  bool CheckTag(quiche::QuicheStringPiece ciphertext, uint8_t tag);
+};
+
+class TestPacketWriter : public QuicPacketWriter {
+  struct PacketBuffer {
+    QUIC_CACHELINE_ALIGNED char buffer[1500];
+    bool in_use = false;
+  };
+
+ public:
+  TestPacketWriter(ParsedQuicVersion version,
+                   MockClock* clock,
+                   Perspective perspective);
+
+  TestPacketWriter(const TestPacketWriter&) = delete;
+  TestPacketWriter& operator=(const TestPacketWriter&) = delete;
+
+  ~TestPacketWriter() override;
+
+  // QuicPacketWriter interface
+  WriteResult WritePacket(const char* buffer,
+                          size_t buf_len,
+                          const QuicIpAddress& self_address,
+                          const QuicSocketAddress& peer_address,
+                          PerPacketOptions* options) override;
+
+  bool ShouldWriteFail() { return write_should_fail_; }
+
+  bool IsWriteBlocked() const override { return write_blocked_; }
+
+  void SetWriteBlocked() { write_blocked_ = true; }
+
+  void SetWritable() override { write_blocked_ = false; }
+
+  void SetShouldWriteFail() { write_should_fail_ = true; }
+
+  QuicByteCount GetMaxPacketSize(
+      const QuicSocketAddress& /*peer_address*/) const override {
+    return max_packet_size_;
+  }
+
+  bool SupportsReleaseTime() const override { return supports_release_time_; }
+
+  bool IsBatchMode() const override { return is_batch_mode_; }
+
+  QuicPacketBuffer GetNextWriteLocation(
+      const QuicIpAddress& /*self_address*/,
+      const QuicSocketAddress& /*peer_address*/) override;
+
+  WriteResult Flush() override;
+
+  void BlockOnNextFlush() { block_on_next_flush_ = true; }
+
+  void BlockOnNextWrite() { block_on_next_write_ = true; }
+
+  void SimulateNextPacketTooLarge() { next_packet_too_large_ = true; }
+
+  void AlwaysGetPacketTooLarge() { always_get_packet_too_large_ = true; }
+
+  // Sets the amount of time that the writer should before the actual write.
+  void SetWritePauseTimeDelta(QuicTime::Delta delta) {
+    write_pause_time_delta_ = delta;
+  }
+
+  void SetBatchMode(bool new_value) { is_batch_mode_ = new_value; }
+
+  const QuicPacketHeader& header() { return framer_.header(); }
+
+  size_t frame_count() const { return framer_.num_frames(); }
+
+  const std::vector<QuicAckFrame>& ack_frames() const {
+    return framer_.ack_frames();
+  }
+
+  const std::vector<QuicStopWaitingFrame>& stop_waiting_frames() const {
+    return framer_.stop_waiting_frames();
+  }
+
+  const std::vector<QuicConnectionCloseFrame>& connection_close_frames() const {
+    return framer_.connection_close_frames();
+  }
+
+  const std::vector<QuicRstStreamFrame>& rst_stream_frames() const {
+    return framer_.rst_stream_frames();
+  }
+
+  const std::vector<std::unique_ptr<QuicStreamFrame>>& stream_frames() const {
+    return framer_.stream_frames();
+  }
+
+  const std::vector<std::unique_ptr<QuicCryptoFrame>>& crypto_frames() const {
+    return framer_.crypto_frames();
+  }
+
+  const std::vector<QuicPingFrame>& ping_frames() const {
+    return framer_.ping_frames();
+  }
+
+  const std::vector<QuicMessageFrame>& message_frames() const {
+    return framer_.message_frames();
+  }
+
+  const std::vector<QuicWindowUpdateFrame>& window_update_frames() const {
+    return framer_.window_update_frames();
+  }
+
+  const std::vector<QuicPaddingFrame>& padding_frames() const {
+    return framer_.padding_frames();
+  }
+
+  const std::vector<QuicPathChallengeFrame>& path_challenge_frames() const {
+    return framer_.path_challenge_frames();
+  }
+
+  const std::vector<QuicPathResponseFrame>& path_response_frames() const {
+    return framer_.path_response_frames();
+  }
+
+  const QuicEncryptedPacket* coalesced_packet() const {
+    return framer_.coalesced_packet();
+  }
+
+  size_t last_packet_size() { return last_packet_size_; }
+
+  const QuicPacketHeader& last_packet_header() const {
+    return last_packet_header_;
+  }
+
+  const QuicVersionNegotiationPacket* version_negotiation_packet() {
+    return framer_.version_negotiation_packet();
+  }
+
+  void set_is_write_blocked_data_buffered(bool buffered) {
+    is_write_blocked_data_buffered_ = buffered;
+  }
+
+  void set_perspective(Perspective perspective) {
+    // We invert perspective here, because the framer needs to parse packets
+    // we send.
+    QuicFramerPeer::SetPerspective(framer_.framer(),
+                                   QuicUtils::InvertPerspective(perspective));
+    framer_.framer()->SetInitialObfuscators(TestConnectionId());
+  }
+
+  // final_bytes_of_last_packet_ returns the last four bytes of the previous
+  // packet as a little-endian, uint32_t. This is intended to be used with a
+  // TaggingEncrypter so that tests can determine which encrypter was used for
+  // a given packet.
+  uint32_t final_bytes_of_last_packet() { return final_bytes_of_last_packet_; }
+
+  // Returns the final bytes of the second to last packet.
+  uint32_t final_bytes_of_previous_packet() {
+    return final_bytes_of_previous_packet_;
+  }
+
+  void use_tagging_decrypter() { use_tagging_decrypter_ = true; }
+
+  uint32_t packets_write_attempts() const { return packets_write_attempts_; }
+
+  uint32_t flush_attempts() const { return flush_attempts_; }
+
+  uint32_t connection_close_packets() const {
+    return connection_close_packets_;
+  }
+
+  void Reset() { framer_.Reset(); }
+
+  void SetSupportedVersions(const ParsedQuicVersionVector& versions) {
+    framer_.SetSupportedVersions(versions);
+  }
+
+  void set_max_packet_size(QuicByteCount max_packet_size) {
+    max_packet_size_ = max_packet_size;
+  }
+
+  void set_supports_release_time(bool supports_release_time) {
+    supports_release_time_ = supports_release_time;
+  }
+
+  SimpleQuicFramer* framer() { return &framer_; }
+
+  const QuicSocketAddress& last_write_peer_address() const {
+    return last_write_peer_address_;
+  }
+
+ private:
+  char* AllocPacketBuffer();
+
+  void FreePacketBuffer(const char* buffer);
+
+  ParsedQuicVersion version_;
+  SimpleQuicFramer framer_;
+  size_t last_packet_size_ = 0;
+  QuicPacketHeader last_packet_header_;
+  bool write_blocked_ = false;
+  bool write_should_fail_ = false;
+  bool block_on_next_flush_ = false;
+  bool block_on_next_write_ = false;
+  bool next_packet_too_large_ = false;
+  bool always_get_packet_too_large_ = false;
+  bool is_write_blocked_data_buffered_ = false;
+  bool is_batch_mode_ = false;
+  // Number of times Flush() was called.
+  uint32_t flush_attempts_ = 0;
+  // (Batch mode only) Number of bytes buffered in writer. It is used as the
+  // return value of a successful Flush().
+  uint32_t bytes_buffered_ = 0;
+  uint32_t final_bytes_of_last_packet_ = 0;
+  uint32_t final_bytes_of_previous_packet_ = 0;
+  bool use_tagging_decrypter_ = false;
+  uint32_t packets_write_attempts_ = 0;
+  uint32_t connection_close_packets_ = 0;
+  MockClock* clock_ = nullptr;
+  // If non-zero, the clock will pause during WritePacket for this amount of
+  // time.
+  QuicTime::Delta write_pause_time_delta_ = QuicTime::Delta::Zero();
+  QuicByteCount max_packet_size_ = kMaxOutgoingPacketSize;
+  bool supports_release_time_ = false;
+  // Used to verify writer-allocated packet buffers are properly released.
+  std::vector<PacketBuffer*> packet_buffer_pool_;
+  // Buffer address => Address of the owning PacketBuffer.
+  QuicHashMap<char*, PacketBuffer*> packet_buffer_pool_index_;
+  // Indices in packet_buffer_pool_ that are not allocated.
+  std::list<PacketBuffer*> packet_buffer_free_list_;
+  // The peer address passed into WritePacket().
+  QuicSocketAddress last_write_peer_address_;
+};
 
 }  // namespace test
 }  // namespace quic

@@ -20,5 +20,6 @@ jumbo_component("color") {
     "//base",
     "//ipc",
     "//ui/gfx:color_space",
+    "//ui/gfx/ipc/buffer_types",
   ]
 }

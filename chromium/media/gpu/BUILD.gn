@@ -30,7 +30,8 @@ component("gpu") {
     "//chrome/gpu",
     "//chromecast/*",
     "//components/arc/mojom:media",
-    "//components/arc/video_accelerator",
+    "//components/arc/mojom:media_mojolpm",
+    "//components/arc/video_accelerator:common",
     "//components/mirroring/service:mirroring_service",
     "//components/chromeos_camera/*",
     "//components/viz/service/main",
@@ -107,6 +108,8 @@ component("gpu") {
       "android/codec_image.h",
       "android/codec_image_group.cc",
       "android/codec_image_group.h",
+      "android/codec_output_buffer_renderer.cc",
+      "android/codec_output_buffer_renderer.h",
       "android/codec_surface_bundle.cc",
       "android/codec_surface_bundle.h",
       "android/codec_wrapper.cc",
@@ -115,6 +118,8 @@ component("gpu") {
       "android/device_info.h",
       "android/direct_shared_image_video_provider.cc",
       "android/direct_shared_image_video_provider.h",
+      "android/frame_info_helper.cc",
+      "android/frame_info_helper.h",
       "android/maybe_render_early_manager.cc",
       "android/maybe_render_early_manager.h",
       "android/media_codec_video_decoder.cc",
@@ -131,8 +136,6 @@ component("gpu") {
       "android/video_frame_factory.h",
       "android/video_frame_factory_impl.cc",
       "android/video_frame_factory_impl.h",
-      "android/ycbcr_helper.cc",
-      "android/ycbcr_helper.h",
     ]
     libs += [ "android" ]
     deps += [
@@ -170,6 +173,7 @@ component("gpu") {
 
   if (is_win) {
     sources += [
+      "windows/av1_guids.h",
       "windows/d3d11_com_defs.h",
       "windows/d3d11_copying_texture_wrapper.cc",
       "windows/d3d11_copying_texture_wrapper.h",
@@ -198,12 +202,12 @@ component("gpu") {
       "windows/d3d11_vp9_accelerator.h",
       "windows/d3d11_vp9_picture.cc",
       "windows/d3d11_vp9_picture.h",
-      "windows/display_helper.cc",
-      "windows/display_helper.h",
       "windows/dxva_picture_buffer_win.cc",
       "windows/dxva_picture_buffer_win.h",
       "windows/dxva_video_decode_accelerator_win.cc",
       "windows/dxva_video_decode_accelerator_win.h",
+      "windows/hresult_status_debug_device.cc",
+      "windows/hresult_status_debug_device.h",
       "windows/init_guid.cc",
       "windows/media_foundation_video_encode_accelerator_win.cc",
       "windows/media_foundation_video_encode_accelerator_win.h",
@@ -217,6 +221,7 @@ component("gpu") {
     ]
     public_deps += [ "//media/base/win:media_foundation_util" ]
     deps += [
+      "//media/base/win:hresult_status_helper",
       "//media/parsers",
       "//third_party/angle:includes",
       "//ui/display",
@@ -237,14 +242,6 @@ component("gpu") {
       "/DELAYLOAD:mf.dll",
       "/DELAYLOAD:mfplat.dll",
     ]
-    if (enable_library_cdms) {
-      sources += [
-        "windows/d3d11_cdm_proxy.cc",
-        "windows/d3d11_cdm_proxy.h",
-        "windows/d3d11_decryptor.cc",
-        "windows/d3d11_decryptor.h",
-      ]
-    }
   }
 
   if (use_ozone) {
@@ -275,6 +272,11 @@ source_set("common") {
     "vp9_picture.h",
     "vp9_reference_frame_vector.cc",
     "vp9_reference_frame_vector.h",
+  ]
+
+  visibility = [
+    ":gpu",
+    "//media/gpu/*",
   ]
 
   # TODO(crbug.com/1006266): consider using |use_chromeos_video_acceleration|.
@@ -364,7 +366,6 @@ if (is_android) {
 
     deps = [
       ":android_video_decode_accelerator_unittests",
-      ":common",
       ":gpu",
       "//base",
       "//base/test:test_support",
@@ -400,6 +401,7 @@ source_set("android_video_decode_accelerator_unittests") {
       "android/codec_wrapper_unittest.cc",
       "android/fake_codec_allocator.cc",
       "android/fake_codec_allocator.h",
+      "android/frame_info_helper_unittest.cc",
       "android/maybe_render_early_manager_unittest.cc",
       "android/media_codec_video_decoder_unittest.cc",
       "android/mock_android_video_surface_chooser.cc",
@@ -420,7 +422,6 @@ source_set("android_video_decode_accelerator_unittests") {
       "android/video_frame_factory_impl_unittest.cc",
     ]
     deps = [
-      ":common",
       ":gpu",
       "//base/test:test_support",
       "//gpu:test_support",
@@ -462,6 +463,7 @@ if (use_v4l2_codec || use_vaapi || is_mac || is_win) {
     sources = [ "video_encode_accelerator_unittest.cc" ]
     if (use_x11) {
       deps += [ "//ui/gfx/x" ]
+      public_configs = [ "//build/config/linux/libva" ]
     }
     if (use_ozone) {
       deps += [ "//ui/ozone" ]
@@ -491,9 +493,11 @@ source_set("unit_tests") {
     "//base/test:test_support",
     "//media:test_support",
     "//media/gpu",
+    "//media/gpu:test_support",
     "//media/gpu/ipc/service:unit_tests",
     "//testing/gmock",
     "//testing/gtest",
+    "//ui/gl:test_support",
   ]
   sources = [ "h264_decoder_unittest.cc" ]
 
@@ -513,18 +517,20 @@ source_set("unit_tests") {
   }
   if (is_win && enable_library_cdms) {
     sources += [
-      "windows/d3d11_cdm_proxy_unittest.cc",
       "windows/d3d11_copying_texture_wrapper_unittest.cc",
       "windows/d3d11_decoder_configurator_unittest.cc",
-      "windows/d3d11_decryptor_unittest.cc",
       "windows/d3d11_texture_selector_unittest.cc",
+      "windows/d3d11_texture_wrapper_unittest.cc",
       "windows/d3d11_video_decoder_unittest.cc",
       "windows/d3d11_video_device_format_support_unittest.cc",
       "windows/d3d11_video_processor_proxy_unittest.cc",
-      "windows/display_helper_unittest.cc",
       "windows/supported_profile_helpers_unittest.cc",
     ]
     libs = [ "dxguid.lib" ]
+  }
+
+  if (is_mac) {
+    deps += [ "//media/gpu/mac:unit_tests" ]
   }
 }
 
@@ -567,7 +573,10 @@ if (use_v4l2_codec || use_vaapi) {
     data = [ "//media/test/data/" ]
     deps = [
       ":buildflags",
+      "test:frame_file_writer",
+      "test:frame_validator",
       "test:helpers",
+      "test:test_helpers",
       "test:video_encoder",
       "test:video_encoder_test_environment",
       "//media:test_support",

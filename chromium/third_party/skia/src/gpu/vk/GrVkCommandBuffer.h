@@ -16,14 +16,13 @@
 
 class GrVkBuffer;
 class GrVkFramebuffer;
-class GrVkIndexBuffer;
 class GrVkImage;
+class GrVkMeshBuffer;
 class GrVkPipeline;
 class GrVkPipelineState;
 class GrVkRenderPass;
 class GrVkRenderTarget;
 class GrVkTransferBuffer;
-class GrVkVertexBuffer;
 
 class GrVkCommandBuffer {
 public:
@@ -47,9 +46,9 @@ public:
                          BarrierType barrierType,
                          void* barrier);
 
-    void bindInputBuffer(GrVkGpu* gpu, uint32_t binding, const GrVkVertexBuffer* vbuffer);
+    void bindInputBuffer(GrVkGpu* gpu, uint32_t binding, sk_sp<const GrBuffer> buffer);
 
-    void bindIndexBuffer(GrVkGpu* gpu, const GrVkIndexBuffer* ibuffer);
+    void bindIndexBuffer(GrVkGpu* gpu, sk_sp<const GrBuffer> buffer);
 
     void bindPipeline(const GrVkGpu* gpu, const GrVkPipeline* pipeline);
 
@@ -94,6 +93,18 @@ public:
               uint32_t firstVertex,
               uint32_t firstInstance);
 
+    void drawIndirect(const GrVkGpu* gpu,
+                      const GrVkMeshBuffer* indirectBuffer,
+                      VkDeviceSize offset,
+                      uint32_t drawCount,
+                      uint32_t stride);
+
+    void drawIndexedIndirect(const GrVkGpu* gpu,
+                             const GrVkMeshBuffer* indirectBuffer,
+                             VkDeviceSize offset,
+                             uint32_t drawCount,
+                             uint32_t stride);
+
     // Add ref-counted resource that will be tracked and released when this command buffer finishes
     // execution
     void addResource(const GrManagedResource* resource) {
@@ -109,6 +120,10 @@ public:
         resource->ref();
         resource->notifyQueuedForWorkOnGpu();
         fTrackedRecycledResources.append(1, &resource);
+    }
+
+    void addGrBuffer(sk_sp<const GrBuffer> buffer) {
+        fTrackedGpuBuffers.push_back(std::move(buffer));
     }
 
     void releaseResources();
@@ -130,10 +145,11 @@ protected:
 
     void addingWork(const GrVkGpu* gpu);
 
-    void submitPipelineBarriers(const GrVkGpu* gpu);
+    void submitPipelineBarriers(const GrVkGpu* gpu, bool forSelfDependency = false);
 
-    SkTDArray<const GrManagedResource*>   fTrackedResources;
-    SkTDArray<const GrRecycledResource*>  fTrackedRecycledResources;
+    SkTDArray<const GrManagedResource*>  fTrackedResources;
+    SkTDArray<const GrRecycledResource*> fTrackedRecycledResources;
+    SkSTArray<16, sk_sp<const GrBuffer>> fTrackedGpuBuffers;
 
     // Tracks whether we are in the middle of a command buffer begin/end calls and thus can add
     // new commands to the buffer;
@@ -288,6 +304,10 @@ public:
 
     void addFinishedProc(sk_sp<GrRefCntedCallback> finishedProc);
 
+    void callFinishedProcs() {
+        fFinishedProcs.reset();
+    }
+
     void recycleSecondaryCommandBuffers(GrVkCommandPool* cmdPool);
 
 private:
@@ -303,7 +323,7 @@ private:
     VkFence                                                     fSubmitFence;
     SkTArray<sk_sp<GrRefCntedCallback>>                         fFinishedProcs;
 
-    typedef GrVkCommandBuffer INHERITED;
+    using INHERITED = GrVkCommandBuffer;
 };
 
 class GrVkSecondaryCommandBuffer : public GrVkCommandBuffer {
@@ -329,7 +349,7 @@ private:
     // Used for accessing fIsActive (on GrVkCommandBuffer)
     friend class GrVkPrimaryCommandBuffer;
 
-    typedef GrVkCommandBuffer INHERITED;
+    using INHERITED = GrVkCommandBuffer;
 };
 
 #endif

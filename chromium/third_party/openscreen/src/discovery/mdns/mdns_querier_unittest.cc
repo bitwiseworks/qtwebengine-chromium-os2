@@ -5,6 +5,7 @@
 #include "discovery/mdns/mdns_querier.h"
 
 #include <memory>
+#include <utility>
 
 #include "discovery/common/config.h"
 #include "discovery/common/testing/mock_reporting_client.h"
@@ -38,11 +39,12 @@ ACTION_P(PartialCompareRecords, expected) {
   EXPECT_TRUE(actual.dns_class() == expected.dns_class());
   EXPECT_TRUE(actual.dns_type() == expected.dns_type());
   EXPECT_TRUE(actual.rdata() == expected.rdata());
+  return std::vector<PendingQueryChange>{};
 }
 
 class MockRecordChangedCallback : public MdnsRecordChangedCallback {
  public:
-  MOCK_METHOD(void,
+  MOCK_METHOD(std::vector<PendingQueryChange>,
               OnRecordChanged,
               (const MdnsRecord&, RecordChangedEvent event),
               (override));
@@ -54,6 +56,7 @@ class MdnsQuerierTest : public testing::Test {
       : clock_(Clock::now()),
         task_runner_(&clock_),
         sender_(&socket_),
+        receiver_(config_),
         record0_created_(DomainName{"testing", "local"},
                          DnsType::kA,
                          DnsClass::kIN,
@@ -286,6 +289,19 @@ TEST_F(MdnsQuerierTest, NoRecordChangesAfterStop) {
   receiver_.OnRead(&socket_, CreatePacketWithRecord(record0_created_));
   querier->StopQuery(DomainName{"testing", "local"}, DnsType::kA, DnsClass::kIN,
                      &callback);
+  receiver_.OnRead(&socket_, CreatePacketWithRecord(record0_updated_));
+}
+
+TEST_F(MdnsQuerierTest, OnRecordChangeCallbacksGetRun) {
+  std::unique_ptr<MdnsQuerier> querier = CreateQuerier();
+  MockRecordChangedCallback callback;
+  DomainName name = DomainName{"testing", "local"};
+  querier->StartQuery(name, DnsType::kA, DnsClass::kIN, &callback);
+  PendingQueryChange result{name, DnsType::kA, DnsClass::kIN, &callback,
+                            PendingQueryChange::kStopQuery};
+  EXPECT_CALL(callback, OnRecordChanged(_, _))
+      .WillOnce(Return(std::vector<PendingQueryChange>{result}));
+  receiver_.OnRead(&socket_, CreatePacketWithRecord(record0_created_));
   receiver_.OnRead(&socket_, CreatePacketWithRecord(record0_updated_));
 }
 
@@ -533,6 +549,31 @@ TEST_F(MdnsQuerierTest, CorrectCallbackCalledWhenNsecRecordReplacesNonNsec) {
   receiver_.OnRead(&socket_, std::move(packet));
   EXPECT_FALSE(ContainsRecord(querier.get(), record0_created_, DnsType::kA));
   EXPECT_TRUE(ContainsRecord(querier.get(), nsec_record_created_, DnsType::kA));
+}
+
+TEST_F(MdnsQuerierTest,
+       NoCallbackCalledWhenNsecRecordWouldReplaceNonNsecButNsecDisabled) {
+  config_.ignore_nsec_responses = true;
+  std::unique_ptr<MdnsQuerier> querier = CreateQuerier();
+
+  // Set up so an A record has been received
+  StrictMock<MockRecordChangedCallback> callback;
+  querier->StartQuery(DomainName{"testing", "local"}, DnsType::kA,
+                      DnsClass::kIN, &callback);
+  EXPECT_CALL(callback,
+              OnRecordChanged(record0_created_, RecordChangedEvent::kCreated));
+  auto packet = CreatePacketWithRecord(record0_created_);
+  receiver_.OnRead(&socket_, std::move(packet));
+  testing::Mock::VerifyAndClearExpectations(&callback);
+  ASSERT_TRUE(ContainsRecord(querier.get(), record0_created_, DnsType::kA));
+  EXPECT_FALSE(
+      ContainsRecord(querier.get(), nsec_record_created_, DnsType::kA));
+
+  packet = CreatePacketWithRecord(nsec_record_created_);
+  receiver_.OnRead(&socket_, std::move(packet));
+  EXPECT_TRUE(ContainsRecord(querier.get(), record0_created_, DnsType::kA));
+  EXPECT_FALSE(
+      ContainsRecord(querier.get(), nsec_record_created_, DnsType::kA));
 }
 
 TEST_F(MdnsQuerierTest, CorrectCallbackCalledWhenNonNsecRecordReplacesNsec) {

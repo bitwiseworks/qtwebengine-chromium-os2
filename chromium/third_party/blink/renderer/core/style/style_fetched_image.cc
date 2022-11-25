@@ -46,7 +46,8 @@ StyleFetchedImage::StyleFetchedImage(const Document& document,
                                      bool is_lazyload_possibly_deferred)
     : document_(&document),
       url_(params.Url()),
-      origin_clean_(!params.IsFromOriginDirtyStyleSheet()) {
+      origin_clean_(!params.IsFromOriginDirtyStyleSheet()),
+      is_ad_related_(params.GetResourceRequest().IsAdResource()) {
   is_image_resource_ = true;
   is_lazyload_possibly_deferred_ = is_lazyload_possibly_deferred;
 
@@ -84,7 +85,7 @@ ImageResourceContent* StyleFetchedImage::CachedImage() const {
 CSSValue* StyleFetchedImage::CssValue() const {
   return MakeGarbageCollected<CSSImageValue>(
       AtomicString(url_.GetString()), url_, Referrer(),
-      origin_clean_ ? OriginClean::kTrue : OriginClean::kFalse,
+      origin_clean_ ? OriginClean::kTrue : OriginClean::kFalse, is_ad_related_,
       const_cast<StyleFetchedImage*>(this));
 }
 
@@ -108,7 +109,7 @@ bool StyleFetchedImage::ErrorOccurred() const {
 FloatSize StyleFetchedImage::ImageSize(
     const Document&,
     float multiplier,
-    const LayoutSize& default_object_size,
+    const FloatSize& default_object_size,
     RespectImageOrientationEnum respect_orientation) const {
   Image* image = image_->GetImage();
   if (image_->HasDevicePixelRatioHeaderValue()) {
@@ -186,7 +187,8 @@ void StyleFetchedImage::LoadDeferredImage(const Document& document) {
   image_->LoadDeferredImage(document_->Fetcher());
 }
 
-bool StyleFetchedImage::GetImageAnimationPolicy(ImageAnimationPolicy& policy) {
+bool StyleFetchedImage::GetImageAnimationPolicy(
+    web_pref::ImageAnimationPolicy& policy) {
   if (!document_ || !document_->GetSettings()) {
     return false;
   }
@@ -194,7 +196,7 @@ bool StyleFetchedImage::GetImageAnimationPolicy(ImageAnimationPolicy& policy) {
   return true;
 }
 
-void StyleFetchedImage::Trace(Visitor* visitor) {
+void StyleFetchedImage::Trace(Visitor* visitor) const {
   visitor->Trace(image_);
   visitor->Trace(document_);
   StyleImage::Trace(visitor);

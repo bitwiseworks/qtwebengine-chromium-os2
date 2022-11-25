@@ -96,6 +96,8 @@ class TestPhishingDetector : public mojom::PhishingDetector {
         mojo::PendingReceiver<mojom::PhishingDetector>(std::move(handle)));
   }
 
+  void SetPhishingModel(const std::string& model) override {}
+
   void StartPhishingDetection(
       const GURL& url,
       StartPhishingDetectionCallback callback) override {
@@ -136,7 +138,9 @@ class TestPasswordProtectionService : public MockPasswordProtectionService {
                                       nullptr),
         cache_manager_(
             std::make_unique<VerdictCacheManager>(nullptr,
-                                                  content_setting_map.get())) {}
+                                                  content_setting_map.get())) {
+    cache_manager_->StopCleanUpTimerForTesting();
+  }
 
   void RequestFinished(
       PasswordProtectionRequest* request,
@@ -261,7 +265,7 @@ class PasswordProtectionServiceTest : public ::testing::TestWithParam<bool> {
     content_setting_map_ = new HostContentSettingsMap(
         &test_pref_service_, false /* is_off_the_record */,
         false /* store_last_modified */,
-        false /* migrate_requesting_and_top_level_origin_settings */);
+        false /* restore_session*/);
     database_manager_ = new MockSafeBrowsingDatabaseManager();
     password_protection_service_ =
         std::make_unique<TestPasswordProtectionService>(
@@ -274,11 +278,13 @@ class PasswordProtectionServiceTest : public ::testing::TestWithParam<bool> {
     EXPECT_CALL(*password_protection_service_, IsIncognito())
         .WillRepeatedly(Return(false));
     EXPECT_CALL(*password_protection_service_,
-                IsURLWhitelistedForPasswordEntry(_, _))
+                IsURLWhitelistedForPasswordEntry(_))
         .WillRepeatedly(Return(false));
     EXPECT_CALL(*password_protection_service_,
                 GetPasswordProtectionWarningTriggerPref(_))
         .WillRepeatedly(Return(PASSWORD_PROTECTION_OFF));
+    EXPECT_CALL(*password_protection_service_, IsUserMBBOptedIn())
+        .WillRepeatedly(Return(true));
     url_ = PasswordProtectionService::GetPasswordProtectionRequestUrl();
   }
 
@@ -1086,6 +1092,7 @@ TEST_P(PasswordProtectionServiceTest,
 
   const LoginReputationClientRequest* actual_request =
       password_protection_service_->GetLatestRequestProto();
+  EXPECT_TRUE(actual_request->population().is_mbb_enabled());
   EXPECT_EQ(kTargetUrl, actual_request->page_url());
   EXPECT_EQ(LoginReputationClientRequest::PASSWORD_REUSE_EVENT,
             actual_request->trigger_type());
@@ -1123,6 +1130,7 @@ TEST_P(PasswordProtectionServiceTest,
 
   const LoginReputationClientRequest* actual_request =
       password_protection_service_->GetLatestRequestProto();
+  EXPECT_TRUE(actual_request->population().is_mbb_enabled());
   ASSERT_TRUE(actual_request->has_password_reuse_event());
   const auto& reuse_event = actual_request->password_reuse_event();
   EXPECT_FALSE(reuse_event.is_chrome_signin_password());
@@ -1165,20 +1173,8 @@ TEST_P(PasswordProtectionServiceTest, VerifyShouldShowModalWarning) {
 
   reused_password_account_type.set_account_type(
       ReusedPasswordAccountType::SAVED_PASSWORD);
-// kPasswordProtectionForSignedInUsers is disabled by default on Android.
-#if defined(OS_ANDROID)
-  EXPECT_FALSE(password_protection_service_->ShouldShowModalWarning(
-#else
+
   EXPECT_TRUE(password_protection_service_->ShouldShowModalWarning(
-#endif
-      LoginReputationClientRequest::PASSWORD_REUSE_EVENT,
-      reused_password_account_type, LoginReputationClientResponse::PHISHING));
-// kPasswordProtectionForSignedInUsers is disabled by default on Android.
-#if defined(OS_ANDROID)
-  EXPECT_FALSE(password_protection_service_->ShouldShowModalWarning(
-#else
-  EXPECT_TRUE(password_protection_service_->ShouldShowModalWarning(
-#endif
       LoginReputationClientRequest::PASSWORD_REUSE_EVENT,
       reused_password_account_type,
       LoginReputationClientResponse::LOW_REPUTATION));
@@ -1339,38 +1335,25 @@ TEST_P(PasswordProtectionServiceTest, VerifyIsSupportedPasswordTypeForPinging) {
       .WillRepeatedly(Return(account_info));
 
   EXPECT_TRUE(password_protection_service_->IsSupportedPasswordTypeForPinging(
-      PasswordType::SAVED_PASSWORD));
-  EXPECT_TRUE(password_protection_service_->IsSupportedPasswordTypeForPinging(
       PasswordType::PRIMARY_ACCOUNT_PASSWORD));
-// kPasswordProtectionForSignedInUsers is disabled by default on Android.
 #if defined(OS_ANDROID)
   EXPECT_FALSE(password_protection_service_->IsSupportedPasswordTypeForPinging(
+      PasswordType::OTHER_GAIA_PASSWORD));
 #else
   EXPECT_TRUE(password_protection_service_->IsSupportedPasswordTypeForPinging(
-#endif
       PasswordType::OTHER_GAIA_PASSWORD));
+#endif
   EXPECT_TRUE(password_protection_service_->IsSupportedPasswordTypeForPinging(
       PasswordType::ENTERPRISE_PASSWORD));
-
   EXPECT_TRUE(password_protection_service_->IsSupportedPasswordTypeForPinging(
       PasswordType::SAVED_PASSWORD));
-  EXPECT_TRUE(password_protection_service_->IsSupportedPasswordTypeForPinging(
-      PasswordType::ENTERPRISE_PASSWORD));
   {
     base::test::ScopedFeatureList feature_list;
     feature_list.InitAndDisableFeature(
         safe_browsing::kPasswordProtectionForSignedInUsers);
-    // Only ping for signed in, non-syncing users if the experiment is on.
     EXPECT_FALSE(
         password_protection_service_->IsSupportedPasswordTypeForPinging(
             PasswordType::OTHER_GAIA_PASSWORD));
-  }
-  {
-    base::test::ScopedFeatureList feature_list;
-    feature_list.InitAndEnableFeature(
-        safe_browsing::kPasswordProtectionForSignedInUsers);
-    EXPECT_TRUE(password_protection_service_->IsSupportedPasswordTypeForPinging(
-        PasswordType::OTHER_GAIA_PASSWORD));
   }
 }
 

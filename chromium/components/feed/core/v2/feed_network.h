@@ -6,11 +6,13 @@
 #define COMPONENTS_FEED_CORE_V2_FEED_NETWORK_H_
 
 #include <memory>
+
 #include "base/callback.h"
+#include "components/feed/core/v2/public/types.h"
 
 namespace feedwire {
-class ActionRequest;
-class FeedActionResponse;
+class UploadActionsResponse;
+class UploadActionsRequest;
 class Request;
 class Response;
 }  // namespace feedwire
@@ -25,8 +27,7 @@ class FeedNetwork {
     ~QueryRequestResult();
     QueryRequestResult(QueryRequestResult&&);
     QueryRequestResult& operator=(QueryRequestResult&&);
-    // HTTP status code if one was received, 0 otherwise.
-    int32_t status_code = 0;
+    NetworkResponseInfo response_info;
     // Response body if one was received.
     std::unique_ptr<feedwire::Response> response_body;
   };
@@ -37,10 +38,9 @@ class FeedNetwork {
     ~ActionRequestResult();
     ActionRequestResult(ActionRequestResult&&);
     ActionRequestResult& operator=(ActionRequestResult&&);
-    // HTTP status code if one was received, 0 otherwise.
-    int32_t status_code = 0;
+    NetworkResponseInfo response_info;
     // Response body if one was received.
-    std::unique_ptr<feedwire::FeedActionResponse> response_body;
+    std::unique_ptr<feedwire::UploadActionsResponse> response_body;
   };
 
   virtual ~FeedNetwork();
@@ -50,13 +50,14 @@ class FeedNetwork {
   // |CancelRequests()|.
   virtual void SendQueryRequest(
       const feedwire::Request& request,
+      bool force_signed_out_request,
       base::OnceCallback<void(QueryRequestResult)> callback) = 0;
 
-  // Send a feedwire::ActionRequest, and receive the response in |callback|.
-  // |callback| will be called unless the request is canceled with
+  // Send a feedwire::UploadActionsRequest, and receive the response in
+  // |callback|. |callback| will be called unless the request is canceled with
   // |CancelRequests()|.
   virtual void SendActionRequest(
-      const feedwire::ActionRequest& request,
+      const feedwire::UploadActionsRequest& request,
       base::OnceCallback<void(ActionRequestResult)> callback) = 0;
 
   // Cancels all pending requests immediately. This could be used, for example,

@@ -37,7 +37,6 @@ class SVGElementRareData final : public GarbageCollected<SVGElementRareData> {
   SVGElementRareData()
       : corresponding_element_(nullptr),
         instances_updates_blocked_(false),
-        use_override_computed_style_(false),
         needs_override_computed_style_update_(false),
         web_animated_attributes_dirty_(false) {}
 
@@ -76,7 +75,7 @@ class SVGElementRareData final : public GarbageCollected<SVGElementRareData> {
     return web_animated_attributes_dirty_;
   }
 
-  HashSet<const QualifiedName*>& WebAnimatedAttributes() {
+  HashSet<QualifiedName>& WebAnimatedAttributes() {
     return web_animated_attributes_;
   }
 
@@ -88,13 +87,9 @@ class SVGElementRareData final : public GarbageCollected<SVGElementRareData> {
   }
   MutableCSSPropertyValueSet* EnsureAnimatedSMILStyleProperties();
 
-  ComputedStyle* OverrideComputedStyle(Element*, const ComputedStyle*);
+  const ComputedStyle* OverrideComputedStyle(Element*, const ComputedStyle*);
   void ClearOverriddenComputedStyle();
 
-  bool UseOverrideComputedStyle() const { return use_override_computed_style_; }
-  void SetUseOverrideComputedStyle(bool value) {
-    use_override_computed_style_ = value;
-  }
   void SetNeedsOverrideComputedStyleUpdate() {
     needs_override_computed_style_update_ = true;
   }
@@ -104,7 +99,7 @@ class SVGElementRareData final : public GarbageCollected<SVGElementRareData> {
 
   AffineTransform* AnimateMotionTransform();
 
-  void Trace(Visitor*);
+  void Trace(Visitor*) const;
 
  private:
   SVGElementSet outgoing_references_;
@@ -114,10 +109,9 @@ class SVGElementRareData final : public GarbageCollected<SVGElementRareData> {
   Member<SVGElementResourceClient> resource_client_;
   Member<ElementSMILAnimations> smil_animations_;
   bool instances_updates_blocked_ : 1;
-  bool use_override_computed_style_ : 1;
   bool needs_override_computed_style_update_ : 1;
   bool web_animated_attributes_dirty_ : 1;
-  HashSet<const QualifiedName*> web_animated_attributes_;
+  HashSet<QualifiedName> web_animated_attributes_;
   Member<MutableCSSPropertyValueSet> animated_smil_style_properties_;
   scoped_refptr<ComputedStyle> override_computed_style_;
   // Used by <animateMotion>

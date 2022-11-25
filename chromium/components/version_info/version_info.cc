@@ -4,8 +4,9 @@
 
 #include "components/version_info/version_info.h"
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/no_destructor.h"
+#include "base/notreached.h"
 #include "base/sanitizer_buildflags.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/version.h"
@@ -50,7 +51,7 @@ std::string GetOSType() {
   return "Windows";
 #elif defined(OS_IOS)
   return "iOS";
-#elif defined(OS_MACOSX)
+#elif defined(OS_APPLE)
   return "Mac OS X";
 #elif defined(OS_CHROMEOS)
 # if BUILDFLAG(GOOGLE_CHROME_BRANDING)

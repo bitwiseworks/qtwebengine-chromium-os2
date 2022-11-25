@@ -108,10 +108,7 @@ bool IsCorsSafelistedMethod(const std::string& method);
 COMPONENT_EXPORT(NETWORK_CPP)
 bool IsCorsSafelistedContentType(const std::string& name);
 COMPONENT_EXPORT(NETWORK_CPP)
-bool IsCorsSafelistedHeader(
-    const std::string& name,
-    const std::string& value,
-    const base::flat_set<std::string>& extra_safelisted_header_names = {});
+bool IsCorsSafelistedHeader(const std::string& name, const std::string& value);
 COMPONENT_EXPORT(NETWORK_CPP)
 bool IsNoCorsSafelistedHeaderName(const std::string& name);
 COMPONENT_EXPORT(NETWORK_CPP)
@@ -138,8 +135,13 @@ std::vector<std::string> CorsUnsafeRequestHeaderNames(
 COMPONENT_EXPORT(NETWORK_CPP)
 std::vector<std::string> CorsUnsafeNotForbiddenRequestHeaderNames(
     const net::HttpRequestHeaders::HeaderVector& headers,
-    bool is_revalidating,
-    const base::flat_set<std::string>& extra_safelisted_header_names = {});
+    bool is_revalidating);
+
+// https://fetch.spec.whatwg.org/#privileged-no-cors-request-header-name
+// The returned list is NOT sorted.
+// The returned list consists of lower-cased names.
+COMPONENT_EXPORT(NETWORK_CPP)
+std::vector<std::string> PrivilegedNoCorsHeaderNames();
 
 // Checks forbidden method in the fetch spec.
 // See https://fetch.spec.whatwg.org/#forbidden-method.
@@ -167,6 +169,19 @@ bool IsCorsCrossOriginResponseType(mojom::FetchResponseType type);
 COMPONENT_EXPORT(NETWORK_CPP)
 bool CalculateCredentialsFlag(mojom::CredentialsMode credentials_mode,
                               mojom::FetchResponseType response_tainting);
+
+// TODO(toyoshim): Consider finding a more organized way to ensure adopting CORS
+// checks against all URLLoaderFactory and URLLoader inheritances.
+// Calculates mojom::FetchResponseType for non HTTP/HTTPS schemes those are out
+// of web standards. This adopts a simplified step 5 of
+// https://fetch.spec.whatwg.org/#main-fetch. |mode| is one of the
+// network::ResourceRequest to provide a CORS mode for the request.
+// |is_request_considered_same_origin| specifies if the request has a special
+// permission to bypass CORS checks.
+COMPONENT_EXPORT(NETWORK_CPP)
+mojom::FetchResponseType CalculateResponseType(
+    mojom::RequestMode mode,
+    bool is_request_considered_same_origin);
 
 }  // namespace cors
 

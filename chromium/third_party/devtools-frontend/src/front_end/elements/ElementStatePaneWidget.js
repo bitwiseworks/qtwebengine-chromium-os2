@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as SDK from '../sdk/sdk.js';
 import * as UI from '../ui/ui.js';
@@ -17,7 +20,8 @@ export class ElementStatePaneWidget extends UI.Widget.Widget {
     this.registerRequiredCSS('elements/elementStatePaneWidget.css');
     this.contentElement.className = 'styles-element-state-pane';
     this.contentElement.createChild('div').createTextChild(Common.UIString.UIString('Force element state'));
-    const table = createElementWithClass('table', 'source-code');
+    const table = document.createElement('table');
+    table.classList.add('source-code');
     UI.ARIAUtils.markAsPresentation(table);
 
     const inputs = [];
@@ -27,7 +31,7 @@ export class ElementStatePaneWidget extends UI.Widget.Widget {
      * @param {!Event} event
      */
     function clickListener(event) {
-      const node = self.UI.context.flavor(SDK.DOMModel.DOMNode);
+      const node = UI.Context.Context.instance().flavor(SDK.DOMModel.DOMNode);
       if (!node) {
         return;
       }
@@ -59,14 +63,10 @@ export class ElementStatePaneWidget extends UI.Widget.Widget {
 
     tr = table.createChild('tr');
     tr.appendChild(createCheckbox.call(null, 'focus-within'));
-    try {
-      tr.querySelector(':focus-visible');  // Will throw if not supported
-      tr.appendChild(createCheckbox.call(null, 'focus-visible'));
-    } catch (e) {
-    }
+    tr.appendChild(createCheckbox.call(null, 'focus-visible'));
 
     this.contentElement.appendChild(table);
-    self.UI.context.addFlavorChangeListener(SDK.DOMModel.DOMNode, this._update, this);
+    UI.Context.Context.instance().addFlavorChangeListener(SDK.DOMModel.DOMNode, this._update, this);
   }
 
   /**
@@ -97,7 +97,7 @@ export class ElementStatePaneWidget extends UI.Widget.Widget {
       return;
     }
 
-    let node = self.UI.context.flavor(SDK.DOMModel.DOMNode);
+    let node = UI.Context.Context.instance().flavor(SDK.DOMModel.DOMNode);
     if (node) {
       node = node.enclosingElementOrSelf();
     }

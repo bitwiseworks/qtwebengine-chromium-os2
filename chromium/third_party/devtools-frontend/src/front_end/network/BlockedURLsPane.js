@@ -18,13 +18,14 @@ export class BlockedURLsPane extends UI.Widget.VBox {
     this.registerRequiredCSS('network/blockedURLsPane.css');
 
     _instance = this;
-    this._manager = self.SDK.multitargetNetworkManager;
-    this._manager.addEventListener(
-        SDK.NetworkManager.MultitargetNetworkManager.Events.BlockedPatternsChanged, this._update, this);
+    this._manager = SDK.NetworkManager.MultitargetNetworkManager.instance();
+    this._manager.addEventListener(SDK.NetworkManager.MultitargetNetworkManager.Events.BlockedPatternsChanged, () => {
+      this._update();
+    }, this);
 
     this._toolbar = new UI.Toolbar.Toolbar('', this.contentElement);
     this._enabledCheckbox = new UI.Toolbar.ToolbarCheckbox(
-        Common.UIString.UIString('Enable request blocking'), undefined, this._toggleEnabled.bind(this));
+        Common.UIString.UIString('Enable network request blocking'), undefined, this._toggleEnabled.bind(this));
     this._toolbar.appendToolbarItem(this._enabledCheckbox);
     this._toolbar.appendSeparator();
     const addButton = new UI.Toolbar.ToolbarButton(Common.UIString.UIString('Add pattern'), 'largeicon-add');
@@ -61,8 +62,8 @@ export class BlockedURLsPane extends UI.Widget.VBox {
   _createEmptyPlaceholder() {
     const element = this.contentElement.createChild('div', 'no-blocked-urls');
     const addButton = UI.UIUtils.createTextButton(ls`Add pattern`, this._addButtonClicked.bind(this), 'add-button');
-    UI.ARIAUtils.setAccessibleName(addButton, ls`Add request blocking pattern`);
-    element.appendChild(UI.UIUtils.formatLocalized('Requests are not blocked. %s', [addButton]));
+    UI.ARIAUtils.setAccessibleName(addButton, ls`Add network request blocking pattern`);
+    element.appendChild(UI.UIUtils.formatLocalized('Network requests are not blocked. %s', [addButton]));
     return element;
   }
 
@@ -85,8 +86,9 @@ export class BlockedURLsPane extends UI.Widget.VBox {
    */
   renderItem(pattern, editable) {
     const count = this._blockedRequestsCount(pattern.url);
-    const element = createElementWithClass('div', 'blocked-url');
-    const checkbox = element.createChild('input', 'blocked-url-checkbox');
+    const element = document.createElement('div');
+    element.classList.add('blocked-url');
+    const checkbox = /** @type {!HTMLInputElement} */ (element.createChild('input', 'blocked-url-checkbox'));
     checkbox.type = 'checkbox';
     checkbox.checked = pattern.enabled;
     checkbox.disabled = !this._manager.blockingEnabled();
@@ -127,7 +129,7 @@ export class BlockedURLsPane extends UI.Widget.VBox {
   /**
    * @override
    * @param {!SDK.NetworkManager.BlockedPattern} pattern
-   * @return {!UI.ListWidget.Editor}
+   * @return {!UI.ListWidget.Editor<!SDK.NetworkManager.BlockedPattern>}
    */
   beginEdit(pattern) {
     this._editor = this._createEditor();
@@ -138,7 +140,7 @@ export class BlockedURLsPane extends UI.Widget.VBox {
   /**
    * @override
    * @param {!SDK.NetworkManager.BlockedPattern} item
-   * @param {!UI.ListWidget.Editor} editor
+   * @param {!UI.ListWidget.Editor<!SDK.NetworkManager.BlockedPattern>} editor
    * @param {boolean} isNew
    */
   commitEdit(item, editor, isNew) {
@@ -167,6 +169,11 @@ export class BlockedURLsPane extends UI.Widget.VBox {
     titles.createChild('div').textContent =
         Common.UIString.UIString('Text pattern to block matching requests; use * for wildcard');
     const fields = content.createChild('div', 'blocked-url-edit-row');
+    /**
+     * @param {!SDK.NetworkManager.BlockedPattern} item
+     * @param {number} index
+     * @param {(!HTMLInputElement|!HTMLSelectElement)} input
+     */
     const validator = (item, index, input) => {
       let valid = true;
       let errorMessage;
@@ -189,7 +196,7 @@ export class BlockedURLsPane extends UI.Widget.VBox {
   }
 
   /**
-   * @return {!Promise<?>}
+   * @return {!Promise<void>}
    */
   _update() {
     const enabled = this._manager.blockingEnabled();
@@ -214,7 +221,7 @@ export class BlockedURLsPane extends UI.Widget.VBox {
     let result = 0;
     for (const blockedUrl of this._blockedCountForUrl.keys()) {
       if (this._matches(url, blockedUrl)) {
-        result += this._blockedCountForUrl.get(blockedUrl);
+        result += /** @type {number} */ (this._blockedCountForUrl.get(blockedUrl));
       }
     }
     return result;

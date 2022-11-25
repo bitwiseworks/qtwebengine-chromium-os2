@@ -31,6 +31,9 @@
 #include "third_party/blink/public/web/web_element.h"
 
 #include "third_party/blink/public/platform/web_rect.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_element.h"
+#include "third_party/blink/renderer/core/css/css_computed_style_declaration.h"
+#include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/fullscreen/fullscreen.h"
@@ -47,6 +50,12 @@
 #include "ui/gfx/geometry/size.h"
 
 namespace blink {
+
+WebElement WebElement::FromV8Value(v8::Local<v8::Value> value) {
+  Element* element =
+      V8Element::ToImplWithTypeCheck(v8::Isolate::GetCurrent(), value);
+  return WebElement(element);
+}
 
 bool WebElement::IsFormControlElement() const {
   return ConstUnwrap<Element>()->IsFormControlElement();
@@ -145,6 +154,14 @@ WebNode WebElement::ShadowRoot() const {
   return WebNode(root);
 }
 
+WebNode WebElement::OpenOrClosedShadowRoot() {
+  if (IsNull())
+    return WebNode();
+
+  auto* root = ConstUnwrap<Element>()->AuthorShadowRoot();
+  return WebNode(root);
+}
+
 WebRect WebElement::BoundsInViewport() const {
   return ConstUnwrap<Element>()->BoundsInViewport();
 }
@@ -180,6 +197,22 @@ gfx::Size WebElement::GetImageSize() {
 void WebElement::RequestFullscreen() {
   Element* element = Unwrap<Element>();
   Fullscreen::RequestFullscreen(*element);
+}
+
+WebString WebElement::GetComputedValue(const WebString& property_name) {
+  if (IsNull())
+    return WebString();
+
+  Element* element = Unwrap<Element>();
+  CSSPropertyID property_id = cssPropertyID(
+      element->GetDocument().GetExecutionContext(), property_name);
+  if (property_id == CSSPropertyID::kInvalid)
+    return WebString();
+
+  element->GetDocument().UpdateStyleAndLayoutTree();
+  auto* computed_style =
+      MakeGarbageCollected<CSSComputedStyleDeclaration>(element);
+  return computed_style->GetPropertyCSSValue(property_id)->CssText();
 }
 
 WebElement::WebElement(Element* elem) : WebNode(elem) {}

@@ -16,32 +16,31 @@
  */
 
 
-#include <ft2build.h>
-#include FT_LIST_H
-#include FT_OUTLINE_H
-#include FT_FONT_FORMATS_H
+#include <freetype/ftlist.h>
+#include <freetype/ftoutln.h>
+#include <freetype/ftfntfmt.h>
 
-#include FT_INTERNAL_VALIDATE_H
-#include FT_INTERNAL_OBJECTS_H
-#include FT_INTERNAL_DEBUG_H
-#include FT_INTERNAL_RFORK_H
-#include FT_INTERNAL_STREAM_H
-#include FT_INTERNAL_SFNT_H            /* for SFNT_Load_Table_Func */
-#include FT_INTERNAL_POSTSCRIPT_AUX_H  /* for PS_Driver            */
+#include <freetype/internal/ftvalid.h>
+#include <freetype/internal/ftobjs.h>
+#include <freetype/internal/ftdebug.h>
+#include <freetype/internal/ftrfork.h>
+#include <freetype/internal/ftstream.h>
+#include <freetype/internal/sfnt.h>          /* for SFNT_Load_Table_Func */
+#include <freetype/internal/psaux.h>         /* for PS_Driver            */
 
-#include FT_TRUETYPE_TABLES_H
-#include FT_TRUETYPE_TAGS_H
-#include FT_TRUETYPE_IDS_H
+#include <freetype/tttables.h>
+#include <freetype/tttags.h>
+#include <freetype/ttnameid.h>
 
-#include FT_SERVICE_PROPERTIES_H
-#include FT_SERVICE_SFNT_H
-#include FT_SERVICE_POSTSCRIPT_NAME_H
-#include FT_SERVICE_GLYPH_DICT_H
-#include FT_SERVICE_TT_CMAP_H
-#include FT_SERVICE_KERNING_H
-#include FT_SERVICE_TRUETYPE_ENGINE_H
+#include <freetype/internal/services/svprop.h>
+#include <freetype/internal/services/svsfnt.h>
+#include <freetype/internal/services/svpostnm.h>
+#include <freetype/internal/services/svgldict.h>
+#include <freetype/internal/services/svttcmap.h>
+#include <freetype/internal/services/svkern.h>
+#include <freetype/internal/services/svtteng.h>
 
-#include FT_DRIVER_H
+#include <freetype/ftdriver.h>
 
 #ifdef FT_CONFIG_OPTION_MAC_FONTS
 #include "ftbase.h"
@@ -50,7 +49,7 @@
 
 #ifdef FT_DEBUG_LEVEL_TRACE
 
-#include FT_BITMAP_H
+#include <freetype/ftbitmap.h>
 
 #if defined( _MSC_VER )      /* Visual C++ (and Intel C++)   */
   /* We disable the warning `conversion from XXX to YYY,     */
@@ -1842,15 +1841,15 @@
       /* FT2 allocator takes signed long buffer length,
        * too large value causing overflow should be checked
        */
-      FT_TRACE4(( "                 POST fragment #%d: length=0x%08x"
-                  " total pfb_len=0x%08x\n",
+      FT_TRACE4(( "                 POST fragment #%d: length=0x%08lx"
+                  " total pfb_len=0x%08lx\n",
                   i, temp, pfb_len + temp + 6 ));
 
       if ( FT_MAC_RFORK_MAX_LEN < temp               ||
            FT_MAC_RFORK_MAX_LEN - temp < pfb_len + 6 )
       {
         FT_TRACE2(( "             MacOS resource length cannot exceed"
-                    " 0x%08x\n",
+                    " 0x%08lx\n",
                     FT_MAC_RFORK_MAX_LEN ));
 
         error = FT_THROW( Invalid_Offset );
@@ -1861,13 +1860,13 @@
     }
 
     FT_TRACE2(( "             total buffer size to concatenate"
-                " %d POST fragments: 0x%08x\n",
+                " %ld POST fragments: 0x%08lx\n",
                  resource_cnt, pfb_len + 2 ));
 
     if ( pfb_len + 2 < 6 )
     {
       FT_TRACE2(( "             too long fragment length makes"
-                  " pfb_len confused: pfb_len=0x%08x\n",
+                  " pfb_len confused: pfb_len=0x%08lx\n",
                   pfb_len ));
 
       error = FT_THROW( Array_Too_Large );
@@ -1910,7 +1909,7 @@
         goto Exit2;
 
       FT_TRACE3(( "POST fragment[%d]:"
-                  " offsets=0x%08x, rlen=0x%08x, flags=0x%04x\n",
+                  " offsets=0x%08lx, rlen=0x%08lx, flags=0x%04x\n",
                   i, offsets[i], rlen, flags ));
 
       error = FT_ERR( Array_Too_Large );
@@ -1937,7 +1936,7 @@
       else
       {
         FT_TRACE3(( "    Write POST fragment #%d header (4-byte) to buffer"
-                    " %p + 0x%08x\n",
+                    " %p + 0x%08lx\n",
                     i, pfb_data, pfb_lenpos ));
 
         if ( pfb_lenpos + 3 > pfb_len + 2 )
@@ -1952,7 +1951,7 @@
           break;
 
         FT_TRACE3(( "    Write POST fragment #%d header (6-byte) to buffer"
-                    " %p + 0x%08x\n",
+                    " %p + 0x%08lx\n",
                     i, pfb_data, pfb_pos ));
 
         if ( pfb_pos + 6 > pfb_len + 2 )
@@ -1974,8 +1973,8 @@
       if ( pfb_pos > pfb_len || pfb_pos + rlen > pfb_len )
         goto Exit2;
 
-      FT_TRACE3(( "    Load POST fragment #%d (%d byte) to buffer"
-                  " %p + 0x%08x\n",
+      FT_TRACE3(( "    Load POST fragment #%d (%ld byte) to buffer"
+                  " %p + 0x%08lx\n",
                   i, rlen, pfb_data, pfb_pos ));
 
       error = FT_Stream_Read( stream, (FT_Byte *)pfb_data + pfb_pos, rlen );
@@ -2260,7 +2259,7 @@
       args2.flags    = FT_OPEN_PATHNAME;
       args2.pathname = file_names[i] ? file_names[i] : args->pathname;
 
-      FT_TRACE3(( "Try rule %d: %s (offset=%d) ...",
+      FT_TRACE3(( "Try rule %d: %s (offset=%ld) ...",
                   i, args2.pathname, offsets[i] ));
 
       error = FT_Stream_New( library, &args2, &stream2 );
@@ -2858,6 +2857,8 @@
     if ( error )
     {
       FT_FREE( node );
+      if ( size )
+        FT_FREE( size->internal );
       FT_FREE( size );
     }
 
@@ -3213,9 +3214,9 @@
       FT_Size_Metrics*  metrics = &face->size->metrics;
 
 
-      FT_TRACE5(( "  x scale: %d (%f)\n",
+      FT_TRACE5(( "  x scale: %ld (%f)\n",
                   metrics->x_scale, metrics->x_scale / 65536.0 ));
-      FT_TRACE5(( "  y scale: %d (%f)\n",
+      FT_TRACE5(( "  y scale: %ld (%f)\n",
                   metrics->y_scale, metrics->y_scale / 65536.0 ));
       FT_TRACE5(( "  ascender: %f\n",    metrics->ascender / 64.0 ));
       FT_TRACE5(( "  descender: %f\n",   metrics->descender / 64.0 ));
@@ -3288,9 +3289,9 @@
       FT_Size_Metrics*  metrics = &face->size->metrics;
 
 
-      FT_TRACE5(( "  x scale: %d (%f)\n",
+      FT_TRACE5(( "  x scale: %ld (%f)\n",
                   metrics->x_scale, metrics->x_scale / 65536.0 ));
-      FT_TRACE5(( "  y scale: %d (%f)\n",
+      FT_TRACE5(( "  y scale: %ld (%f)\n",
                   metrics->y_scale, metrics->y_scale / 65536.0 ));
       FT_TRACE5(( "  ascender: %f\n",    metrics->ascender / 64.0 ));
       FT_TRACE5(( "  descender: %f\n",   metrics->descender / 64.0 ));
@@ -3450,7 +3451,7 @@
               if ( akerning->x != orig_x_rounded ||
                    akerning->y != orig_y_rounded )
                 FT_TRACE5(( "FT_Get_Kerning: horizontal kerning"
-                            " (%d, %d) scaled down to (%d, %d) pixels\n",
+                            " (%ld, %ld) scaled down to (%ld, %ld) pixels\n",
                             orig_x_rounded / 64, orig_y_rounded / 64,
                             akerning->x / 64, akerning->y / 64 ));
             }
@@ -3722,7 +3723,7 @@
       if ( charcode > 0xFFFFFFFFUL )
       {
         FT_TRACE1(( "FT_Get_Char_Index: too large charcode" ));
-        FT_TRACE1(( " 0x%x is truncated\n", charcode ));
+        FT_TRACE1(( " 0x%lx is truncated\n", charcode ));
       }
 
       result = cmap->clazz->char_index( cmap, (FT_UInt32)charcode );
@@ -3898,13 +3899,13 @@
         {
           FT_TRACE1(( "FT_Face_GetCharVariantIndex:"
                       " too large charcode" ));
-          FT_TRACE1(( " 0x%x is truncated\n", charcode ));
+          FT_TRACE1(( " 0x%lx is truncated\n", charcode ));
         }
         if ( variantSelector > 0xFFFFFFFFUL )
         {
           FT_TRACE1(( "FT_Face_GetCharVariantIndex:"
                       " too large variantSelector" ));
-          FT_TRACE1(( " 0x%x is truncated\n", variantSelector ));
+          FT_TRACE1(( " 0x%lx is truncated\n", variantSelector ));
         }
 
         result = vcmap->clazz->char_var_index( vcmap, ucmap,
@@ -3941,13 +3942,13 @@
         {
           FT_TRACE1(( "FT_Face_GetCharVariantIsDefault:"
                       " too large charcode" ));
-          FT_TRACE1(( " 0x%x is truncated\n", charcode ));
+          FT_TRACE1(( " 0x%lx is truncated\n", charcode ));
         }
         if ( variantSelector > 0xFFFFFFFFUL )
         {
           FT_TRACE1(( "FT_Face_GetCharVariantIsDefault:"
                       " too large variantSelector" ));
-          FT_TRACE1(( " 0x%x is truncated\n", variantSelector ));
+          FT_TRACE1(( " 0x%lx is truncated\n", variantSelector ));
         }
 
         result = vcmap->clazz->char_var_default( vcmap,
@@ -4010,7 +4011,7 @@
         if ( charcode > 0xFFFFFFFFUL )
         {
           FT_TRACE1(( "FT_Face_GetVariantsOfChar: too large charcode" ));
-          FT_TRACE1(( " 0x%x is truncated\n", charcode ));
+          FT_TRACE1(( " 0x%lx is truncated\n", charcode ));
         }
 
         result = vcmap->clazz->charvariant_list( vcmap, memory,
@@ -4044,7 +4045,7 @@
         if ( variantSelector > 0xFFFFFFFFUL )
         {
           FT_TRACE1(( "FT_Get_Char_Index: too large variantSelector" ));
-          FT_TRACE1(( " 0x%x is truncated\n", variantSelector ));
+          FT_TRACE1(( " 0x%lx is truncated\n", variantSelector ));
         }
 
         result = vcmap->clazz->variantchar_list( vcmap, memory,

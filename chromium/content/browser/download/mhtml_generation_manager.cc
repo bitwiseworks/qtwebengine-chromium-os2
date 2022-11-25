@@ -23,8 +23,8 @@
 #include "components/download/public/common/download_task_runner.h"
 #include "content/browser/bad_message.h"
 #include "content/browser/download/mhtml_extra_parts_impl.h"
-#include "content/browser/frame_host/frame_tree_node.h"
-#include "content/browser/frame_host/render_frame_host_impl.h"
+#include "content/browser/renderer_host/frame_tree_node.h"
+#include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/common/download/mhtml_file_writer.mojom.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/mhtml_extra_parts.h"
@@ -514,8 +514,8 @@ void MHTMLGenerationManager::Job::OnWriteComplete(
   DCHECK(download::GetDownloadTaskRunner()->RunsTasksInCurrentSequence());
 
   watcher_.reset();
-  base::PostTask(FROM_HERE, {BrowserThread::UI},
-                 base::BindOnce(std::move(callback), save_status));
+  GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindOnce(std::move(callback), save_status));
 }
 
 void MHTMLGenerationManager::Job::DoneWritingToDisk(

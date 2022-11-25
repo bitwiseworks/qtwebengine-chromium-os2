@@ -53,6 +53,7 @@
 #include "net/third_party/quiche/src/quic/core/quic_utils.h"
 #include "net/third_party/quiche/src/quic/core/quic_versions.h"
 #include "net/third_party/quiche/src/quic/platform/api/quic_default_proof_providers.h"
+#include "net/third_party/quiche/src/quic/platform/api/quic_ip_address.h"
 #include "net/third_party/quiche/src/quic/platform/api/quic_socket_address.h"
 #include "net/third_party/quiche/src/quic/platform/api/quic_system_event_loop.h"
 #include "net/third_party/quiche/src/quic/tools/fake_proof_verifier.h"
@@ -76,6 +77,12 @@ DEFINE_QUIC_COMMAND_LINE_FLAG(
     "will be derived from the provided URL.");
 
 DEFINE_QUIC_COMMAND_LINE_FLAG(int32_t, port, 0, "The port to connect to.");
+
+DEFINE_QUIC_COMMAND_LINE_FLAG(std::string,
+                              ip_version_for_host_lookup,
+                              "",
+                              "Only used if host address lookup is needed. "
+                              "4=ipv4; 6=ipv6; otherwise=don't care.");
 
 DEFINE_QUIC_COMMAND_LINE_FLAG(std::string,
                               body,
@@ -108,6 +115,20 @@ DEFINE_QUIC_COMMAND_LINE_FLAG(
     "QUIC version to speak, e.g. 21. If not set, then all available "
     "versions are offered in the handshake. Also supports wire versions "
     "such as Q043 or T099.");
+
+DEFINE_QUIC_COMMAND_LINE_FLAG(
+    std::string,
+    connection_options,
+    "",
+    "Connection options as ASCII tags separated by commas, "
+    "e.g. \"ABCD,EFGH\"");
+
+DEFINE_QUIC_COMMAND_LINE_FLAG(
+    std::string,
+    client_connection_options,
+    "",
+    "Client connection options as ASCII tags separated by commas, "
+    "e.g. \"ABCD,EFGH\"");
 
 DEFINE_QUIC_COMMAND_LINE_FLAG(bool,
                               quic_ietf_draft,
@@ -164,6 +185,16 @@ DEFINE_QUIC_COMMAND_LINE_FLAG(
     disable_port_changes,
     false,
     "If true, do not change local port after each request.");
+
+DEFINE_QUIC_COMMAND_LINE_FLAG(int32_t,
+                              server_connection_id_length,
+                              -1,
+                              "Length of the server connection ID used.");
+
+DEFINE_QUIC_COMMAND_LINE_FLAG(int32_t,
+                              client_connection_id_length,
+                              -1,
+                              "Length of the client connection ID used.");
 
 namespace quic {
 
@@ -222,9 +253,30 @@ int QuicToyClient::SendRequestsAndPrintResponses(
     proof_verifier = quic::CreateDefaultProofVerifier(url.host());
   }
 
+  QuicConfig config;
+  std::string connection_options_string = GetQuicFlag(FLAGS_connection_options);
+  if (!connection_options_string.empty()) {
+    config.SetConnectionOptionsToSend(
+        ParseQuicTagVector(connection_options_string));
+  }
+  std::string client_connection_options_string =
+      GetQuicFlag(FLAGS_client_connection_options);
+  if (!client_connection_options_string.empty()) {
+    config.SetClientConnectionOptions(
+        ParseQuicTagVector(client_connection_options_string));
+  }
+
+  int address_family_for_lookup = AF_UNSPEC;
+  if (GetQuicFlag(FLAGS_ip_version_for_host_lookup) == "4") {
+    address_family_for_lookup = AF_INET;
+  } else if (GetQuicFlag(FLAGS_ip_version_for_host_lookup) == "6") {
+    address_family_for_lookup = AF_INET6;
+  }
+
   // Build the client, and try to connect.
   std::unique_ptr<QuicSpdyClientBase> client = client_factory_->CreateClient(
-      url.host(), host, port, versions, std::move(proof_verifier));
+      url.host(), host, address_family_for_lookup, port, versions, config,
+      std::move(proof_verifier));
 
   if (client == nullptr) {
     std::cerr << "Failed to create client." << std::endl;
@@ -235,6 +287,16 @@ int QuicToyClient::SendRequestsAndPrintResponses(
   client->set_initial_max_packet_length(
       initial_mtu != 0 ? initial_mtu : quic::kDefaultMaxPacketSize);
   client->set_drop_response_body(GetQuicFlag(FLAGS_drop_response_body));
+  const int32_t server_connection_id_length =
+      GetQuicFlag(FLAGS_server_connection_id_length);
+  if (server_connection_id_length >= 0) {
+    client->set_server_connection_id_length(server_connection_id_length);
+  }
+  const int32_t client_connection_id_length =
+      GetQuicFlag(FLAGS_client_connection_id_length);
+  if (client_connection_id_length >= 0) {
+    client->set_client_connection_id_length(client_connection_id_length);
+  }
   if (!client->Initialize()) {
     std::cerr << "Failed to initialize client." << std::endl;
     return 1;

@@ -10,14 +10,14 @@
 #include <vector>
 
 #include "base/containers/span.h"
-#include "base/macros.h"
 #include "build/build_config.h"
+#include "printing/mojom/print.mojom-forward.h"
 #include "printing/native_drawing_context.h"
 #include "printing/printing_export.h"
 
 #if defined(OS_WIN)
 #include <windows.h>
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
 #include <ApplicationServices/ApplicationServices.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include "base/mac/scoped_cftyperef.h"
@@ -37,33 +37,9 @@ namespace printing {
 // This class plays metafiles from data stream (usually PDF or EMF).
 class PRINTING_EXPORT MetafilePlayer {
  public:
-#if defined(OS_MACOSX)
-  struct MacRenderPageParams {
-    // Whether the output should be shrunk to fit a destination page if the
-    // source PDF is bigger than the destination page in any dimension. If this
-    // is false, parts of the source PDF page that lie outside the bounds will
-    // be clipped.
-    bool shrink_to_fit = false;
-
-    // Whether the output should be stretched to fit the destination page if the
-    // source page size is smaller in all dimensions.
-    bool stretch_to_fit = false;
-
-    // Whether the output (after any scaling is done) should be centered
-    // horizontally within the destination page.
-    bool center_horizontally = false;
-
-    // Whether the output (after any scaling is done) should be centered
-    // vertically within the destination page. Note that all scaling preserves
-    // the original aspect ratio of the page.
-    bool center_vertically = false;
-
-    // Whether the source PDF should be autorotated to fit on the destination
-    // page.
-    bool autorotate = false;
-  };
-#endif  // defined(OS_MACOSX)
   MetafilePlayer();
+  MetafilePlayer(const MetafilePlayer&) = delete;
+  MetafilePlayer& operator=(const MetafilePlayer&) = delete;
   virtual ~MetafilePlayer();
 
 #if defined(OS_WIN)
@@ -73,15 +49,18 @@ class PRINTING_EXPORT MetafilePlayer {
   // details.
   virtual bool SafePlayback(printing::NativeDrawingContext hdc) const = 0;
 
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
   // Renders the given page into |rect| in the given context.
-  // Pages use a 1-based index. The rendering uses the arguments in
-  // |params| to determine scaling, translation, and rotation.
+  // Pages use a 1-based index. |autorotate| determines whether the source PDF
+  // should be autorotated to fit on the destination page. |fit_to_page|
+  // determines whether the source PDF should be scaled to fit on the
+  // destination page.
   virtual bool RenderPage(unsigned int page_number,
                           printing::NativeDrawingContext context,
                           const CGRect& rect,
-                          const MacRenderPageParams& params) const = 0;
-#endif  // if defined(OS_WIN)
+                          bool autorotate,
+                          bool fit_to_page) const = 0;
+#endif  // defined(OS_WIN)
 
   // Populates the buffer with the underlying data. This function should ONLY be
   // called after the metafile is closed. Returns true if writing succeeded.
@@ -98,9 +77,6 @@ class PRINTING_EXPORT MetafilePlayer {
   // called after the metafile is closed. Returns true if writing succeeded.
   virtual bool SaveTo(base::File* file) const = 0;
 #endif  // defined(OS_ANDROID)
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(MetafilePlayer);
 };
 
 // This class creates a graphics context that renders into a data stream
@@ -108,6 +84,8 @@ class PRINTING_EXPORT MetafilePlayer {
 class PRINTING_EXPORT Metafile : public MetafilePlayer {
  public:
   Metafile();
+  Metafile(const Metafile&) = delete;
+  Metafile& operator=(const Metafile&) = delete;
   ~Metafile() override;
 
   // Initializes a fresh new metafile for rendering. Returns false on failure.
@@ -124,7 +102,8 @@ class PRINTING_EXPORT Metafile : public MetafilePlayer {
   // in points (=1/72 in).
   virtual void StartPage(const gfx::Size& page_size,
                          const gfx::Rect& content_area,
-                         float scale_factor) = 0;
+                         float scale_factor,
+                         mojom::PageOrientation page_orientation) = 0;
 
   // Closes the current page and destroys the context used in rendering that
   // page. The results of current page will be appended into the underlying
@@ -167,9 +146,6 @@ class PRINTING_EXPORT Metafile : public MetafilePlayer {
 #if !defined(OS_ANDROID)
   bool SaveTo(base::File* file) const override;
 #endif  // !defined(OS_ANDROID)
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(Metafile);
 };
 
 }  // namespace printing

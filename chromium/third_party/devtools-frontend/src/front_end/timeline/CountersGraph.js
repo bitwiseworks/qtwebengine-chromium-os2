@@ -27,6 +27,8 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
 
 import * as Common from '../common/common.js';
 import * as PerfUI from '../perf_ui/perf_ui.js';
@@ -35,7 +37,7 @@ import * as TimelineModel from '../timeline_model/timeline_model.js';
 import * as UI from '../ui/ui.js';
 
 import {Events, PerformanceModel, Window} from './PerformanceModel.js';  // eslint-disable-line no-unused-vars
-import {TimelineModeViewDelegate} from './TimelinePanel.js';     // eslint-disable-line no-unused-vars
+import {TimelineModeViewDelegate} from './TimelinePanel.js';             // eslint-disable-line no-unused-vars
 
 /**
  * @unrestricted
@@ -82,7 +84,7 @@ export class CountersGraph extends UI.Widget.VBox {
     this._countersByName = {};
     this._countersByName['jsHeapSizeUsed'] = this._createCounter(
         Common.UIString.UIString('JS Heap'), Common.UIString.UIString('JS Heap: %s'), 'hsl(220, 90%, 43%)',
-        Number.bytesToString);
+        Platform.NumberUtilities.bytesToString);
     this._countersByName['documents'] = this._createCounter(
         Common.UIString.UIString('Documents'), Common.UIString.UIString('Documents: %s'), 'hsl(0, 90%, 43%)');
     this._countersByName['nodes'] = this._createCounter(
@@ -91,7 +93,7 @@ export class CountersGraph extends UI.Widget.VBox {
         Common.UIString.UIString('Listeners'), Common.UIString.UIString('Listeners: %s'), 'hsl(38, 90%, 43%)');
     this._gpuMemoryCounter = this._createCounter(
         Common.UIString.UIString('GPU Memory'), Common.UIString.UIString('GPU Memory [KB]: %s'), 'hsl(300, 90%, 43%)',
-        Number.bytesToString);
+        Platform.NumberUtilities.bytesToString);
     this._countersByName['gpuMemoryUsedKB'] = this._gpuMemoryCounter;
   }
 
@@ -384,7 +386,7 @@ export class CounterUI {
     this._setting = Common.Settings.Settings.instance().createSetting('timelineCountersGraph-' + title, true);
     this._setting.setTitle(title);
     this._filter = new UI.Toolbar.ToolbarSettingCheckbox(this._setting, title);
-    this._filter.inputElement.classList.add('-theme-preserve');
+    this._filter.inputElement.classList.add('-theme-preserve-input');
     const color = Common.Color.Color.parse(graphColor).setAlpha(0.5).asString(Common.Color.Format.RGBA);
     if (color) {
       this._filter.element.backgroundColor = color;

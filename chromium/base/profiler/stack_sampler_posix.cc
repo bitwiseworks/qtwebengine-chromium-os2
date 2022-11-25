@@ -14,8 +14,9 @@ namespace base {
 std::unique_ptr<StackSampler> StackSampler::Create(
     SamplingProfilerThreadToken thread_token,
     ModuleCache* module_cache,
-    StackSamplerTestDelegate* test_delegate,
-    std::unique_ptr<Unwinder> native_unwinder) {
+    UnwindersFactory core_unwinders_factory,
+    RepeatingClosure record_sample_callback,
+    StackSamplerTestDelegate* test_delegate) {
   return nullptr;
 }
 

@@ -142,6 +142,16 @@ bool FormData::IdentityComparator::operator()(const FormData& a,
                                       FormFieldData::IdentityComparator());
 }
 
+bool FormHasNonEmptyPasswordField(const FormData& form) {
+  for (const auto& field : form.fields) {
+    if (field.IsPasswordInputElement()) {
+      if (!field.value.empty() || !field.typed_value.empty())
+        return true;
+    }
+  }
+  return false;
+}
+
 std::ostream& operator<<(std::ostream& os, const FormData& form) {
   os << base::UTF16ToUTF8(form.name) << " " << form.url << " " << form.action
      << " " << form.main_frame_origin << " " << form.is_form_tag << " "
@@ -231,7 +241,7 @@ LogBuffer& operator<<(LogBuffer& buffer, const FormData& form) {
   buffer << Tag{"div"} << Attrib{"class", "form"};
   buffer << Tag{"table"};
   buffer << Tr{} << "Form name:" << form.name;
-  buffer << Tr{} << "Unique renderer Id:" << form.unique_renderer_id;
+  buffer << Tr{} << "Unique renderer Id:" << form.unique_renderer_id.value();
   buffer << Tr{} << "URL:" << form.url;
   buffer << Tr{} << "Action:" << form.action;
   buffer << Tr{} << "Is action empty:" << form.is_action_empty;

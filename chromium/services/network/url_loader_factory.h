@@ -14,6 +14,7 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "services/network/public/mojom/cookie_access_observer.mojom.h"
 #include "services/network/public/mojom/cross_origin_embedder_policy.mojom.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
@@ -37,9 +38,8 @@ class CorsURLLoaderFactory;
 // works on each frame.
 // A URLLoaderFactory can be created with null ResourceSchedulerClient, in which
 // case requests constructed by the factory will not be throttled.
-// The CORS related part is implemented in CorsURLLoader[Factory] until
-// kOutOfBlinkCors and kNetworkService is fully enabled. Note that
-// NetworkContext::CreateURLLoaderFactory returns a CorsURLLoaderFactory,
+// Note that the CORS related part is implemented in CorsURLLoader[Factory]
+// and NetworkContext::CreateURLLoaderFactory returns a CorsURLLoaderFactory,
 // instead of a URLLoaderFactory.
 class URLLoaderFactory : public mojom::URLLoaderFactory {
  public:
@@ -77,6 +77,8 @@ class URLLoaderFactory : public mojom::URLLoaderFactory {
 
   // |cors_url_loader_factory_| owns this.
   cors::CorsURLLoaderFactory* cors_url_loader_factory_;
+
+  mojo::Remote<mojom::CookieAccessObserver> cookie_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(URLLoaderFactory);
 };

@@ -19,13 +19,6 @@ base::Optional<Vector<double>> OrientationSensor::quaternion() {
   return Vector<double>({quat.x, quat.y, quat.z, quat.w});
 }
 
-Vector<double> OrientationSensor::quaternion(bool& is_null) {
-  reading_dirty_ = false;
-  INIT_IS_NULL_AND_RETURN(is_null, Vector<double>());
-  const auto& quat = GetReading().orientation_quat;
-  return Vector<double>({quat.x, quat.y, quat.z, quat.w});
-}
-
 template <typename T>
 void DoPopulateMatrix(T* target_matrix,
                       double x,
@@ -136,7 +129,7 @@ void OrientationSensor::OnSensorReadingChanged() {
   Sensor::OnSensorReadingChanged();
 }
 
-void OrientationSensor::Trace(Visitor* visitor) {
+void OrientationSensor::Trace(Visitor* visitor) const {
   Sensor::Trace(visitor);
 }
 

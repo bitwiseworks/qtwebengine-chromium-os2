@@ -8,8 +8,10 @@
 
 #include <algorithm>
 
+#include "base/logging.h"
 #include "base/macros.h"
 #include "base/stl_util.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "gpu/vulkan/vulkan_device_queue.h"
 #include "gpu/vulkan/vulkan_function_pointers.h"
 #include "gpu/vulkan/vulkan_swap_chain.h"
@@ -68,6 +70,9 @@ gfx::OverlayTransform FromVkSurfaceTransformFlag(
   }
 }
 
+// Minimum VkImages in a vulkan swap chain.
+uint32_t kMinImageCount = 3u;
+
 }  // namespace
 
 VulkanSurface::~VulkanSurface() {
@@ -75,9 +80,11 @@ VulkanSurface::~VulkanSurface() {
 }
 
 VulkanSurface::VulkanSurface(VkInstance vk_instance,
+                             gfx::AcceleratedWidget accelerated_widget,
                              VkSurfaceKHR surface,
                              bool enforce_protected_memory)
     : vk_instance_(vk_instance),
+      accelerated_widget_(accelerated_widget),
       surface_(surface),
       enforce_protected_memory_(enforce_protected_memory) {
   DCHECK_NE(static_cast<VkSurfaceKHR>(VK_NULL_HANDLE), surface_);
@@ -163,7 +170,19 @@ bool VulkanSurface::Initialize(VulkanDeviceQueue* device_queue,
     return false;
   }
 
-  image_count_ = std::max(surface_caps.minImageCount, 3u);
+  constexpr auto kRequiredUsageFlags =
+      VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+  constexpr auto kOptionalUsageFlags =
+      VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  if ((surface_caps.supportedUsageFlags & kRequiredUsageFlags) !=
+      kRequiredUsageFlags) {
+    DLOG(ERROR) << "Vulkan surface doesn't support necessary usage. "
+                   "supportedUsageFlags: 0x"
+                << std::hex << surface_caps.supportedUsageFlags;
+  }
+
+  image_usage_flags_ = (kRequiredUsageFlags | kOptionalUsageFlags) &
+                       surface_caps.supportedUsageFlags;
 
   return true;
 }
@@ -182,10 +201,18 @@ gfx::SwapResult VulkanSurface::SwapBuffers() {
 }
 
 gfx::SwapResult VulkanSurface::PostSubBuffer(const gfx::Rect& rect) {
-  return swap_chain_->PresentBuffer(rect);
+  return swap_chain_->PostSubBuffer(rect);
+}
+
+void VulkanSurface::PostSubBufferAsync(
+    const gfx::Rect& rect,
+    VulkanSwapChain::PostSubBufferCompletionCallback callback) {
+  swap_chain_->PostSubBufferAsync(rect, std::move(callback));
 }
 
 void VulkanSurface::Finish() {
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::WILL_BLOCK);
   vkQueueWaitIdle(device_queue_->GetVulkanQueue());
 }
 
@@ -201,8 +228,8 @@ bool VulkanSurface::CreateSwapChain(const gfx::Size& size,
   VkResult result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
       device_queue_->GetVulkanPhysicalDevice(), surface_, &surface_caps);
   if (VK_SUCCESS != result) {
-    DLOG(ERROR) << "vkGetPhysicalDeviceSurfaceCapabilitiesKHR() failed: "
-                << result;
+    LOG(FATAL) << "vkGetPhysicalDeviceSurfaceCapabilitiesKHR() failed: "
+               << result;
     return false;
   }
 
@@ -248,19 +275,21 @@ bool VulkanSurface::CreateSwapChain(const gfx::Size& size,
   DCHECK_GT(static_cast<uint32_t>(image_size.width()), 0u);
   DCHECK_GT(static_cast<uint32_t>(image_size.height()), 0u);
 
-  if (image_size_ == image_size && transform_ == transform)
+  if (image_size_ == image_size && transform_ == transform &&
+      swap_chain_->state() == VK_SUCCESS) {
     return true;
+  }
 
   image_size_ = image_size;
   transform_ = transform;
 
   auto swap_chain = std::make_unique<VulkanSwapChain>();
-
   // Create swap chain.
-  DCHECK_EQ(image_count_, std::max(surface_caps.minImageCount, 3u));
-  if (!swap_chain->Initialize(
-          device_queue_, surface_, surface_format_, image_size_, image_count_,
-          vk_transform, enforce_protected_memory_, std::move(swap_chain_))) {
+  auto min_image_count = std::max(surface_caps.minImageCount, kMinImageCount);
+  if (!swap_chain->Initialize(device_queue_, surface_, surface_format_,
+                              image_size_, min_image_count, image_usage_flags_,
+                              vk_transform, enforce_protected_memory_,
+                              std::move(swap_chain_))) {
     return false;
   }
 

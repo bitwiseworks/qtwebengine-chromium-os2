@@ -5,8 +5,23 @@
 /**
  * @fileoverview An element that represents an SSL certificate entry.
  */
+import '../../cr_elements/cr_expand_button/cr_expand_button.m.js';
+import '../../cr_elements/policy/cr_policy_indicator.m.js';
+import 'chrome://resources/polymer/v3_0/iron-flex-layout/iron-flex-layout-classes.js';
+import './certificate_shared_css.js';
+import './certificate_subentry.js';
+
+import {html, Polymer} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+
+import {CrPolicyIndicatorType} from '../../cr_elements/policy/cr_policy_indicator_behavior.m.js';
+import {I18nBehavior} from '../../js/i18n_behavior.m.js';
+
+import {CertificatesOrgGroup, CertificateType} from './certificates_browser_proxy.js';
+
 Polymer({
   is: 'certificate-entry',
+
+  _template: html`{__html_template__}`,
 
   behaviors: [I18nBehavior],
 

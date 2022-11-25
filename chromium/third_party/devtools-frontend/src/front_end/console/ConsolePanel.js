@@ -26,10 +26,16 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';  // eslint-disable-line no-unused-vars
 import * as UI from '../ui/ui.js';
 
 import {ConsoleView} from './ConsoleView.js';
+
+/** @type {!ConsolePanel} */
+let consolePanelInstance;
 
 /**
  * @unrestricted
@@ -41,15 +47,21 @@ export class ConsolePanel extends UI.Panel.Panel {
   }
 
   /**
+   * @param {{forceNew: ?boolean}=} opts
    * @return {!ConsolePanel}
    */
-  static instance() {
-    return /** @type {!ConsolePanel} */ (self.runtime.sharedInstance(ConsolePanel));
+  static instance(opts = {forceNew: null}) {
+    const {forceNew} = opts;
+    if (!consolePanelInstance || forceNew) {
+      consolePanelInstance = new ConsolePanel();
+    }
+
+    return consolePanelInstance;
   }
 
   static _updateContextFlavor() {
     const consoleView = ConsolePanel.instance()._view;
-    self.UI.context.setFlavor(ConsoleView, consoleView.isShowing() ? consoleView : null);
+    UI.Context.Context.instance().setFlavor(ConsoleView, consoleView.isShowing() ? consoleView : null);
   }
 
   /**
@@ -59,7 +71,7 @@ export class ConsolePanel extends UI.Panel.Panel {
     super.wasShown();
     const wrapper = WrapperView._instance;
     if (wrapper && wrapper.isShowing()) {
-      self.UI.inspectorView.setDrawerMinimized(true);
+      UI.InspectorView.InspectorView.instance().setDrawerMinimized(true);
     }
     this._view.show(this.element);
     ConsolePanel._updateContextFlavor();
@@ -72,7 +84,7 @@ export class ConsolePanel extends UI.Panel.Panel {
     super.willHide();
     // The minimized drawer has 0 height, and showing Console inside may set
     // Console's scrollTop to 0. Unminimize before calling show to avoid this.
-    self.UI.inspectorView.setDrawerMinimized(false);
+    UI.InspectorView.InspectorView.instance().setDrawerMinimized(false);
     if (WrapperView._instance) {
       WrapperView._instance._showViewInWrapper();
     }
@@ -108,7 +120,7 @@ export class WrapperView extends UI.Widget.VBox {
     if (!ConsolePanel.instance().isShowing()) {
       this._showViewInWrapper();
     } else {
-      self.UI.inspectorView.setDrawerMinimized(true);
+      UI.InspectorView.InspectorView.instance().setDrawerMinimized(true);
     }
     ConsolePanel._updateContextFlavor();
   }
@@ -117,7 +129,7 @@ export class WrapperView extends UI.Widget.VBox {
    * @override
    */
   willHide() {
-    self.UI.inspectorView.setDrawerMinimized(false);
+    UI.InspectorView.InspectorView.instance().setDrawerMinimized(false);
     ConsolePanel._updateContextFlavor();
   }
 

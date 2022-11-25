@@ -19,8 +19,6 @@ class Value;
 
 namespace autofill {
 
-struct PasswordForm;
-
 // When logging decisions made by password management code about whether to
 // offer user-entered credentials for saving or not, do use this class. It
 // offers a suite of convenience methods to format and scrub logs. The methods
@@ -70,16 +68,12 @@ class SavePasswordProgressLogger {
     STRING_FORM_FOUND_ON_PAGE,
     STRING_FORM_IS_VISIBLE,
     STRING_FORM_IS_PASSWORD,
-    STRING_FORM_IS_NOT_PASSWORD,
-    STRING_WILL_SUBMIT_FORM_METHOD,
     STRING_HTML_FORM_FOR_SUBMIT,
-    STRING_CREATED_PASSWORD_FORM,
     STRING_DID_START_PROVISIONAL_LOAD_METHOD,
     STRING_FRAME_NOT_MAIN_FRAME,
     STRING_PROVISIONALLY_SAVE_FORM_METHOD,
     STRING_EMPTY_PASSWORD,
     STRING_MATCHING_NOT_COMPLETE,
-    STRING_FORM_BLACKLISTED,
     STRING_INVALID_FORM,
     STRING_SYNC_CREDENTIAL,
     STRING_BLOCK_PASSWORD_SAME_ORIGIN_INSECURE_SCHEME,
@@ -141,7 +135,6 @@ class SavePasswordProgressLogger {
     STRING_HTTPAUTH_ON_PROMPT_USER,
     STRING_HTTPAUTH_ON_SET_OBSERVER,
     STRING_HTTPAUTH_ON_DETACH_OBSERVER,
-    STRING_SHOW_ONBOARDING,
     STRING_LEAK_DETECTION_DISABLED_FEATURE,
     STRING_LEAK_DETECTION_DISABLED_SAFE_BROWSING,
     STRING_LEAK_DETECTION_FINISHED,
@@ -172,7 +165,6 @@ class SavePasswordProgressLogger {
 
   // Call these methods to log information. They sanitize the input and call
   // SendLog to pass it for display.
-  void LogPasswordForm(StringID label, const PasswordForm& form);
   void LogFormData(StringID label, const FormData& form_data);
   void LogHTMLForm(StringID label,
                    const std::string& name_or_id,

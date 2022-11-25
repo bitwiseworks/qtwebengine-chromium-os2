@@ -11,8 +11,8 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/check.h"
 #include "base/location.h"
-#include "base/logging.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
@@ -28,6 +28,8 @@
 #include "mojo/public/cpp/system/platform_handle.h"
 
 namespace device {
+
+constexpr int64_t kPollingIntervalMilliseconds = 4;  // ~250 Hz
 
 GamepadProvider::GamepadProvider(
     GamepadConnectionChangeClient* connection_change_client)
@@ -139,7 +141,7 @@ void GamepadProvider::OnDevicesChanged(base::SystemMonitor::DeviceType type) {
 
 void GamepadProvider::Initialize(std::unique_ptr<GamepadDataFetcher> fetcher) {
   sampling_interval_delta_ =
-      base::TimeDelta::FromMilliseconds(features::GetGamepadPollingInterval());
+      base::TimeDelta::FromMilliseconds(kPollingIntervalMilliseconds);
 
   base::SystemMonitor* monitor = base::SystemMonitor::Get();
   if (monitor)
@@ -147,7 +149,7 @@ void GamepadProvider::Initialize(std::unique_ptr<GamepadDataFetcher> fetcher) {
 
   if (!polling_thread_)
     polling_thread_.reset(new base::Thread("Gamepad polling thread"));
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
   // On Linux, the data fetcher needs to watch file descriptors, so the message
   // loop needs to be a libevent loop.
   const base::MessagePumpType kMessageLoopType = base::MessagePumpType::IO;

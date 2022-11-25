@@ -33,7 +33,6 @@ let MostVisitedData;
  *            realboxEnabled: boolean,
  *            realboxMatchOmniboxTheme: boolean,
  *            richerPicker: boolean,
- *            suggestionTransparencyEnabled: boolean,
  *            translatedStrings: Object<string>}}
  */
 let configData;
@@ -413,6 +412,8 @@ window.chrome.embeddedSearch.newTabPage.openExtensionsPage;
 window.chrome.embeddedSearch.searchBox;
 /** @param {number} line */
 window.chrome.embeddedSearch.searchBox.deleteAutocompleteMatch;
+/** @param {number} suggestionGroupId */
+window.chrome.embeddedSearch.searchBox.toggleSuggestionGroupIdVisibility;
 window.chrome.embeddedSearch.searchBox.isKeyCaptureEnabled;
 /** @param {number} latencyMs */
 window.chrome.embeddedSearch.searchBox.logCharTypedToRepaintLatency;
@@ -440,6 +441,7 @@ let ACMatchClassification;
  *   descriptionClass: !Array<!ACMatchClassification>,
  *   destinationUrl: string,
  *   fillIntoEdit: string,
+ *   suggestionGroupId: number,
  *   iconUrl: string,
  *   imageDominantColor: string,
  *   imageUrl: string,
@@ -454,7 +456,16 @@ let AutocompleteMatch;
 
 /**
  * @typedef {{
+ *   header: string,
+ *   hidden: boolean,
+ * }}
+ */
+let SuggestionGroup;
+
+/**
+ * @typedef {{
  *   input: string,
+ *   suggestionGroupsMap: !Object<!SuggestionGroup>,
  *   matches: !Array<!AutocompleteMatch>,
  * }}
  */

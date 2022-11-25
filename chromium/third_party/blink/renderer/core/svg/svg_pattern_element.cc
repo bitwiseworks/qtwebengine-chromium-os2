@@ -28,6 +28,10 @@
 #include "third_party/blink/renderer/core/layout/svg/svg_resources.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_resources_cache.h"
 #include "third_party/blink/renderer/core/svg/pattern_attributes.h"
+#include "third_party/blink/renderer/core/svg/svg_animated_length.h"
+#include "third_party/blink/renderer/core/svg/svg_animated_preserve_aspect_ratio.h"
+#include "third_party/blink/renderer/core/svg/svg_animated_rect.h"
+#include "third_party/blink/renderer/core/svg/svg_animated_transform_list.h"
 #include "third_party/blink/renderer/core/svg/svg_resource.h"
 #include "third_party/blink/renderer/core/svg/svg_tree_scope_resources.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
@@ -83,7 +87,7 @@ SVGPatternElement::SVGPatternElement(Document& document)
   AddToPropertyMap(pattern_content_units_);
 }
 
-void SVGPatternElement::Trace(Visitor* visitor) {
+void SVGPatternElement::Trace(Visitor* visitor) const {
   visitor->Trace(x_);
   visitor->Trace(y_);
   visitor->Trace(width_);
@@ -225,14 +229,13 @@ static void SetPatternAttributes(const SVGPatternElement& element,
   }
 
   if (!attributes.HasPatternUnits() && element.patternUnits()->IsSpecified()) {
-    attributes.SetPatternUnits(
-        element.patternUnits()->CurrentValue()->EnumValue());
+    attributes.SetPatternUnits(element.patternUnits()->CurrentEnumValue());
   }
 
   if (!attributes.HasPatternContentUnits() &&
       element.patternContentUnits()->IsSpecified()) {
     attributes.SetPatternContentUnits(
-        element.patternContentUnits()->CurrentValue()->EnumValue());
+        element.patternContentUnits()->CurrentEnumValue());
   }
 
   if (!attributes.HasPatternTransform() &&

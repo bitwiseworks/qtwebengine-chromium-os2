@@ -21,6 +21,7 @@
 #include "components/performance_manager/public/render_process_host_proxy.h"
 #include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/tokens/tokens.h"
 
 namespace performance_manager {
 
@@ -79,12 +80,12 @@ struct TestNodeWrapper<FrameNodeImpl>::Factory {
       FrameNodeImpl* parent_frame_node,
       int frame_tree_node_id,
       int render_frame_id,
-      const base::UnguessableToken& token = base::UnguessableToken::Create(),
+      const blink::LocalFrameToken& frame_token = blink::LocalFrameToken(),
       int32_t browsing_instance_id = 0,
       int32_t site_instance_id = 0) {
     return std::make_unique<FrameNodeImpl>(
         process_node, page_node, parent_frame_node, frame_tree_node_id,
-        render_frame_id, token, browsing_instance_id, site_instance_id);
+        render_frame_id, frame_token, browsing_instance_id, site_instance_id);
   }
 };
 
@@ -93,9 +94,10 @@ struct TestNodeWrapper<FrameNodeImpl>::Factory {
 template <>
 struct TestNodeWrapper<ProcessNodeImpl>::Factory {
   static std::unique_ptr<ProcessNodeImpl> Create(
+      content::ProcessType process_type = content::PROCESS_TYPE_RENDERER,
       RenderProcessHostProxy proxy = RenderProcessHostProxy()) {
     // Provide an empty RenderProcessHostProxy by default.
-    return std::make_unique<ProcessNodeImpl>(std::move(proxy));
+    return std::make_unique<ProcessNodeImpl>(process_type, std::move(proxy));
   }
 };
 
@@ -124,7 +126,7 @@ struct TestNodeWrapper<WorkerNodeImpl>::Factory {
       WorkerNode::WorkerType worker_type,
       ProcessNodeImpl* process_node,
       const std::string& browser_context_id = std::string(),
-      const base::UnguessableToken& token = base::UnguessableToken::Create()) {
+      const blink::WorkerToken& token = blink::WorkerToken()) {
     return std::make_unique<WorkerNodeImpl>(browser_context_id, worker_type,
                                             process_node, token);
   }
@@ -187,6 +189,22 @@ class TestGraphImpl : public GraphImpl {
   int next_frame_routing_id_ = 0;
 };
 
+// A test harness that initializes the graph without the rest of
+// PerformanceManager. Allows for creating individual nodes without going
+// through an embedder. The structs in mock_graphs.h are useful for this.
+//
+// This is intended for testing code that is entirely bound to the
+// PerformanceManager sequence. Since the PerformanceManager itself is not
+// initialized messages posted using CallOnGraph or
+// PerformanceManager::GetTaskRunner will go into the void. To test code that
+// posts to and from the PerformanceManager sequence use
+// PerformanceManagerTestHarness.
+//
+// If you need to write tests that manipulate graph nodes and also use
+// CallOnGraph, you probably want to split the code under test into a
+// sequence-bound portion that deals with the graph (tested using
+// GraphTestHarness) and an interface that marshals to the PerformanceManager
+// sequence (tested using PerformanceManagerTestHarness).
 class GraphTestHarness : public ::testing::Test {
  public:
   GraphTestHarness();
@@ -194,7 +212,8 @@ class GraphTestHarness : public ::testing::Test {
 
   // Optional constructor for directly configuring the BrowserTaskEnvironment.
   template <class... ArgTypes>
-  explicit GraphTestHarness(ArgTypes... args) : task_env_(args...) {}
+  explicit GraphTestHarness(ArgTypes... args)
+      : task_env_(args...), graph_(new TestGraphImpl()) {}
 
   template <class NodeClass, typename... Args>
   TestNodeWrapper<NodeClass> CreateNode(Args&&... args) {
@@ -223,11 +242,18 @@ class GraphTestHarness : public ::testing::Test {
   void AdvanceClock(base::TimeDelta delta) { task_env_.FastForwardBy(delta); }
 
   content::BrowserTaskEnvironment& task_env() { return task_env_; }
-  TestGraphImpl* graph() { return &graph_; }
+  TestGraphImpl* graph() {
+    DCHECK(graph_.get());
+    return graph_.get();
+  }
+
+  // Manually tears down the graph. Useful for DEATH tests that deliberately
+  // violate graph invariants.
+  void TearDownAndDestroyGraph();
 
  private:
   content::BrowserTaskEnvironment task_env_;
-  TestGraphImpl graph_;
+  std::unique_ptr<TestGraphImpl> graph_;
 };
 
 }  // namespace performance_manager

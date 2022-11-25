@@ -28,16 +28,14 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/devtools/chrome_devtools_manager_delegate.h"
 #include "chrome/browser/extensions/api/debugger/debugger_api_constants.h"
-#include "chrome/browser/extensions/api/debugger/extension_dev_tools_infobar.h"
+#include "chrome/browser/extensions/api/debugger/extension_dev_tools_infobar_delegate.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/extension_util.h"
-#include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/webui/chrome_web_ui_controller_factory.h"
 #include "chrome/common/chrome_switches.h"
-#include "components/infobars/core/infobar.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/devtools_agent_host.h"
@@ -90,10 +88,14 @@ void CopyDebuggee(Debuggee* dst, const Debuggee& src) {
 
 // Returns true if the given |Extension| is allowed to attach to the specified
 // |url|.
-bool ExtensionCanAttachToURL(const Extension& extension,
+bool ExtensionMayAttachToURL(const Extension& extension,
                              const GURL& url,
                              Profile* profile,
                              std::string* error) {
+  // Allow the extension to attach to about:blank and empty URLs.
+  if (url.is_empty() || url == "about:")
+    return true;
+
   if (url == content::kUnreachableWebDataURL)
     return true;
 
@@ -117,6 +119,38 @@ constexpr char kPerfettoUIExtensionId[] = "lfmkphfpdbjijhpomgecfikhfohaoine";
 
 bool ExtensionMayAttachToBrowser(const Extension& extension) {
   return extension.id() == kPerfettoUIExtensionId;
+}
+
+bool ExtensionMayAttachToWebContents(const Extension& extension,
+                                     WebContents& web_contents,
+                                     Profile* profile,
+                                     std::string* error) {
+  // This is *not* redundant to the checks below, as
+  // web_contents.GetLastCommittedURL() may be different from
+  // web_contents.GetMainFrame()->GetLastCommittedURL(), with the
+  // former being a 'virtual' URL as obtained from NavigationEntry.
+  if (!ExtensionMayAttachToURL(extension, web_contents.GetLastCommittedURL(),
+                               profile, error)) {
+    return false;
+  }
+
+  for (content::RenderFrameHost* rfh : web_contents.GetAllFrames()) {
+    if (!ExtensionMayAttachToURL(extension, rfh->GetLastCommittedURL(), profile,
+                                 error))
+      return false;
+  }
+  return true;
+}
+
+bool ExtensionMayAttachToAgentHost(const Extension& extension,
+                                   DevToolsAgentHost& agent_host,
+                                   Profile* profile,
+                                   std::string* error) {
+  if (WebContents* wc = agent_host.GetWebContents())
+    return ExtensionMayAttachToWebContents(extension, *wc, profile, error);
+
+  return ExtensionMayAttachToURL(extension, agent_host.GetURL(), profile,
+                                 error);
 }
 
 }  // namespace
@@ -148,7 +182,7 @@ class ExtensionDevToolsClientHost : public content::DevToolsAgentHostClient,
                             SendCommand::Params::CommandParams* command_params);
 
   // Closes connection as terminated by the user.
-  void InfoBarDismissed();
+  void InfoBarDestroyed();
 
   // DevToolsAgentHostClient interface.
   void AgentHostClosed(DevToolsAgentHost* agent_host) override;
@@ -180,10 +214,12 @@ class ExtensionDevToolsClientHost : public content::DevToolsAgentHostClient,
   scoped_refptr<const Extension> extension_;
   Debuggee debuggee_;
   content::NotificationRegistrar registrar_;
-  int last_request_id_;
+  int last_request_id_ = 0;
   PendingRequests pending_requests_;
-  ExtensionDevToolsInfoBar* infobar_;
-  api::debugger::DetachReason detach_reason_;
+  std::unique_ptr<ExtensionDevToolsInfoBarDelegate::CallbackList::Subscription>
+      subscription_;
+  api::debugger::DetachReason detach_reason_ =
+      api::debugger::DETACH_REASON_TARGET_CLOSED;
 
   // Listen to extension unloaded notification.
   ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
@@ -199,10 +235,7 @@ ExtensionDevToolsClientHost::ExtensionDevToolsClientHost(
     const Debuggee& debuggee)
     : profile_(profile),
       agent_host_(agent_host),
-      extension_(std::move(extension)),
-      last_request_id_(0),
-      infobar_(nullptr),
-      detach_reason_(api::debugger::DETACH_REASON_TARGET_CLOSED) {
+      extension_(std::move(extension)) {
   CopyDebuggee(&debuggee_, debuggee);
 
   g_attached_client_hosts.Get().insert(this);
@@ -233,16 +266,14 @@ bool ExtensionDevToolsClientHost::Attach() {
   if (Manifest::IsPolicyLocation(extension_->location()))
     return true;
 
-  infobar_ = ExtensionDevToolsInfoBar::Create(
-      extension_id(), extension_->name(), this,
-      base::Bind(&ExtensionDevToolsClientHost::InfoBarDismissed,
-                 base::Unretained(this)));
+  subscription_ = ExtensionDevToolsInfoBarDelegate::Create(
+      extension_id(), extension_->name(),
+      base::BindOnce(&ExtensionDevToolsClientHost::InfoBarDestroyed,
+                     base::Unretained(this)));
   return true;
 }
 
 ExtensionDevToolsClientHost::~ExtensionDevToolsClientHost() {
-  if (infobar_)
-    infobar_->Remove(this);
   g_attached_client_hosts.Get().erase(this);
 }
 
@@ -281,7 +312,7 @@ void ExtensionDevToolsClientHost::SendMessageToBackend(
                                        base::as_bytes(base::make_span(json)));
 }
 
-void ExtensionDevToolsClientHost::InfoBarDismissed() {
+void ExtensionDevToolsClientHost::InfoBarDestroyed() {
   detach_reason_ = api::debugger::DETACH_REASON_CANCELED_BY_USER;
   RespondDetachedToPendingRequests();
   SendDetachedEvent();
@@ -373,11 +404,16 @@ bool ExtensionDevToolsClientHost::MayAttachToURL(const GURL& url,
                                                  bool is_webui) {
   if (is_webui)
     return false;
-  // Allow the extension to attach to about:blank.
-  if (url.is_empty() || url == "about:")
-    return true;
   std::string error;
-  return ExtensionCanAttachToURL(*extension_, url, profile_, &error);
+  if (!ExtensionMayAttachToURL(*extension_, url, profile_, &error))
+    return false;
+  // For nested URLs, make sure ExtensionMayAttachToURL() allows both
+  // the outer and the inner URLs.
+  if (url.inner_url() && !ExtensionMayAttachToURL(*extension_, *url.inner_url(),
+                                                  profile_, &error)) {
+    return false;
+  }
+  return true;
 }
 
 bool ExtensionDevToolsClientHost::MayAttachToBrowser() {
@@ -394,9 +430,7 @@ bool ExtensionDevToolsClientHost::MayWriteLocalFiles() {
 
 // DebuggerFunction -----------------------------------------------------------
 
-DebuggerFunction::DebuggerFunction()
-    : client_host_(NULL) {
-}
+DebuggerFunction::DebuggerFunction() : client_host_(nullptr) {}
 
 DebuggerFunction::~DebuggerFunction() = default;
 
@@ -423,12 +457,9 @@ bool DebuggerFunction::InitAgentHost(std::string* error) {
         *debuggee_.tab_id, browser_context(), include_incognito_information(),
         &web_contents);
     if (result && web_contents) {
-      // TODO(rdevlin.cronin) This should definitely be GetLastCommittedURL().
-      GURL url = web_contents->GetVisibleURL();
-
-      if (!ExtensionCanAttachToURL(
-              *extension(), url, Profile::FromBrowserContext(browser_context()),
-              error)) {
+      if (!ExtensionMayAttachToWebContents(
+              *extension(), *web_contents,
+              Profile::FromBrowserContext(browser_context()), error)) {
         return false;
       }
 
@@ -440,20 +471,22 @@ bool DebuggerFunction::InitAgentHost(std::string* error) {
             ->GetBackgroundHostForExtension(*debuggee_.extension_id);
     if (extension_host) {
       if (extension()->permissions_data()->IsRestrictedUrl(
-              extension_host->GetURL(), error)) {
+              extension_host->GetLastCommittedURL(), error)) {
         return false;
       }
       agent_host_ =
           DevToolsAgentHost::GetOrCreateFor(extension_host->host_contents());
     }
   } else if (debuggee_.target_id) {
-    agent_host_ = DevToolsAgentHost::GetForId(*debuggee_.target_id);
-    if (agent_host_.get()) {
-      if (extension()->permissions_data()->IsRestrictedUrl(
-              agent_host_->GetURL(), error)) {
-        agent_host_ = nullptr;
+    scoped_refptr<DevToolsAgentHost> agent_host =
+        DevToolsAgentHost::GetForId(*debuggee_.target_id);
+    if (agent_host) {
+      if (!ExtensionMayAttachToAgentHost(
+              *extension(), *agent_host,
+              Profile::FromBrowserContext(browser_context()), error)) {
         return false;
       }
+      agent_host_ = std::move(agent_host);
     } else if (*debuggee_.target_id == kBrowserTargetId &&
                ExtensionMayAttachToBrowser(*extension())) {
       // TODO(caseq): get rid of the below code, browser agent host should
@@ -530,7 +563,7 @@ ExtensionFunction::ResponseAction DebuggerAttachFunction::Run() {
   CopyDebuggee(&debuggee_, params->target);
   std::string error;
   if (!InitAgentHost(&error))
-    return RespondNow(Error(error));
+    return RespondNow(Error(std::move(error)));
 
   if (!DevToolsAgentHost::IsSupportedProtocolVersion(
           params->required_version)) {
@@ -569,7 +602,7 @@ ExtensionFunction::ResponseAction DebuggerDetachFunction::Run() {
   CopyDebuggee(&debuggee_, params->target);
   std::string error;
   if (!InitClientHost(&error))
-    return RespondNow(Error(error));
+    return RespondNow(Error(std::move(error)));
 
   client_host_->RespondDetachedToPendingRequests();
   client_host_->Close();
@@ -590,7 +623,7 @@ ExtensionFunction::ResponseAction DebuggerSendCommandFunction::Run() {
   CopyDebuggee(&debuggee_, params->target);
   std::string error;
   if (!InitClientHost(&error))
-    return RespondNow(Error(error));
+    return RespondNow(Error(std::move(error)));
 
   client_host_->SendMessageToBackend(this, params->method,
       params->command_params.get());
@@ -605,7 +638,7 @@ void DebuggerSendCommandFunction::SendResponseBody(
   if (response->Get("error", &error_body)) {
     std::string error;
     base::JSONWriter::Write(*error_body, &error);
-    Respond(Error(error));
+    Respond(Error(std::move(error)));
     return;
   }
 

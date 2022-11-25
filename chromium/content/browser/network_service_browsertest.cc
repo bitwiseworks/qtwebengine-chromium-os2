@@ -20,6 +20,7 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/network_service_util.h"
 #include "content/public/common/url_utils.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -28,6 +29,8 @@
 #include "content/shell/browser/shell.h"
 #include "content/test/content_browser_test_utils_internal.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "net/base/features.h"
+#include "net/disk_cache/disk_cache.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/http/http_response_headers.h"
 #include "net/test/embedded_test_server/default_handlers.h"
@@ -38,6 +41,7 @@
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "services/network/public/mojom/network_service_test.mojom.h"
+#include "services/network/test/udp_socket_test_util.h"
 
 #if defined(OS_ANDROID)
 #include "base/android/application_status_listener.h"
@@ -165,8 +169,10 @@ class NetworkServiceBrowserTest : public ContentBrowserTest {
     request->url = url;
     url::Origin origin = url::Origin::Create(url);
     request->trusted_params = network::ResourceRequest::TrustedParams();
-    request->trusted_params->network_isolation_key =
-        net::NetworkIsolationKey(origin, origin);
+    request->trusted_params->isolation_info =
+        net::IsolationInfo::CreateForInternalRequest(origin);
+    request->site_for_cookies =
+        request->trusted_params->isolation_info.site_for_cookies();
 
     SimpleURLLoaderTestHelper simple_loader_helper;
     std::unique_ptr<network::SimpleURLLoader> simple_loader =
@@ -193,7 +199,7 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest, WebUIBindingsNoHttp) {
   RenderProcessHostBadIpcMessageWaiter kill_waiter(
       shell()->web_contents()->GetMainFrame()->GetProcess());
   ASSERT_FALSE(CheckCanLoadHttp());
-  EXPECT_EQ(bad_message::WEBUI_BAD_SCHEME_ACCESS, kill_waiter.Wait());
+  EXPECT_EQ(bad_message::RPH_MOJO_PROCESS_ERROR, kill_waiter.Wait());
 }
 
 // Verifies that WebUI pages without WebUI bindings can make network requests.
@@ -252,6 +258,8 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest,
   mojo::Remote<network::mojom::NetworkContext> network_context;
   network::mojom::NetworkContextParamsPtr context_params =
       network::mojom::NetworkContextParams::New();
+  context_params->cert_verifier_params =
+      GetCertVerifierParams(network::mojom::CertVerifierCreationParams::New());
   context_params->http_cache_path = GetCacheDirectory();
   GetNetworkService()->CreateNetworkContext(
       network_context.BindNewPipeAndPassReceiver(), std::move(context_params));
@@ -259,6 +267,7 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest,
   network::mojom::URLLoaderFactoryParamsPtr params =
       network::mojom::URLLoaderFactoryParams::New();
   params->process_id = network::mojom::kBrowserProcessId;
+  params->automatically_assign_isolation_info = true;
   params->is_corb_enabled = false;
   params->is_trusted = true;
   mojo::Remote<network::mojom::URLLoaderFactory> loader_factory;
@@ -416,85 +425,9 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest, SyncCookieGetOnCrash) {
   // If the renderer is hung the test will hang.
 }
 
-class NetworkServiceInProcessBrowserTest : public ContentBrowserTest {
- public:
-  NetworkServiceInProcessBrowserTest() {
-    std::vector<base::Feature> features;
-    features.push_back(features::kNetworkServiceInProcess);
-    scoped_feature_list_.InitWithFeatures(features,
-                                          std::vector<base::Feature>());
-  }
-
-  void SetUpOnMainThread() override {
-    host_resolver()->AddRule("*", "127.0.0.1");
-    EXPECT_TRUE(embedded_test_server()->Start());
-  }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-
-  DISALLOW_COPY_AND_ASSIGN(NetworkServiceInProcessBrowserTest);
-};
-
-// Verifies that in-process network service works.
-IN_PROC_BROWSER_TEST_F(NetworkServiceInProcessBrowserTest, Basic) {
-  GURL test_url = embedded_test_server()->GetURL("foo.com", "/echo");
-  StoragePartitionImpl* partition = static_cast<StoragePartitionImpl*>(
-      BrowserContext::GetDefaultStoragePartition(
-          shell()->web_contents()->GetBrowserContext()));
-  EXPECT_TRUE(NavigateToURL(shell(), test_url));
-  ASSERT_EQ(net::OK,
-            LoadBasicRequest(partition->GetNetworkContext(), test_url));
-}
-
-class NetworkServiceInvalidLogBrowserTest : public ContentBrowserTest {
- public:
-  NetworkServiceInvalidLogBrowserTest() {}
-
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitchASCII(network::switches::kLogNetLog, "/abc/def");
-  }
-
-  void SetUpOnMainThread() override {
-    host_resolver()->AddRule("*", "127.0.0.1");
-    EXPECT_TRUE(embedded_test_server()->Start());
-  }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(NetworkServiceInvalidLogBrowserTest);
-};
-
-// Verifies that an invalid --log-net-log flag won't crash the browser.
-IN_PROC_BROWSER_TEST_F(NetworkServiceInvalidLogBrowserTest, Basic) {
-  GURL test_url = embedded_test_server()->GetURL("foo.com", "/echo");
-  StoragePartitionImpl* partition = static_cast<StoragePartitionImpl*>(
-      BrowserContext::GetDefaultStoragePartition(
-          shell()->web_contents()->GetBrowserContext()));
-  EXPECT_TRUE(NavigateToURL(shell(), test_url));
-  ASSERT_EQ(net::OK,
-            LoadBasicRequest(partition->GetNetworkContext(), test_url));
-}
-
-// TODO(yhirano): Merge this to NetworkServiceTest when OOR_CORS is enabled by
-// default.
-class NetworkServiceWithCorsBrowserTest : public NetworkServiceBrowserTest {
- public:
-  NetworkServiceWithCorsBrowserTest() {
-    scoped_feature_list_.InitAndEnableFeature(
-        network::features::kOutOfBlinkCors);
-  }
-  NetworkServiceWithCorsBrowserTest(const NetworkServiceWithCorsBrowserTest&) =
-      delete;
-  NetworkServiceWithCorsBrowserTest& operator=(
-      const NetworkServiceWithCorsBrowserTest&) = delete;
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
-
 // Tests that CORS is performed by the network service when |factory_override|
 // is used.
-IN_PROC_BROWSER_TEST_F(NetworkServiceWithCorsBrowserTest, FactoryOverride) {
+IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest, FactoryOverride) {
   class TestURLLoaderFactory final : public network::mojom::URLLoaderFactory {
    public:
     void CreateLoaderAndStart(
@@ -515,17 +448,17 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceWithCorsBrowserTest, FactoryOverride) {
         auto response = network::mojom::URLResponseHead::New();
         response->headers =
             base::MakeRefCounted<net::HttpResponseHeaders>("HTTP/1.1 200 OK");
-        response->headers->AddHeader(
-            "access-control-allow-origin: https://www2.example.com");
-        response->headers->AddHeader("access-control-allow-methods: *");
+        response->headers->SetHeader("access-control-allow-origin",
+                                     "https://www2.example.com");
+        response->headers->SetHeader("access-control-allow-methods", "*");
         client->OnReceiveResponse(std::move(response));
       } else if (resource_request.method == "custom-method") {
         has_received_request_ = true;
         auto response = network::mojom::URLResponseHead::New();
         response->headers = base::MakeRefCounted<net::HttpResponseHeaders>(
             "HTTP/1.1 202 Accepted");
-        response->headers->AddHeader(
-            "access-control-allow-origin: https://www2.example.com");
+        response->headers->SetHeader("access-control-allow-origin",
+                                     "https://www2.example.com");
         client->OnReceiveResponse(std::move(response));
         client->OnComplete(network::URLLoaderCompletionStatus(net::OK));
       } else {
@@ -589,6 +522,150 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceWithCorsBrowserTest, FactoryOverride) {
   EXPECT_EQ(headers->response_code(), 202);
   EXPECT_TRUE(test_loader_factory->has_received_preflight());
   EXPECT_TRUE(test_loader_factory->has_received_request());
+}
+
+class NetworkServiceInProcessBrowserTest : public ContentBrowserTest {
+ public:
+  NetworkServiceInProcessBrowserTest() {
+    std::vector<base::Feature> features;
+    features.push_back(features::kNetworkServiceInProcess);
+    scoped_feature_list_.InitWithFeatures(features,
+                                          std::vector<base::Feature>());
+  }
+
+  void SetUpOnMainThread() override {
+    host_resolver()->AddRule("*", "127.0.0.1");
+    EXPECT_TRUE(embedded_test_server()->Start());
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+
+  DISALLOW_COPY_AND_ASSIGN(NetworkServiceInProcessBrowserTest);
+};
+
+// Verifies that in-process network service works.
+IN_PROC_BROWSER_TEST_F(NetworkServiceInProcessBrowserTest, Basic) {
+  GURL test_url = embedded_test_server()->GetURL("foo.com", "/echo");
+  StoragePartitionImpl* partition = static_cast<StoragePartitionImpl*>(
+      BrowserContext::GetDefaultStoragePartition(
+          shell()->web_contents()->GetBrowserContext()));
+  EXPECT_TRUE(NavigateToURL(shell(), test_url));
+  ASSERT_EQ(net::OK,
+            LoadBasicRequest(partition->GetNetworkContext(), test_url));
+}
+
+class NetworkServiceInvalidLogBrowserTest : public ContentBrowserTest {
+ public:
+  NetworkServiceInvalidLogBrowserTest() = default;
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    command_line->AppendSwitchASCII(network::switches::kLogNetLog, "/abc/def");
+  }
+
+  void SetUpOnMainThread() override {
+    host_resolver()->AddRule("*", "127.0.0.1");
+    EXPECT_TRUE(embedded_test_server()->Start());
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(NetworkServiceInvalidLogBrowserTest);
+};
+
+// Verifies that an invalid --log-net-log flag won't crash the browser.
+IN_PROC_BROWSER_TEST_F(NetworkServiceInvalidLogBrowserTest, Basic) {
+  GURL test_url = embedded_test_server()->GetURL("foo.com", "/echo");
+  StoragePartitionImpl* partition = static_cast<StoragePartitionImpl*>(
+      BrowserContext::GetDefaultStoragePartition(
+          shell()->web_contents()->GetBrowserContext()));
+  EXPECT_TRUE(NavigateToURL(shell(), test_url));
+  ASSERT_EQ(net::OK,
+            LoadBasicRequest(partition->GetNetworkContext(), test_url));
+}
+
+// Test fixture for using a NetworkService that has a non-default limit on the
+// number of allowed open UDP sockets.
+class NetworkServiceWithUDPSocketLimit : public NetworkServiceBrowserTest {
+ public:
+  NetworkServiceWithUDPSocketLimit() {
+    base::FieldTrialParams params;
+    params[net::features::kLimitOpenUDPSocketsMax.name] =
+        base::NumberToString(kMaxUDPSockets);
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+        net::features::kLimitOpenUDPSockets, params);
+  }
+
+ protected:
+  static constexpr int kMaxUDPSockets = 4;
+
+  // Creates and synchronously connects a UDPSocket using |network_context|.
+  // Returns the network error for Connect().
+  int ConnectUDPSocketSync(
+      mojo::Remote<network::mojom::NetworkContext>* network_context,
+      mojo::Remote<network::mojom::UDPSocket>* socket) {
+    network_context->get()->CreateUDPSocket(
+        socket->BindNewPipeAndPassReceiver(), mojo::NullRemote());
+
+    // The address of this endpoint doesn't matter, since Connect() will not
+    // actually send any datagrams, and is only being called to verify the
+    // socket limit enforcement.
+    net::IPEndPoint remote_addr(net::IPAddress(127, 0, 0, 1), 8080);
+
+    network::mojom::UDPSocketOptionsPtr options =
+        network::mojom::UDPSocketOptions::New();
+
+    net::IPEndPoint local_addr;
+    network::test::UDPSocketTestHelper helper(socket);
+    return helper.ConnectSync(remote_addr, std::move(options), &local_addr);
+  }
+
+  // Creates a NetworkContext using default parameters.
+  mojo::Remote<network::mojom::NetworkContext> CreateNetworkContext() {
+    mojo::Remote<network::mojom::NetworkContext> network_context;
+    network::mojom::NetworkContextParamsPtr context_params =
+        network::mojom::NetworkContextParams::New();
+    GetNetworkService()->CreateNetworkContext(
+        network_context.BindNewPipeAndPassReceiver(),
+        std::move(context_params));
+    return network_context;
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+// Tests calling Connect() on |kMaxUDPSockets + 4| sockets. The first
+// kMaxUDPSockets should succeed, whereas the last 4 should fail with
+// ERR_INSUFFICIENT_RESOURCES due to having exceeding the global bound.
+IN_PROC_BROWSER_TEST_F(NetworkServiceWithUDPSocketLimit,
+                       UDPSocketBoundEnforced) {
+  constexpr size_t kNumContexts = 2;
+
+  mojo::Remote<network::mojom::NetworkContext> network_contexts[kNumContexts] =
+      {CreateNetworkContext(), CreateNetworkContext()};
+
+  mojo::Remote<network::mojom::UDPSocket> sockets[kMaxUDPSockets];
+
+  // Try to connect the maximum number of UDP sockets (|kMaxUDPSockets|),
+  // spread evenly between 2 NetworkContexts. These should succeed as the
+  // global limit has not been reached yet. This assumes there are no
+  // other consumers of UDP sockets in the browser yet.
+  for (size_t i = 0; i < kMaxUDPSockets; ++i) {
+    auto* network_context = &network_contexts[i % kNumContexts];
+    EXPECT_EQ(net::OK, ConnectUDPSocketSync(network_context, &sockets[i]));
+  }
+
+  // Try to connect an additional 4 sockets, alternating between each of the
+  // NetworkContexts. These should all fail with ERR_INSUFFICIENT_RESOURCES as
+  // the limit has already been reached. Spreading across NetworkContext
+  // is done to ensure the socket limit is global and not per
+  // NetworkContext.
+  for (size_t i = 0; i < 4; ++i) {
+    auto* network_context = &network_contexts[i % kNumContexts];
+    mojo::Remote<network::mojom::UDPSocket> socket;
+    EXPECT_EQ(net::ERR_INSUFFICIENT_RESOURCES,
+              ConnectUDPSocketSync(network_context, &socket));
+  }
 }
 
 }  // namespace

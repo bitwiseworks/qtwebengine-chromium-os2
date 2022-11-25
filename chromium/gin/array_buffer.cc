@@ -8,7 +8,7 @@
 #include <stdlib.h>
 
 #include "base/allocator/partition_allocator/page_allocator.h"
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/partition_alloc_buildflags.h"
 #include "build/build_config.h"
 #include "gin/per_isolate_data.h"
@@ -151,10 +151,7 @@ void ArrayBuffer::Private::SecondWeakCallback(
 
 // ArrayBuffer ----------------------------------------------------------------
 
-ArrayBuffer::ArrayBuffer()
-    : bytes_(0),
-      num_bytes_(0) {
-}
+ArrayBuffer::ArrayBuffer() : bytes_(nullptr), num_bytes_(0) {}
 
 ArrayBuffer::ArrayBuffer(v8::Isolate* isolate,
                          v8::Local<v8::ArrayBuffer> array) {

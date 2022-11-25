@@ -26,10 +26,10 @@ class SVGTreeScopeResources final
   LocalSVGResource* ResourceForId(const AtomicString& id);
   LocalSVGResource* ExistingResourceForId(const AtomicString& id) const;
 
-  void Trace(Visitor*);
+  void Trace(Visitor*) const;
 
  private:
-  void ProcessCustomWeakness(const WeakCallbackInfo&);
+  void ProcessCustomWeakness(const LivenessBroker&);
 
   HeapHashMap<AtomicString, WeakMember<LocalSVGResource>> resources_;
   Member<TreeScope> tree_scope_;

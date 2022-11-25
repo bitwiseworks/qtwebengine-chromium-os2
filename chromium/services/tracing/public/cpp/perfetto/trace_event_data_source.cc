@@ -39,10 +39,11 @@
 #include "services/tracing/public/cpp/perfetto/macros.h"
 #include "services/tracing/public/cpp/perfetto/perfetto_producer.h"
 #include "services/tracing/public/cpp/perfetto/perfetto_traced_process.h"
+#include "services/tracing/public/cpp/perfetto/system_producer.h"
 #include "services/tracing/public/cpp/perfetto/trace_time.h"
 #include "services/tracing/public/cpp/perfetto/traced_value_proto_writer.h"
 #include "services/tracing/public/cpp/perfetto/track_event_thread_local_event_sink.h"
-#include "services/tracing/public/cpp/trace_event_args_whitelist.h"
+#include "services/tracing/public/cpp/trace_event_args_allowlist.h"
 #include "services/tracing/public/cpp/trace_startup.h"
 #include "services/tracing/public/mojom/constants.mojom.h"
 #include "third_party/perfetto/include/perfetto/ext/tracing/core/shared_memory_arbiter.h"
@@ -176,11 +177,11 @@ TraceEventMetadataSource::GenerateTraceConfigMetadataDict() {
 
   auto metadata_dict = std::make_unique<base::DictionaryValue>();
   // If argument filtering is enabled, we need to check if the trace config is
-  // whitelisted before emitting it.
+  // allowlisted before emitting it.
   // TODO(eseckler): Figure out a way to solve this without calling directly
-  // into IsMetadataWhitelisted().
+  // into IsMetadataAllowlisted().
   if (!parsed_chrome_config_->IsArgumentFilterEnabled() ||
-      IsMetadataWhitelisted("trace-config")) {
+      IsMetadataAllowlisted("trace-config")) {
     metadata_dict->SetString("trace-config", chrome_config_);
   } else {
     metadata_dict->SetString("trace-config", "__stripped__");
@@ -300,7 +301,7 @@ void TraceEventMetadataSource::GenerateMetadata(
   trace_packet->set_timestamp_clock_id(kTraceClockId);
   auto* chrome_metadata = trace_packet->set_chrome_metadata();
   for (auto& generator : *proto_generators) {
-    generator.Run(chrome_metadata, privacy_filtering_enabled_);
+    generator.Run(chrome_metadata, privacy_filtering_enabled);
   }
 
   if (privacy_filtering_enabled) {
@@ -460,13 +461,41 @@ TraceEventDataSource::~TraceEventDataSource() = default;
 
 void TraceEventDataSource::RegisterStartupHooks() {
   RegisterTracedValueProtoWriter();
+  base::trace_event::EnableTypedTraceEvents(
+      &TraceEventDataSource::OnAddTypedTraceEvent,
+      &TraceEventDataSource::OnAddTracePacket);
 }
 
-void TraceEventDataSource::RegisterWithTraceLog() {
+void TraceEventDataSource::RegisterWithTraceLog(
+    const base::trace_event::TraceConfig& trace_config) {
   TraceLog::GetInstance()->SetAddTraceEventOverrides(
-      &TraceEventDataSource::OnAddTraceEvent,
+      &TraceEventDataSource::OnAddLegacyTraceEvent,
       &TraceEventDataSource::FlushCurrentThread,
       &TraceEventDataSource::OnUpdateDuration);
+
+  DCHECK(monitored_histograms_.empty());
+  if (trace_config.IsCategoryGroupEnabled(
+          TRACE_DISABLED_BY_DEFAULT("histogram_samples"))) {
+    if (trace_config.histogram_names().empty()) {
+      base::StatisticsRecorder::SetGlobalSampleCallback(
+          &TraceEventDataSource::OnMetricsSampleCallback);
+    } else {
+      for (const std::string& histogram_name : trace_config.histogram_names()) {
+        if (base::StatisticsRecorder::SetCallback(
+                histogram_name,
+                base::BindRepeating(
+                    &TraceEventDataSource::OnMetricsSampleCallback))) {
+          monitored_histograms_.emplace_back(histogram_name);
+        } else {
+          // TODO(crbug/1119851): Refactor SetCallback to allow multiple
+          // callbacks for a single histogram.
+          LOG(WARNING) << "OnMetricsSampleCallback was not set for histogram "
+                       << histogram_name;
+        }
+      }
+    }
+  }
+
   base::AutoLock l(lock_);
   is_enabled_ = true;
 }
@@ -500,8 +529,7 @@ void TraceEventDataSource::OnStopTracingDone() {
 }
 
 // static
-TrackEventThreadLocalEventSink* TraceEventDataSource::GetOrPrepareEventSink(
-    bool thread_will_flush) {
+TrackEventThreadLocalEventSink* TraceEventDataSource::GetOrPrepareEventSink() {
   // Avoid re-entrancy, which can happen during PostTasks (the taskqueue can
   // emit trace events). We discard the events in this case, as any PostTasking
   // to deal with these events later would break the event ordering that the
@@ -538,8 +566,7 @@ TrackEventThreadLocalEventSink* TraceEventDataSource::GetOrPrepareEventSink(
   }
 
   if (!thread_local_event_sink) {
-    thread_local_event_sink =
-        GetInstance()->CreateThreadLocalEventSink(thread_will_flush);
+    thread_local_event_sink = GetInstance()->CreateThreadLocalEventSink();
     ThreadLocalEventSinkSlot()->Set(thread_local_event_sink);
   }
 
@@ -578,7 +605,6 @@ void TraceEventDataSource::SetupStartupTracing(
     trace_writer_ = CreateTraceWriterLocked();
   }
   EmitTrackDescriptor();
-  RegisterWithTraceLog();
 
   base::trace_event::TraceConfig config_for_trace_log(trace_config);
   // Perfetto backend configures buffer sizes when tracing is started in the
@@ -591,6 +617,9 @@ void TraceEventDataSource::SetupStartupTracing(
   if (!trace_config.event_filters().empty()) {
     modes |= base::trace_event::TraceLog::FILTERING_MODE;
   }
+
+  RegisterWithTraceLog(config_for_trace_log);
+
   base::trace_event::TraceLog::GetInstance()->SetEnabled(trace_config, modes);
 }
 
@@ -742,6 +771,9 @@ void TraceEventDataSource::StartTracingInternal(
     }
   }
 
+  auto trace_config =
+      TraceConfig(data_source_config.chrome_config().trace_config());
+
   // SetupStartupTracing() will not setup a new startup session after we set
   // |producer_| above, so accessing |startup_tracing_active| outside the lock
   // is safe.
@@ -753,29 +785,22 @@ void TraceEventDataSource::StartTracingInternal(
     producer->BindStartupTargetBuffer(session_id,
                                       data_source_config.target_buffer());
   } else {
-    RegisterWithTraceLog();
+    RegisterWithTraceLog(trace_config);
   }
 
   // We emit the track/process descriptor another time even if we were
   // previously startup tracing, because the process name may have changed.
   EmitTrackDescriptor();
 
-  auto trace_config =
-      TraceConfig(data_source_config.chrome_config().trace_config());
   TraceLog::GetInstance()->SetEnabled(trace_config, TraceLog::RECORDING_MODE);
   ResetHistograms(trace_config);
 
-  if (trace_config.IsCategoryGroupEnabled(
-          TRACE_DISABLED_BY_DEFAULT("histogram_samples"))) {
-    base::StatisticsRecorder::SetGlobalSampleCallback(
-        &TraceEventDataSource::OnMetricsSampleCallback);
-  }
   if (trace_config.IsCategoryGroupEnabled(
           TRACE_DISABLED_BY_DEFAULT("user_action_samples"))) {
     auto task_runner = base::GetRecordActionTaskRunner();
     if (task_runner) {
       task_runner->PostTask(
-          FROM_HERE, base::Bind([]() {
+          FROM_HERE, base::BindOnce([]() {
             base::AddActionCallback(
                 TraceEventDataSource::GetInstance()->user_action_callback_);
           }));
@@ -850,10 +875,15 @@ void TraceEventDataSource::StopTracing(
   }
 
   base::StatisticsRecorder::SetGlobalSampleCallback(nullptr);
+  for (const std::string& histogram_name : monitored_histograms_) {
+    base::StatisticsRecorder::ClearCallback(histogram_name);
+  }
+  monitored_histograms_.clear();
+
   auto task_runner = base::GetRecordActionTaskRunner();
   if (task_runner) {
     task_runner->PostTask(
-        FROM_HERE, base::Bind([]() {
+        FROM_HERE, base::BindOnce([]() {
           base::RemoveActionCallback(
               TraceEventDataSource::GetInstance()->user_action_callback_);
         }));
@@ -871,7 +901,7 @@ void TraceEventDataSource::LogHistogram(base::HistogramBase* histogram) {
   base::Base64Encode(
       std::string(static_cast<const char*>(pickle.data()), pickle.size()),
       &buckets);
-  TRACE_EVENT_INSTANT2("benchmark", "UMAHistogramSamples",
+  TRACE_EVENT_INSTANT2("benchmark,uma", "UMAHistogramSamples",
                        TRACE_EVENT_SCOPE_PROCESS, "name",
                        histogram->histogram_name(), "buckets", buckets);
 }
@@ -931,7 +961,7 @@ TraceEventDataSource::CreateTraceWriterLocked() {
 }
 
 TrackEventThreadLocalEventSink*
-TraceEventDataSource::CreateThreadLocalEventSink(bool thread_will_flush) {
+TraceEventDataSource::CreateThreadLocalEventSink() {
   AutoLockWithDeferredTaskPosting lock(lock_);
   uint32_t session_id =
       session_flags_.load(std::memory_order_relaxed).session_id;
@@ -947,12 +977,27 @@ TraceEventDataSource::CreateThreadLocalEventSink(bool thread_will_flush) {
 }
 
 // static
-void TraceEventDataSource::OnAddTraceEvent(
+void TraceEventDataSource::OnAddLegacyTraceEvent(
     TraceEvent* trace_event,
     bool thread_will_flush,
     base::trace_event::TraceEventHandle* handle) {
-  OnAddTraceEvent(trace_event, thread_will_flush, handle,
-                  [](perfetto::EventContext) {});
+  auto* thread_local_event_sink = GetOrPrepareEventSink();
+  if (thread_local_event_sink) {
+    AutoThreadLocalBoolean thread_is_in_trace_event(
+        GetThreadIsInTraceEventTLS());
+    thread_local_event_sink->AddLegacyTraceEvent(trace_event, handle);
+  }
+}
+
+// static
+base::trace_event::TrackEventHandle TraceEventDataSource::OnAddTypedTraceEvent(
+    base::trace_event::TraceEvent* trace_event) {
+  auto* thread_local_event_sink = GetOrPrepareEventSink();
+  if (thread_local_event_sink) {
+    // GetThreadIsInTraceEventTLS() is handled by the sink for typed events.
+    return thread_local_event_sink->AddTypedTraceEvent(trace_event);
+  }
+  return base::trace_event::TrackEventHandle();
 }
 
 // static
@@ -981,6 +1026,16 @@ void TraceEventDataSource::OnUpdateDuration(
 }
 
 // static
+base::trace_event::TracePacketHandle TraceEventDataSource::OnAddTracePacket() {
+  auto* thread_local_event_sink = GetOrPrepareEventSink();
+  if (thread_local_event_sink) {
+    // GetThreadIsInTraceEventTLS() is handled by the sink for trace packets.
+    return thread_local_event_sink->AddTracePacket();
+  }
+  return base::trace_event::TracePacketHandle();
+}
+
+// static
 void TraceEventDataSource::FlushCurrentThread() {
   auto* thread_local_event_sink = static_cast<TrackEventThreadLocalEventSink*>(
       ThreadLocalEventSinkSlot()->Get());
@@ -1003,26 +1058,29 @@ void TraceEventDataSource::OnMetricsSampleCallback(
     const char* histogram_name,
     uint64_t name_hash,
     base::HistogramBase::Sample sample) {
-  // TODO(oysteine): Write an interned histogram name during local dev tracing
-  // when we're less space constrained.
   TRACE_EVENT_INSTANT(
       TRACE_DISABLED_BY_DEFAULT("histogram_samples"), "HistogramSample",
       TRACE_EVENT_SCOPE_THREAD, [&](perfetto::EventContext ctx) {
+        bool privacy_filtering_enabled =
+            TraceEventDataSource::GetInstance()->IsPrivacyFilteringEnabled();
         perfetto::protos::pbzero::ChromeHistogramSample* new_sample =
             ctx.event()->set_chrome_histogram_sample();
         new_sample->set_name_hash(name_hash);
         new_sample->set_sample(sample);
+        if (!privacy_filtering_enabled) {
+          new_sample->set_name(histogram_name);
+        }
       });
 }
 
 void TraceEventDataSource::OnUserActionSampleCallback(
     const std::string& action,
     base::TimeTicks action_time) {
-  bool privacy_filtering_enabled =
-      TraceEventDataSource::GetInstance()->IsPrivacyFilteringEnabled();
   TRACE_EVENT_INSTANT(
       TRACE_DISABLED_BY_DEFAULT("user_action_samples"), "UserAction",
       TRACE_EVENT_SCOPE_GLOBAL, [&](perfetto::EventContext ctx) {
+        bool privacy_filtering_enabled =
+            TraceEventDataSource::GetInstance()->IsPrivacyFilteringEnabled();
         perfetto::protos::pbzero::ChromeUserEvent* new_sample =
             ctx.event()->set_chrome_user_event();
         if (!privacy_filtering_enabled) {
@@ -1058,16 +1116,19 @@ void TraceEventDataSource::ReturnTraceWriter(
   // synchronously, which can trigger a call to TaskRunnerHandle::Get()).
   auto* trace_writer_raw = trace_writer.release();
   ANNOTATE_LEAKING_OBJECT_PTR(trace_writer_raw);
-  PerfettoTracedProcess::GetTaskRunner()->GetOrCreateTaskRunner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(
-          // Pass writer as raw pointer so that we leak it if task posting fails
-          // (during shutdown).
-          [](perfetto::TraceWriter* trace_writer) { delete trace_writer; },
-          trace_writer_raw));
+  // Use PostTask() on PerfettoTaskRunner to ensure we comply with
+  // base::ScopedDeferTaskPosting.
+  PerfettoTracedProcess::GetTaskRunner()->PostTask(
+      // Capture writer as raw pointer so that we leak it if task posting
+      // fails (during shutdown).
+      [trace_writer_raw]() { delete trace_writer_raw; });
 }
 
 void TraceEventDataSource::EmitTrackDescriptor() {
+  // Prevent reentrancy into tracing code (flushing the trace writer sends a
+  // mojo message which can result in additional trace events).
+  AutoThreadLocalBoolean thread_is_in_trace_event(GetThreadIsInTraceEventTLS());
+
   AutoLockWithDeferredTaskPosting lock(lock_);
 
   int process_id = TraceLog::GetInstance()->process_id();
@@ -1111,6 +1172,23 @@ void TraceEventDataSource::EmitTrackDescriptor() {
   if (process_type != ChromeProcessDescriptor::PROCESS_UNSPECIFIED) {
     chrome_process->set_process_type(process_type);
   }
+
+#if defined(OS_ANDROID)
+  // Host app package name is only recorded if privacy filtering is disabled or
+  // this is a system trace.
+  if (!privacy_filtering_enabled_ ||
+      producer_ == PerfettoTracedProcess::Get()->system_producer()) {
+    // Host app package name is used to group information from different
+    // processes that "belong" to the same WebView app.
+    // TODO(b/161983088): only write this for WebView since this information is
+    // not useful in other cases.
+    if (process_type == ChromeProcessDescriptor::PROCESS_RENDERER ||
+        process_type == ChromeProcessDescriptor::PROCESS_BROWSER) {
+      chrome_process->set_host_app_package_name(
+          base::android::BuildInfo::GetInstance()->host_package_name());
+    }
+  }
+#endif  // defined(OS_ANDROID)
 
   // TODO(eseckler): Set other fields on |chrome_process|.
 

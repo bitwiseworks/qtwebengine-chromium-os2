@@ -8,17 +8,17 @@
 
 #include <utility>
 
+#include "base/check_op.h"
 #include "base/compiler_specific.h"
 #include "base/debug/alias.h"
-#include "base/logging.h"
 #include "base/task/thread_pool/environment_config.h"
 #include "base/task/thread_pool/task_tracker.h"
 #include "base/task/thread_pool/worker_thread_observer.h"
 #include "base/threading/hang_watcher.h"
 #include "base/time/time_override.h"
-#include "base/trace_event/trace_event.h"
+#include "base/trace_event/base_tracing.h"
 
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
 #include "base/mac/scoped_nsautorelease_pool.h"
 #endif
 
@@ -220,72 +220,81 @@ void WorkerThread::ThreadMain() {
 }
 
 NOINLINE void WorkerThread::RunPooledWorker() {
-  const int line_number = __LINE__;
   RunWorker();
+  // Inhibit tail calls of RunWorker and inhibit code folding.
+  const int line_number = __LINE__;
   base::debug::Alias(&line_number);
 }
 
 NOINLINE void WorkerThread::RunBackgroundPooledWorker() {
-  const int line_number = __LINE__;
   RunWorker();
+  // Inhibit tail calls of RunWorker and inhibit code folding.
+  const int line_number = __LINE__;
   base::debug::Alias(&line_number);
 }
 
 NOINLINE void WorkerThread::RunSharedWorker() {
-  const int line_number = __LINE__;
   RunWorker();
+  // Inhibit tail calls of RunWorker and inhibit code folding.
+  const int line_number = __LINE__;
   base::debug::Alias(&line_number);
 }
 
 NOINLINE void WorkerThread::RunBackgroundSharedWorker() {
-  const int line_number = __LINE__;
   RunWorker();
+  // Inhibit tail calls of RunWorker and inhibit code folding.
+  const int line_number = __LINE__;
   base::debug::Alias(&line_number);
 }
 
 NOINLINE void WorkerThread::RunDedicatedWorker() {
-  const int line_number = __LINE__;
   RunWorker();
+  // Inhibit tail calls of RunWorker and inhibit code folding.
+  const int line_number = __LINE__;
   base::debug::Alias(&line_number);
 }
 
 NOINLINE void WorkerThread::RunBackgroundDedicatedWorker() {
-  const int line_number = __LINE__;
   RunWorker();
+  // Inhibit tail calls of RunWorker and inhibit code folding.
+  const int line_number = __LINE__;
   base::debug::Alias(&line_number);
 }
 
 #if defined(OS_WIN)
 NOINLINE void WorkerThread::RunSharedCOMWorker() {
-  const int line_number = __LINE__;
   RunWorker();
+  // Inhibit tail calls of RunWorker and inhibit code folding.
+  const int line_number = __LINE__;
   base::debug::Alias(&line_number);
 }
 
 NOINLINE void WorkerThread::RunBackgroundSharedCOMWorker() {
-  const int line_number = __LINE__;
   RunWorker();
+  // Inhibit tail calls of RunWorker and inhibit code folding.
+  const int line_number = __LINE__;
   base::debug::Alias(&line_number);
 }
 
 NOINLINE void WorkerThread::RunDedicatedCOMWorker() {
-  const int line_number = __LINE__;
   RunWorker();
+  // Inhibit tail calls of RunWorker and inhibit code folding.
+  const int line_number = __LINE__;
   base::debug::Alias(&line_number);
 }
 
 NOINLINE void WorkerThread::RunBackgroundDedicatedCOMWorker() {
-  const int line_number = __LINE__;
   RunWorker();
+  // Inhibit tail calls of RunWorker and inhibit code folding.
+  const int line_number = __LINE__;
   base::debug::Alias(&line_number);
 }
 #endif  // defined(OS_WIN)
 
 void WorkerThread::RunWorker() {
   DCHECK_EQ(self_, this);
-  TRACE_EVENT_INSTANT0("thread_pool", "WorkerThreadThread born",
-                       TRACE_EVENT_SCOPE_THREAD);
-  TRACE_EVENT_BEGIN0("thread_pool", "WorkerThreadThread active");
+  TRACE_EVENT_INSTANT0("base", "WorkerThread born", TRACE_EVENT_SCOPE_THREAD);
+  TRACE_EVENT_BEGIN0("base", "WorkerThread active");
 
   if (worker_thread_observer_)
     worker_thread_observer_->OnWorkerThreadMainEntry();
@@ -295,7 +304,7 @@ void WorkerThread::RunWorker() {
   // Background threads can take an arbitrary amount of time to complete, do not
   // watch them for hangs. Ignore priority boosting for now.
   const bool watch_for_hangs =
-      base::HangWatcher::GetInstance() != nullptr &&
+      base::HangWatcher::IsThreadPoolHangWatchingEnabled() &&
       GetDesiredThreadPriority() != ThreadPriority::BACKGROUND;
 
   // If this process has a HangWatcher register this thread for watching.
@@ -307,18 +316,19 @@ void WorkerThread::RunWorker() {
 
   // A WorkerThread starts out waiting for work.
   {
-    TRACE_EVENT_END0("thread_pool", "WorkerThreadThread active");
+    TRACE_EVENT_END0("base", "WorkerThread active");
     delegate_->WaitForWork(&wake_up_event_);
-    TRACE_EVENT_BEGIN0("thread_pool", "WorkerThreadThread active");
+    TRACE_EVENT_BEGIN0("base", "WorkerThread active");
   }
 
   while (!ShouldExit()) {
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
     mac::ScopedNSAutoreleasePool autorelease_pool;
 #endif
-    base::Optional<HangWatchScope> hang_watch_scope;
+    base::Optional<HangWatchScopeEnabled> hang_watch_scope;
     if (watch_for_hangs)
-      hang_watch_scope.emplace(base::HangWatchScope::kDefaultHangWatchTime);
+      hang_watch_scope.emplace(
+          base::HangWatchScopeEnabled::kDefaultHangWatchTime);
 
     UpdateThreadPriority(GetDesiredThreadPriority());
 
@@ -329,10 +339,10 @@ void WorkerThread::RunWorker() {
       if (ShouldExit())
         break;
 
-      TRACE_EVENT_END0("thread_pool", "WorkerThreadThread active");
+      TRACE_EVENT_END0("base", "WorkerThread active");
       hang_watch_scope.reset();
       delegate_->WaitForWork(&wake_up_event_);
-      TRACE_EVENT_BEGIN0("thread_pool", "WorkerThreadThread active");
+      TRACE_EVENT_BEGIN0("base", "WorkerThread active");
       continue;
     }
 
@@ -360,9 +370,8 @@ void WorkerThread::RunWorker() {
   // and as such no more member accesses should be made after this point.
   self_ = nullptr;
 
-  TRACE_EVENT_END0("thread_pool", "WorkerThreadThread active");
-  TRACE_EVENT_INSTANT0("thread_pool", "WorkerThreadThread dead",
-                       TRACE_EVENT_SCOPE_THREAD);
+  TRACE_EVENT_END0("base", "WorkerThread active");
+  TRACE_EVENT_INSTANT0("base", "WorkerThread dead", TRACE_EVENT_SCOPE_THREAD);
 }
 
 }  // namespace internal

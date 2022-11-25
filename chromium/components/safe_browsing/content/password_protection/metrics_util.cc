@@ -4,8 +4,10 @@
 
 #include "components/safe_browsing/content/password_protection/metrics_util.h"
 
+#include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notreached.h"
 #include "base/time/time.h"
 #include "net/http/http_status_code.h"
 

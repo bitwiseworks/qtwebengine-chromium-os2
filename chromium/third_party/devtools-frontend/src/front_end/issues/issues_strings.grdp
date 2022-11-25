@@ -1,86 +1,132 @@
 <?xml version="1.0" encoding="utf-8"?>
 <grit-part>
-  <message name="IDS_DEVTOOLS_044e523024944672d1d5aa5b2538ba5c" desc="Description for an issue in the issues view">
-    The resource was loaded in a context that is not same-origin and that enables the cross-origin embedder policy. The resource specified a cross-origin resource policy that allows only same-origin usage, and was hence blocked.
-  To use this resource from a different origin, the server may relax the cross-origin resource policy response header:
+  <message name="IDS_DEVTOOLS_00863a2bf697faf22a8b330b28195a4c" desc="Title for a column in an Heavy Ads issue view">
+    Limit exceeded
   </message>
-  <message name="IDS_DEVTOOLS_0c94f752d037fd8475e98b0711b543a6" desc="Label for the link for SameSiteCookies Issues">
-    SameSite cookies explained
+  <message name="IDS_DEVTOOLS_05bb50eae282e818b1a9a4b0ada16150" desc="Reason for a Heavy Ad being flagged in issue view">
+    Network limit
   </message>
-  <message name="IDS_DEVTOOLS_2dccd1ab3e03990aea77359831c85ca2" desc="Label for number of affected resource indication in issue view">
+  <message name="IDS_DEVTOOLS_07fad2e297fd65e042fa00d6977b4f2d" desc="Tooltip for button linking to the Elements panel">
+    Click to reveal the violating DOM node in the Elements panel
+  </message>
+  <message name="IDS_DEVTOOLS_26d528c2e706eb2c3f4d4f90fc72632a" desc="Reason for a Heavy Ad being flagged in issue view">
+    CPU peak limit
+  </message>
+  <message name="IDS_DEVTOOLS_1d47b3daf92c302138270c38d820865c" desc="Header for the section listing affected directives">
+    Directive
+  </message>
+  <message name="IDS_DEVTOOLS_2dccd1ab3e03990aea77359831c85ca2" desc="Label for number of affected resources indication in issue view">
     cookie
   </message>
-  <message name="IDS_DEVTOOLS_3298f13049d19cffaa37ca931dd4d421" desc="Label for number of affected resource indication in issue view">
+  <message name="IDS_DEVTOOLS_3298f13049d19cffaa37ca931dd4d421" desc="Label for number of affected resources indication in issue view">
     requests
   </message>
-  <message name="IDS_DEVTOOLS_40bf79d4fb1a6c55040a72b7eab1b7aa" desc="Title for an issue in the issues view">
-    An <ph name="LOCKED_1">iframe</ph> navigation to a document with a cross-origin opener policy was blocked
+  <message name="IDS_DEVTOOLS_330c6bbd83d7bbec5d92acd8fb8161c1" desc="Category title for a group of SameSite cookie issues">
+    SameSite Cookie
   </message>
-  <message name="IDS_DEVTOOLS_55e7dd3016ce4ac57b9a0f56af12f7c2" desc="Label for number of affected resource indication in issue view">
+  <message name="IDS_DEVTOOLS_518dbfcc162c16f899d0df7b7dfaabbb" desc="Category title for a group of mixed content issues">
+    Mixed Content
+  </message>
+  <message name="IDS_DEVTOOLS_55b558c7ef820e6e00e5993b9e55d93b" desc="Label for number of affected resources indication in issue view">
+    resources
+  </message>
+  <message name="IDS_DEVTOOLS_36cd38f49b9afa08222c0dc9ebfe35eb" desc="Singular label for number of affected source resource indication in issue view">
+    source
+  </message>
+  <message name="IDS_DEVTOOLS_55e7dd3016ce4ac57b9a0f56af12f7c2" desc="Label for number of affected resources indication in issue view">
     cookies
-  </message>
-  <message name="IDS_DEVTOOLS_59a88821ae1cfa9637365d5fa2b46242" desc="Description for an issue in the issues view">
-    An <ph name="LOCKED_1">iframe</ph> was emdbedded on a site which enables the cross-origin embedder policy, but the response headers for the document of the <ph name="LOCKED_1">iframe</ph> did not specify a cross-origin embedder policy, which causes the <ph name="LOCKED_1">iframe</ph> to get blocked.
-  To allow embedding of the <ph name="LOCKED_1">iframe</ph>, the response needs to enable the cross-origin embedder policy for the <ph name="LOCKED_1">iframe</ph> by specifying the following response header:
   </message>
   <message name="IDS_DEVTOOLS_6011ea0969680deba3975ac5bd0e153e" desc="Title for a link to further information in issue view">
     Learn more: <ph name="THIS__DETAILS_LINKTITLE">$1s<ex>SameSite Cookies Explained</ex></ph>
   </message>
-  <message name="IDS_DEVTOOLS_738529c4dc85873f31f579e2fe21736b" desc="Title for an issue in the issues view">
-    An <ph name="LOCKED_1">iframe</ph> was blocked because it did not specify a cross-origin embedder policy
+  <message name="IDS_DEVTOOLS_640250cf8c78740c663c2ef111fd1f16" desc="Label for a checkbox which toggles grouping by category in the issues tab">
+    Group by category
   </message>
-  <message name="IDS_DEVTOOLS_77df128d7d124446c107c9bf445eed0c" desc="Description for an issue in the issues view">
-    The resource was loaded in a context that is not same-site and that enables the cross-origin embedder policy. The resource specified a cross-origin resource policy that allows only same-site usage, and was hence blocked.
-  To allow usage of the resource from a different site, the server may relax the cross-origin resource policy response header:
+  <message name="IDS_DEVTOOLS_64c7927762778c9380d74b0bc7ca5a89" desc="Label on the issues tab">
+    Only third-party cookie issues detected so far
   </message>
-  <message name="IDS_DEVTOOLS_8aa85d8015c515cde89fade0983df424" desc="Description for an issue in the issues view">
-    A document was blocked from loading in an <ph name="LOCKED_1">iframe</ph> with a <ph name="LOCKED_1">sandbox</ph> attribute because the document specified a cross-origin opener policy.
+  <message name="IDS_DEVTOOLS_6a7f245843454cf4f28ad7c5e2572aa2" desc="Plural label for number of affected element resource indication in issue view">
+    elements
   </message>
-  <message name="IDS_DEVTOOLS_9bd335d81da7fb52ceab31f45df228cb" desc="Title for an issue in the issues view">
-    A resource was blocked because its cross-origin resource policy only allows same-site usage
+  <message name="IDS_DEVTOOLS_6bc90532b96243fd3deae4514bbb5dc4" desc="Title for a link to a request in the network panel">
+    Click to show request in the network panel
   </message>
-  <message name="IDS_DEVTOOLS_9d9dd3883d9d33b88cede92d18217dd8" desc="Title for an issue in the issues view">
-    A resource was blocked because its cross-origin resource policy only allows same-origin usage
+  <message name="IDS_DEVTOOLS_712e023413c1a2069cb68c5cb4a914a0" desc="Title for an unavailable link a request in the network panel">
+    Request unavailable in the network panel, try reloading the inspected page
   </message>
-  <message name="IDS_DEVTOOLS_a08f2685b9b1a561a133769715321e40" desc="Label for the issue kind in the issues view">
-    Breaking change
+  <message name="IDS_DEVTOOLS_7232b2cfdea953afe7f0087a11712c9b" desc="Category title for a group of content security policy (CSP) issues">
+    Content Security Policy
+  </message>
+  <message name="IDS_DEVTOOLS_8e2dcfd7e7e24b1ca76c1193f645902b" desc="Singular label for number of affected element resource indication in issue view">
+    element
+  </message>
+  <message name="IDS_DEVTOOLS_965667e5913ece6c999a54b2a167fc15" desc="Tooltip for button linking to the Elements panel">
+    Click to reveal the frame&apos;s DOM node in the Elements panel
+  </message>
+  <message name="IDS_DEVTOOLS_8fe7c9bd9a6f645b80a6db7c2496dc81" desc="Plural label for number of affected directive resource indication in issue view">
+    directives
+  </message>
+  <message name="IDS_DEVTOOLS_96ab4e163f4ee03aaa4d1051aa51d204" desc="Label for number of affected resources indication in issue view">
+    resource
+  </message>
+  <message name="IDS_DEVTOOLS_9bb0b0febed28d7b9503d4e7872e7145" desc="Label for a checkbox. Whether the issues tab should include third-party issues or not.">
+    Include third-party cookie issues
+  </message>
+  <message name="IDS_DEVTOOLS_a35e12e7c5b04c128af39e1c2e1ed793" desc="Category title for a group of heavy ads issues">
+    Heavy Ads
+  </message>
+  <message name="IDS_DEVTOOLS_a4d7581ea74e5240c4a1a7c32532d6f8" desc="Label for mixed content issue's restriction status">
+    Restriction Status
+  </message>
+  <message name="IDS_DEVTOOLS_a98df7359ac52361af81fa897d556a6a" desc="Header for the source code column">
+    Source code
+  </message>
+  <message name="IDS_DEVTOOLS_af54fb3a43842c87e975974597a1623a" desc="Label in the issues panel">
+    No issues detected so far
+  </message>
+  <message name="IDS_DEVTOOLS_af59bb7c08d6527bb26a798b7acf0ec5" desc="The kind of resolution for a Heavy Ads issue">
+    Warned
   </message>
   <message name="IDS_DEVTOOLS_b02478e52979ba9af8bffc41f342f4b6" desc="Header for the section listing affected resources">
     Affected Resources
   </message>
-  <message name="IDS_DEVTOOLS_bb1be05a71dffef6cfe9564fa1fcf515" desc="Title of an issue in the issues view">
-    A Cookie in a third-party context has been set without SameSite=None
+  <message name="IDS_DEVTOOLS_93f07b720ebf7d1246512569761a5804" desc="The kind of resolution for a Heavy Ads issue">
+    Removed
   </message>
-  <message name="IDS_DEVTOOLS_d3330d895eefdef1b6272db5775fd351" desc="Title for an issue in the issues view">
-    A resource was blocked because it is missing a cross-origin resource policy
+  <message name="IDS_DEVTOOLS_b404999a151ab49a38d35be7e094e7e7" desc="Title for a checkbox which toggles grouping by category in the issues tab">
+    Group displayed issues under associated categories
   </message>
-  <message name="IDS_DEVTOOLS_ec9d50650ce0ffbe688e453377198b95" desc="Title for a link in the issues view">
-    Enable powerful features with COOP and COEP
+  <message name="IDS_DEVTOOLS_ba514415c6a7f5b7aa2b54d0914a122d" desc="Title for a column in an Heavy Ads issue view">
+    Resolution Status
+  </message>
+  <message name="IDS_DEVTOOLS_c8af22df9d871d6025aefc70795a91d6" desc="Title for a checkbox. Whether the issues tab should include third-party issues or not.">
+    Include cookie Issues caused by third-party sites
+  </message>
+  <message name="IDS_DEVTOOLS_c8f2c7aa04b8080f5d0bb020dc886d82" desc="Title for a column in an Heavy Ads issue view">
+    Frame URL
+  </message>
+  <message name="IDS_DEVTOOLS_d09fde8cce3e04fe6dfc89c15e3c449f" desc="Title for a column in an issue view">
+    Blocked Resource
+  </message>
+  <message name="IDS_DEVTOOLS_d4cfcb4d43733c39d7b1b802fe2fc235" desc="Category title for a group of cross origin embedder policy (COEP) issues">
+    Cross Origin Embedder Policy
+  </message>
+  <message name="IDS_DEVTOOLS_d63605063a480a98396822bd7ee88a11" desc="Title for a column in an issue view">
+    Parent Frame
+  </message>
+  <message name="IDS_DEVTOOLS_e1317e393c4c13c1bba0195dd20eceb8" desc="Singular label for number of affected directive resource indication in issue view">
+    directive
   </message>
   <message name="IDS_DEVTOOLS_ee02b74d0caebce3dabaf3b3e79b6a65" desc="The UI destination when right clicking an item that can be revealed">
     Issues view
   </message>
-  <message name="IDS_DEVTOOLS_80b768b15c3693e345a436b9dc0ea36f" desc="Label for the issues Pane">
+  <message name="IDS_DEVTOOLS_80b768b15c3693e345a436b9dc0ea36f" desc="Label for the issues pane">
     Issues
   </message>
-  <message name="IDS_DEVTOOLS_888fab4d70ed5244fb152416372e6e3c" desc="Title for the SameSiteCookies::SameSiteNoneWithoutSecure issue code">
-    A Cookie has been set with SameSite=None but without Secure
+  <message name="IDS_DEVTOOLS_f2ab5fb218da8b84623f45579aa4ba11" desc="Plural label for number of affected source resource indication in issue view">
+    sources
   </message>
-  <message name="IDS_DEVTOOLS_8e6aefb01ad865cdce56f1992b317e4a" desc="Link for SameSiteCookies Issues">
-    https://web.dev/samesite-cookies-explained/
-  </message>
-  <message name="IDS_DEVTOOLS_0ed7212d68b6867bc1294244c9bc0b33" desc="Message for the SameSiteCookies::SameSiteNoneMissingForThirdParty issue code">
-    In a future version of Chrome, third-party cookies will only be sent when marked as SameSite=None and Secure to prevent them from being accessed in a man-in-the-middle scenario.
-  </message>
-  <message name="IDS_DEVTOOLS_eeb7bd647d3fade40ab848754327dd63" desc="Description for an issue in the issues view">
-    The resource is not a same-origin resource, and the response headers for the resource did not specify any cross-origin resource policy.
-     The cross-origin resource policy was defaulted to same-origin, because the resource was used in a context that enables the cross-origin embedder policy.
-     To use this resource from a different origin, the server needs to specify a cross-origin resource policy in the response headers:
-  </message>
-  <message name="IDS_DEVTOOLS_fbf5a685e313dad7d780b63bdb5dd2fb" desc="Explanatory message why a reload of the inspected page is required. Next to reload button.">
-    Some issues might be missing or incomplete, reload the inspected page to get full information
-  </message>
-  <message name="IDS_DEVTOOLS_f63631e200b8b3ba73fe9ea65dcd2d3a" desc="A link to more information in the issues view">
-    https://web.dev/coop-coep/
+  <message name="IDS_DEVTOOLS_fae3520ad615b90014c2f2991ff32edf" desc="Reason for a Heavy Ad being flagged in issue view">
+    CPU total limit
   </message>
 </grit-part>

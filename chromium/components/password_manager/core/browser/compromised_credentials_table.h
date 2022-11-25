@@ -5,9 +5,11 @@
 #ifndef COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_COMPROMISED_CREDENTIALS_TABLE_H_
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_COMPROMISED_CREDENTIALS_TABLE_H_
 
+#include "base/callback.h"
 #include "base/macros.h"
 #include "base/time/time.h"
 #include "base/util/type_safety/strong_alias.h"
+#include "components/password_manager/core/browser/password_form.h"
 #include "url/gurl.h"
 
 namespace sql {
@@ -31,7 +33,9 @@ enum class RemoveCompromisedCredentialsReason {
   kUpdate = 0,
   // If the password is removed from the password store.
   kRemove = 1,
-  kMaxValue = kRemove
+  // If a password was considered phished on a site later marked as legitimate.
+  kMarkSiteAsLegitimate = 2,
+  kMaxValue = kMarkSiteAsLegitimate
 };
 
 // Represents information about the particular compromised credentials.
@@ -44,6 +48,8 @@ struct CompromisedCredentials {
   base::Time create_time;
   // The type of the credentials that was compromised.
   CompromiseType compromise_type = CompromiseType::kLeaked;
+  // The store in which those credentials are stored.
+  PasswordForm::Store in_store = PasswordForm::Store::kNotSet;
 };
 
 bool operator==(const CompromisedCredentials& lhs,
@@ -82,10 +88,23 @@ class CompromisedCredentialsTable {
                  const base::string16& username,
                  RemoveCompromisedCredentialsReason reason);
 
+  // Removes information about the credentials compromised for |username| and
+  // |compromise_type| on |signon_realm|. |reason| is the reason why the
+  // credentials is removed from the table. Returns true if the SQL completed
+  // successfully. Also logs the compromise type in UMA.
+  bool RemoveRowByCompromiseType(const std::string& signon_realm,
+                                 const base::string16& username,
+                                 const CompromiseType& compromise_type,
+                                 RemoveCompromisedCredentialsReason reason);
+
   // Gets all the rows in the database for the |username| and |signon_realm|.
   std::vector<CompromisedCredentials> GetRows(
       const std::string& signon_realm,
       const base::string16& username) const;
+
+  // Gets all the rows in the database for |signon_realm|.
+  std::vector<CompromisedCredentials> GetRows(
+      const std::string& signon_realm) const;
 
   // Removes all compromised credentials created between |remove_begin|
   // inclusive and |remove_end| exclusive. If |url_filter| is not null, only
@@ -104,6 +123,13 @@ class CompromisedCredentialsTable {
   void ReportMetrics(BulkCheckDone bulk_check_done);
 
  private:
+  // Gets the row in the database for the |username|, |signon_realm|, and
+  // |compromise_type|.
+  std::vector<CompromisedCredentials> GetRowByCompromiseType(
+      const std::string& signon_realm,
+      const base::string16& username,
+      const CompromiseType& compromise_type) const;
+
   sql::Database* db_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(CompromisedCredentialsTable);

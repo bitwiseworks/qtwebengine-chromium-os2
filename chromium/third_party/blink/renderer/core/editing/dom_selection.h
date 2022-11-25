@@ -48,7 +48,6 @@ class TreeScope;
 class CORE_EXPORT DOMSelection final : public ScriptWrappable,
                                        public ExecutionContextClient {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(DOMSelection);
 
  public:
   explicit DOMSelection(const TreeScope*);
@@ -100,7 +99,7 @@ class CORE_EXPORT DOMSelection final : public ScriptWrappable,
   // Microsoft Selection Object API
   void empty();
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   bool IsAvailable() const;

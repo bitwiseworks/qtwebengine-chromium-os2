@@ -7,13 +7,12 @@
 
 #include <stdint.h>
 
-#include "base/logging.h"
 #include "build/build_config.h"
 #include "ui/gfx/gfx_export.h"
 
 #if defined(OS_ANDROID)
 #include "base/android/scoped_java_ref.h"
-#elif defined(OS_MACOSX)
+#elif defined(OS_APPLE)
 #include <objc/objc.h>
 #elif defined(OS_WIN)
 #include "base/win/windows_types.h"
@@ -76,7 +75,7 @@ class UIView;
 class UIWindow;
 class UITextField;
 #endif  // __OBJC__
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
 struct CGContext;
 #ifdef __OBJC__
 @class NSCursor;
@@ -102,7 +101,7 @@ struct ANativeWindow;
 namespace ui {
 class WindowAndroid;
 class ViewAndroid;
-}
+}  // namespace ui
 #endif
 class SkBitmap;
 
@@ -129,7 +128,7 @@ typedef UIWindow* NativeWindow;
 typedef UIEvent* NativeEvent;
 constexpr NativeView kNullNativeView = nullptr;
 constexpr NativeWindow kNullNativeWindow = nullptr;
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
 typedef NSCursor* NativeCursor;
 typedef NSEvent* NativeEvent;
 // NativeViews and NativeWindows on macOS are not necessarily in the same
@@ -204,7 +203,7 @@ typedef IAccessible* NativeViewAccessible;
 #elif defined(OS_IOS)
 typedef UIFont* NativeFont;
 typedef id NativeViewAccessible;
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
 typedef NSFont* NativeFont;
 typedef id NativeViewAccessible;
 #elif defined(OS_LINUX) && !defined(OS_CHROMEOS)
@@ -222,7 +221,7 @@ typedef UnimplementedNativeViewAccessible* NativeViewAccessible;
 const ui::mojom::CursorType kNullCursor =
     static_cast<ui::mojom::CursorType>(-1);
 #else
-const gfx::NativeCursor kNullCursor = static_cast<gfx::NativeCursor>(NULL);
+const gfx::NativeCursor kNullCursor = static_cast<gfx::NativeCursor>(nullptr);
 #endif
 
 // Note: for test_shell we're packing a pointer into the NativeViewId. So, if
@@ -235,24 +234,21 @@ typedef intptr_t NativeViewId;
 // AcceleratedWidget provides a surface to compositors to paint pixels.
 #if defined(OS_WIN)
 typedef HWND AcceleratedWidget;
-constexpr AcceleratedWidget kNullAcceleratedWidget = NULL;
+constexpr AcceleratedWidget kNullAcceleratedWidget = nullptr;
 #elif defined(OS_OS2)
 typedef HWND AcceleratedWidget;
 constexpr AcceleratedWidget kNullAcceleratedWidget = NULLHANDLE;
-#elif defined(USE_X11)
-typedef unsigned long AcceleratedWidget;
-constexpr AcceleratedWidget kNullAcceleratedWidget = 0;
 #elif defined(OS_IOS)
 typedef UIView* AcceleratedWidget;
 constexpr AcceleratedWidget kNullAcceleratedWidget = 0;
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
 typedef uint64_t AcceleratedWidget;
 constexpr AcceleratedWidget kNullAcceleratedWidget = 0;
 #elif defined(OS_ANDROID)
 typedef ANativeWindow* AcceleratedWidget;
 constexpr AcceleratedWidget kNullAcceleratedWidget = 0;
-#elif defined(USE_OZONE)
-typedef int32_t AcceleratedWidget;
+#elif defined(USE_OZONE) || defined(USE_X11)
+typedef uint32_t AcceleratedWidget;
 constexpr AcceleratedWidget kNullAcceleratedWidget = 0;
 #else
 #error unknown platform

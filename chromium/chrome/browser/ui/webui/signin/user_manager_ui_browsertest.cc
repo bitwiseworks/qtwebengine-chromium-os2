@@ -25,6 +25,7 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -147,6 +148,8 @@ IN_PROC_BROWSER_TEST_F(UserManagerUIAuthenticatedUserBrowserTest, Reauth) {
   Init();
   signin_util::SetForceSigninForTesting(true);
   entry_->SetLocalAuthCredentials("1mock_credentials");
+  // Consent profile's primary account.
+  entry_->SetAuthInfo("gaia_id", base::string16(), true);
 
   LaunchAuthenticatedUser("email@mock.com");
 
@@ -158,6 +161,29 @@ IN_PROC_BROWSER_TEST_F(UserManagerUIAuthenticatedUserBrowserTest, Reauth) {
       AuthenticatedLaunchUserEvent::GAIA_REAUTH_DIALOG, 1);
   histogram_tester_.ExpectTotalCount(kAuthenticatedLaunchUserEventMetricsName,
                                      2);
+}
+
+IN_PROC_BROWSER_TEST_F(UserManagerUIAuthenticatedUserBrowserTest,
+                       SigninButUnconsentedUserBlocked) {
+  Init();
+  signin_util::SetForceSigninForTesting(true);
+
+  // Unconsent profile's primary account is used locked due to force sign in.
+  entry_->SetIsSigninRequired(true);
+  entry_->SetActiveTimeToNow();
+  entry_->SetAuthInfo("gaia_id", base::string16(), false);
+
+  MockLoginUIService* service = static_cast<MockLoginUIService*>(
+      LoginUIServiceFactory::GetInstance()->SetTestingFactoryAndUse(
+          profile_, base::BindRepeating(&CreateLoginUIService)));
+  EXPECT_CALL(*service, SetProfileBlockingErrorMessage());
+
+  LaunchAuthenticatedUser("email@mock.com");
+
+  histogram_tester_.ExpectUniqueSample(
+      kAuthenticatedLaunchUserEventMetricsName,
+      AuthenticatedLaunchUserEvent::USED_PROFILE_BLOCKED_WARNING, 1);
+  signin_util::ResetForceSigninForTesting();
 }
 
 IN_PROC_BROWSER_TEST_F(UserManagerUIAuthenticatedUserBrowserTest,

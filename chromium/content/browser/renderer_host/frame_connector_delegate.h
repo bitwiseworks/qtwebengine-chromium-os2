@@ -8,19 +8,20 @@
 #include "base/compiler_specific.h"
 #include "base/time/time.h"
 #include "cc/input/touch_action.h"
-#include "components/viz/common/surfaces/local_surface_id_allocation.h"
+#include "components/viz/common/surfaces/local_surface_id.h"
 #include "components/viz/host/hit_test/hit_test_query.h"
 #include "content/browser/renderer_host/event_with_latency_info.h"
 #include "content/common/content_export.h"
-#include "content/common/input/input_handler.mojom.h"
-#include "content/public/common/input_event_ack_state.h"
-#include "content/public/common/screen_info.h"
+#include "third_party/blink/public/common/widget/screen_info.h"
+#include "third_party/blink/public/mojom/frame/intrinsic_sizing_info.mojom-forward.h"
+#include "third_party/blink/public/mojom/input/input_event_result.mojom-shared.h"
+#include "third_party/blink/public/mojom/input/pointer_lock_result.mojom-shared.h"
 #include "third_party/blink/public/platform/viewport_intersection_state.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace blink {
+struct FrameVisualProperties;
 class WebGestureEvent;
-struct WebIntrinsicSizingInfo;
 }
 
 namespace cc {
@@ -36,7 +37,6 @@ namespace content {
 class RenderWidgetHostViewBase;
 class RenderWidgetHostViewChildFrame;
 class WebCursor;
-struct FrameVisualProperties;
 
 //
 // FrameConnectorDelegate
@@ -76,12 +76,11 @@ class CONTENT_EXPORT FrameConnectorDelegate {
   // Sends the given intrinsic sizing information from a sub-frame to
   // its corresponding remote frame in the parent frame's renderer.
   virtual void SendIntrinsicSizingInfoToParent(
-      const blink::WebIntrinsicSizingInfo&) {}
+      blink::mojom::IntrinsicSizingInfoPtr);
 
   // Sends new resize parameters to the sub-frame's renderer.
   void SynchronizeVisualProperties(
-      const viz::FrameSinkId& frame_sink_id,
-      const FrameVisualProperties& visual_properties);
+      const blink::FrameVisualProperties& visual_properties);
 
   // Return the size of the CompositorFrame to use in the child renderer.
   const gfx::Size& local_frame_size_in_pixels() const {
@@ -134,7 +133,7 @@ class CONTENT_EXPORT FrameConnectorDelegate {
   // for processing.
   virtual void ForwardAckedTouchpadZoomEvent(
       const blink::WebGestureEvent& event,
-      InputEventAckState ack_result) {}
+      blink::mojom::InputEventResultState ack_result) {}
 
   // A gesture scroll sequence that is not consumed by a child must be bubbled
   // to ancestors who may consume it.
@@ -169,17 +168,17 @@ class CONTENT_EXPORT FrameConnectorDelegate {
     return intersection_state_;
   }
 
-  // Returns the viz::LocalSurfaceIdAllocation propagated from the parent to be
+  // Returns the viz::LocalSurfaceId propagated from the parent to be
   // used by this child frame.
-  const viz::LocalSurfaceIdAllocation& local_surface_id_allocation() const {
-    return local_surface_id_allocation_;
+  const viz::LocalSurfaceId& local_surface_id() const {
+    return local_surface_id_;
   }
 
   // Returns the ScreenInfo propagated from the parent to be used by this
   // child frame.
-  const ScreenInfo& screen_info() const { return screen_info_; }
+  const blink::ScreenInfo& screen_info() const { return screen_info_; }
 
-  void SetScreenInfoForTesting(const ScreenInfo& screen_info) {
+  void SetScreenInfoForTesting(const blink::ScreenInfo& screen_info) {
     screen_info_ = screen_info;
   }
 
@@ -231,8 +230,9 @@ class CONTENT_EXPORT FrameConnectorDelegate {
 
   bool has_size() const { return has_size_; }
 
-  virtual void DidAckGestureEvent(const blink::WebGestureEvent& event,
-                                  InputEventAckState ack_result) {}
+  virtual void DidAckGestureEvent(
+      const blink::WebGestureEvent& event,
+      blink::mojom::InputEventResultState ack_result) {}
 
  protected:
   explicit FrameConnectorDelegate(bool use_zoom_for_device_scale_factor);
@@ -246,13 +246,13 @@ class CONTENT_EXPORT FrameConnectorDelegate {
   // intersection_state() can return a reference.
   blink::ViewportIntersectionState intersection_state_;
 
-  ScreenInfo screen_info_;
+  blink::ScreenInfo screen_info_;
   gfx::Size local_frame_size_in_dip_;
   gfx::Size local_frame_size_in_pixels_;
   gfx::Rect screen_space_rect_in_dip_;
   gfx::Rect screen_space_rect_in_pixels_;
 
-  viz::LocalSurfaceIdAllocation local_surface_id_allocation_;
+  viz::LocalSurfaceId local_surface_id_;
 
   bool has_size_ = false;
   const bool use_zoom_for_device_scale_factor_;

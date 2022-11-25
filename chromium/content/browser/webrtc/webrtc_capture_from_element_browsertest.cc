@@ -7,6 +7,7 @@
 #include "build/build_config.h"
 #include "content/browser/webrtc/webrtc_content_browsertest_base.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/shell/common/shell_switches.h"
 #include "media/base/media_switches.h"
@@ -87,7 +88,7 @@ IN_PROC_BROWSER_TEST_F(WebRtcCaptureFromElementBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(WebRtcCaptureFromElementBrowserTest,
                        VerifyCanvasWebGLCaptureColor) {
-#if !defined(OS_MACOSX)
+#if !defined(OS_MAC)
   // TODO(crbug.com/706009): Make this test pass on mac.  Behavior is not buggy
   // (verified manually) on mac, but for some reason this test fails on the mac
   // bot.

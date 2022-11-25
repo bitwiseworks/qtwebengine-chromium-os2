@@ -49,7 +49,7 @@ class CORE_EXPORT ReadableStream : public ScriptWrappable {
     bool PreventCancel() const { return prevent_cancel_; }
     AbortSignal* Signal() const { return signal_; }
 
-    void Trace(Visitor*);
+    void Trace(Visitor*) const;
 
    private:
     bool GetBoolean(ScriptState* script_state,
@@ -102,7 +102,7 @@ class CORE_EXPORT ReadableStream : public ScriptWrappable {
   ~ReadableStream() override;
 
   // https://streams.spec.whatwg.org/#rs-constructor
-  bool locked(ScriptState*, ExceptionState&) const;
+  bool locked() const;
 
   ScriptPromise cancel(ScriptState*, ExceptionState&);
 
@@ -143,27 +143,17 @@ class CORE_EXPORT ReadableStream : public ScriptWrappable {
            ReadableStream** branch2,
            ExceptionState&);
 
-  base::Optional<bool> IsLocked(ScriptState*, ExceptionState&) const {
-    return IsLocked(this);
-  }
+  bool IsLocked() const { return IsLocked(this); }
 
-  base::Optional<bool> IsDisturbed(ScriptState*, ExceptionState&) const {
-    return IsDisturbed(this);
-  }
+  bool IsDisturbed() const { return IsDisturbed(this); }
 
-  base::Optional<bool> IsReadable(ScriptState*, ExceptionState&) const {
-    return IsReadable(this);
-  }
+  bool IsReadable() const { return IsReadable(this); }
 
-  base::Optional<bool> IsClosed(ScriptState*, ExceptionState&) const {
-    return IsClosed(this);
-  }
+  bool IsClosed() const { return IsClosed(this); }
 
-  base::Optional<bool> IsErrored(ScriptState*, ExceptionState&) const {
-    return IsErrored(this);
-  }
+  bool IsErrored() const { return IsErrored(this); }
 
-  void LockAndDisturb(ScriptState*, ExceptionState&);
+  void LockAndDisturb(ScriptState*);
 
   void Serialize(ScriptState*, MessagePort* port, ExceptionState&);
 
@@ -174,11 +164,9 @@ class CORE_EXPORT ReadableStream : public ScriptWrappable {
   // Returns a reader that doesn't have the |for_author_code_| flag set. This is
   // used in contexts where reads should not be interceptable by user code. This
   // corresponds to calling AcquireReadableStreamDefaultReader(stream, false) in
-  // specification language.
-  ReadableStreamDefaultReader* GetReaderNotForAuthorCode(ScriptState*,
-                                                         ExceptionState&);
-
-  bool IsBroken() const { return false; }
+  // specification language. The caller must ensure that the stream is not
+  // locked.
+  ReadableStreamDefaultReader* GetReaderNotForAuthorCode(ScriptState*);
 
   //
   // Readable stream abstract operations
@@ -220,7 +208,7 @@ class CORE_EXPORT ReadableStream : public ScriptWrappable {
 
   v8::Local<v8::Value> GetStoredError(v8::Isolate*) const;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   friend class ReadableStreamDefaultController;

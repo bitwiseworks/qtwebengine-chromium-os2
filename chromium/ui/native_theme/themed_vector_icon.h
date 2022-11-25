@@ -7,6 +7,7 @@
 
 #include "base/optional.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/base/models/image_model.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/native_theme/native_theme_export.h"
 
@@ -22,22 +23,32 @@ class NATIVE_THEME_EXPORT ThemedVectorIcon {
   ThemedVectorIcon();
   explicit ThemedVectorIcon(
       const gfx::VectorIcon* icon,
-      NativeTheme::ColorId color_id = NativeTheme::kColorId_DefaultIconColor);
+      NativeTheme::ColorId color_id = NativeTheme::kColorId_MenuIconColor,
+      int icon_size = 0);
+  explicit ThemedVectorIcon(const VectorIconModel& vector_icon_model);
   // TODO (kylixrd): Remove this once all the hard-coded uses of color are
   // removed.
-  ThemedVectorIcon(const gfx::VectorIcon* icon, SkColor color);
+  ThemedVectorIcon(const gfx::VectorIcon* icon,
+                   SkColor color,
+                   int icon_size = 0);
+
+  // Copyable and moveable
   ThemedVectorIcon(const ThemedVectorIcon& other);
+  ThemedVectorIcon& operator=(const ThemedVectorIcon&);
+  ThemedVectorIcon(ThemedVectorIcon&&);
+  ThemedVectorIcon& operator=(ThemedVectorIcon&&);
 
   void clear() { icon_ = nullptr; }
   bool empty() const { return !icon_; }
-  const gfx::ImageSkia GetImageSkia(NativeTheme* theme) const;
-  const gfx::ImageSkia GetImageSkia(NativeTheme* theme, int icon_size) const;
-  const gfx::ImageSkia GetImageSkia(SkColor color) const;
+  gfx::ImageSkia GetImageSkia(const NativeTheme* theme) const;
+  gfx::ImageSkia GetImageSkia(const NativeTheme* theme, int icon_size) const;
+  gfx::ImageSkia GetImageSkia(SkColor color) const;
 
  private:
-  SkColor GetColor(NativeTheme* theme) const;
+  SkColor GetColor(const NativeTheme* theme) const;
 
   const gfx::VectorIcon* icon_ = nullptr;
+  int icon_size_ = 0;
   base::Optional<NativeTheme::ColorId> color_id_;
   base::Optional<SkColor> color_;
 };

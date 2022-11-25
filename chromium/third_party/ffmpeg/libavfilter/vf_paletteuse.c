@@ -122,7 +122,7 @@ static const AVOption paletteuse_options[] = {
     { "alpha_threshold", "set the alpha threshold for transparency", OFFSET(trans_thresh), AV_OPT_TYPE_INT, {.i64=128}, 0, 255, FLAGS },
 
     /* following are the debug options, not part of the official API */
-    { "debug_kdtree", "save Graphviz graph of the kdtree in specified file", OFFSET(dot_filename), AV_OPT_TYPE_STRING, {.str=NULL}, CHAR_MIN, CHAR_MAX, FLAGS },
+    { "debug_kdtree", "save Graphviz graph of the kdtree in specified file", OFFSET(dot_filename), AV_OPT_TYPE_STRING, {.str=NULL}, 0, 0, FLAGS },
     { "color_search", "set reverse colormap color search method", OFFSET(color_search_method), AV_OPT_TYPE_INT, {.i64=COLOR_SEARCH_NNS_ITERATIVE}, 0, NB_COLOR_SEARCHES-1, FLAGS, "search" },
         { "nns_iterative", "iterative search",             0, AV_OPT_TYPE_CONST, {.i64=COLOR_SEARCH_NNS_ITERATIVE}, INT_MIN, INT_MAX, FLAGS, "search" },
         { "nns_recursive", "recursive search",             0, AV_OPT_TYPE_CONST, {.i64=COLOR_SEARCH_NNS_RECURSIVE}, INT_MIN, INT_MAX, FLAGS, "search" },
@@ -142,18 +142,12 @@ static int query_formats(AVFilterContext *ctx)
     static const enum AVPixelFormat inpal_fmts[] = {AV_PIX_FMT_RGB32, AV_PIX_FMT_NONE};
     static const enum AVPixelFormat out_fmts[]   = {AV_PIX_FMT_PAL8,  AV_PIX_FMT_NONE};
     int ret;
-    AVFilterFormats *in    = ff_make_format_list(in_fmts);
-    AVFilterFormats *inpal = ff_make_format_list(inpal_fmts);
-    AVFilterFormats *out   = ff_make_format_list(out_fmts);
-    if (!in || !inpal || !out) {
-        av_freep(&in);
-        av_freep(&inpal);
-        av_freep(&out);
-        return AVERROR(ENOMEM);
-    }
-    if ((ret = ff_formats_ref(in   , &ctx->inputs[0]->out_formats)) < 0 ||
-        (ret = ff_formats_ref(inpal, &ctx->inputs[1]->out_formats)) < 0 ||
-        (ret = ff_formats_ref(out  , &ctx->outputs[0]->in_formats)) < 0)
+    if ((ret = ff_formats_ref(ff_make_format_list(in_fmts),
+                              &ctx->inputs[0]->out_formats)) < 0 ||
+        (ret = ff_formats_ref(ff_make_format_list(inpal_fmts),
+                              &ctx->inputs[1]->out_formats)) < 0 ||
+        (ret = ff_formats_ref(ff_make_format_list(out_fmts),
+                              &ctx->outputs[0]->in_formats)) < 0)
         return ret;
     return 0;
 }
@@ -912,12 +906,12 @@ static int apply_palette(AVFilterLink *inlink, AVFrame *in, AVFrame **outf)
                           s->last_out, out, &x, &y, &w, &h);
     av_frame_unref(s->last_in);
     av_frame_unref(s->last_out);
-    if (av_frame_ref(s->last_in, in) < 0 ||
-        av_frame_ref(s->last_out, out) < 0 ||
-        av_frame_make_writable(s->last_in) < 0) {
+    if ((ret = av_frame_ref(s->last_in, in))       < 0 ||
+        (ret = av_frame_ref(s->last_out, out))     < 0 ||
+        (ret = av_frame_make_writable(s->last_in)) < 0) {
         av_frame_free(&out);
         *outf = NULL;
-        return AVERROR(ENOMEM);
+        return ret;
     }
 
     ff_dlog(ctx, "%dx%d rect: (%d;%d) -> (%d,%d) [area:%dx%d]\n",

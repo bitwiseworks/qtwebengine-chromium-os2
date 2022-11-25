@@ -26,12 +26,11 @@
 #include "mojo/public/cpp/bindings/shared_remote.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
-#include "third_party/blink/public/common/screen_orientation/web_screen_orientation_type.h"
 #include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
 #include "third_party/blink/public/mojom/cache_storage/cache_storage.mojom.h"
 #include "third_party/blink/public/mojom/loader/code_cache.mojom.h"
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
 #include "components/services/font/public/cpp/font_loader.h"  // nogncheck
 #include "third_party/skia/include/core/SkRefCnt.h"           // nogncheck
 #endif
@@ -57,8 +56,6 @@ class RasterContextProvider;
 }
 
 namespace content {
-class ChildURLLoaderFactoryBundle;
-class ThreadSafeSender;
 
 class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
  public:
@@ -87,7 +84,7 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
                      const uint8_t*,
                      size_t) override;
   void FetchCachedCode(blink::mojom::CodeCacheType cache_type,
-                       const GURL&,
+                       const blink::WebURL&,
                        FetchCachedCodeCallback) override;
   void ClearCodeCacheEntry(blink::mojom::CodeCacheType cache_type,
                            const GURL&) override;
@@ -98,6 +95,11 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
       size_t,
       const blink::WebSecurityOrigin& cacheStorageOrigin,
       const blink::WebString& cacheStorageCacheName) override;
+  void PopulateURLResponse(const blink::WebURL& url,
+                           const network::mojom::URLResponseHead& head,
+                           blink::WebURLResponse* response,
+                           bool report_security_info,
+                           int request_id) override;
   blink::WebString DefaultLocale() override;
   void SuddenTerminationChanged(bool enabled) override;
   blink::WebString DatabaseCreateOriginIdentifier(
@@ -110,9 +112,17 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
 
   bool IsThreadedAnimationEnabled() override;
   bool IsGpuCompositingDisabled() override;
+#if defined(OS_ANDROID)
+  bool IsSynchronousCompositingEnabled() override;
+#endif
+  bool IsUseZoomForDSFEnabled() override;
+  bool IsLcdTextEnabled() override;
+  bool IsElasticOverscrollEnabled() override;
+  bool IsScrollAnimatorEnabled() override;
   double AudioHardwareSampleRate() override;
   size_t AudioHardwareBufferSize() override;
   unsigned AudioHardwareOutputChannels() override;
+  base::TimeDelta GetHungRendererDelay() override;
 
   std::unique_ptr<blink::WebAudioDevice> CreateAudioDevice(
       unsigned input_channels,
@@ -185,30 +195,24 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
   void DidStartWorkerThread() override;
   void WillStopWorkerThread() override;
   void WorkerContextCreated(const v8::Local<v8::Context>& worker) override;
+  bool AllowScriptExtensionForServiceWorker(
+      const blink::WebSecurityOrigin& script_origin) override;
   bool IsExcludedHeaderForServiceWorkerFetchEvent(
       const blink::WebString& header_name) override;
 
   void RecordMetricsForBackgroundedRendererPurge() override;
 
-  std::unique_ptr<blink::WebURLLoaderFactory> CreateDefaultURLLoaderFactory()
-      override;
-  std::unique_ptr<blink::CodeCacheLoader> CreateCodeCacheLoader() override;
+  std::unique_ptr<blink::WebCodeCacheLoader> CreateCodeCacheLoader() override;
 
   std::unique_ptr<blink::WebURLLoaderFactory> WrapURLLoaderFactory(
-      mojo::ScopedMessagePipeHandle url_loader_factory_handle) override;
+      blink::CrossVariantMojoRemote<
+          network::mojom::URLLoaderFactoryInterfaceBase> url_loader_factory)
+      override;
   std::unique_ptr<blink::WebURLLoaderFactory> WrapSharedURLLoaderFactory(
       scoped_refptr<network::SharedURLLoaderFactory> factory) override;
 
   media::GpuVideoAcceleratorFactories* GetGpuFactories() override;
-
-  // Returns non-null.
-  // It is invalid to call this in an incomplete env where
-  // RenderThreadImpl::current() returns nullptr (e.g. in some tests).
-  scoped_refptr<ChildURLLoaderFactoryBundle>
-  CreateDefaultURLLoaderFactoryBundle();
-
-  mojo::PendingRemote<network::mojom::URLLoaderFactory>
-  CreateNetworkURLLoaderFactory();
+  void SetRenderingColorSpace(const gfx::ColorSpace& color_space) override;
 
   // Tells this platform that the renderer is locked to a site (i.e., a scheme
   // plus eTLD+1, such as https://google.com), or to a more specific origin.
@@ -220,9 +224,7 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
   // Return the mojo interface for making CodeCache calls.
   blink::mojom::CodeCacheHost& GetCodeCacheHost();
 
-  scoped_refptr<base::SingleThreadTaskRunner> io_runner_;
-
-#if defined(OS_LINUX) || defined(OS_MACOSX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_MAC)
   std::unique_ptr<blink::WebSandboxSupport> sandbox_support_;
 #endif
 
@@ -235,9 +237,6 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
   // If true, the renderer process is locked to a site.
   bool is_locked_to_site_;
 
-  scoped_refptr<base::SingleThreadTaskRunner> default_task_runner_;
-  scoped_refptr<ThreadSafeSender> thread_safe_sender_;
-
   // NOT OWNED
   blink::scheduler::WebThreadScheduler* main_thread_scheduler_;
 
@@ -246,7 +245,7 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
   mojo::PendingRemote<blink::mojom::CodeCacheHost> code_cache_host_remote_;
   mojo::SharedRemote<blink::mojom::CodeCacheHost> code_cache_host_;
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
   sk_sp<font_service::FontLoader> font_loader_;
 #endif
 

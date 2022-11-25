@@ -10,15 +10,17 @@
 #include <string>
 
 #include "base/macros.h"
+#include "ui/gfx/x/event.h"
 #include "ui/gl/gl_export.h"
-#include "ui/gl/gl_surface_egl.h"
+#include "ui/gl/gl_surface_egl_x11.h"
 
 namespace gl {
 
 // Encapsulates an EGL surface bound to a view using the X Window System.
-class GL_EXPORT NativeViewGLSurfaceEGLX11GLES2 : public NativeViewGLSurfaceEGL {
+class GL_EXPORT NativeViewGLSurfaceEGLX11GLES2
+    : public NativeViewGLSurfaceEGLX11 {
  public:
-  explicit NativeViewGLSurfaceEGLX11GLES2(EGLNativeWindowType window);
+  explicit NativeViewGLSurfaceEGLX11GLES2(x11::Window window);
 
   // NativeViewGLSurfaceEGL overrides.
   EGLConfig GetConfig() override;
@@ -29,13 +31,19 @@ class GL_EXPORT NativeViewGLSurfaceEGLX11GLES2 : public NativeViewGLSurfaceEGL {
               bool has_alpha) override;
   bool InitializeNativeWindow() override;
 
- private:
+ protected:
   ~NativeViewGLSurfaceEGLX11GLES2() override;
 
-  // XEventDispatcher:
-  bool DispatchXEvent(XEvent* xev) override;
+  x11::Window window() const { return static_cast<x11::Window>(window_); }
+  void set_window(x11::Window window) {
+    window_ = static_cast<uint32_t>(window);
+  }
 
-  EGLNativeWindowType parent_window_;
+ private:
+  // XEventDispatcher:
+  bool DispatchXEvent(x11::Event* xev) override;
+
+  x11::Window parent_window_;
 
   DISALLOW_COPY_AND_ASSIGN(NativeViewGLSurfaceEGLX11GLES2);
 };

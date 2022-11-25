@@ -7,6 +7,8 @@
 #import <Foundation/Foundation.h>
 
 #include "base/bind.h"
+#include "base/logging.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "components/autofill/ios/form_util/form_activity_observer.h"
 #include "components/autofill/ios/form_util/form_activity_params.h"
@@ -16,6 +18,9 @@
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
+
+using base::NumberToString;
+using base::StringToUint;
 
 namespace autofill {
 
@@ -83,14 +88,27 @@ bool FormActivityTabHelper::HandleFormActivity(
     bool form_in_main_frame,
     web::WebFrame* sender_frame) {
   FormActivityParams params;
+  std::string unique_form_id;
+  std::string unique_field_id;
   if (!message.GetString("formName", &params.form_name) ||
+      !message.GetString("uniqueFormID", &unique_form_id) ||
       !message.GetString("fieldIdentifier", &params.field_identifier) ||
+      !message.GetString("uniqueFieldID", &unique_field_id) ||
       !message.GetString("fieldType", &params.field_type) ||
       !message.GetString("type", &params.type) ||
       !message.GetString("value", &params.value) ||
       !message.GetBoolean("hasUserGesture", &params.has_user_gesture)) {
     params.input_missing = true;
   }
+  if (unique_form_id != NumberToString(kNotSetRendererID))
+    StringToUint(unique_form_id, &params.unique_form_id.value());
+  else
+    params.unique_form_id = FormRendererId();
+
+  if (unique_field_id != NumberToString(kNotSetRendererID))
+    StringToUint(unique_field_id, &params.unique_field_id.value());
+  else
+    params.unique_field_id = FieldRendererId();
 
   params.is_main_frame = form_in_main_frame;
   if (!sender_frame) {

@@ -49,7 +49,7 @@ class AutofillDriverIOS : public AutofillDriver {
                               const FormData& data) override;
   void PropagateAutofillPredictions(
       const std::vector<autofill::FormStructure*>& forms) override;
-  void HandleParsedForms(const std::vector<FormStructure*>& forms) override;
+  void HandleParsedForms(const std::vector<const FormData*>& forms) override;
   void SendAutofillTypePredictionsToRenderer(
       const std::vector<FormStructure*>& forms) override;
   void RendererShouldClearFilledSection() override;
@@ -67,7 +67,7 @@ class AutofillDriverIOS : public AutofillDriver {
   void PopupHidden() override;
   gfx::RectF TransformBoundingBoxToViewportCoordinates(
       const gfx::RectF& bounding_box) override;
-  net::NetworkIsolationKey NetworkIsolationKey() override;
+  net::IsolationInfo IsolationInfo() override;
 
   bool is_processed() const { return processed_; }
   void set_processed(bool processed) { processed_ = processed; }

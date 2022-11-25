@@ -23,13 +23,11 @@ namespace dawn_native { namespace metal {
 
     class Device;
 
-    class RenderPipeline : public RenderPipelineBase {
+    class RenderPipeline final : public RenderPipelineBase {
       public:
         static ResultOrError<RenderPipeline*> Create(Device* device,
                                                      const RenderPipelineDescriptor* descriptor);
-        ~RenderPipeline();
 
-        MTLIndexType GetMTLIndexType() const;
         MTLPrimitiveType GetMTLPrimitiveTopology() const;
         MTLWinding GetMTLFrontFace() const;
         MTLCullMode GetMTLCullMode() const;
@@ -40,23 +38,23 @@ namespace dawn_native { namespace metal {
 
         // For each Dawn vertex buffer, give the index in which it will be positioned in the Metal
         // vertex buffer table.
-        uint32_t GetMtlVertexBufferIndex(uint32_t dawnIndex) const;
+        uint32_t GetMtlVertexBufferIndex(VertexBufferSlot slot) const;
 
         wgpu::ShaderStage GetStagesRequiringStorageBufferLength() const;
 
       private:
+        ~RenderPipeline() override;
         using RenderPipelineBase::RenderPipelineBase;
         MaybeError Initialize(const RenderPipelineDescriptor* descriptor);
 
         MTLVertexDescriptor* MakeVertexDesc();
 
-        MTLIndexType mMtlIndexType;
         MTLPrimitiveType mMtlPrimitiveTopology;
         MTLWinding mMtlFrontFace;
         MTLCullMode mMtlCullMode;
         id<MTLRenderPipelineState> mMtlRenderPipelineState = nil;
         id<MTLDepthStencilState> mMtlDepthStencilState = nil;
-        std::array<uint32_t, kMaxVertexBuffers> mMtlVertexBufferIndices;
+        ityp::array<VertexBufferSlot, uint32_t, kMaxVertexBuffers> mMtlVertexBufferIndices;
 
         wgpu::ShaderStage mStagesRequiringStorageBufferLength = wgpu::ShaderStage::None;
     };

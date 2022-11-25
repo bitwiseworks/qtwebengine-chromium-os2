@@ -18,8 +18,8 @@
 namespace {
 
 constexpr static GrGeometryProcessor::Attribute kInstanceAttribs[] = {
-        {"devibounds", kInt4_GrVertexAttribType, kInt4_GrSLType},
-        {"dev_to_atlas_offset", kInt2_GrVertexAttribType, kInt2_GrSLType},
+        {"dev_xywh", kInt4_GrVertexAttribType, kInt4_GrSLType},
+        {"atlas_xy", kInt2_GrVertexAttribType, kInt2_GrSLType},
         {"color", kFloat4_GrVertexAttribType, kHalf4_GrSLType},
         {"viewmatrix_scaleskew", kFloat4_GrVertexAttribType, kFloat4_GrSLType},
         {"viewmatrix_trans", kFloat2_GrVertexAttribType, kFloat2_GrSLType}};
@@ -69,37 +69,38 @@ class DrawAtlasPathShader::Impl : public GrGLSLGeometryProcessor {
 
         const char* atlasAdjust;
         fAtlasAdjustUniform = args.fUniformHandler->addUniform(
-                kVertex_GrShaderFlag, kFloat2_GrSLType, "atlas_adjust", &atlasAdjust);
+                nullptr, kVertex_GrShaderFlag, kFloat2_GrSLType, "atlas_adjust", &atlasAdjust);
 
         args.fVertBuilder->codeAppendf(R"(
                 float2 T = float2(sk_VertexID & 1, sk_VertexID >> 1);
-                float2 devcoord = mix(float2(devibounds.xy), float2(devibounds.zw), T);
-                float2 atlascoord = devcoord + float2(dev_to_atlas_offset);
+                float2 devtopleft = float2(dev_xywh.xy);
+                float2 devcoord = abs(float2(dev_xywh.zw)) * T + devtopleft;
+                float2 atlascoord = devcoord - devtopleft;
+                if (dev_xywh.w < 0) {  // Negative height indicates that the path is transposed.
+                    atlascoord = atlascoord.yx;
+                }
+                atlascoord += atlas_xy;
                 %s = atlascoord * %s;)",
                 atlasCoord.vsOut(), atlasAdjust);
 
         gpArgs->fPositionVar.set(kFloat2_GrSLType, "devcoord");
 
-        GrShaderVar localCoord = gpArgs->fPositionVar;
         if (shader.fUsesLocalCoords) {
             args.fVertBuilder->codeAppendf(R"(
                     float2x2 M = float2x2(viewmatrix_scaleskew);
                     float2 localcoord = inverse(M) * (devcoord - viewmatrix_trans);)");
-            localCoord.set(kFloat2_GrSLType, "localcoord");
+            gpArgs->fLocalCoordVar.set(kFloat2_GrSLType, "localcoord");
         }
-        this->emitTransforms(args.fVertBuilder, args.fVaryingHandler, args.fUniformHandler,
-                             localCoord, args.fFPCoordTransformHandler);
 
         args.fFragBuilder->codeAppendf("%s = ", args.fOutputCoverage);
         args.fFragBuilder->appendTextureLookup(args.fTexSamplers[0], atlasCoord.fsIn());
         args.fFragBuilder->codeAppendf(".aaaa;");
     }
 
-    void setData(const GrGLSLProgramDataManager& pdman, const GrPrimitiveProcessor& primProc,
-                 const CoordTransformRange& transformRange) override {
+    void setData(const GrGLSLProgramDataManager& pdman,
+                 const GrPrimitiveProcessor& primProc) override {
         const SkISize& dimensions = primProc.cast<DrawAtlasPathShader>().fAtlasDimensions;
         pdman.set2f(fAtlasAdjustUniform, 1.f / dimensions.width(), 1.f / dimensions.height());
-        this->setTransformDataHelper(SkMatrix::I(), pdman, transformRange);
     }
 
     GrGLSLUniformHandler::UniformHandle fAtlasAdjustUniform;
@@ -141,10 +142,10 @@ GrOp::CombineResult GrDrawAtlasPathOp::onCombineIfPossible(
 }
 
 void GrDrawAtlasPathOp::onPrePrepare(GrRecordingContext*,
-                                     const GrSurfaceProxyView* outputView,
+                                     const GrSurfaceProxyView* writeView,
                                      GrAppliedClip*,
-                                     const GrXferProcessor::DstProxyView&) {
-}
+                                     const GrXferProcessor::DstProxyView&,
+                                     GrXferBarrierFlags renderPassXferBarriers) {}
 
 void GrDrawAtlasPathOp::onPrepare(GrOpFlushState* state) {
     size_t instanceStride = Instance::Stride(fUsesLocalCoords);
@@ -178,11 +179,12 @@ void GrDrawAtlasPathOp::onExecute(GrOpFlushState* state, const SkRect& chainBoun
     SkASSERT(shader.instanceStride() == Instance::Stride(fUsesLocalCoords));
 
     GrProgramInfo programInfo(state->proxy()->numSamples(), state->proxy()->numStencilSamples(),
-                              state->proxy()->backendFormat(), state->outputView()->origin(),
-                              &pipeline, &shader, GrPrimitiveType::kTriangleStrip);
+                              state->proxy()->backendFormat(), state->writeView()->origin(),
+                              &pipeline, &GrUserStencilSettings::kUnused, &shader,
+                              GrPrimitiveType::kTriangleStrip, 0, state->renderPassBarriers());
 
     state->bindPipelineAndScissorClip(programInfo, this->bounds());
     state->bindTextures(shader, *fAtlasProxy, pipeline);
-    state->bindBuffers(nullptr, fInstanceBuffer.get(), nullptr);
+    state->bindBuffers(nullptr, std::move(fInstanceBuffer), nullptr);
     state->drawInstanced(fInstanceCount, fBaseInstance, 4, 0);
 }

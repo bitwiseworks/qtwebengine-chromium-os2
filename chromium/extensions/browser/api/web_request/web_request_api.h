@@ -197,6 +197,7 @@ class WebRequestAPI : public BrowserContextKeyedAPI,
       int render_process_id,
       content::ContentBrowserClient::URLLoaderFactoryType type,
       base::Optional<int64_t> navigation_id,
+      base::UkmSourceId ukm_source_id,
       mojo::PendingReceiver<network::mojom::URLLoaderFactory>* factory_receiver,
       mojo::PendingRemote<network::mojom::TrustedURLLoaderHeaderClient>*
           header_client);
@@ -836,7 +837,7 @@ class WebRequestHandlerBehaviorChangedFunction
       extensions::QuotaLimitHeuristics* heuristics) const override;
   // Handle quota exceeded gracefully: Only warn the user but still execute the
   // function.
-  void OnQuotaExceeded(const std::string& error) override;
+  void OnQuotaExceeded(std::string error) override;
   ResponseAction Run() override;
 };
 

@@ -14,13 +14,14 @@ namespace blink {
 // The constants are implemented as static members of a class to have an unique
 // address and not violate ODR.
 struct CORE_EXPORT ReportType {
+  static constexpr const char kCSPViolation[] = "csp-violation";
+  static constexpr const char kCoopAccessViolation[] = "coop-access-violation";
   static constexpr const char kDeprecation[] = "deprecation";
-  static constexpr const char kFeaturePolicyViolation[] =
-      "feature-policy-violation";
   static constexpr const char kDocumentPolicyViolation[] =
       "document-policy-violation";
+  static constexpr const char kFeaturePolicyViolation[] =
+      "feature-policy-violation";
   static constexpr const char kIntervention[] = "intervention";
-  static constexpr const char kCSPViolation[] = "csp-violation";
 };
 
 class CORE_EXPORT Report : public ScriptWrappable {
@@ -36,7 +37,7 @@ class CORE_EXPORT Report : public ScriptWrappable {
   String url() const { return url_; }
   ReportBody* body() const { return body_; }
 
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     visitor->Trace(body_);
     ScriptWrappable::Trace(visitor);
   }

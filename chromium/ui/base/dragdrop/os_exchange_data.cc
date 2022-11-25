@@ -9,27 +9,18 @@
 
 #include "base/callback.h"
 #include "base/pickle.h"
-#include "build/build_config.h"
 #include "ui/base/clipboard/clipboard_format_type.h"
 #include "ui/base/dragdrop/os_exchange_data_provider_factory.h"
 #include "url/gurl.h"
 
 namespace ui {
 
-OSExchangeData::DownloadFileInfo::DownloadFileInfo(
-    const base::FilePath& filename,
-    std::unique_ptr<DownloadFileProvider> downloader)
-    : filename(filename), downloader(std::move(downloader)) {}
-
-OSExchangeData::DownloadFileInfo::~DownloadFileInfo() = default;
-
 OSExchangeData::OSExchangeData()
     : provider_(OSExchangeDataProviderFactory::CreateProvider()) {
 }
 
-OSExchangeData::OSExchangeData(std::unique_ptr<Provider> provider)
-    : provider_(std::move(provider)) {
-}
+OSExchangeData::OSExchangeData(std::unique_ptr<OSExchangeDataProvider> provider)
+    : provider_(std::move(provider)) {}
 
 OSExchangeData::~OSExchangeData() {
 }
@@ -108,9 +99,9 @@ bool OSExchangeData::HasAnyFormat(
     const std::set<ClipboardFormatType>& format_types) const {
   if ((formats & STRING) != 0 && HasString())
     return true;
-  if ((formats & URL) != 0 && HasURL(CONVERT_FILENAMES))
+  if ((formats & URL) != 0 && HasURL(FilenameToURLPolicy::CONVERT_FILENAMES))
     return true;
-#if defined(OS_WIN)
+#if defined(OS_WIN) && !defined(TOOLKIT_QT)
   if ((formats & FILE_CONTENTS) != 0 && provider_->HasFileContents())
     return true;
 #endif
@@ -127,7 +118,7 @@ bool OSExchangeData::HasAnyFormat(
   return false;
 }
 
-#if defined(OS_WIN)
+#if defined(OS_WIN) && !defined(TOOLKIT_QT)
 void OSExchangeData::SetFileContents(const base::FilePath& filename,
                                      const std::string& file_contents) {
   provider_->SetFileContents(filename, file_contents);
@@ -152,10 +143,6 @@ bool OSExchangeData::GetVirtualFilesAsTempFiles(
         void(const std::vector<std::pair<base::FilePath, base::FilePath>>&)>
         callback) const {
   return provider_->GetVirtualFilesAsTempFiles(std::move(callback));
-}
-
-void OSExchangeData::SetDownloadFileInfo(DownloadFileInfo* download) {
-  provider_->SetDownloadFileInfo(download);
 }
 #endif
 

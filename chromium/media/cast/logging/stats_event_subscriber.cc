@@ -9,8 +9,9 @@
 #include <memory>
 #include <utility>
 
+#include "base/check_op.h"
 #include "base/format_macros.h"
-#include "base/logging.h"
+#include "base/notreached.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 
@@ -382,16 +383,14 @@ void StatsEventSubscriber::GetStatsInternal(StatsMap* stats_map) const {
 
   if (capture_latency_datapoints_ > 0) {
     double avg_capture_latency_ms =
-        total_capture_latency_.InMillisecondsF() /
-        capture_latency_datapoints_;
+        total_capture_latency_.InMillisecondsF() / capture_latency_datapoints_;
     stats_map->insert(
         std::make_pair(AVG_CAPTURE_LATENCY_MS, avg_capture_latency_ms));
   }
 
   if (encode_time_datapoints_ > 0) {
     double avg_encode_time_ms =
-        total_encode_time_.InMillisecondsF() /
-        encode_time_datapoints_;
+        total_encode_time_.InMillisecondsF() / encode_time_datapoints_;
     stats_map->insert(
         std::make_pair(AVG_ENCODE_TIME_MS, avg_encode_time_ms));
   }
@@ -406,16 +405,14 @@ void StatsEventSubscriber::GetStatsInternal(StatsMap* stats_map) const {
 
   if (network_latency_datapoints_ > 0) {
     double avg_network_latency_ms =
-        total_network_latency_.InMillisecondsF() /
-        network_latency_datapoints_;
+        total_network_latency_.InMillisecondsF() / network_latency_datapoints_;
     stats_map->insert(
         std::make_pair(AVG_NETWORK_LATENCY_MS, avg_network_latency_ms));
   }
 
   if (packet_latency_datapoints_ > 0) {
     double avg_packet_latency_ms =
-        total_packet_latency_.InMillisecondsF() /
-        packet_latency_datapoints_;
+        total_packet_latency_.InMillisecondsF() / packet_latency_datapoints_;
     stats_map->insert(
         std::make_pair(AVG_PACKET_LATENCY_MS, avg_packet_latency_ms));
   }

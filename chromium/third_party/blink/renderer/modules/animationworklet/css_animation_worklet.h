@@ -14,24 +14,20 @@
 
 namespace blink {
 
-class Document;
-
 class MODULES_EXPORT CSSAnimationWorklet final
     : public GarbageCollected<CSSAnimationWorklet>,
       public Supplement<LocalDOMWindow>,
       public ExecutionContextLifecycleObserver {
-  USING_GARBAGE_COLLECTED_MIXIN(CSSAnimationWorklet);
-
  public:
   static const char kSupplementName[];
 
   static AnimationWorklet* animationWorklet(ScriptState*);
 
-  explicit CSSAnimationWorklet(Document*);
+  explicit CSSAnimationWorklet(LocalDOMWindow&);
 
   void ContextDestroyed() override;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   static CSSAnimationWorklet& From(LocalDOMWindow&);

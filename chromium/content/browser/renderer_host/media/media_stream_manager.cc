@@ -19,12 +19,12 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/power_monitor/power_monitor.h"
+#include "base/power_monitor/power_monitor_source.h"
 #include "base/rand_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/task/post_task.h"
 #include "base/task_runner_util.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_local.h"
@@ -32,6 +32,8 @@
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/gpu/gpu_process_host.h"
 #include "content/browser/media/capture/desktop_capture_device_uma_types.h"
+#include "content/browser/media/media_devices_permission_checker.h"
+#include "content/browser/permissions/permission_controller_impl.h"
 #include "content/browser/renderer_host/media/audio_input_device_manager.h"
 #include "content/browser/renderer_host/media/audio_service_listener.h"
 #include "content/browser/renderer_host/media/in_process_video_capture_provider.h"
@@ -69,6 +71,7 @@
 #include "media/capture/video/video_capture_system_impl.h"
 #include "media/mojo/mojom/display_media_information.mojom.h"
 #include "services/video_capture/public/uma/video_capture_service_event.h"
+#include "third_party/blink/public/common/mediastream/media_devices.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -428,8 +431,6 @@ void FinalizeGetMediaDeviceIDForHMAC(
     scoped_refptr<base::SequencedTaskRunner> task_runner,
     base::OnceCallback<void(const base::Optional<std::string>&)> callback,
     const MediaDeviceEnumeration& enumeration) {
-  DCHECK(type == blink::MEDIA_DEVICE_TYPE_AUDIO_INPUT ||
-         type == blink::MEDIA_DEVICE_TYPE_VIDEO_INPUT);
   for (const auto& device : enumeration[type]) {
     if (MediaStreamManager::DoesMediaDeviceIDMatchHMAC(
             salt, security_origin, source_id, device.device_id)) {
@@ -527,7 +528,8 @@ class MediaStreamManager::DeviceRequest {
         requesting_process_id, requesting_frame_id, page_request_id,
         salt_and_origin.origin.GetURL(), user_gesture, request_type_,
         requested_audio_device_id, requested_video_device_id, audio_type_,
-        video_type_, controls.disable_local_echo));
+        video_type_, controls.disable_local_echo,
+        controls.request_pan_tilt_zoom_permission));
   }
 
   // Creates a tab capture specific MediaStreamRequest object that is used by
@@ -540,7 +542,8 @@ class MediaStreamManager::DeviceRequest {
     ui_request_.reset(new MediaStreamRequest(
         target_render_process_id, target_render_frame_id, page_request_id,
         salt_and_origin.origin.GetURL(), user_gesture, request_type_, "", "",
-        audio_type_, video_type_, controls.disable_local_echo));
+        audio_type_, video_type_, controls.disable_local_echo,
+        /*request_pan_tilt_zoom_permission=*/false));
   }
 
   bool HasUIRequest() const { return ui_request_.get() != nullptr; }
@@ -603,7 +606,8 @@ class MediaStreamManager::DeviceRequest {
     if (generate_stream_cb) {
       std::move(generate_stream_cb)
           .Run(MediaStreamRequestResult::FAILED_DUE_TO_SHUTDOWN, std::string(),
-               MediaStreamDevices(), MediaStreamDevices());
+               MediaStreamDevices(), MediaStreamDevices(),
+               /*pan_tilt_zoom_allowed=*/false);
     }
 
     if (open_device_cb) {
@@ -664,6 +668,10 @@ class MediaStreamManager::DeviceRequest {
 
   std::string tab_capture_device_id;
 
+  PermissionController::SubscriptionId audio_subscription_id;
+
+  PermissionController::SubscriptionId video_subscription_id;
+
  private:
   std::vector<MediaRequestState> state_;
   std::unique_ptr<MediaStreamRequest> ui_request_;
@@ -677,8 +685,8 @@ class MediaStreamManager::DeviceRequest {
 // static
 void MediaStreamManager::SendMessageToNativeLog(const std::string& message) {
   if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
-    base::PostTask(
-        FROM_HERE, {BrowserThread::IO},
+    GetIOThreadTaskRunner({})->PostTask(
+        FROM_HERE,
         base::BindOnce(&MediaStreamManager::SendMessageToNativeLog, message));
     return;
   }
@@ -769,7 +777,7 @@ MediaStreamManager::MediaStreamManager(
       video_capture_provider = InProcessVideoCaptureProvider::CreateInstance(
           std::make_unique<media::VideoCaptureSystemImpl>(
               media::CreateVideoCaptureDeviceFactory(
-                  base::CreateSingleThreadTaskRunner({BrowserThread::UI}))),
+                  GetUIThreadTaskRunner({}))),
           std::move(device_task_runner),
           base::BindRepeating(&SendVideoCaptureLogMessage));
     }
@@ -861,8 +869,8 @@ std::string MediaStreamManager::MakeMediaAccessRequest(
   // and thus can not handle a response. Using base::Unretained is safe since
   // MediaStreamManager is deleted on the UI thread, after the IO thread has
   // been stopped.
-  base::PostTask(FROM_HERE, {BrowserThread::IO},
-                 base::BindOnce(&MediaStreamManager::SetUpRequest,
+  GetIOThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindOnce(&MediaStreamManager::SetUpRequest,
                                 base::Unretained(this), label));
   return label;
 }
@@ -912,8 +920,8 @@ void MediaStreamManager::GenerateStream(
   // and thus can not handle a response. Using base::Unretained is safe since
   // MediaStreamManager is deleted on the UI thread, after the IO thread has
   // been stopped.
-  base::PostTask(FROM_HERE, {BrowserThread::IO},
-                 base::BindOnce(&MediaStreamManager::SetUpRequest,
+  GetIOThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindOnce(&MediaStreamManager::SetUpRequest,
                                 base::Unretained(this), label));
 }
 
@@ -1135,8 +1143,8 @@ void MediaStreamManager::OpenDevice(int render_process_id,
   // and thus can not handle a response. Using base::Unretained is safe since
   // MediaStreamManager is deleted on the UI thread, after the IO thread has
   // been stopped.
-  base::PostTask(FROM_HERE, {BrowserThread::IO},
-                 base::BindOnce(&MediaStreamManager::SetUpRequest,
+  GetIOThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindOnce(&MediaStreamManager::SetUpRequest,
                                 base::Unretained(this), label));
 }
 
@@ -1320,7 +1328,18 @@ void MediaStreamManager::DeleteRequest(const std::string& label) {
   for (auto request_it = requests_.begin(); request_it != requests_.end();
        ++request_it) {
     if (request_it->first == label) {
+      // Clean up permission controller subscription.
+      GetUIThreadTaskRunner({})->PostTask(
+          FROM_HERE,
+          base::BindOnce(&MediaStreamManager::
+                             UnsubscribeFromPermissionControllerOnUIThread,
+                         request_it->second->requesting_process_id,
+                         request_it->second->requesting_frame_id,
+                         request_it->second->audio_subscription_id,
+                         request_it->second->video_subscription_id));
+
       requests_.erase(request_it);
+
       return;
     }
   }
@@ -1335,8 +1354,6 @@ void MediaStreamManager::ReadOutputParamsAndPostRequestToUI(
 
   // Actual audio parameters are required only for
   // MEDIA_GUM_TAB_AUDIO_CAPTURE.
-  // TODO(guidou): MEDIA_GUM_TAB_AUDIO_CAPTURE should not be a special
-  // case. See https://crbug.com/584287.
   if (request->audio_type() == MediaStreamType::GUM_TAB_AUDIO_CAPTURE) {
     // Using base::Unretained is safe: |audio_system_| will post
     // PostRequestToUI() to IO thread, and MediaStreamManager is deleted on the
@@ -1566,8 +1583,8 @@ bool MediaStreamManager::SetUpTabCaptureRequest(DeviceRequest* request,
     return false;
   }
 
-  base::PostTaskAndReplyWithResult(
-      FROM_HERE, {BrowserThread::UI},
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+      FROM_HERE,
       base::BindOnce(&MediaStreamManager::ResolveTabCaptureDeviceIdOnUIThread,
                      base::Unretained(this), capture_device_id,
                      request->requesting_process_id,
@@ -1774,8 +1791,51 @@ void MediaStreamManager::FinalizeGenerateStream(const std::string& label,
       NOTREACHED();
   }
 
+  // Subscribe to follow permission changes in order to close streams when the
+  // user denies mic/camera.
+  // It is safe to bind base::Unretained(this) because MediaStreamManager is
+  // owned by BrowserMainLoop.
+  GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE,
+      base::BindOnce(
+          &MediaStreamManager::SubscribeToPermissionControllerOnUIThread,
+          base::Unretained(this), label, request->requesting_process_id,
+          request->requesting_frame_id, request->requester_id,
+          request->page_request_id, audio_devices.size() > 0,
+          video_devices.size() > 0, request->salt_and_origin.origin.GetURL()));
+
+  // It is safe to bind base::Unretained(this) because MediaStreamManager is
+  // owned by BrowserMainLoop and so outlives the IO thread.
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+      FROM_HERE,
+      base::BindOnce(&MediaDevicesPermissionChecker::
+                         HasPanTiltZoomPermissionGrantedOnUIThread,
+                     request->requesting_process_id,
+                     request->requesting_frame_id),
+      base::BindOnce(&MediaStreamManager::PanTiltZoomPermissionChecked,
+                     base::Unretained(this), label, audio_devices,
+                     video_devices));
+}
+
+void MediaStreamManager::PanTiltZoomPermissionChecked(
+    const std::string& label,
+    MediaStreamDevices audio_devices,
+    MediaStreamDevices video_devices,
+    bool pan_tilt_zoom_allowed) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DeviceRequest* request = FindRequest(label);
+  if (!request)
+    return;
+
+  SendLogMessage(base::StringPrintf(
+      "PanTiltZoomPermissionChecked({label=%s}, {requester_id="
+      "%d}, {request_type=%s}, {pan_tilt_zoom_allowed=%d})",
+      label.c_str(), request->requester_id,
+      RequestTypeToString(request->request_type()), pan_tilt_zoom_allowed));
+
   std::move(request->generate_stream_cb)
-      .Run(MediaStreamRequestResult::OK, label, audio_devices, video_devices);
+      .Run(MediaStreamRequestResult::OK, label, audio_devices, video_devices,
+           pan_tilt_zoom_allowed);
 }
 
 void MediaStreamManager::FinalizeRequestFailed(
@@ -1792,7 +1852,7 @@ void MediaStreamManager::FinalizeRequestFailed(
       DCHECK(request->generate_stream_cb);
       std::move(request->generate_stream_cb)
           .Run(result, std::string(), MediaStreamDevices(),
-               MediaStreamDevices());
+               MediaStreamDevices(), /*pan_tilt_zoom_allowed=*/false);
       break;
     }
     case blink::MEDIA_OPEN_DEVICE_PEPPER_ONLY: {
@@ -1815,8 +1875,8 @@ void MediaStreamManager::FinalizeRequestFailed(
         if (device.type == MediaStreamType::GUM_DESKTOP_VIDEO_CAPTURE) {
           DesktopMediaID source = DesktopMediaID::Parse(device.id);
           DCHECK(source.type == DesktopMediaID::TYPE_WEB_CONTENTS);
-          base::PostTask(
-              FROM_HERE, {BrowserThread::UI},
+          GetUIThreadTaskRunner({})->PostTask(
+              FROM_HERE,
               base::BindOnce(&MediaStreamManager::ActivateTabOnUIThread,
                              base::Unretained(this), source));
           break;
@@ -1902,8 +1962,8 @@ void MediaStreamManager::InitializeMaybeAsync(
   // initialization is done synchronously. Other clients call this from a
   // different thread and expect initialization to run asynchronously.
   if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
-    base::PostTask(FROM_HERE, {BrowserThread::IO},
-                   base::BindOnce(&MediaStreamManager::InitializeMaybeAsync,
+    GetIOThreadTaskRunner({})->PostTask(
+        FROM_HERE, base::BindOnce(&MediaStreamManager::InitializeMaybeAsync,
                                   base::Unretained(this),
                                   std::move(video_capture_provider)));
     return;
@@ -1923,7 +1983,7 @@ void MediaStreamManager::InitializeMaybeAsync(
 
   // We want to be notified of IO message loop destruction to delete the thread
   // and the device managers.
-  base::MessageLoopCurrent::Get()->AddDestructionObserver(this);
+  base::CurrentThread::Get()->AddDestructionObserver(this);
 
   video_capture_manager_ =
       new VideoCaptureManager(std::move(video_capture_provider),
@@ -1958,6 +2018,8 @@ void MediaStreamManager::Opened(
     for (MediaStreamDevice& device : request->devices) {
       if (device.type == stream_type &&
           device.session_id() == capture_session_id) {
+        if (request->state(device.type) == MEDIA_REQUEST_STATE_DONE)
+          continue;
         CHECK_EQ(request->state(device.type), MEDIA_REQUEST_STATE_OPENING);
         // We've found a matching request.
         request->SetState(device.type, MEDIA_REQUEST_STATE_DONE);
@@ -2075,6 +2137,14 @@ void MediaStreamManager::OnSuspend() {
 
 void MediaStreamManager::OnResume() {
   SendLogMessage(base::StringPrintf("OnResume([this=%p])", this));
+}
+
+void MediaStreamManager::OnThermalStateChange(
+    base::PowerObserver::DeviceThermalState new_state) {
+  const char* state_name =
+      base::PowerMonitorSource::DeviceThermalStateToString(new_state);
+  SendLogMessage(base::StringPrintf(
+      "OnThermalStateChange({this=%p}, {new_state=%s})", this, state_name));
 }
 
 void MediaStreamManager::UseFakeUIFactoryForTests(
@@ -2463,8 +2533,21 @@ void MediaStreamManager::GetMediaDeviceIDForHMAC(
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(stream_type == MediaStreamType::DEVICE_AUDIO_CAPTURE ||
          stream_type == MediaStreamType::DEVICE_VIDEO_CAPTURE);
-  MediaStreamManager* msm = g_media_stream_manager_tls_ptr.Pointer()->Get();
   blink::MediaDeviceType device_type = ConvertToMediaDeviceType(stream_type);
+  MediaStreamManager::GetMediaDeviceIDForHMAC(
+      device_type, std::move(salt), std::move(security_origin),
+      std::move(hmac_device_id), std::move(task_runner), std::move(callback));
+}
+
+void MediaStreamManager::GetMediaDeviceIDForHMAC(
+    blink::MediaDeviceType device_type,
+    std::string salt,
+    url::Origin security_origin,
+    std::string hmac_device_id,
+    scoped_refptr<base::SequencedTaskRunner> task_runner,
+    base::OnceCallback<void(const base::Optional<std::string>&)> callback) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  MediaStreamManager* msm = g_media_stream_manager_tls_ptr.Pointer()->Get();
   MediaDevicesManager::BoolDeviceTypes requested_types;
   requested_types[device_type] = true;
   msm->media_devices_manager()->EnumerateDevices(
@@ -2519,7 +2602,8 @@ MediaStreamDevices MediaStreamManager::ConvertToMediaStreamDevices(
   MediaStreamDevices devices;
   for (const auto& info : device_infos) {
     devices.emplace_back(stream_type, info.device_id, info.label,
-                         info.video_facing, info.group_id);
+                         info.video_control_support, info.video_facing,
+                         info.group_id);
   }
 
   return devices;
@@ -2570,6 +2654,146 @@ void MediaStreamManager::OnStreamStarted(const std::string& label) {
                        base::Unretained(this), request->video_type(),
                        request->devices));
   }
+}
+
+// static
+PermissionControllerImpl* MediaStreamManager::GetPermissionController(
+    int requesting_process_id,
+    int requesting_frame_id) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  RenderFrameHost* rfh =
+      RenderFrameHost::FromID(requesting_process_id, requesting_frame_id);
+  if (!rfh)
+    return nullptr;
+
+  return PermissionControllerImpl::FromBrowserContext(rfh->GetBrowserContext());
+}
+
+void MediaStreamManager::SubscribeToPermissionControllerOnUIThread(
+    const std::string& label,
+    int requesting_process_id,
+    int requesting_frame_id,
+    int requester_id,
+    int page_request_id,
+    bool is_audio_request,
+    bool is_video_request,
+    const GURL& origin) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  PermissionControllerImpl* controller =
+      GetPermissionController(requesting_process_id, requesting_frame_id);
+  if (!controller)
+    return;
+
+  PermissionController::SubscriptionId audio_subscription_id;
+  PermissionController::SubscriptionId video_subscription_id;
+
+  if (is_audio_request) {
+    // It is safe to bind base::Unretained(this) because MediaStreamManager is
+    // owned by BrowserMainLoop.
+    audio_subscription_id = controller->SubscribePermissionStatusChange(
+        PermissionType::AUDIO_CAPTURE,
+        RenderFrameHost::FromID(requesting_process_id, requesting_frame_id),
+        origin,
+        base::BindRepeating(&MediaStreamManager::PermissionChangedCallback,
+                            base::Unretained(this), requesting_process_id,
+                            requesting_frame_id, requester_id,
+                            page_request_id));
+  }
+
+  if (is_video_request) {
+    // It is safe to bind base::Unretained(this) because MediaStreamManager is
+    // owned by BrowserMainLoop.
+    video_subscription_id = controller->SubscribePermissionStatusChange(
+        PermissionType::VIDEO_CAPTURE,
+        RenderFrameHost::FromID(requesting_process_id, requesting_frame_id),
+        origin,
+        base::BindRepeating(&MediaStreamManager::PermissionChangedCallback,
+                            base::Unretained(this), requesting_process_id,
+                            requesting_frame_id, requester_id,
+                            page_request_id));
+  }
+
+  // It is safe to bind base::Unretained(this) because MediaStreamManager is
+  // owned by BrowserMainLoop.
+  GetIOThreadTaskRunner({})->PostTask(
+      FROM_HERE,
+      base::BindOnce(&MediaStreamManager::SetPermissionSubscriptionIDs,
+                     base::Unretained(this), label, requesting_process_id,
+                     requesting_frame_id, audio_subscription_id,
+                     video_subscription_id));
+}
+
+void MediaStreamManager::SetPermissionSubscriptionIDs(
+    const std::string& label,
+    int requesting_process_id,
+    int requesting_frame_id,
+    PermissionController::SubscriptionId audio_subscription_id,
+    PermissionController::SubscriptionId video_subscription_id) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+
+  DeviceRequest* const request = FindRequest(label);
+  if (!request) {
+    // Something happened with the request while the permission subscription was
+    // created, unsubscribe to clean up.
+    // It is safe to bind base::Unretained(this) because MediaStreamManager is
+    // owned by BrowserMainLoop.
+    GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE,
+        base::BindOnce(
+            &MediaStreamManager::UnsubscribeFromPermissionControllerOnUIThread,
+            requesting_process_id, requesting_frame_id, audio_subscription_id,
+            video_subscription_id));
+
+    return;
+  }
+
+  request->audio_subscription_id = audio_subscription_id;
+  request->video_subscription_id = video_subscription_id;
+}
+
+// static
+void MediaStreamManager::UnsubscribeFromPermissionControllerOnUIThread(
+    int requesting_process_id,
+    int requesting_frame_id,
+    PermissionController::SubscriptionId audio_subscription_id,
+    PermissionController::SubscriptionId video_subscription_id) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  PermissionControllerImpl* controller =
+      GetPermissionController(requesting_process_id, requesting_frame_id);
+  if (!controller)
+    return;
+
+  controller->UnsubscribePermissionStatusChange(audio_subscription_id);
+  controller->UnsubscribePermissionStatusChange(video_subscription_id);
+}
+
+void MediaStreamManager::PermissionChangedCallback(
+    int requesting_process_id,
+    int requesting_frame_id,
+    int requester_id,
+    int page_request_id,
+    blink::mojom::PermissionStatus status) {
+  if (status == blink::mojom::PermissionStatus::GRANTED)
+    return;
+
+  if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
+    // It is safe to bind base::Unretained(this) because MediaStreamManager is
+    // owned by BrowserMainLoop.
+    GetIOThreadTaskRunner({})->PostTask(
+        FROM_HERE,
+        base::BindOnce(&MediaStreamManager::PermissionChangedCallback,
+                       base::Unretained(this), requesting_process_id,
+                       requesting_frame_id, requester_id, page_request_id,
+                       status));
+
+    return;
+  }
+
+  CancelRequest(requesting_process_id, requesting_frame_id, requester_id,
+                page_request_id);
 }
 
 }  // namespace content

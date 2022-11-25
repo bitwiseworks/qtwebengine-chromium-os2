@@ -203,6 +203,7 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   // Sets/gets the clip rect for the layer. |clip_rect| is in layer space and
   // relative to |this| layer. Prefer SetMasksToBounds() to set the clip to the
   // bounds of |this| layer. This clips the subtree rooted at |this| layer.
+  gfx::Rect GetTargetClipRect() const;
   void SetClipRect(const gfx::Rect& clip_rect);
   gfx::Rect clip_rect() const { return cc_layer_->clip_rect(); }
 
@@ -458,7 +459,7 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   float device_scale_factor() const { return device_scale_factor_; }
 
   // Triggers a call to SwitchToLayer.
-  void SwitchCCLayerForTest();
+  bool SwitchCCLayerForTest();
 
   const cc::Region& damaged_region_for_testing() const {
     return damaged_region_;
@@ -509,6 +510,10 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
 
   bool ContainsMirrorForTest(Layer* mirror) const;
 
+  void SetCompositorForTesting(Compositor* compositor) {
+    compositor_ = compositor;
+  }
+
  private:
   friend class LayerOwner;
   class LayerMirror;
@@ -527,7 +532,7 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   // Implementation of LayerAnimatorDelegate
   void SetBoundsFromAnimation(const gfx::Rect& bounds,
                               PropertyChangeReason reason) override;
-  void SetTransformFromAnimation(const gfx::Transform& transform,
+  void SetTransformFromAnimation(const gfx::Transform& new_transform,
                                  PropertyChangeReason reason) override;
   void SetOpacityFromAnimation(float opacity,
                                PropertyChangeReason reason) override;
@@ -575,8 +580,11 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   // Set all filters which got applied to the layer background.
   void SetLayerBackgroundFilters();
 
-  // Cleanup |cc_layer_| and replaces it with |new_layer|.
-  void SwitchToLayer(scoped_refptr<cc::Layer> new_layer);
+  // Cleanup |cc_layer_| and replaces it with |new_layer|. When stopping
+  // animations handled by old cc layer before the switch, |this| could be
+  // released by an animation observer. Returns false when it happens and
+  // callers should take cautions as well. Otherwise returns true.
+  bool SwitchToLayer(scoped_refptr<cc::Layer> new_layer) WARN_UNUSED_RESULT;
 
   void SetCompositorForAnimatorsInTree(Compositor* compositor);
   void ResetCompositorForAnimatorsInTree(Compositor* compositor);

@@ -4,8 +4,10 @@
 
 module network.mojom;
 
+import "url/mojom/origin.mojom";
 import "url/mojom/url.mojom";
 import "services/network/public/mojom/source_location.mojom";
+import "services/network/public/mojom/web_sandbox_flags.mojom";
 
 // The HTTP Content-Security-Policy-Report-Only response header allows web
 // developers to experiment with policies by monitoring (but not enforcing)
@@ -61,30 +63,87 @@ struct CSPSource {
   bool is_port_wildcard = false;
 };
 
+enum CSPHashAlgorithm {
+  SHA256,
+  SHA384,
+  SHA512,
+};
+
+struct CSPHashSource {
+  CSPHashAlgorithm algorithm;
+  string value;
+};
+
 struct CSPSourceList {
   array<CSPSource> sources;
+  array<string> nonces;
+  array<CSPHashSource> hashes;
 
   // Wildcard hosts and 'self' aren't stored in |sources|, but as attributes
   // on the source list itself.
   bool allow_self = false;
   bool allow_star = false;
   bool allow_response_redirects = false;
+  bool allow_inline = false;
+  bool allow_eval = false;
+  bool allow_wasm_eval = false;
+  bool allow_dynamic = false;
+  bool allow_unsafe_hashes = false;
+  bool report_sample = false;
 };
 
 enum CSPDirectiveName {
   Unknown,
 
-  DefaultSrc,
+  BaseURI,
+  BlockAllMixedContent,
   ChildSrc,
-  FrameSrc,
+  ConnectSrc,
+  DefaultSrc,
+  FontSrc,
   FormAction,
-  UpgradeInsecureRequests,
-  NavigateTo,
   FrameAncestors,
+  FrameSrc,
+  ImgSrc,
+  ManifestSrc,
+  MediaSrc,
+  NavigateTo,
+  ObjectSrc,
+  PluginTypes,
+  PrefetchSrc,
+  ReportTo,
+  ReportURI,
+  RequireTrustedTypesFor,
+  Sandbox,
+  ScriptSrc,
+  ScriptSrcAttr,
+  ScriptSrcElem,
+  StyleSrc,
+  StyleSrcAttr,
+  StyleSrcElem,
+  TreatAsPublicAddress,
+  TrustedTypes,
+  UpgradeInsecureRequests,
+  WorkerSrc,
 };
 
 struct ContentSecurityPolicy {
   map<CSPDirectiveName, CSPSourceList> directives;
+
+  // Spec: https://www.w3.org/TR/upgrade-insecure-requests/
+  //
+  // Parsed by both the network and blink CSP parsers.
+  // TODO(https://crbug.com/1076894): Only the value coming from blink is used.
+  // We might want to reverse this. The browser could 'push' its value to the
+  // renderer instead of 'pulling' it after the navigation commit.
+  bool upgrade_insecure_requests = false;
+
+  // https://wicg.github.io/cors-rfc1918/#csp
+  bool treat_as_public_address = false;
+
+  // https://www.w3.org/TR/CSP3/#directive-sandbox
+  // This uses the convention: kAll means "everything is allowed".
+  WebSandboxFlags sandbox = WebSandboxFlags.kAll;
 
   ContentSecurityPolicyHeader header;
 
@@ -94,6 +153,15 @@ struct ContentSecurityPolicy {
 
   // Set of reporting endpoints to which violation reports are sent.
   array<string> report_endpoints;
+
+  // Plugin types specified by the CSP. If `null`, no plugin-types directive is
+  // specified and hence all types are allowed. If an empty array, then the
+  // plugin-types directive is specified with no types, hence no types are
+  // allowed.
+  array<string>? plugin_types;
+
+  // An array containing a set of errors occurred while parsing the CSP header.
+  array<string> parsing_errors;
 };
 
 // Data to report Content-Security-Policy violations.
@@ -132,4 +200,15 @@ struct CSPViolation {
 
   // The source code location that triggered the blocked navigation.
   SourceLocation source_location;
+};
+
+union AllowCSPFromHeaderValue {
+  // Set to true if the 'Allow-CSP-From' header just contains '*'.
+  bool allow_star;
+
+  // The parsed origin contained in the 'Allow-CSP-From' header.
+  url.mojom.Origin origin;
+
+  // If the header value is invalid, an error message will be stored here.
+  string error_message;
 };

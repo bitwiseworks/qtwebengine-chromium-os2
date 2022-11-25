@@ -10,6 +10,7 @@
 #include "chrome/common/channel_info.h"
 #include "components/version_info/version_info.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/test/browser_test.h"
 #include "media/base/media_switches.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 
@@ -47,9 +48,10 @@ class WebRtcDisableEncryptionFlagBrowserTest : public WebRtcTestBase {
 
 // Makes a call and checks that there's encryption or not in the SDP offer.
 // TODO(crbug.com/910216): De-flake this for ChromeOs.
-// TODO(crbug.com/984879): De-flake this for MSAN Linux.
-#if defined(OS_CHROMEOS) ||                             \
-    (defined(OS_LINUX) && defined(MEMORY_SANITIZER)) || \
+// TODO(crbug.com/984879): De-flake this for ASAN/MSAN Linux.
+#if defined(OS_CHROMEOS) ||                                        \
+    (defined(OS_LINUX) &&                                          \
+     (defined(MEMORY_SANITIZER) || defined(ADDRESS_SANITIZER))) || \
     (defined(OS_WIN) && defined(ADDRESS_SANITIZER))
 #define MAYBE_VerifyEncryption DISABLED_VerifyEncryption
 #else

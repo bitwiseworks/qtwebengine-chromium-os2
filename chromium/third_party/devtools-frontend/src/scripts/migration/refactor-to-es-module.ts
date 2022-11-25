@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// eslint-disable-next-line rulesdir/es_modules_import
 import {CommentKind, IdentifierKind, MemberExpressionKind} from 'ast-types/gen/kinds';
 import fs from 'fs';
 import path from 'path';
@@ -19,6 +20,7 @@ function capitalizeFirstLetter(string: string) {
 
 const b = types.builders;
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function createReplacementDeclaration(propertyName: IdentifierKind, declaration: any): any {
   // UI.ARIAUtils.Foo = class {} -> export class Foo {}
   if (declaration.type === 'ClassExpression') {
@@ -31,6 +33,7 @@ function createReplacementDeclaration(propertyName: IdentifierKind, declaration:
   console.error(`Unable to refactor declaration of type "${declaration.type}" named "${propertyName.name}"`);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getTopLevelMemberExpression(expression: MemberExpressionKind): any {
   while (expression.object.type === 'MemberExpression') {
     expression = expression.object;
@@ -43,6 +46,7 @@ function rewriteSource(source: string, refactoringNamespace: string, refactoring
   const exportedMembers: {prop: IdentifierKind, comments: CommentKind[]}[] = [];
   const ast = parse(source);
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ast.program.body = ast.program.body.map((expression: any) => {
     // UI.ARIAUtils.Foo = 5;
     if (expression.type === 'ExpressionStatement') {

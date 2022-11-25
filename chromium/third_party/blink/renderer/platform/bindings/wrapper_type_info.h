@@ -103,9 +103,6 @@ struct WrapperTypeInfo {
         v8::External::Cast(*type_info_wrapper)->Value());
   }
 
-  PLATFORM_EXPORT static void WrapperCreated();
-  PLATFORM_EXPORT static void WrapperDestroyed();
-
   bool Equals(const WrapperTypeInfo* that) const { return this == that; }
 
   bool IsSubclass(const WrapperTypeInfo* that) const {
@@ -190,6 +187,13 @@ inline T* GetInternalField(v8::Local<v8::Object> wrapper) {
       wrapper->GetAlignedPointerFromInternalField(offset));
 }
 
+template <typename T, int offset>
+inline T* GetInternalField(v8::Object* wrapper) {
+  DCHECK_LT(offset, wrapper->InternalFieldCount());
+  return reinterpret_cast<T*>(
+      wrapper->GetAlignedPointerFromInternalField(offset));
+}
+
 // The return value can be null if |wrapper| is a global proxy, which points to
 // nothing while a navigation.
 inline ScriptWrappable* ToScriptWrappable(
@@ -203,6 +207,10 @@ inline ScriptWrappable* ToScriptWrappable(
 }
 
 inline ScriptWrappable* ToScriptWrappable(v8::Local<v8::Object> wrapper) {
+  return GetInternalField<ScriptWrappable, kV8DOMWrapperObjectIndex>(wrapper);
+}
+
+inline ScriptWrappable* ToScriptWrappable(v8::Object* wrapper) {
   return GetInternalField<ScriptWrappable, kV8DOMWrapperObjectIndex>(wrapper);
 }
 

@@ -54,11 +54,14 @@ class VIEWS_EXPORT AXTreeSourceViews
   bool IsValid(AXAuraObjWrapper* node) const override;
   bool IsEqual(AXAuraObjWrapper* node1, AXAuraObjWrapper* node2) const override;
   AXAuraObjWrapper* GetNull() const override;
+  std::string GetDebugString(AXAuraObjWrapper* node) const override;
   void SerializeNode(AXAuraObjWrapper* node,
                      ui::AXNodeData* out_data) const override;
 
   // Useful for debugging.
   std::string ToString(views::AXAuraObjWrapper* root, std::string prefix);
+
+  const ui::AXTreeID tree_id_for_test() const { return tree_id_; }
 
  private:
   // The top-level object to use for the AX tree. See class comment.

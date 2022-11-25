@@ -12,7 +12,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "build/build_config.h"
-#include "content/browser/frame_host/frame_tree_node.h"
+#include "content/browser/renderer_host/frame_tree_node.h"
 #include "content/browser/web_package/mock_signed_exchange_handler.h"
 #include "content/browser/web_package/signed_exchange_devtools_proxy.h"
 #include "content/browser/web_package/signed_exchange_prefetch_metric_recorder.h"
@@ -85,8 +85,9 @@ class SignedExchangeLoaderTest : public testing::TestWithParam<bool> {
     ~MockURLLoader() override = default;
 
     // network::mojom::URLLoader overrides:
-    MOCK_METHOD3(FollowRedirect,
+    MOCK_METHOD4(FollowRedirect,
                  void(const std::vector<std::string>&,
+                      const net::HttpRequestHeaders&,
                       const net::HttpRequestHeaders&,
                       const base::Optional<GURL>&));
     MOCK_METHOD2(SetPriority,
@@ -191,7 +192,8 @@ TEST_P(SignedExchangeLoaderTest, Simple) {
           nullptr /* reporter */, CreateMockPingLoaderFactory(),
           base::BindRepeating(&SignedExchangeLoaderTest::ThrottlesGetter),
           FrameTreeNode::kFrameTreeNodeInvalidId, nullptr /* metric_recorder */,
-          std::string() /* accept_langs */);
+          std::string() /* accept_langs */,
+          false /* keep_entry_for_prefetch_cache */);
 
   EXPECT_CALL(mock_loader, PauseReadingBodyFromNet());
   signed_exchange_loader->PauseReadingBodyFromNet();

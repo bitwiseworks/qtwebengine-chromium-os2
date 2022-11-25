@@ -4,13 +4,13 @@
 
 #include "ui/gfx/x/x11_error_tracker.h"
 
-#include "base/logging.h"
+#include "base/check.h"
+#include "ui/gfx/x/x11.h"
 #include "ui/gfx/x/x11_types.h"
 
 namespace {
 
 unsigned char g_x11_error_code = 0;
-static gfx::X11ErrorTracker* g_handler = NULL;
 
 int X11ErrorHandler(Display* display, XErrorEvent* error) {
   g_x11_error_code = error->error_code;
@@ -22,22 +22,17 @@ int X11ErrorHandler(Display* display, XErrorEvent* error) {
 namespace gfx {
 
 X11ErrorTracker::X11ErrorTracker() {
-  // This is a non-exhaustive check for incorrect usage. It disallows nested
-  // X11ErrorTracker instances on the same thread.
-  DCHECK(g_handler == NULL);
-  g_handler = this;
-  XSync(GetXDisplay(), False);
-  old_handler_ = XSetErrorHandler(X11ErrorHandler);
+  x11::Connection::Get()->Sync();
+  old_handler_ = reinterpret_cast<void*>(XSetErrorHandler(X11ErrorHandler));
   g_x11_error_code = 0;
 }
 
 X11ErrorTracker::~X11ErrorTracker() {
-  g_handler = NULL;
-  XSetErrorHandler(old_handler_);
+  XSetErrorHandler(reinterpret_cast<XErrorHandler>(old_handler_));
 }
 
 bool X11ErrorTracker::FoundNewError() {
-  XSync(GetXDisplay(), False);
+  x11::Connection::Get()->Sync();
   unsigned char error = g_x11_error_code;
   g_x11_error_code = 0;
   return error != 0;

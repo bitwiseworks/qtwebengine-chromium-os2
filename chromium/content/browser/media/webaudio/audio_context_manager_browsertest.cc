@@ -5,6 +5,7 @@
 #include "build/build_config.h"
 #include "components/ukm/test_ukm_recorder.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -72,7 +73,7 @@ class AudioContextManagerTest : public ContentBrowserTest {
 };
 
 // Flaky on Linux: https://crbug.com/1047163
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
 #define MAYBE_AudioContextPlaybackRecorded DISABLED_AudioContextPlaybackRecorded
 #else
 #define MAYBE_AudioContextPlaybackRecorded AudioContextPlaybackRecorded
@@ -98,7 +99,7 @@ IN_PROC_BROWSER_TEST_F(AudioContextManagerTest,
 }
 
 // Flaky on Linux: https://crbug.com/941219
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
 #define MAYBE_AudioContextPlaybackTimeUkm DISABLED_AudioContextPlaybackTimeUkm
 #else
 #define MAYBE_AudioContextPlaybackTimeUkm AudioContextPlaybackTimeUkm

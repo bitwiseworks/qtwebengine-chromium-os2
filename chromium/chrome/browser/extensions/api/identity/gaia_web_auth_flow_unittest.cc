@@ -32,7 +32,11 @@ class DeleteCookiesTestCookieManager : public network::TestCookieManager {
 class FakeWebAuthFlow : public WebAuthFlow {
  public:
   explicit FakeWebAuthFlow(WebAuthFlow::Delegate* delegate)
-      : WebAuthFlow(delegate, nullptr, GURL(), WebAuthFlow::INTERACTIVE) {
+      : WebAuthFlow(delegate,
+                    nullptr,
+                    GURL(),
+                    WebAuthFlow::INTERACTIVE,
+                    WebAuthFlow::GET_AUTH_TOKEN) {
     storage_partition.set_cookie_manager_for_browser_process(&cookie_manager);
   }
 
@@ -95,7 +99,12 @@ class IdentityGaiaWebAuthFlowTest : public testing::Test {
   }
 
   std::unique_ptr<TestGaiaWebAuthFlow> CreateTestFlow() {
-    ExtensionTokenKey token_key("extension_id", CoreAccountId("account_id"),
+    CoreAccountInfo user_info;
+    user_info.account_id = CoreAccountId("account_id");
+    user_info.gaia = "account_id";
+    user_info.email = "email";
+
+    ExtensionTokenKey token_key("extension_id", user_info,
                                 std::set<std::string>());
     return std::unique_ptr<TestGaiaWebAuthFlow>(new TestGaiaWebAuthFlow(
         &delegate_, &token_key, "fake.client.id", ubertoken_error_state_));

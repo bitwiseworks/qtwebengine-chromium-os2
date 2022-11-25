@@ -11,10 +11,13 @@
 #include "src/base/template-utils.h"
 #include "src/debug/debug.h"
 #include "src/execution/frames-inl.h"
+#include "src/execution/v8threads.h"
 #include "src/execution/vm-state-inl.h"
+#include "src/libsampler/sampler.h"
 #include "src/logging/counters.h"
 #include "src/logging/log.h"
 #include "src/profiler/cpu-profiler-inl.h"
+#include "src/profiler/profiler-stats.h"
 #include "src/utils/locked-queue-inl.h"
 #include "src/wasm/wasm-engine.h"
 
@@ -27,12 +30,25 @@ class CpuSampler : public sampler::Sampler {
  public:
   CpuSampler(Isolate* isolate, SamplingEventsProcessor* processor)
       : sampler::Sampler(reinterpret_cast<v8::Isolate*>(isolate)),
-        processor_(processor) {}
+        processor_(processor),
+        threadId_(ThreadId::Current()) {}
 
   void SampleStack(const v8::RegisterState& regs) override {
-    TickSample* sample = processor_->StartTickSample();
-    if (sample == nullptr) return;
     Isolate* isolate = reinterpret_cast<Isolate*>(this->isolate());
+    if (v8::Locker::IsActive() &&
+        !isolate->thread_manager()->IsLockedByThread(threadId_)) {
+      ProfilerStats::Instance()->AddReason(
+          ProfilerStats::Reason::kIsolateNotLocked);
+      return;
+    }
+    TickSample* sample = processor_->StartTickSample();
+    if (sample == nullptr) {
+      ProfilerStats::Instance()->AddReason(
+          ProfilerStats::Reason::kTickBufferFull);
+      return;
+    }
+    // Every bailout up until here resulted in a dropped sample. From now on,
+    // the sample is created in the buffer.
     sample->Init(isolate, regs, TickSample::kIncludeCEntryFrame,
                  /* update_stats */ true,
                  /* use_simulator_reg_state */ true, processor_->period());
@@ -45,6 +61,7 @@ class CpuSampler : public sampler::Sampler {
 
  private:
   SamplingEventsProcessor* processor_;
+  ThreadId threadId_;
 };
 
 ProfilingScope::ProfilingScope(Isolate* isolate, ProfilerListener* listener)
@@ -84,7 +101,6 @@ ProfilerEventsProcessor::ProfilerEventsProcessor(
     : Thread(Thread::Options("v8:ProfEvntProc", kProfilerStackSize)),
       generator_(generator),
       code_observer_(code_observer),
-      running_(1),
       last_code_event_id_(0),
       last_processed_code_event_id_(0),
       isolate_(isolate) {
@@ -149,7 +165,10 @@ void ProfilerEventsProcessor::AddSample(TickSample sample) {
 }
 
 void ProfilerEventsProcessor::StopSynchronously() {
-  if (!base::Relaxed_AtomicExchange(&running_, 0)) return;
+  bool expected = true;
+  if (!running_.compare_exchange_strong(expected, false,
+                                        std::memory_order_relaxed))
+    return;
   {
     base::MutexGuard guard(&running_mutex_);
     running_cond_.NotifyOne();
@@ -161,14 +180,7 @@ void ProfilerEventsProcessor::StopSynchronously() {
 bool ProfilerEventsProcessor::ProcessCodeEvent() {
   CodeEventsContainer record;
   if (events_buffer_.Dequeue(&record)) {
-    if (record.generic.type == CodeEventRecord::NATIVE_CONTEXT_MOVE) {
-      NativeContextMoveEventRecord& nc_record =
-          record.NativeContextMoveEventRecord_;
-      generator_->UpdateNativeContextAddress(nc_record.from_address,
-                                             nc_record.to_address);
-    } else {
-      code_observer_->CodeEventHandlerInternal(record);
-    }
+    code_observer_->CodeEventHandlerInternal(record);
     last_processed_code_event_id_ = record.generic.order;
     return true;
   }
@@ -181,7 +193,6 @@ void ProfilerEventsProcessor::CodeEventHandler(
     case CodeEventRecord::CODE_CREATION:
     case CodeEventRecord::CODE_MOVE:
     case CodeEventRecord::CODE_DISABLE_OPT:
-    case CodeEventRecord::NATIVE_CONTEXT_MOVE:
       Enqueue(evt_rec);
       break;
     case CodeEventRecord::CODE_DEOPT: {
@@ -205,7 +216,7 @@ SamplingEventsProcessor::ProcessOneSample() {
       (record1.order == last_processed_code_event_id_)) {
     TickSampleEventRecord record;
     ticks_from_vm_buffer_.Dequeue(&record);
-    generator_->RecordTickSample(record.sample);
+    generator_->SymbolizeTickSample(record.sample);
     return OneSampleProcessed;
   }
 
@@ -217,14 +228,14 @@ SamplingEventsProcessor::ProcessOneSample() {
   if (record->order != last_processed_code_event_id_) {
     return FoundSampleForNextCodeEvent;
   }
-  generator_->RecordTickSample(record->sample);
+  generator_->SymbolizeTickSample(record->sample);
   ticks_buffer_.Remove();
   return OneSampleProcessed;
 }
 
 void SamplingEventsProcessor::Run() {
   base::MutexGuard guard(&running_mutex_);
-  while (!!base::Relaxed_Load(&running_)) {
+  while (running_.load(std::memory_order_relaxed)) {
     base::TimeTicks nextSampleTime =
         base::TimeTicks::HighResolutionNow() + period_;
     base::TimeTicks now;
@@ -261,7 +272,7 @@ void SamplingEventsProcessor::Run() {
           // If true was returned, we got interrupted before the timeout
           // elapsed. If this was not due to a change in running state, a
           // spurious wakeup occurred (thus we should continue to wait).
-          if (!base::Relaxed_Load(&running_)) {
+          if (!running_.load(std::memory_order_relaxed)) {
             break;
           }
           now = base::TimeTicks::HighResolutionNow();
@@ -287,7 +298,7 @@ void SamplingEventsProcessor::SetSamplingInterval(base::TimeDelta period) {
   StopSynchronously();
 
   period_ = period;
-  base::Relaxed_Store(&running_, 1);
+  running_.store(true, std::memory_order_relaxed);
 
   StartSynchronously();
 }
@@ -348,7 +359,9 @@ void ProfilerCodeObserver::LogBuiltins() {
     CodeEventsContainer evt_rec(CodeEventRecord::REPORT_BUILTIN);
     ReportBuiltinEventRecord* rec = &evt_rec.ReportBuiltinEventRecord_;
     Builtins::Name id = static_cast<Builtins::Name>(i);
-    rec->instruction_start = builtins->builtin(id).InstructionStart();
+    Code code = builtins->builtin(id);
+    rec->instruction_start = code.InstructionStart();
+    rec->instruction_size = code.InstructionSize();
     rec->builtin_id = id;
     CodeEventHandlerInternal(evt_rec);
   }

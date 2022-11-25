@@ -11,9 +11,8 @@
 #include "include/core/SkMatrix.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkString.h"
-#include "include/private/GrRecordingContext.h"
+#include "include/gpu/GrRecordingContext.h"
 #include "src/gpu/GrGpuResource.h"
-#include "src/gpu/GrNonAtomicRef.h"
 #include "src/gpu/GrTracing.h"
 #include "src/gpu/GrXferProcessor.h"
 #include <atomic>
@@ -70,7 +69,7 @@ public:
 
     virtual const char* name() const = 0;
 
-    using VisitProxyFunc = std::function<void(GrSurfaceProxy*, GrMipMapped)>;
+    using VisitProxyFunc = std::function<void(GrSurfaceProxy*, GrMipmapped)>;
 
     virtual void visitProxies(const VisitProxyFunc&) const {
         // This default implementation assumes the op has no proxies
@@ -163,8 +162,9 @@ public:
      * ahead of time and when it has not been called).
      */
     void prePrepare(GrRecordingContext* context, GrSurfaceProxyView* dstView, GrAppliedClip* clip,
-                    const GrXferProcessor::DstProxyView& dstProxyView) {
-        this->onPrePrepare(context, dstView, clip, dstProxyView);
+                    const GrXferProcessor::DstProxyView& dstProxyView,
+                    GrXferBarrierFlags renderPassXferBarriers) {
+        this->onPrePrepare(context, dstView, clip, dstProxyView, renderPassXferBarriers);
     }
 
     /**
@@ -180,15 +180,12 @@ public:
     }
 
     /** Used for spewing information about ops when debugging. */
-#ifdef SK_DEBUG
-    virtual SkString dumpInfo() const {
-        SkString string;
-        string.appendf("OpBounds: [L: %.2f, T: %.2f, R: %.2f, B: %.2f]\n",
-                       fBounds.fLeft, fBounds.fTop, fBounds.fRight, fBounds.fBottom);
-        return string;
+#if GR_TEST_UTILS
+    virtual SkString dumpInfo() const final {
+        return SkStringPrintf("%s\nOpBounds: [L: %.2f, T: %.2f, R: %.2f, B: %.2f]",
+                              this->onDumpInfo().c_str(), fBounds.fLeft, fBounds.fTop,
+                              fBounds.fRight, fBounds.fBottom);
     }
-#else
-    SkString dumpInfo() const { return SkString("<Op information unavailable>"); }
 #endif
 
     /**
@@ -297,13 +294,17 @@ private:
 
     // TODO: the parameters to onPrePrepare mirror GrOpFlushState::OpArgs - fuse the two?
     virtual void onPrePrepare(GrRecordingContext*,
-                              const GrSurfaceProxyView* outputView,
+                              const GrSurfaceProxyView* writeView,
                               GrAppliedClip*,
-                              const GrXferProcessor::DstProxyView&) = 0;
+                              const GrXferProcessor::DstProxyView&,
+                              GrXferBarrierFlags renderPassXferBarriers) = 0;
     virtual void onPrepare(GrOpFlushState*) = 0;
     // If this op is chained then chainBounds is the union of the bounds of all ops in the chain.
     // Otherwise, this op's bounds.
     virtual void onExecute(GrOpFlushState*, const SkRect& chainBounds) = 0;
+#if GR_TEST_UTILS
+    virtual SkString onDumpInfo() const { return SkString(); }
+#endif
 
     static uint32_t GenID(std::atomic<uint32_t>* idCounter) {
         uint32_t id = (*idCounter)++;

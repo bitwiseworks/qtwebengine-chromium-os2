@@ -158,7 +158,7 @@ class Column : public LayoutElement {
   Column(GridLayout::Alignment h_align,
          GridLayout::Alignment v_align,
          float resize_percent,
-         GridLayout::SizeType size_type,
+         GridLayout::ColumnSize size_type,
          int fixed_width,
          int min_width,
          bool is_padding)
@@ -194,7 +194,7 @@ class Column : public LayoutElement {
 
   const GridLayout::Alignment h_align_;
   const GridLayout::Alignment v_align_;
-  const GridLayout::SizeType size_type_;
+  const GridLayout::ColumnSize size_type_;
   int same_size_column_;
   const int fixed_width_;
   const int min_width_;
@@ -216,7 +216,7 @@ class Column : public LayoutElement {
 };
 
 void Column::ResetSize() {
-  if (size_type_ == GridLayout::FIXED) {
+  if (size_type_ == GridLayout::ColumnSize::kFixed) {
     SetSize(fixed_width_);
   } else {
     SetSize(min_width_);
@@ -249,7 +249,7 @@ void Column::UnifyLinkedColumnSizes(int size_limit) {
 }
 
 void Column::AdjustSize(int size) {
-  if (size_type_ == GridLayout::USE_PREF)
+  if (size_type_ == GridLayout::ColumnSize::kUsePreferred)
     LayoutElement::AdjustSize(size);
 }
 
@@ -342,7 +342,7 @@ struct ViewState {
   const bool pref_height_fixed;
 
   // The preferred size, only set during the preferred size pass
-  // (SizeCalculationType::PREFERRED).
+  // (SizeCalculationType::kPreferred).
   gfx::Size pref_size;
 
   // The width/height. This is one of possible three values:
@@ -382,13 +382,13 @@ ColumnSet::~ColumnSet() = default;
 
 void ColumnSet::AddPaddingColumn(float resize_percent, int width) {
   AddColumn(GridLayout::FILL, GridLayout::FILL, resize_percent,
-            GridLayout::FIXED, width, width, true);
+            GridLayout::ColumnSize::kFixed, width, width, true);
 }
 
 void ColumnSet::AddColumn(GridLayout::Alignment h_align,
                           GridLayout::Alignment v_align,
                           float resize_percent,
-                          GridLayout::SizeType size_type,
+                          GridLayout::ColumnSize size_type,
                           int fixed_width,
                           int min_width) {
   AddColumn(h_align, v_align, resize_percent, size_type, fixed_width, min_width,
@@ -411,7 +411,7 @@ void ColumnSet::LinkColumnSizes(const std::vector<int>& columns) {
 void ColumnSet::AddColumn(GridLayout::Alignment h_align,
                           GridLayout::Alignment v_align,
                           float resize_percent,
-                          GridLayout::SizeType size_type,
+                          GridLayout::ColumnSize size_type,
                           int fixed_width,
                           int min_width,
                           bool is_padding) {
@@ -533,7 +533,8 @@ void ColumnSet::DistributeRemainingWidth(ViewState* view_state) {
     if (columns_[i]->IsResizable()) {
       total_resize += columns_[i]->ResizePercent();
       resizable_columns++;
-    } else if (columns_[i]->size_type_ == GridLayout::USE_PREF) {
+    } else if (columns_[i]->size_type_ ==
+               GridLayout::ColumnSize::kUsePreferred) {
       pref_size_columns++;
     }
   }
@@ -559,7 +560,7 @@ void ColumnSet::DistributeRemainingWidth(ViewState* view_state) {
     // that use the preferred size.
     int to_distribute = width / pref_size_columns;
     for (int i = start_col; i < max_col; ++i) {
-      if (columns_[i]->size_type_ == GridLayout::USE_PREF) {
+      if (columns_[i]->size_type_ == GridLayout::ColumnSize::kUsePreferred) {
         width -= to_distribute;
         if (width < to_distribute)
           to_distribute += width;
@@ -587,17 +588,17 @@ void ColumnSet::ResetColumnXCoordinates() {
 
 void ColumnSet::CalculateSize(SizeCalculationType type) {
 #if DCHECK_IS_ON()
-  // SizeCalculationType::MINIMUM must be preceeded by a request for
-  // SizeCalculationType::PREFERRED.
-  DCHECK(type == SizeCalculationType::PREFERRED ||
-         last_calculation_type_ == PREFERRED);
+  // SizeCalculationType::kMinimum must be preceded by a request for
+  // SizeCalculationType::kPreferred.
+  DCHECK(type == SizeCalculationType::kPreferred ||
+         last_calculation_type_ == SizeCalculationType::kPreferred);
   last_calculation_type_ = type;
 #endif
   // Reset the size and remaining sizes.
   for (auto* view_state : view_states_) {
     if (!view_state->pref_width_fixed || !view_state->pref_height_fixed) {
       gfx::Size size;
-      if (type == SizeCalculationType::MINIMUM && CanUseMinimum(*view_state)) {
+      if (type == SizeCalculationType::kMinimum && CanUseMinimum(*view_state)) {
         // If the min size is bigger than the preferred, use the preferred.
         // This relies on MINIMUM being calculated immediately after PREFERRED,
         // which the rest of this code relies on as well.
@@ -675,7 +676,7 @@ void ColumnSet::ResizeUsingMin(int total_delta) {
     preferred_column_sizes[i] = columns_[i]->Size();
 
   // Recalculate the sizes using the min.
-  CalculateSize(ColumnSet::SizeCalculationType::MINIMUM);
+  CalculateSize(ColumnSet::SizeCalculationType::kMinimum);
 
   // Build up the set of columns that can be shrunk in |resize_data|, this
   // iteration also resets the size of the column back to the preferred size.
@@ -740,7 +741,8 @@ void ColumnSet::ResizeUsingMin(int total_delta) {
 
 bool ColumnSet::CanUseMinimum(const ViewState& view_state) const {
   const auto resizable = [](const auto& col) {
-    return col->ResizePercent() > 0 && col->size_type_ != GridLayout::FIXED;
+    return col->ResizePercent() > 0 &&
+           col->size_type_ != GridLayout::ColumnSize::kFixed;
   };
   return std::all_of(
       columns_.cbegin() + view_state.start_col,
@@ -961,7 +963,7 @@ void GridLayout::SizeRowsAndColumns(bool layout,
   // preferred heights are derived from their width, as such we need to
   // calculate the size of the columns first.
   for (const auto& column_set : column_sets_) {
-    column_set->CalculateSize(ColumnSet::SizeCalculationType::PREFERRED);
+    column_set->CalculateSize(ColumnSet::SizeCalculationType::kPreferred);
     pref->set_width(std::max(pref->width(), column_set->LayoutWidth()));
   }
   const gfx::Insets& insets = host_->GetInsets();

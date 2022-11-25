@@ -226,6 +226,7 @@ var GetLocation = natives.GetLocation;
  * @param {number} nodeID The id of a node.
  * @param {number} startIndex The start index of the range.
  * @param {number} endIndex The end index of the range.
+ * @param {boolean} clipped Whether the bounds are clipped to ancestors.
  * @return {?automation.Rect} The bounding box of the subrange of this node,
  *     or the location if there are no subranges, or undefined if
  *     the tree or node wasn't found.
@@ -261,6 +262,13 @@ var GetUnclippedLocation = natives.GetUnclippedLocation;
  */
 var GetLineStartOffsets = requireNative(
     'automationInternal').GetLineStartOffsets;
+
+/**
+ * @param {string} axTreeID The id of the accessibility tree.
+ * @param {number} nodeID The id of the node.
+ * @return {?string} The computed name of this node.
+ */
+var GetName = natives.GetName;
 
 /**
  * @param {string} axTreeID The id of the accessibility tree.
@@ -472,6 +480,20 @@ var GetTableCellAriaColumnIndex = natives.GetTableCellAriaColumnIndex;
 var GetTableCellAriaRowIndex = natives.GetTableCellAriaRowIndex;
 
 /**
+ * @param {string} axTreeID The id of the accessibility tree.
+ * @param {number} nodeID The id of a node.
+ * @return {number} column count for this cell's table. 0 if not in a table.
+ */
+var GetTableColumnCount = natives.GetTableColumnCount;
+
+/**
+ * @param {string} axTreeID The id of the accessibility tree.
+ * @param {number} nodeID The id of a node.
+ * @return {number} Row count for this cell's table. 0 if not in a table.
+ */
+var GetTableRowCount = natives.GetTableRowCount;
+
+/**
  * @param {string} axTreeId The id of the accessibility tree.
  * @param {number} nodeID The id of a node.
  * @return {string} Detected language for this node.
@@ -505,6 +527,12 @@ var GetWordEndOffsets = natives.GetWordEndOffsets;
 /**
  * @param {string} axTreeID The id of the accessibility tree.
  * @param {number} nodeID The id of a node.
+ */
+var SetAccessibilityFocus = natives.SetAccessibilityFocus;
+
+/**
+ * @param {string} axTreeID The id of the accessibility tree.
+ * @param {number} nodeID The id of a node.
  * @param {string} eventType
  */
 var EventListenerAdded = natives.EventListenerAdded;
@@ -530,7 +558,14 @@ var GetMarkers = natives.GetMarkers;
  * @param {boolean} isUpstream
  * @return {!Object}
  */
-var createAutomationPosition = natives.CreateAutomationPosition;
+var CreateAutomationPosition = natives.CreateAutomationPosition;
+
+/**
+ * @param {string} axTreeID The id of the accessibility tree.
+ * @param {number} nodeID The id of a node.
+ * @return {string} The sort direction.
+ */
+var GetSortDirection = natives.GetSortDirection;
 
 var logging = requireNative('logging');
 var utils = require('utils');
@@ -592,6 +627,20 @@ AutomationNodeImpl.prototype = {
   },
 
   boundsForRange: function(startIndex, endIndex, callback) {
+    this.boundsForRangeInternal_(
+        startIndex, endIndex, true /* clipped */, callback);
+  },
+
+  unclippedBoundsForRange: function(startIndex, endIndex, callback) {
+    this.boundsForRangeInternal_(
+        startIndex, endIndex, false /* clipped */, callback);
+  },
+
+  boundsForRangeInternal_: function(startIndex, endIndex, clipped, callback) {
+    const errorMessage = clipped ?
+        'Error with bounds for range callback' :
+        'Error with unclipped bounds for range callback';
+
     if (!this.rootImpl)
       return;
 
@@ -605,11 +654,11 @@ AutomationNodeImpl.prototype = {
 
     if (!GetBoolAttribute(this.treeID, this.id, 'supportsTextLocation')) {
       try {
-        callback(
-            GetBoundsForRange(this.treeID, this.id, startIndex, endIndex));
+        callback(GetBoundsForRange(
+            this.treeID, this.id, startIndex, endIndex, clipped /* clipped */));
         return;
       } catch (e) {
-        logging.WARNING('Error with bounds for range callback' + e);
+        logging.WARNING(errorMessage + e);
       }
       return;
     }
@@ -618,6 +667,10 @@ AutomationNodeImpl.prototype = {
         'getTextLocation', {startIndex: startIndex, endIndex: endIndex},
         callback);
     return;
+  },
+
+  get sortDirection() {
+    return GetSortDirection(this.treeID, this.id);
   },
 
   get unclippedLocation() {
@@ -700,6 +753,9 @@ AutomationNodeImpl.prototype = {
     return GetNameFrom(this.treeID, this.id);
   },
 
+  get name() {
+    return GetName(this.treeID, this.id);
+  },
 
   get descriptionFrom() {
     return GetDescriptionFrom(this.treeID, this.id);
@@ -787,6 +843,14 @@ AutomationNodeImpl.prototype = {
     return GetTableCellAriaRowIndex(this.treeID, this.id);
   },
 
+  get tableColumnCount() {
+    return GetTableColumnCount(this.treeID, this.id);
+  },
+
+  get tableRowCount() {
+    return GetTableRowCount(this.treeID, this.id);
+  },
+
   get nonInlineTextWordStarts() {
     return GetWordStartOffsets(this.treeID, this.id);
   },
@@ -800,7 +864,7 @@ AutomationNodeImpl.prototype = {
   },
 
   createPosition: function(offset, opt_isUpstream) {
-    var nativePosition = createAutomationPosition(
+    var nativePosition = CreateAutomationPosition(
         this.treeID, this.id, offset, !!opt_isUpstream);
 
     // Attach a getter for the node, which is only available in js.
@@ -901,6 +965,18 @@ AutomationNodeImpl.prototype = {
     this.performAction_('scrollRight', {}, opt_callback);
   },
 
+  scrollToPoint: function(x, y) {
+    this.performAction_('scrollToPoint', {x, y});
+  },
+
+  setScrollOffset: function(x, y) {
+    this.performAction_('setScrollOffset', {x, y});
+  },
+
+  setAccessibilityFocus: function() {
+    SetAccessibilityFocus(this.treeID, this.id);
+  },
+
   setSelection: function(startIndex, endIndex) {
     if (this.state.editable) {
       this.performAction_('setSelection',
@@ -973,12 +1049,17 @@ AutomationNodeImpl.prototype = {
     this.removeEventListener(eventType, callback);
     if (!this.listeners[eventType])
       this.listeners[eventType] = [];
+
+    // Calling EventListenerAdded will also validate the args
+    // and throw an exception it's not a valid event type, so no invalid event
+    // type/listener gets enqueued.
+    EventListenerAdded(this.treeID, this.id, eventType);
+
     $Array.push(this.listeners[eventType], {
       __proto__: null,
       callback: callback,
       capture: !!capture,
     });
-    EventListenerAdded(this.treeID, this.id, eventType);
   },
 
   // TODO(dtseng/aboxhall): Check this impl against spec.
@@ -1003,16 +1084,17 @@ AutomationNodeImpl.prototype = {
              attributes: this.attributes };
   },
 
-  dispatchEvent: function(eventType, eventFrom, mouseX, mouseY) {
+  dispatchEvent: function(
+      eventType, eventFrom, mouseX, mouseY, intents) {
     var path = [];
     var parent = this.parent;
     while (parent) {
       $Array.push(path, parent);
       parent = parent.parent;
     }
-    var event = new AutomationEvent(eventType, this.wrapper, eventFrom);
-    event.mouseX = mouseX;
-    event.mouseY = mouseY;
+
+    var event = new AutomationEvent(eventType, this.wrapper, eventFrom, mouseX,
+                                    mouseY, intents);
 
     // Dispatch the event through the propagation path in three phases:
     // - capturing: starting from the root and going down to the target's parent
@@ -1036,7 +1118,7 @@ AutomationNodeImpl.prototype = {
       var childID = GetChildIDAtIndex(this.treeID, this.id, i).nodeId;
       $Array.push(childIDs, childID);
     }
-    var name = GetStringAttribute(this.treeID, this.id, 'name');
+    var name = GetName(this.treeID, this.id);
 
     var result = 'node id=' + this.id +
         ' role=' + this.role +
@@ -1231,7 +1313,6 @@ var stringAttributes = [
     'language',
     'liveRelevant',
     'liveStatus',
-    'name',
     'placeholder',
     'roleDescription',
     'textInputType',
@@ -1240,8 +1321,9 @@ var stringAttributes = [
     'value'];
 
 var boolAttributes = [
-  'busy', 'clickable', 'containerLiveAtomic', 'containerLiveBusy', 'liveAtomic',
-  'modal', 'scrollable', 'selected', 'supportsTextLocation'
+  'busy', 'clickable', 'containerLiveAtomic', 'containerLiveBusy',
+  'editableRoot', 'liveAtomic', 'modal', 'notUserSelectableStyle', 'scrollable',
+  'selected', 'supportsTextLocation'
 ];
 
 var intAttributes = [
@@ -1259,12 +1341,8 @@ var intAttributes = [
     'setSize',
     'tableCellColumnSpan',
     'tableCellRowSpan',
-    'tableColumnCount',
     'ariaColumnCount',
-    'tableColumnIndex',
-    'tableRowCount',
     'ariaRowCount',
-    'tableRowIndex',
     'textSelEnd',
     'textSelStart'];
 
@@ -1684,8 +1762,9 @@ AutomationRootNodeImpl.prototype = {
     if (targetNode) {
       var targetNodeImpl = privates(targetNode).impl;
       targetNodeImpl.dispatchEvent(
-          eventParams.eventType, eventParams.eventFrom,
-          eventParams.mouseX, eventParams.mouseY);
+          eventParams.eventType,
+          eventParams.eventFrom, eventParams.mouseX, eventParams.mouseY,
+          eventParams.intents);
 
       if (eventParams.actionRequestID != -1) {
         this.onActionResult(eventParams.actionRequestID, targetNode);
@@ -1757,8 +1836,11 @@ function AutomationNode() {
 }
 utils.expose(AutomationNode, AutomationNodeImpl, {
   functions: [
+    'addEventListener',
+    'boundsForRange',
     'createPosition',
     'doDefault',
+    'domQuerySelector',
     'find',
     'findAll',
     'focus',
@@ -1766,18 +1848,23 @@ utils.expose(AutomationNode, AutomationNodeImpl, {
     'getNextTextMatch',
     'hitTest',
     'hitTestWithReply',
+    'languageAnnotationForStringAttribute',
     'makeVisible',
     'matches',
     'performCustomAction',
     'performStandardAction',
+    'removeEventListener',
     'replaceSelectedText',
     'resumeMedia',
     'scrollBackward',
-    'scrollForward',
-    'scrollUp',
     'scrollDown',
+    'scrollForward',
     'scrollLeft',
     'scrollRight',
+    'scrollToPoint',
+    'scrollUp',
+    'setAccessibilityFocus',
+    'setScrollOffset',
     'setSelection',
     'setSequentialFocusNavigationStartingPoint',
     'setValue',
@@ -1785,12 +1872,8 @@ utils.expose(AutomationNode, AutomationNodeImpl, {
     'startDuckingMedia',
     'stopDuckingMedia',
     'suspendMedia',
-    'addEventListener',
-    'removeEventListener',
-    'domQuerySelector',
     'toString',
-    'boundsForRange',
-    'languageAnnotationForStringAttribute',
+    'unclippedBoundsForRange'
   ],
   readonly: $Array.concat(
       publicAttributes,
@@ -1814,6 +1897,7 @@ utils.expose(AutomationNode, AutomationNodeImpl, {
         'lineThrough',
         'location',
         'markers',
+        'name',
         'nameFrom',
         'nextSibling',
         'nonInlineTextWordEnds',
@@ -1823,6 +1907,7 @@ utils.expose(AutomationNode, AutomationNodeImpl, {
         'restriction',
         'role',
         'root',
+        'sortDirection',
         'standardActions',
         'state',
         'tableCellAriaColumnIndex',
@@ -1831,6 +1916,8 @@ utils.expose(AutomationNode, AutomationNodeImpl, {
         'tableCellColumnIndex',
         'tableCellRowHeaders',
         'tableCellRowIndex',
+        'tableColumnCount',
+        'tableRowCount',
         'unclippedLocation',
         'underline',
       ]),

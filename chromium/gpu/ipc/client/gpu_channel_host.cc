@@ -54,9 +54,9 @@ GpuChannelHost::GpuChannelHost(int channel_id,
        i <= static_cast<int32_t>(GpuChannelReservedRoutes::kMaxValue); ++i)
     next_route_id_.GetNext();
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   gpu::SetMacOSSpecificTextureTarget(gpu_info.macos_specific_texture_target);
-#endif  // defined(OS_MACOSX)
+#endif  // defined(OS_MAC)
 }
 
 bool GpuChannelHost::Send(IPC::Message* msg) {
@@ -244,6 +244,10 @@ int32_t GpuChannelHost::GenerateRouteID() {
 
 void GpuChannelHost::CrashGpuProcessForTesting() {
   Send(new GpuChannelMsg_CrashForTesting());
+}
+
+void GpuChannelHost::TerminateGpuProcessForTesting() {
+  Send(new GpuChannelMsg_TerminateForTesting());
 }
 
 std::unique_ptr<ClientSharedImageInterface>

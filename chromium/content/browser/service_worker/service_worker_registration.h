@@ -11,7 +11,6 @@
 #include <string>
 #include <vector>
 
-#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
@@ -32,8 +31,7 @@ struct ServiceWorkerRegistrationInfo;
 // to this class. This is refcounted via ServiceWorkerRegistrationObjectHost to
 // facilitate multiple controllees being associated with the same registration.
 class CONTENT_EXPORT ServiceWorkerRegistration
-    : public base::RefCounted<ServiceWorkerRegistration>,
-      public ServiceWorkerVersion::Observer {
+    : public base::RefCounted<ServiceWorkerRegistration> {
  public:
   using StatusCallback =
       base::OnceCallback<void(blink::ServiceWorkerStatusCode status)>;
@@ -42,8 +40,7 @@ class CONTENT_EXPORT ServiceWorkerRegistration
    public:
     virtual void OnVersionAttributesChanged(
         ServiceWorkerRegistration* registration,
-        blink::mojom::ChangedServiceWorkerObjectsMaskPtr changed_mask,
-        const ServiceWorkerRegistrationInfo& info) {}
+        blink::mojom::ChangedServiceWorkerObjectsMaskPtr changed_mask) {}
     virtual void OnUpdateViaCacheChanged(
         ServiceWorkerRegistration* registation) {}
     virtual void OnRegistrationFailed(
@@ -52,8 +49,7 @@ class CONTENT_EXPORT ServiceWorkerRegistration
         ServiceWorkerRegistration* registration) {}
     virtual void OnRegistrationDeleted(
         ServiceWorkerRegistration* registration) {}
-    virtual void OnUpdateFound(
-        ServiceWorkerRegistration* registration) {}
+    virtual void OnUpdateFound(ServiceWorkerRegistration* registration) {}
     virtual void OnSkippedWaiting(ServiceWorkerRegistration* registation) {}
   };
 
@@ -80,6 +76,7 @@ class CONTENT_EXPORT ServiceWorkerRegistration
 
   int64_t id() const { return registration_id_; }
   const GURL& scope() const { return scope_; }
+  const url::Origin& origin() const { return origin_; }
   blink::mojom::ServiceWorkerUpdateViaCache update_via_cache() const {
     return update_via_cache_;
   }
@@ -207,8 +204,14 @@ class CONTENT_EXPORT ServiceWorkerRegistration
   void EnableNavigationPreload(bool enable);
   void SetNavigationPreloadHeader(const std::string& value);
 
+  // Called when all controllees are removed from |version|.
+  void OnNoControllees(ServiceWorkerVersion* version);
+
+  // Called when there is no work in |version|.
+  void OnNoWork(ServiceWorkerVersion* version);
+
  protected:
-  ~ServiceWorkerRegistration() override;
+  virtual ~ServiceWorkerRegistration();
 
  private:
   friend class base::RefCounted<ServiceWorkerRegistration>;
@@ -217,10 +220,6 @@ class CONTENT_EXPORT ServiceWorkerRegistration
   void UnsetVersionInternal(
       ServiceWorkerVersion* version,
       blink::mojom::ChangedServiceWorkerObjectsMask* mask);
-
-  // ServiceWorkerVersion::Observer override.
-  void OnNoControllees(ServiceWorkerVersion* version) override;
-  void OnNoWork(ServiceWorkerVersion* version) override;
 
   bool IsReadyToActivate() const;
   bool IsLameDuckActiveVersion() const;
@@ -257,6 +256,7 @@ class CONTENT_EXPORT ServiceWorkerRegistration
   };
 
   const GURL scope_;
+  const url::Origin origin_;
   blink::mojom::ServiceWorkerUpdateViaCache update_via_cache_;
   const int64_t registration_id_;
   Status status_;

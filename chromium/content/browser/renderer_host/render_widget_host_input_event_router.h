@@ -23,7 +23,7 @@
 #include "content/browser/renderer_host/render_widget_host_view_base_observer.h"
 #include "content/browser/renderer_host/render_widget_targeter.h"
 #include "content/common/content_export.h"
-#include "content/public/common/input_event_ack_state.h"
+#include "third_party/blink/public/mojom/input/input_event_result.mojom-shared.h"
 #include "ui/gfx/geometry/vector2d_conversions.h"
 #include "ui/gfx/transform.h"
 
@@ -92,7 +92,7 @@ class CONTENT_EXPORT RenderWidgetHostInputEventRouter
                          const ui::LatencyInfo& latency);
   void OnHandledTouchStartOrFirstTouchMove(uint32_t unique_touch_event_id);
   void ProcessAckedTouchEvent(const TouchEventWithLatencyInfo& event,
-                              InputEventAckState ack_result,
+                              blink::mojom::InputEventResultState ack_result,
                               RenderWidgetHostViewBase* view);
   void RouteTouchEvent(RenderWidgetHostViewBase* root_view,
                        blink::WebTouchEvent *event,
@@ -195,10 +195,11 @@ class CONTENT_EXPORT RenderWidgetHostInputEventRouter
   FRIEND_TEST_ALL_PREFIXES(BrowserSideFlingBrowserTest,
                            InertialGSUBubblingStopsWhenParentCannotScroll);
 
-  using FrameSinkIdOwnerMap = std::unordered_map<viz::FrameSinkId,
-                                                 RenderWidgetHostViewBase*,
-                                                 viz::FrameSinkIdHash>;
-  using TargetMap = std::map<uint32_t, RenderWidgetHostViewBase*>;
+  using FrameSinkIdOwnerMap =
+      std::unordered_map<viz::FrameSinkId,
+                         base::WeakPtr<RenderWidgetHostViewBase>,
+                         viz::FrameSinkIdHash>;
+  using TargetMap = std::map<uint32_t, base::WeakPtr<RenderWidgetHostViewBase>>;
 
   void ClearAllObserverRegistrations();
   RenderWidgetTargetResult FindViewAtLocation(
@@ -331,6 +332,9 @@ class CONTENT_EXPORT RenderWidgetHostInputEventRouter
 
   void SetTouchscreenGestureTarget(RenderWidgetHostViewBase* target,
                                    bool moved_recently = false);
+
+  // TODO(crbug.com/1155297): Remove when bug investigation is complete.
+  void LogTouchscreenGestureTargetCrashKeys(const std::string& log_message);
 
   FrameSinkIdOwnerMap owner_map_;
   TargetMap touchscreen_gesture_target_map_;

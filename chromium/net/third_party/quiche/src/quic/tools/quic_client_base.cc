@@ -37,7 +37,9 @@ QuicClientBase::QuicClientBase(
       connection_error_(QUIC_NO_ERROR),
       connected_or_attempting_connect_(false),
       network_helper_(std::move(network_helper)),
-      connection_debug_visitor_(nullptr) {}
+      connection_debug_visitor_(nullptr),
+      server_connection_id_length_(kQuicDefaultConnectionIdLength),
+      client_connection_id_length_(0) {}
 
 QuicClientBase::~QuicClientBase() = default;
 
@@ -87,6 +89,10 @@ bool QuicClientBase::Connect() {
     }
     num_attempts++;
   }
+  if (session() == nullptr) {
+    QUIC_BUG << "Missing session after Connect";
+    return false;
+  }
   return session()->connection()->connected();
 }
 
@@ -108,14 +114,17 @@ void QuicClientBase::StartConnect() {
     UpdateStats();
   }
 
+  const quic::ParsedQuicVersionVector client_supported_versions =
+      can_reconnect_with_different_version
+          ? ParsedQuicVersionVector{mutual_version}
+          : supported_versions();
+
   session_ = CreateQuicClientSession(
-      supported_versions(),
+      client_supported_versions,
       new QuicConnection(GetNextConnectionId(), server_address(), helper(),
                          alarm_factory(), writer,
                          /* owns_writer= */ false, Perspective::IS_CLIENT,
-                         can_reconnect_with_different_version
-                             ? ParsedQuicVersionVector{mutual_version}
-                             : supported_versions()));
+                         client_supported_versions));
   if (connection_debug_visitor_ != nullptr) {
     session()->connection()->set_debug_visitor(connection_debug_visitor_);
   }
@@ -163,7 +172,10 @@ bool QuicClientBase::EncryptionBeingEstablished() {
 }
 
 bool QuicClientBase::WaitForEvents() {
-  DCHECK(connected());
+  if (!connected()) {
+    QUIC_BUG << "Cannot call WaitForEvents on non-connected client";
+    return false;
+  }
 
   network_helper_->RunEventLoop();
 
@@ -217,6 +229,10 @@ QuicSession* QuicClientBase::session() {
   return session_.get();
 }
 
+const QuicSession* QuicClientBase::session() const {
+  return session_.get();
+}
+
 QuicClientBase::NetworkHelper* QuicClientBase::network_helper() {
   return network_helper_.get();
 }
@@ -226,17 +242,36 @@ const QuicClientBase::NetworkHelper* QuicClientBase::network_helper() const {
 }
 
 void QuicClientBase::WaitForStreamToClose(QuicStreamId id) {
-  DCHECK(connected());
+  if (!connected()) {
+    QUIC_BUG << "Cannot WaitForStreamToClose on non-connected client";
+    return;
+  }
 
   while (connected() && !session_->IsClosedStream(id)) {
     WaitForEvents();
   }
 }
 
-bool QuicClientBase::WaitForCryptoHandshakeConfirmed() {
-  DCHECK(connected());
+bool QuicClientBase::WaitForOneRttKeysAvailable() {
+  if (!connected()) {
+    QUIC_BUG << "Cannot WaitForOneRttKeysAvailable on non-connected client";
+    return false;
+  }
 
   while (connected() && !session_->OneRttKeysAvailable()) {
+    WaitForEvents();
+  }
+
+  // If the handshake fails due to a timeout, the connection will be closed.
+  QUIC_LOG_IF(ERROR, !connected()) << "Handshake with server failed.";
+  return connected();
+}
+
+bool QuicClientBase::WaitForHandshakeConfirmed() {
+  if (!session_->connection()->version().HasHandshakeDone()) {
+    return WaitForOneRttKeysAvailable();
+  }
+  while (connected() && session_->GetHandshakeState() < HANDSHAKE_CONFIRMED) {
     WaitForEvents();
   }
 
@@ -251,7 +286,7 @@ bool QuicClientBase::connected() const {
 }
 
 bool QuicClientBase::goaway_received() const {
-  return session_ != nullptr && session_->goaway_received();
+  return session_ != nullptr && session_->transport_goaway_received();
 }
 
 int QuicClientBase::GetNumSentClientHellos() {
@@ -288,29 +323,15 @@ QuicErrorCode QuicClientBase::connection_error() const {
 }
 
 QuicConnectionId QuicClientBase::GetNextConnectionId() {
-  QuicConnectionId server_designated_id = GetNextServerDesignatedConnectionId();
-  return !server_designated_id.IsEmpty() ? server_designated_id
-                                         : GenerateNewConnectionId();
-}
-
-QuicConnectionId QuicClientBase::GetNextServerDesignatedConnectionId() {
-  QuicCryptoClientConfig::CachedState* cached =
-      crypto_config_.LookupOrCreate(server_id_);
-  // If the cached state indicates that we should use a server-designated
-  // connection ID, then return that connection ID.
-  CHECK(cached != nullptr) << "QuicClientCryptoConfig::LookupOrCreate returned "
-                           << "unexpected nullptr.";
-  return cached->has_server_designated_connection_id()
-             ? cached->GetNextServerDesignatedConnectionId()
-             : EmptyQuicConnectionId();
+  return GenerateNewConnectionId();
 }
 
 QuicConnectionId QuicClientBase::GenerateNewConnectionId() {
-  return QuicUtils::CreateRandomConnectionId();
+  return QuicUtils::CreateRandomConnectionId(server_connection_id_length_);
 }
 
 QuicConnectionId QuicClientBase::GetClientConnectionId() {
-  return EmptyQuicConnectionId();
+  return QuicUtils::CreateRandomConnectionId(client_connection_id_length_);
 }
 
 bool QuicClientBase::CanReconnectWithDifferentVersion(

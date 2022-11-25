@@ -39,15 +39,13 @@ class GPUCanvasContext : public CanvasRenderingContext {
                    const CanvasContextCreationAttributesCore&);
   ~GPUCanvasContext() override;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
   const IntSize& CanvasSize() const;
 
   // CanvasRenderingContext implementation
   ContextType GetContextType() const override;
   void SetCanvasGetContextResult(RenderingContext&) final;
-  scoped_refptr<StaticBitmapImage> GetImage(AccelerationHint) final {
-    return nullptr;
-  }
+  scoped_refptr<StaticBitmapImage> GetImage() final { return nullptr; }
   void SetIsInHiddenPage(bool) override {}
   void SetIsBeingDisplayed(bool) override {}
   bool isContextLost() const override { return false; }
@@ -55,19 +53,21 @@ class GPUCanvasContext : public CanvasRenderingContext {
   bool IsAccelerated() const final { return true; }
   bool IsOriginTopLeft() const final { return true; }
   bool Is3d() const final { return true; }
-  void SetFilterQuality(SkFilterQuality) final {}
+  void SetFilterQuality(SkFilterQuality) override;
   bool IsPaintable() const final { return true; }
   int ExternallyAllocatedBufferCountPerPixel() final { return 1; }
   void Stop() final;
   cc::Layer* CcLayer() const final;
 
   // gpu_canvas_context.idl
-  GPUSwapChain* configureSwapChain(const GPUSwapChainDescriptor* descriptor);
+  GPUSwapChain* configureSwapChain(const GPUSwapChainDescriptor* descriptor,
+                                   ExceptionState&);
   ScriptPromise getSwapChainPreferredFormat(ScriptState* script_state,
                                             const GPUDevice* device);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(GPUCanvasContext);
+  SkFilterQuality filter_quality_ = kLow_SkFilterQuality;
   Member<GPUSwapChain> swapchain_;
   bool stopped_ = false;
 };

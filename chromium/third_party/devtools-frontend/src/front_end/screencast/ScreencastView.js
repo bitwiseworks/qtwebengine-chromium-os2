@@ -28,6 +28,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Host from '../host/host.js';
 import * as SDK from '../sdk/sdk.js';
@@ -66,6 +69,7 @@ export class ScreencastView extends UI.Widget.VBox {
     this._glassPaneElement = this._canvasContainerElement.createChild('div', 'screencast-glasspane fill hidden');
 
     this._canvasElement = this._canvasContainerElement.createChild('canvas');
+    UI.ARIAUtils.setAccessibleName(this._canvasElement, ls`Screencast view of debug target`);
     this._canvasElement.tabIndex = 0;
     this._canvasElement.addEventListener('mousedown', this._handleMouseEvent.bind(this), false);
     this._canvasElement.addEventListener('mouseup', this._handleMouseEvent.bind(this), false);
@@ -138,7 +142,7 @@ export class ScreencastView extends UI.Widget.VBox {
     dimensions.height *= window.devicePixelRatio;
     // Note: startScreencast width and height are expected to be integers so must be floored.
     this._screenCaptureModel.startScreencast(
-        'jpeg', 80, Math.floor(Math.min(maxImageDimension, dimensions.width)),
+        Protocol.Page.StartScreencastRequestFormat.Jpeg, 80, Math.floor(Math.min(maxImageDimension, dimensions.width)),
         Math.floor(Math.min(maxImageDimension, dimensions.height)), undefined, this._screencastFrame.bind(this),
         this._screencastVisibilityChanged.bind(this));
     for (const emulationModel of SDK.SDKModel.TargetManager.instance().models(SDK.EmulationModel.EmulationModel)) {
@@ -708,7 +712,12 @@ export class ScreencastView extends UI.Widget.VBox {
     if (!url.match(_SchemeRegex)) {
       url = 'http://' + url;
     }
-    this._resourceTreeModel.navigate(url);
+
+    // Perform decodeURI in case the user enters an encoded string
+    // decodeURI has no effect on strings that are already decoded
+    // encodeURI ensures an encoded URL is always passed to the backend
+    // This allows the input field to support both encoded and decoded URLs
+    this._resourceTreeModel.navigate(encodeURI(decodeURI(url)));
     this._canvasElement.focus();
   }
 
@@ -737,7 +746,7 @@ export class ScreencastView extends UI.Widget.VBox {
       url = match[1];
     }
     Host.InspectorFrontendHost.InspectorFrontendHostInstance.inspectedURLChanged(url);
-    this._navigationUrl.value = url;
+    this._navigationUrl.value = decodeURI(url);
   }
 
   _focusNavigationBar() {
@@ -800,9 +809,9 @@ export class ProgressTracker {
     if (!this._navigationProgressVisible()) {
       return;
     }
-    const request = /** @type {!SDK.NetworkRequest.NetworkRequest} */ (event.data);
+    const request = /** @type {!SDK.NetworkRequest.NetworkRequest} */ (event.data.request);
     // Ignore long-living WebSockets for the sake of progress indicator, as we won't be waiting them anyway.
-    if (request.type === Common.ResourceType.resourceTypes.WebSocket) {
+    if (request.resourceType() === Common.ResourceType.resourceTypes.WebSocket) {
       return;
     }
     this._requestIds[request.requestId()] = request;

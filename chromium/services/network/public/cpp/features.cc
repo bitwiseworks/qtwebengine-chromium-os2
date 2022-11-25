@@ -9,11 +9,6 @@
 namespace network {
 namespace features {
 
-// When kCapReferrerToOriginOnCrossOrigin is enabled, HTTP referrers on cross-
-// origin requests are restricted to contain at most the source origin.
-const base::Feature kCapReferrerToOriginOnCrossOrigin{
-    "CapReferrerToOriginOnCrossOrigin", base::FEATURE_DISABLED_BY_DEFAULT};
-
 // Enables Expect CT reporting, which sends reports for opted-in sites
 // that don't serve sufficient Certificate Transparency information.
 const base::Feature kExpectCTReporting{"ExpectCTReporting",
@@ -30,14 +25,6 @@ const base::Feature kNetworkService {
 #endif
       base::FEATURE_ENABLED_BY_DEFAULT
 };
-
-// Out of Blink CORS for browsers is launched at m79 (http://crbug.com/1001450),
-// and one for WebView will be at m81 (http://crbug.com/1035763).
-// The legacy CORS will be also maintained at least until m81 for enterprise
-// users. See https://sites.google.com/a/chromium.org/dev/Home/loading/oor-cors
-// for FYI Builders information.
-const base::Feature kOutOfBlinkCors{"OutOfBlinkCors",
-                                    base::FEATURE_ENABLED_BY_DEFAULT};
 
 const base::Feature kReporting{"Reporting", base::FEATURE_ENABLED_BY_DEFAULT};
 
@@ -61,7 +48,7 @@ const base::Feature kDelayRequestsOnMultiplexedConnections{
 
 // When kRequestInitiatorSiteLock is enabled, then CORB, CORP and Sec-Fetch-Site
 // will validate network::ResourceRequest::request_initiator against
-// network::mojom::URLLoaderFactoryParams::request_initiator_site_lock.
+// network::mojom::URLLoaderFactoryParams::request_initiator_origin_lock.
 const base::Feature kRequestInitiatorSiteLock{"RequestInitiatorSiteLock",
                                               base::FEATURE_ENABLED_BY_DEFAULT};
 
@@ -89,17 +76,25 @@ const base::Feature kProactivelyThrottleLowPriorityRequests{
 
 // Enables Cross-Origin Opener Policy (COOP).
 // https://gist.github.com/annevk/6f2dd8c79c77123f39797f6bdac43f3e
-// Currently this feature is enabled for all platforms except WebView. It is not
-// possible to distinguish between Android and WebView here, so we enable the
-// feature on Android via finch.
-const base::Feature kCrossOriginOpenerPolicy {
-  "CrossOriginOpenerPolicy",
-#if defined(OS_ANDROID)
-      base::FEATURE_DISABLED_BY_DEFAULT
-#else
-      base::FEATURE_ENABLED_BY_DEFAULT
-#endif
-};
+// Currently this feature is enabled for all platforms except WebView.
+const base::Feature kCrossOriginOpenerPolicy{"CrossOriginOpenerPolicy",
+                                             base::FEATURE_ENABLED_BY_DEFAULT};
+
+// Enables Cross-Origin-Opener-Policy reporting API origin trial. It will be
+// used as a kill switch during the experiment.
+const base::Feature kCrossOriginOpenerPolicyReportingOriginTrial{
+    "CrossOriginOpenerPolicyReportingOriginTrial",
+    base::FEATURE_ENABLED_BY_DEFAULT};
+
+// Enables Cross-Origin Opener Policy (COOP) reporting.
+// https://gist.github.com/annevk/6f2dd8c79c77123f39797f6bdac43f3e
+const base::Feature kCrossOriginOpenerPolicyReporting{
+    "CrossOriginOpenerPolicyReporting", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Enables Cross-Origin Opener Policy (COOP) access reporting.
+// https://github.com/camillelamy/explainers/blob/master/coop_reporting.md#report-blocked-accesses-to-other-windows
+const base::Feature kCrossOriginOpenerPolicyAccessReporting{
+    "CrossOriginOpenerPolicyAccessReporting", base::FEATURE_ENABLED_BY_DEFAULT};
 
 // Enables Cross-Origin Embedder Policy (COEP).
 // https://github.com/mikewest/corpp
@@ -107,22 +102,10 @@ const base::Feature kCrossOriginOpenerPolicy {
 const base::Feature kCrossOriginEmbedderPolicy{
     "CrossOriginEmbedderPolicy", base::FEATURE_ENABLED_BY_DEFAULT};
 
-// When kBlockNonSecureExternalRequests is enabled, requests initiated from a
-// pubic network may only target a private network if the initiating context
-// is secure.
-//
-// https://wicg.github.io/cors-rfc1918/#integration-fetch
-const base::Feature kBlockNonSecureExternalRequests{
-    "BlockNonSecureExternalRequests", base::FEATURE_DISABLED_BY_DEFAULT};
-
-// When kPrefetchMainResourceNetworkIsolationKey is enabled, cross-origin
-// prefetch requests for main-resources, as well as their preload response
-// headers, will use a special NetworkIsolationKey allowing them to be reusable
-// from a cross-origin context when the HTTP cache is partitioned by the
-// NetworkIsolationKey.
-const base::Feature kPrefetchMainResourceNetworkIsolationKey{
-    "PrefetchMainResourceNetworkIsolationKey",
-    base::FEATURE_ENABLED_BY_DEFAULT};
+// Enables the most recent developments on the crossOriginIsolated property.
+// https://developer.mozilla.org/en-US/docs/Web/API/WindowOrWorkerGlobalScope/crossOriginIsolated
+const base::Feature kCrossOriginIsolated{"CrossOriginIsolated",
+                                         base::FEATURE_ENABLED_BY_DEFAULT};
 
 // Enables or defaults splittup up server (not proxy) entries in the
 // HttpAuthCache.
@@ -132,7 +115,7 @@ const base::Feature kSplitAuthCacheByNetworkIsolationKey{
 // Enable usage of hardcoded DoH upgrade mapping for use in automatic mode.
 const base::Feature kDnsOverHttpsUpgrade {
   "DnsOverHttpsUpgrade",
-#if defined(OS_CHROMEOS) || defined(OS_MACOSX) || defined(OS_ANDROID) || \
+#if defined(OS_CHROMEOS) || defined(OS_MAC) || defined(OS_ANDROID) || \
     defined(OS_WIN)
       base::FEATURE_ENABLED_BY_DEFAULT
 #else
@@ -160,12 +143,6 @@ const base::FeatureParam<std::string>
 const base::Feature kDisableKeepaliveFetch{"DisableKeepaliveFetch",
                                            base::FEATURE_DISABLED_BY_DEFAULT};
 
-// When kOutOfBlinkFrameAncestors is enabled, the frame-ancestors
-// directive is parsed from the Content-Security-Policy header in the network
-// service and enforced in the browser.
-const base::Feature kOutOfBlinkFrameAncestors{"OutOfBlinkFrameAncestors",
-                                              base::FEATURE_ENABLED_BY_DEFAULT};
-
 // Attach the origin of the destination URL to the "origin" header
 const base::Feature
     kDeriveOriginFromUrlForNeitherGetNorHeadRequestWhenHavingSpecialAccess{
@@ -187,9 +164,30 @@ const base::FeatureParam<std::string> kEmergencyLegacyCookieAccessParam{
 // [1]
 // https://www.chromium.org/Home/chromium-security/extension-content-script-fetches
 const base::Feature kCorbAllowlistAlsoAppliesToOorCors = {
-    "CorbAllowlistAlsoAppliesToOorCors", base::FEATURE_DISABLED_BY_DEFAULT};
+    "CorbAllowlistAlsoAppliesToOorCors", base::FEATURE_ENABLED_BY_DEFAULT};
 const char kCorbAllowlistAlsoAppliesToOorCorsParamName[] =
     "AllowlistForCorbAndCors";
+
+// Controls whether a |request_initiator| that mismatches
+// |request_initiator_origin_lock| leads to 1) failing the HTTP request and 2)
+// calling mojo::ReportBadMessage (on desktop platforms, where NetworkService
+// is hosted outside of the Browser process, this leads to DumpWithoutCrashing
+// and does *not* lead to a renderer kill).
+//
+// See also https://crbug.com/920634
+const base::Feature kRequestInitiatorSiteLockEnfocement = {
+    "RequestInitiatorSiteLockEnfocement",
+#if defined(OS_ANDROID)
+    base::FEATURE_DISABLED_BY_DEFAULT};
+#else
+    base::FEATURE_ENABLED_BY_DEFAULT};
+#endif
+
+// When the CertVerifierService is enabled, certificate verification will not be
+// performed in the network service, but will instead be brokered to a separate
+// cert verification service potentially running in a different process.
+const base::Feature kCertVerifierService{"CertVerifierService",
+                                         base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Enables preprocessing requests with the Trust Tokens API Fetch flags set,
 // and handling their responses, according to the protocol.
@@ -197,9 +195,46 @@ const char kCorbAllowlistAlsoAppliesToOorCorsParamName[] =
 const base::Feature kTrustTokens{"TrustTokens",
                                  base::FEATURE_DISABLED_BY_DEFAULT};
 
-bool ShouldEnableOutOfBlinkCorsForTesting() {
-  return base::FeatureList::IsEnabled(features::kOutOfBlinkCors);
-}
+// Determines which Trust Tokens operations require the TrustTokens origin trial
+// active in order to be used. This is runtime-configurable so that the Trust
+// Tokens operations of issuance, redemption, and signing are compatible with
+// both standard origin trials and third-party origin trials:
+//
+// - For standard origin trials, set kOnlyIssuanceRequiresOriginTrial. In Blink,
+// all of the interface will be enabled (so long as the base::Feature is!), and
+// issuance operations will check at runtime if the origin trial is enabled,
+// returning an error if it is not.
+// - For third-party origin trials, set kAllOperationsRequireOriginTrial. In
+// Blink, the interface will be enabled exactly when the origin trial is present
+// in the executing context (so long as the base::Feature is present).
+//
+// For testing, set kOriginTrialNotRequired. With this option, although all
+// operations will still only be available if the base::Feature is enabled, none
+// will additionally require that the origin trial be active.
+const base::FeatureParam<TrustTokenOriginTrialSpec>::Option
+    kTrustTokenOriginTrialParamOptions[] = {
+        {TrustTokenOriginTrialSpec::kOriginTrialNotRequired,
+         "origin-trial-not-required"},
+        {TrustTokenOriginTrialSpec::kAllOperationsRequireOriginTrial,
+         "all-operations-require-origin-trial"},
+        {TrustTokenOriginTrialSpec::kOnlyIssuanceRequiresOriginTrial,
+         "only-issuance-requires-origin-trial"}};
+const base::FeatureParam<TrustTokenOriginTrialSpec>
+    kTrustTokenOperationsRequiringOriginTrial{
+        &kTrustTokens, "TrustTokenOperationsRequiringOriginTrial",
+        TrustTokenOriginTrialSpec::kOriginTrialNotRequired,
+        &kTrustTokenOriginTrialParamOptions};
+
+// Enables the Content Security Policy Embedded Enforcement check out of blink
+const base::Feature kOutOfBlinkCSPEE{"OutOfBlinkCSPEE",
+                                     base::FEATURE_ENABLED_BY_DEFAULT};
+
+const base::Feature kWebSocketReassembleShortMessages{
+    "WebSocketReassembleShortMessages", base::FEATURE_ENABLED_BY_DEFAULT};
+
+// Enables usage of First Party Sets to determine cookie availability.
+const base::Feature kFirstPartySets{"FirstPartySets",
+                                    base::FEATURE_DISABLED_BY_DEFAULT};
 
 }  // namespace features
 }  // namespace network

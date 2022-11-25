@@ -46,6 +46,8 @@ namespace GrQuadUtils {
      */
     bool CropToRect(const SkRect& cropRect, GrAA cropAA, DrawQuad* quad, bool computeLocal=true);
 
+    inline void Outset(const skvx::Vec<4, float>& edgeDistances, GrQuad* quad);
+
     class TessellationHelper {
     public:
         // Set the original device and (optional) local coordinates that are inset or outset
@@ -111,7 +113,8 @@ namespace GrQuadUtils {
             // small, edges are near parallel, or edges are very short/zero-length. Returns number
             // of effective vertices in the degenerate quad.
             int computeDegenerateQuad(const skvx::Vec<4, float>& signedEdgeDistances,
-                                      skvx::Vec<4, float>* x2d, skvx::Vec<4, float>* y2d) const;
+                                      skvx::Vec<4, float>* x2d, skvx::Vec<4, float>* y2d,
+                                      skvx::Vec<4, int32_t>* aaMask) const;
         };
 
         struct OutsetRequest {
@@ -192,5 +195,11 @@ namespace GrQuadUtils {
     };
 
 }; // namespace GrQuadUtils
+
+void GrQuadUtils::Outset(const skvx::Vec<4, float>& edgeDistances, GrQuad* quad) {
+    TessellationHelper outsetter;
+    outsetter.reset(*quad, nullptr);
+    outsetter.outset(edgeDistances, quad, nullptr);
+}
 
 #endif

@@ -17,38 +17,37 @@ namespace SkSL {
  * A literal floating point number.
  */
 struct FloatLiteral : public Expression {
+    static constexpr Kind kExpressionKind = Kind::kFloatLiteral;
+
     FloatLiteral(const Context& context, int offset, double value)
-    : INHERITED(offset, kFloatLiteral_Kind, *context.fFloatLiteral_Type)
+    : INHERITED(offset, kExpressionKind, context.fFloatLiteral_Type.get())
     , fValue(value) {}
 
     FloatLiteral(int offset, double value, const Type* type)
-    : INHERITED(offset, kFloatLiteral_Kind, *type)
+    : INHERITED(offset, kExpressionKind, type)
     , fValue(value) {}
 
-#ifdef SK_DEBUG
     String description() const override {
         return to_string(fValue);
     }
-#endif
 
     bool hasProperty(Property property) const override {
         return false;
     }
 
-    bool isConstant() const override {
+    bool isCompileTimeConstant() const override {
         return true;
     }
 
-    int coercionCost(const Type& target) const override {
+    CoercionCost coercionCost(const Type& target) const override {
         if (target.isFloat()) {
-            return 0;
+            return CoercionCost::Free();
         }
         return INHERITED::coercionCost(target);
     }
 
     bool compareConstant(const Context& context, const Expression& other) const override {
-        FloatLiteral& f = (FloatLiteral&) other;
-        return fValue == f.fValue;
+        return fValue == other.as<FloatLiteral>().fValue;
     }
 
     double getConstantFloat() const override {
@@ -56,14 +55,14 @@ struct FloatLiteral : public Expression {
     }
 
     std::unique_ptr<Expression> clone() const override {
-        return std::unique_ptr<Expression>(new FloatLiteral(fOffset, fValue, &fType));
+        return std::unique_ptr<Expression>(new FloatLiteral(fOffset, fValue, &this->type()));
     }
 
     const double fValue;
 
-    typedef Expression INHERITED;
+    using INHERITED = Expression;
 };
 
-} // namespace
+}  // namespace SkSL
 
 #endif

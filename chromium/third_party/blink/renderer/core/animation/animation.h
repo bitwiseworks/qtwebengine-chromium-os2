@@ -69,7 +69,6 @@ class CORE_EXPORT Animation : public EventTargetWithInlineData,
                               public CompositorAnimationClient,
                               public AnimationEffectOwner {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(Animation);
   USING_PRE_FINALIZER(Animation, Dispose);
 
  public:
@@ -142,21 +141,10 @@ class CORE_EXPORT Animation : public EventTargetWithInlineData,
 
   void cancel();
 
-  base::Optional<double> currentTimeForBinding() const;
-  // TODO(crbug.com/1060971): Remove |is_null| version.
-  double currentTimeForBinding(bool& is_null);  // DEPRECATED
-  void setCurrentTimeForBinding(base::Optional<double> new_current_time,
-                                ExceptionState& exception_state);
-  // TODO(crbug.com/1060971): Remove |is_null| version.
-  void setCurrentTimeForBinding(double new_current_time,  // DEPRECATED
-                                bool is_null,
-                                ExceptionState& exception_state);
-
-  double currentTime() const;
-  double currentTime(bool& is_null);
-  void setCurrentTime(double new_current_time,
-                      bool is_null,
-                      ExceptionState& = ASSERT_NO_EXCEPTION);
+  base::Optional<double> currentTime() const;
+  void setCurrentTime(base::Optional<double> new_current_time,
+                      ExceptionState& exception_state);
+  void setCurrentTime(base::Optional<double> new_current_time);
 
   base::Optional<double> UnlimitedCurrentTime() const;
 
@@ -211,17 +199,13 @@ class CORE_EXPORT Animation : public EventTargetWithInlineData,
   double playbackRate() const;
   void setPlaybackRate(double, ExceptionState& = ASSERT_NO_EXCEPTION);
   AnimationTimeline* timeline() { return timeline_; }
+  void setTimeline(AnimationTimeline* timeline);
   Document* GetDocument() const;
 
   base::Optional<double> startTime() const;
-  // TODO(crbug.com/1060971): Remove |is_null| version.
-  double startTime(bool& is_null) const;  // DEPRECATED
   base::Optional<double> StartTimeInternal() const { return start_time_; }
   virtual void setStartTime(base::Optional<double>, ExceptionState&);
-  // TODO(crbug.com/1060971): Remove |is_null| version.
-  void setStartTime(double,  // DEPRECATED
-                    bool is_null,
-                    ExceptionState& = ASSERT_NO_EXCEPTION);
+  void setStartTime(base::Optional<double>);
 
   const AnimationEffect* effect() const { return content_.Get(); }
   AnimationEffect* effect() { return content_.Get(); }
@@ -242,7 +226,8 @@ class CORE_EXPORT Animation : public EventTargetWithInlineData,
   bool Outdated() { return outdated_; }
 
   CompositorAnimations::FailureReasons CheckCanStartAnimationOnCompositor(
-      const PaintArtifactCompositor* paint_artifact_compositor) const;
+      const PaintArtifactCompositor* paint_artifact_compositor,
+      PropertyHandleSet* unsupported_properties = nullptr) const;
   void StartAnimationOnCompositor(
       const PaintArtifactCompositor* paint_artifact_compositor);
   void CancelAnimationOnCompositor();
@@ -266,7 +251,7 @@ class CORE_EXPORT Animation : public EventTargetWithInlineData,
   bool PreCommit(int compositor_group,
                  const PaintArtifactCompositor*,
                  bool start_on_compositor);
-  void PostCommit(double timeline_time);
+  void PostCommit();
 
   unsigned SequenceNumber() const override { return sequence_number_; }
 
@@ -282,7 +267,7 @@ class CORE_EXPORT Animation : public EventTargetWithInlineData,
 
   void InvalidateKeyframeEffect(const TreeScope&);
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   bool CompositorPendingForTesting() const { return compositor_pending_; }
 
@@ -302,16 +287,12 @@ class CORE_EXPORT Animation : public EventTargetWithInlineData,
   // depends on computed values.
   virtual void FlushPendingUpdates() const {}
 
-  // TODO(yigu): This is a reverse dependency between AnimationTimeline and
-  // Animation. We should move the update logic once snapshotting is
-  // implemented. https://crbug.com/1060578.
-  void UpdateCompositorScrollTimeline();
-
  protected:
   DispatchEventResult DispatchEventInternal(Event&) override;
   void AddedEventListener(const AtomicString& event_type,
                           RegisteredEventListener&) override;
   base::Optional<double> CurrentTimeInternal() const;
+  TimelinePhase CurrentPhaseInternal() const;
   virtual AnimationEffect::EventDelegate* CreateEventDelegate(
       Element* target,
       const AnimationEffect::EventDelegate* old_event_delegate) {
@@ -320,6 +301,11 @@ class CORE_EXPORT Animation : public EventTargetWithInlineData,
 
  private:
   void SetCurrentTimeInternal(double new_current_time);
+  void SetHoldTimeAndPhase(
+      base::Optional<double> new_hold_time /* in seconds */,
+      TimelinePhase new_hold_phase);
+  void ResetHoldTimeAndPhase();
+  bool ValidateHoldTimeAndPhase() const;
 
   void ClearOutdated();
   void ForceServiceOnNextFrame();
@@ -335,6 +321,7 @@ class CORE_EXPORT Animation : public EventTargetWithInlineData,
 
   base::Optional<double> CalculateStartTime(double current_time) const;
   base::Optional<double> CalculateCurrentTime() const;
+  TimelinePhase CalculateCurrentPhase() const;
 
   void BeginUpdatingState();
   void EndUpdatingState();
@@ -398,7 +385,9 @@ class CORE_EXPORT Animation : public EventTargetWithInlineData,
   base::Optional<double> pending_playback_rate_;
   base::Optional<double> start_time_;
   base::Optional<double> hold_time_;
+  base::Optional<TimelinePhase> hold_phase_;
   base::Optional<double> previous_current_time_;
+  bool reset_current_time_on_resume_ = false;
 
   unsigned sequence_number_;
 
@@ -422,6 +411,7 @@ class CORE_EXPORT Animation : public EventTargetWithInlineData,
   // control.
   bool pending_pause_;
   bool pending_play_;
+  // Indicates finish notification queued but not processed.
   bool pending_finish_notification_;
   bool has_queued_microtask_;
 
@@ -429,7 +419,11 @@ class CORE_EXPORT Animation : public EventTargetWithInlineData,
   // has changed by means other than the ordinary progression of time
   bool outdated_;
 
+  // Indicates the animation is no longer active. Cancelled animation is marked
+  // as finished_.
   bool finished_;
+  // Indicates finish notification has been handled.
+  bool committed_finish_notification_;
   // Holds a 'finished' event queued for asynchronous dispatch via the
   // ScriptedAnimationController. This object remains active until the
   // event is actually dispatched.
@@ -481,7 +475,7 @@ class CORE_EXPORT Animation : public EventTargetWithInlineData,
 
     void Detach();
 
-    void Trace(Visitor* visitor) { visitor->Trace(animation_); }
+    void Trace(Visitor* visitor) const { visitor->Trace(animation_); }
 
     CompositorAnimation* GetAnimation() const {
       return compositor_animation_.get();

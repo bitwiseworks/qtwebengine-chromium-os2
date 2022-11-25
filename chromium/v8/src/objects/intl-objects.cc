@@ -89,9 +89,7 @@ inline constexpr uint16_t ToLatin1Lower(uint16_t ch) {
 
 // Does not work for U+00DF (sharp-s), U+00B5 (micron), U+00FF.
 inline constexpr uint16_t ToLatin1Upper(uint16_t ch) {
-#if V8_HAS_CXX14_CONSTEXPR
-  DCHECK(ch != 0xDF && ch != 0xB5 && ch != 0xFF);
-#endif
+  CONSTEXPR_DCHECK(ch != 0xDF && ch != 0xB5 && ch != 0xFF);
   return ch &
          ~((IsAsciiLower(ch) || (((ch & 0xE0) == 0xE0) && ch != 0xF7)) << 5);
 }
@@ -440,7 +438,7 @@ Maybe<icu::Locale> CreateICULocale(const std::string& bcp47_locale) {
   UErrorCode status = U_ZERO_ERROR;
 
   icu::Locale icu_locale = icu::Locale::forLanguageTag(bcp47_locale, status);
-  CHECK(U_SUCCESS(status));
+  DCHECK(U_SUCCESS(status));
   if (icu_locale.isBogus()) {
     return Nothing<icu::Locale>();
   }
@@ -563,14 +561,12 @@ bool ValidateResource(const icu::Locale locale, const char* path,
 }  // namespace
 
 std::set<std::string> Intl::BuildLocaleSet(
-    const icu::Locale* icu_available_locales, int32_t count, const char* path,
+    const std::vector<std::string>& icu_available_locales, const char* path,
     const char* validate_key) {
   std::set<std::string> locales;
-  for (int32_t i = 0; i < count; ++i) {
-    std::string locale =
-        Intl::ToLanguageTag(icu_available_locales[i]).FromJust();
+  for (const std::string& locale : icu_available_locales) {
     if (path != nullptr || validate_key != nullptr) {
-      if (!ValidateResource(icu_available_locales[i], path, validate_key)) {
+      if (!ValidateResource(icu::Locale(locale.c_str()), path, validate_key)) {
         continue;
       }
     }
@@ -590,7 +586,7 @@ Maybe<std::string> Intl::ToLanguageTag(const icu::Locale& locale) {
   if (U_FAILURE(status)) {
     return Nothing<std::string>();
   }
-  CHECK(U_SUCCESS(status));
+  DCHECK(U_SUCCESS(status));
 
   // Hack to remove -true and -yes from unicode extensions
   // Address https://crbug.com/v8/8565
@@ -1375,7 +1371,7 @@ ParsedLocale ParseBCP47Locale(const std::string& locale) {
     // Check to make sure that this really is a grandfathered or
     // privateuse extension. ICU can sometimes mess up the
     // canonicalization.
-    CHECK(locale[0] == 'x' || locale[0] == 'i');
+    DCHECK(locale[0] == 'x' || locale[0] == 'i');
     parsed_locale.no_extensions_locale = locale;
     return parsed_locale;
   }
@@ -1456,7 +1452,7 @@ icu::LocaleMatcher BuildLocaleMatcher(
     UErrorCode* status) {
   icu::Locale default_locale =
       icu::Locale::forLanguageTag(DefaultLocale(isolate), *status);
-  CHECK(U_SUCCESS(*status));
+  DCHECK(U_SUCCESS(*status));
   icu::LocaleMatcher::Builder builder;
   builder.setDefaultLocale(&default_locale);
   for (auto it = available_locales.begin(); it != available_locales.end();
@@ -1473,14 +1469,14 @@ class Iterator : public icu::Locale::Iterator {
   Iterator(std::vector<std::string>::const_iterator begin,
            std::vector<std::string>::const_iterator end)
       : iter_(begin), end_(end) {}
-  virtual ~Iterator() {}
+  ~Iterator() override = default;
 
   UBool hasNext() const override { return iter_ != end_; }
 
   const icu::Locale& next() override {
     UErrorCode status = U_ZERO_ERROR;
     locale_ = icu::Locale::forLanguageTag(iter_->c_str(), status);
-    CHECK(U_SUCCESS(status));
+    DCHECK(U_SUCCESS(status));
     ++iter_;
     return locale_;
   }
@@ -1513,7 +1509,7 @@ std::string BestFitMatcher(Isolate* isolate,
   UErrorCode status = U_ZERO_ERROR;
   icu::LocaleMatcher matcher =
       BuildLocaleMatcher(isolate, available_locales, &status);
-  CHECK(U_SUCCESS(status));
+  DCHECK(U_SUCCESS(status));
 
   Iterator iter(requested_locales.cbegin(), requested_locales.cend());
   std::string bestfit =
@@ -1539,7 +1535,7 @@ std::vector<std::string> BestFitSupportedLocales(
   UErrorCode status = U_ZERO_ERROR;
   icu::LocaleMatcher matcher =
       BuildLocaleMatcher(isolate, available_locales, &status);
-  CHECK(U_SUCCESS(status));
+  DCHECK(U_SUCCESS(status));
 
   std::string default_locale = DefaultLocale(isolate);
   std::vector<std::string> result;
@@ -1691,13 +1687,14 @@ bool IsValidExtension(const icu::Locale& locale, const char* key,
   return false;
 }
 
-bool IsValidCollation(const icu::Locale& locale, const std::string& value) {
+}  // namespace
+
+bool Intl::IsValidCollation(const icu::Locale& locale,
+                            const std::string& value) {
   std::set<std::string> invalid_values = {"standard", "search"};
   if (invalid_values.find(value) != invalid_values.end()) return false;
   return IsValidExtension<icu::Collator>(locale, "collation", value);
 }
-
-}  // namespace
 
 bool Intl::IsWellFormedCalendar(const std::string& value) {
   return JSLocale::Is38AlphaNumList(value);
@@ -1773,7 +1770,7 @@ std::map<std::string, std::string> LookupAndValidateUnicodeExtensions(
       if (strcmp("ca", bcp47_key) == 0) {
         is_valid_value = Intl::IsValidCalendar(*icu_locale, bcp47_value);
       } else if (strcmp("co", bcp47_key) == 0) {
-        is_valid_value = IsValidCollation(*icu_locale, bcp47_value);
+        is_valid_value = Intl::IsValidCollation(*icu_locale, bcp47_value);
       } else if (strcmp("hc", bcp47_key) == 0) {
         // https://www.unicode.org/repos/cldr/tags/latest/common/bcp47/calendar.xml
         std::set<std::string> valid_values = {"h11", "h12", "h23", "h24"};
@@ -1895,8 +1892,8 @@ Maybe<Intl::ResolvedLocale> Intl::ResolveLocale(
 Handle<Managed<icu::UnicodeString>> Intl::SetTextToBreakIterator(
     Isolate* isolate, Handle<String> text, icu::BreakIterator* break_iterator) {
   text = String::Flatten(isolate, text);
-  icu::UnicodeString* u_text =
-      (icu::UnicodeString*)(Intl::ToICUUnicodeString(isolate, text).clone());
+  icu::UnicodeString* u_text = static_cast<icu::UnicodeString*>(
+      Intl::ToICUUnicodeString(isolate, text).clone());
 
   Handle<Managed<icu::UnicodeString>> new_u_text =
       Managed<icu::UnicodeString>::FromRawPtr(isolate, 0, u_text);
@@ -1954,7 +1951,7 @@ MaybeHandle<String> Intl::Normalize(Isolate* isolate, Handle<String> string,
   const icu::Normalizer2* normalizer =
       icu::Normalizer2::getInstance(nullptr, form_name, form_mode, status);
   DCHECK(U_SUCCESS(status));
-  CHECK_NOT_NULL(normalizer);
+  DCHECK_NOT_NULL(normalizer);
   int32_t normalized_prefix_length =
       normalizer->spanQuickCheckYes(input, status);
   // Quick return if the input is already normalized.
@@ -2107,9 +2104,9 @@ Maybe<bool> Intl::GetNumberingSystem(Isolate* isolate,
   return Just(false);
 }
 
-const std::set<std::string>& Intl::GetAvailableLocalesForLocale() {
-  static base::LazyInstance<Intl::AvailableLocales<icu::Locale>>::type
-      available_locales = LAZY_INSTANCE_INITIALIZER;
+const std::set<std::string>& Intl::GetAvailableLocales() {
+  static base::LazyInstance<Intl::AvailableLocales<>>::type available_locales =
+      LAZY_INSTANCE_INITIALIZER;
   return available_locales.Pointer()->Get();
 }
 
@@ -2123,8 +2120,7 @@ struct CheckCalendar {
 }  // namespace
 
 const std::set<std::string>& Intl::GetAvailableLocalesForDateFormat() {
-  static base::LazyInstance<
-      Intl::AvailableLocales<icu::DateFormat, CheckCalendar>>::type
+  static base::LazyInstance<Intl::AvailableLocales<CheckCalendar>>::type
       available_locales = LAZY_INSTANCE_INITIALIZER;
   return available_locales.Pointer()->Get();
 }

@@ -142,8 +142,7 @@ LayoutText* FirstLetterPseudoElement::FirstLetterTextLayoutObject(
         break;
       first_letter_text_layout_object =
           first_letter_text_layout_object->NextSibling();
-    } else if (first_letter_text_layout_object
-                   ->IsListMarkerIncludingNGOutsideAndInside()) {
+    } else if (first_letter_text_layout_object->IsListMarkerIncludingAll()) {
       // The list item marker may have out-of-flow siblings inside an anonymous
       // block. Skip them to make sure we leave the anonymous block before
       // continuing looking for the first letter text.
@@ -165,7 +164,7 @@ LayoutText* FirstLetterPseudoElement::FirstLetterTextLayoutObject(
       first_letter_text_layout_object =
           first_letter_text_layout_object->NextSibling();
     } else if (first_letter_text_layout_object->IsAtomicInlineLevel() ||
-               first_letter_text_layout_object->IsLayoutButton() ||
+               first_letter_text_layout_object->IsButtonIncludingNG() ||
                IsMenuList(first_letter_text_layout_object)) {
       return nullptr;
     } else if (first_letter_text_layout_object
@@ -188,7 +187,7 @@ LayoutText* FirstLetterPseudoElement::FirstLetterTextLayoutObject(
   }
 
   // No first letter text to display, we're done.
-  // FIXME: This black-list of disallowed LayoutText subclasses is fragile.
+  // FIXME: This list of disallowed LayoutText subclasses is fragile.
   // crbug.com/422336.
   // Should counter be on this list? What about LayoutTextFragment?
   if (!first_letter_text_layout_object ||
@@ -242,10 +241,9 @@ void FirstLetterPseudoElement::ClearRemainingTextLayoutObject() {
   DCHECK(remaining_text_layout_object_);
   remaining_text_layout_object_ = nullptr;
 
-  if (GetDocument().GetStyleEngine().InRebuildLayoutTree()) {
-    // We are in the layout tree rebuild phase. We will do UpdateFirstLetter()
-    // as part of RebuildFirstLetterLayoutTree() or AttachLayoutTree(). Marking
-    // us style-dirty during layout tree rebuild is not allowed.
+  if (GetDocument().InStyleRecalc()) {
+    // UpdateFirstLetterPseudoElement will handle remaining_text_layout_object_
+    // changes during style recalc and layout tree rebuild.
     return;
   }
 

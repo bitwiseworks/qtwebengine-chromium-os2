@@ -9,13 +9,14 @@ namespace features {
 
 // Weblayer features in alphabetical order.
 
+// Covers all media router features, i.e. Presentation API, Remote Playback API,
+// and Media Fling (automatic casting of html5 videos).
+const base::Feature kMediaRouter{"WebLayerMediaRouter",
+                                 base::FEATURE_DISABLED_BY_DEFAULT};
+
 // Safebrowsing support for weblayer.
 const base::Feature kWebLayerSafeBrowsing{"WebLayerSafeBrowsing",
                                           base::FEATURE_ENABLED_BY_DEFAULT};
-
-// Enable auto-reload of error pages.
-const base::Feature kEnableAutoReload{"EnableAutoReload",
-                                      base::FEATURE_ENABLED_BY_DEFAULT};
 
 }  // namespace features
 }  // namespace weblayer

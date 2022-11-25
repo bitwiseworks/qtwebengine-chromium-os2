@@ -20,9 +20,9 @@
 #include "libavutil/intmath.h"
 #include "libavutil/log.h"
 #include "libavutil/mem.h"
-#include "libavutil/opt.h"
 
 #include "bsf.h"
+#include "bsf_internal.h"
 #include "get_bits.h"
 #include "put_bits.h"
 

@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/core/layout/ng/ng_base_layout_algorithm_test.h"
 
+#include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_break_token.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_node.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_line_breaker.h"
@@ -22,8 +23,7 @@ String ToString(NGInlineItemResults line, NGInlineNode node) {
   const String& text = node.ItemsData(false).text_content;
   for (const auto& item_result : line) {
     builder.Append(
-        StringView(text, item_result.start_offset,
-                   item_result.end_offset - item_result.start_offset));
+        StringView(text, item_result.StartOffset(), item_result.Length()));
   }
   return builder.ToString();
 }
@@ -535,11 +535,42 @@ TEST_F(NGLineBreakerTest, MinMaxWithTrailingSpaces) {
     <div id=container>12345 6789 </div>
   )HTML");
 
-  auto size = node.ComputeMinMaxSizes(
-      WritingMode::kHorizontalTb,
-      MinMaxSizesInput(/* percentage_resolution_block_size */ (LayoutUnit())));
-  EXPECT_EQ(size.min_size, LayoutUnit(60));
-  EXPECT_EQ(size.max_size, LayoutUnit(110));
+  auto sizes =
+      node.ComputeMinMaxSizes(
+              WritingMode::kHorizontalTb,
+              MinMaxSizesInput(/* percentage_resolution_block_size */
+                               LayoutUnit(), MinMaxSizesType::kContent))
+          .sizes;
+  EXPECT_EQ(sizes.min_size, LayoutUnit(60));
+  EXPECT_EQ(sizes.max_size, LayoutUnit(110));
+}
+
+// For http://crbug.com/1104534
+TEST_F(NGLineBreakerTest, SplitTextZero) {
+  // Note: |V8TestingScope| is needed for |Text::splitText()|.
+  V8TestingScope scope;
+
+  LoadAhem();
+  NGInlineNode node = CreateInlineNode(R"HTML(
+    <!DOCTYPE html>
+    <style>
+    #container {
+      font: 10px/1 Ahem;
+      overflow-wrap: break-word;
+    }
+    </style>
+    <div id=container>0123456789<b id=target> </b>ab</i></div>
+  )HTML");
+
+  To<Text>(GetElementById("target")->firstChild())
+      ->splitText(0, ASSERT_NO_EXCEPTION);
+  UpdateAllLifecyclePhasesForTest();
+
+  Vector<std::pair<String, unsigned>> lines;
+  lines = BreakLines(node, LayoutUnit(100));
+  EXPECT_EQ(2u, lines.size());
+  EXPECT_EQ("0123456789", lines[0].first);
+  EXPECT_EQ("ab", lines[1].first);
 }
 
 TEST_F(NGLineBreakerTest, TableCellWidthCalculationQuirkOutOfFlow) {
@@ -561,8 +592,50 @@ TEST_F(NGLineBreakerTest, TableCellWidthCalculationQuirkOutOfFlow) {
 
   node.ComputeMinMaxSizes(
       WritingMode::kHorizontalTb,
-      MinMaxSizesInput(/* percentage_resolution_block_size */ LayoutUnit()));
+      MinMaxSizesInput(/* percentage_resolution_block_size */ LayoutUnit(),
+                       MinMaxSizesType::kContent));
   // Pass if |ComputeMinMaxSize| doesn't hit DCHECK failures.
+}
+
+TEST_F(NGLineBreakerTest, RewindPositionedFloat) {
+  SetBodyInnerHTML(R"HTML(
+<div style="float: left">
+  &#xe49d;oB&#xfb45;|&#xf237;&#xfefc;
+  )&#xe2c9;&#xea7a;0{r
+  6
+  <span style="float: left">
+    <span style="border-right: solid green 2.166621530302065e+19in"></span>
+  </span>
+</div>
+  )HTML");
+  UpdateAllLifecyclePhasesForTest();
+}
+
+// crbug.com/1091359
+TEST_F(NGLineBreakerTest, RewindRubyRun) {
+  NGInlineNode node = CreateInlineNode(R"HTML(
+<div id="container">
+<style>
+* {
+  -webkit-text-security:square;
+  font-size:16px;
+}
+</style>
+<big style="word-wrap: break-word">a
+<ruby dir="rtl">
+<rt>
+B AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+<svg></svg>
+<b>
+</rt>
+</ruby>
+  )HTML");
+
+  node.ComputeMinMaxSizes(
+      WritingMode::kHorizontalTb,
+      MinMaxSizesInput(/* percentage_resolution_block_size */ LayoutUnit(),
+                       MinMaxSizesType::kContent));
+  // This test passes if no CHECK failures.
 }
 
 #undef MAYBE_OverflowAtomicInline

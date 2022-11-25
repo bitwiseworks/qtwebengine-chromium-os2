@@ -36,10 +36,11 @@
 #include "base/threading/simple_thread.h"
 #include "base/threading/thread.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/multiprocess_func_list.h"
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
 #include <malloc.h>
 #include <sched.h>
 #include <sys/syscall.h>
@@ -63,7 +64,7 @@
 #if defined(OS_WIN)
 #include <windows.h>
 #endif
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
 #include <mach/vm_param.h>
 #include <malloc/malloc.h>
 #endif
@@ -536,8 +537,7 @@ MULTIPROCESS_TEST_MAIN(CheckCwdProcess) {
   event.Wait();
 
   // Get a new cwd for the process.
-  FilePath home_dir;
-  CHECK(PathService::Get(DIR_HOME, &home_dir));
+  const FilePath home_dir = PathService::CheckedGet(DIR_HOME);
 
   // Change the cwd on the secondary thread. IgnoreResult is used when setting
   // because it is checked immediately after.
@@ -603,7 +603,7 @@ TEST_F(ProcessUtilTest, GetProcId) {
 }
 #endif  // defined(OS_WIN)
 
-#if !defined(OS_MACOSX) && !defined(OS_ANDROID)
+#if !defined(OS_APPLE) && !defined(OS_ANDROID)
 // This test is disabled on Mac, since it's flaky due to ReportCrash
 // taking a variable amount of time to parse and load the debug and
 // symbol data for this unit test's executable before firing the
@@ -670,7 +670,7 @@ TEST_F(ProcessUtilTest, MAYBE_GetTerminationStatusCrash) {
   debug::EnableInProcessStackDumping();
   remove(signal_file.c_str());
 }
-#endif  // !defined(OS_MACOSX) && !defined(OS_ANDROID)
+#endif  // !defined(OS_APPLE) && !defined(OS_ANDROID)
 
 MULTIPROCESS_TEST_MAIN(KilledChildProcess) {
   WaitToDie(ProcessUtilTest::GetSignalFilePath(kSignalFileKill).c_str());
@@ -719,7 +719,7 @@ TEST_F(ProcessUtilTest, MAYBE_GetTerminationStatusSigKill) {
   exit_code = 42;
   TerminationStatus status =
       WaitForChildTermination(process.Handle(), &exit_code);
-#if defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS) || BUILDFLAG(IS_LACROS)
   EXPECT_EQ(TERMINATION_STATUS_PROCESS_WAS_KILLED_BY_OOM, status);
 #else
   EXPECT_EQ(TERMINATION_STATUS_PROCESS_WAS_KILLED, status);
@@ -950,7 +950,7 @@ int GetMaxFilesOpenInProcess() {
 
 const int kChildPipe = 20;  // FD # for write end of pipe in child process.
 
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
 
 // <http://opensource.apple.com/source/xnu/xnu-2422.1.72/bsd/sys/guarded.h>
 #if !defined(_GUARDID_T)
@@ -1010,7 +1010,7 @@ bool CanGuardFd(int fd) {
 
   return true;
 }
-#endif  // defined(OS_MACOSX)
+#endif  // defined(OS_APPLE)
 
 }  // namespace
 
@@ -1021,7 +1021,7 @@ MULTIPROCESS_TEST_MAIN(ProcessUtilsLeakFDChildProcess) {
   int write_pipe = kChildPipe;
   int max_files = GetMaxFilesOpenInProcess();
   for (int i = STDERR_FILENO + 1; i < max_files; i++) {
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
     // Ignore guarded or invalid file descriptors.
     if (!CanGuardFd(i))
       continue;
@@ -1237,7 +1237,7 @@ TEST_F(ProcessUtilTest, GetParentProcessId) {
 }
 #endif  // !defined(OS_FUCHSIA)
 
-#if !defined(OS_ANDROID) && !defined(OS_FUCHSIA) && !defined(OS_MACOSX)
+#if !defined(OS_ANDROID) && !defined(OS_FUCHSIA) && !defined(OS_APPLE)
 class WriteToPipeDelegate : public LaunchOptions::PreExecDelegate {
  public:
   explicit WriteToPipeDelegate(int fd) : fd_(fd) {}
@@ -1307,11 +1307,11 @@ std::string TestLaunchProcess(const CommandLine& cmdline,
   options.fds_to_remap.emplace_back(fds[1], STDOUT_FILENO);
 #endif  // defined(OS_WIN)
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
   options.clone_flags = clone_flags;
 #else
   CHECK_EQ(0, clone_flags);
-#endif  // defined(OS_LINUX)
+#endif  // defined(OS_LINUX) || defined(OS_CHROMEOS)
 
   EXPECT_TRUE(LaunchProcess(cmdline, options).IsValid());
   write_pipe.Close();
@@ -1377,11 +1377,11 @@ TEST_F(ProcessUtilTest, LaunchProcess) {
   EXPECT_EQ("wibble", TestLaunchProcess(kPrintEnvCommand, env_changes,
                                         no_clear_environ, no_clone_flags));
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
   // Test a non-trival value for clone_flags.
   EXPECT_EQ("wibble", TestLaunchProcess(kPrintEnvCommand, env_changes,
                                         no_clear_environ, CLONE_FS));
-#endif  // defined(OS_LINUX)
+#endif  // defined(OS_LINUX) || defined(OS_CHROMEOS)
 
   EXPECT_EQ("wibble",
             TestLaunchProcess(kPrintEnvCommand, env_changes,
@@ -1391,7 +1391,7 @@ TEST_F(ProcessUtilTest, LaunchProcess) {
                                   true /* clear_environ */, no_clone_flags));
 }
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
 MULTIPROCESS_TEST_MAIN(CheckPidProcess) {
   const pid_t kInitPid = 1;
   const pid_t pid = syscall(__NR_getpid);
@@ -1452,6 +1452,6 @@ TEST_F(ProcessUtilTest, InvalidCurrentDirectory) {
   EXPECT_TRUE(process.WaitForExit(&exit_code));
   EXPECT_NE(kSuccess, exit_code);
 }
-#endif  // defined(OS_LINUX)
+#endif  // defined(OS_LINUX) || defined(OS_CHROMEOS)
 
 }  // namespace base

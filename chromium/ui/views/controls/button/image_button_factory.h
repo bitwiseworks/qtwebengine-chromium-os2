@@ -8,7 +8,7 @@
 #include <memory>
 
 #include "third_party/skia/include/core/SkColor.h"
-#include "ui/gfx/color_palette.h"
+#include "ui/views/controls/button/button.h"
 #include "ui/views/views_export.h"
 
 namespace gfx {
@@ -17,12 +17,14 @@ struct VectorIcon;
 
 namespace views {
 
-class ButtonListener;
 class ImageButton;
 class ToggleImageButton;
 
 // Creates an ImageButton with an ink drop and a centered image built from a
 // vector icon that tracks color changes in NativeTheme.
+VIEWS_EXPORT std::unique_ptr<ImageButton>
+CreateVectorImageButtonWithNativeTheme(Button::PressedCallback callback,
+                                       const gfx::VectorIcon& icon);
 VIEWS_EXPORT std::unique_ptr<ImageButton>
 CreateVectorImageButtonWithNativeTheme(ButtonListener* listener,
                                        const gfx::VectorIcon& icon);
@@ -30,11 +32,14 @@ CreateVectorImageButtonWithNativeTheme(ButtonListener* listener,
 // Creates an ImageButton with an ink drop and a centered image in preparation
 // for applying a vector icon with SetImageFromVectorIcon below.
 VIEWS_EXPORT std::unique_ptr<ImageButton> CreateVectorImageButton(
+    Button::PressedCallback callback);
+VIEWS_EXPORT std::unique_ptr<ImageButton> CreateVectorImageButton(
     ButtonListener* listener);
 
 // Creates a ToggleImageButton with an ink drop and a centered image in
-// preperation for applying a vector icon from SetImageFromVectorIcon and
-// SetToggledImageFromVectorIcon below.
+// preparation for applying a vector icon from SetImageFromVectorIcon below.
+VIEWS_EXPORT std::unique_ptr<ToggleImageButton> CreateVectorToggleImageButton(
+    Button::PressedCallback callback);
 VIEWS_EXPORT std::unique_ptr<ToggleImageButton> CreateVectorToggleImageButton(
     ButtonListener* listener);
 
@@ -68,19 +73,14 @@ VIEWS_EXPORT void SetImageFromVectorIconWithColor(ImageButton* button,
                                                   int dip_size,
                                                   SkColor icon_color);
 
-// As above, but sets the toggled images for a toggled image button.
-VIEWS_EXPORT void SetToggledImageFromVectorIcon(
-    ToggleImageButton* button,
-    const gfx::VectorIcon& icon,
-    int dip_size,
-    SkColor related_text_color = gfx::kGoogleGrey900);
-
-// As above, but with a given icon color instead of deriving from a text color.
+// As above, but sets the toggled images for a toggled image button
+// with a given icon color instead of deriving from a text color.
 VIEWS_EXPORT void SetToggledImageFromVectorIconWithColor(
     ToggleImageButton* button,
     const gfx::VectorIcon& icon,
     int dip_size,
-    SkColor icon_color);
+    SkColor icon_color,
+    SkColor disabled_color);
 
 }  // namespace views
 

@@ -74,7 +74,10 @@ jumbo_source_set("utility") {
   }
 
   if (is_chromeos) {
-    deps += [ "//chromeos/services/ime:sandbox_hook" ]
+    deps += [
+      "//chromeos/services/ime:sandbox_hook",
+      "//chromeos/services/tts:sandbox_hook",
+    ]
   }
 
   # PAC execution is done in process on Android.
@@ -82,8 +85,8 @@ jumbo_source_set("utility") {
     deps += [ "//services/proxy_resolver:lib" ]
   }
 
-  if (is_linux && !use_qt) {
-    deps += [ "//content/utility/soda:soda_sandbox_hook" ]
+  if ((is_linux || is_chromeos) && !use_qt) {
+    deps += [ "//content/utility/speech:speech_recognition_sandbox_hook" ]
   }
 
   if (enable_vr && !is_android) {

@@ -9,9 +9,11 @@
 #include <wrl/client.h>
 #include <cstdint>
 
+#include "media/base/status.h"
 #include "media/gpu/media_gpu_export.h"
 #include "media/gpu/windows/d3d11_com_defs.h"
 #include "ui/gfx/color_space.h"
+#include "ui/gl/hdr_metadata.h"
 
 namespace media {
 
@@ -23,7 +25,7 @@ class MEDIA_GPU_EXPORT VideoProcessorProxy {
                       ComD3D11DeviceContext d3d11_device_context);
   virtual ~VideoProcessorProxy();
 
-  virtual bool Init(uint32_t width, uint32_t height);
+  virtual Status Init(uint32_t width, uint32_t height);
 
   // TODO(tmathmeyer) implement color space modification.
 
@@ -42,6 +44,13 @@ class MEDIA_GPU_EXPORT VideoProcessorProxy {
 
   // Configure the output color space on the video context.
   virtual void SetOutputColorSpace(const gfx::ColorSpace& color_space);
+
+  // Set the stream / display metadata.  Optional, and may silently do nothing
+  // if it's not supported.
+  virtual void SetStreamHDRMetadata(
+      const DXGI_HDR_METADATA_HDR10& stream_metadata);
+  virtual void SetDisplayHDRMetadata(
+      const DXGI_HDR_METADATA_HDR10& display_metadata);
 
   virtual HRESULT VideoProcessorBlt(ID3D11VideoProcessorOutputView* output_view,
                                     UINT output_frameno,

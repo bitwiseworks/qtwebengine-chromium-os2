@@ -42,7 +42,12 @@ namespace dawn_native {
         ResourceMemoryAllocation invalidAllocation = ResourceMemoryAllocation{};
 
         if (allocationSize == 0) {
-            return invalidAllocation;
+            return std::move(invalidAllocation);
+        }
+
+        // Check the unaligned size to avoid overflowing NextPowerOfTwo.
+        if (allocationSize > mMemoryBlockSize) {
+            return std::move(invalidAllocation);
         }
 
         // Round allocation size to nearest power-of-two.
@@ -50,13 +55,13 @@ namespace dawn_native {
 
         // Allocation cannot exceed the memory size.
         if (allocationSize > mMemoryBlockSize) {
-            return invalidAllocation;
+            return std::move(invalidAllocation);
         }
 
         // Attempt to sub-allocate a block of the requested size.
         const uint64_t blockOffset = mBuddyBlockAllocator.Allocate(allocationSize, alignment);
         if (blockOffset == BuddyAllocator::kInvalidOffset) {
-            return invalidAllocation;
+            return std::move(invalidAllocation);
         }
 
         const uint64_t memoryIndex = GetMemoryIndex(blockOffset);

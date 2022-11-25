@@ -85,6 +85,7 @@ jumbo_source_set("filters") {
   ]
 
   deps = [
+    "//base/util/type_safety:type_safety",
     "//cc/base",  # For MathUtil.
     "//media:media_buildflags",
     "//media/base",
@@ -187,6 +188,13 @@ jumbo_source_set("filters") {
         "ffmpeg_video_decoder.h",
       ]
     }
+
+    if (is_android) {
+      sources += [
+        "android/video_frame_extractor.cc",
+        "android/video_frame_extractor.h",
+      ]
+    }
   }
 
   if (is_android) {
@@ -199,8 +207,6 @@ jumbo_source_set("filters") {
     sources += [
       "android/media_codec_audio_decoder.cc",
       "android/media_codec_audio_decoder.h",
-      "android/video_frame_extractor.cc",
-      "android/video_frame_extractor.h",
     ]
     deps += [ "//media/base/android" ]
   }
@@ -256,6 +262,8 @@ static_library("test_support") {
   visibility = [ "//media:test_support" ]
 
   sources = [
+    "fake_video_decoder.cc",
+    "fake_video_decoder.h",
     "ivf_parser.cc",
     "ivf_parser.h",
   ]
@@ -284,8 +292,6 @@ source_set("unit_tests") {
     "decrypting_demuxer_stream_unittest.cc",
     "decrypting_media_resource_unittest.cc",
     "decrypting_video_decoder_unittest.cc",
-    "fake_video_decoder.cc",
-    "fake_video_decoder.h",
     "fake_video_decoder_unittest.cc",
     "file_data_source_unittest.cc",
     "frame_buffer_pool_unittest.cc",

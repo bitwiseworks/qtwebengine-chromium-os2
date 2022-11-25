@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/memory/read_only_shared_memory_region.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_data.h"
@@ -65,6 +66,8 @@ class MetricsWebContentsObserver
     // fine.
     virtual void OnCommit(PageLoadTracker* tracker) {}
 
+    virtual void OnRestoredFromBackForwardCache(PageLoadTracker* tracker) {}
+
     // Returns the observer delegate for the committed load associated with
     // the MetricsWebContentsObserver.
     const PageLoadMetricsObserverDelegate& GetDelegateForCommittedLoad();
@@ -83,9 +86,6 @@ class MetricsWebContentsObserver
 
   // Note that the returned metrics is owned by the web contents.
   static MetricsWebContentsObserver* CreateForWebContents(
-      content::WebContents* web_contents,
-      std::unique_ptr<PageLoadMetricsEmbedderInterface> embedder_interface);
-  MetricsWebContentsObserver(
       content::WebContents* web_contents,
       std::unique_ptr<PageLoadMetricsEmbedderInterface> embedder_interface);
   ~MetricsWebContentsObserver() override;
@@ -108,6 +108,7 @@ class MetricsWebContentsObserver
   void RenderViewHostChanged(content::RenderViewHost* old_host,
                              content::RenderViewHost* new_host) override;
   void FrameDeleted(content::RenderFrameHost* render_frame_host) override;
+  void RenderFrameDeleted(content::RenderFrameHost* render_frame_host) override;
   void MediaStartedPlaying(
       const content::WebContentsObserver::MediaPlayerInfo& video_type,
       const content::MediaPlayerId& id) override;
@@ -122,19 +123,16 @@ class MetricsWebContentsObserver
                                 bool is_display_none) override;
   void FrameSizeChanged(content::RenderFrameHost* render_frame_host,
                         const gfx::Size& frame_size) override;
-  void OnCookiesRead(const GURL& url,
-                     const GURL& first_party_url,
-                     const net::CookieList& cookie_list,
-                     bool blocked_by_policy) override;
-  void OnCookieChange(const GURL& url,
-                      const GURL& first_party_url,
-                      const net::CanonicalCookie& cookie,
-                      bool blocked_by_policy) override;
-
+  void OnCookiesAccessed(content::NavigationHandle* navigation,
+                         const content::CookieAccessDetails& details) override;
+  void OnCookiesAccessed(content::RenderFrameHost* rfh,
+                         const content::CookieAccessDetails& details) override;
   void OnStorageAccessed(const GURL& url,
                          const GURL& first_party_url,
                          bool blocked_by_policy,
                          StorageType storage_type);
+  void DidActivatePortal(content::WebContents* predecessor_web_contents,
+                         base::TimeTicks activation_time) override;
 
   // These methods are forwarded from the MetricsNavigationThrottle.
   void WillStartNavigationRequest(content::NavigationHandle* navigation_handle);
@@ -175,6 +173,10 @@ class MetricsWebContentsObserver
  private:
   friend class content::WebContentsUserData<MetricsWebContentsObserver>;
 
+  MetricsWebContentsObserver(
+      content::WebContents* web_contents,
+      std::unique_ptr<PageLoadMetricsEmbedderInterface> embedder_interface);
+
   void WillStartNavigationRequestImpl(
       content::NavigationHandle* navigation_handle);
 
@@ -187,6 +189,11 @@ class MetricsWebContentsObserver
                     mojom::CpuTimingPtr cpu_timing,
                     mojom::DeferredResourceCountsPtr new_deferred_resource_data,
                     mojom::InputTimingPtr input_timing) override;
+  void SetUpSharedMemoryForSmoothness(
+      base::ReadOnlySharedMemoryRegion shared_memory) override;
+
+  // Common part for UpdateThroughput and OnTimingUpdated.
+  bool DoesTimingUpdateHaveError();
 
   void HandleFailedNavigationForTrackedLoad(
       content::NavigationHandle* navigation_handle,
@@ -238,6 +245,23 @@ class MetricsWebContentsObserver
   void OnBrowserFeatureUsage(content::RenderFrameHost* render_frame_host,
                              const mojom::PageLoadFeatures& new_features);
 
+  // Before deleting PageLoadTracker, check if we need to keep it alive as the
+  // page is stored in back-forward cache. The page can either be restored later
+  // (we will be notified via DidFinishNavigation and NavigationHandle::
+  // IsServedFromBackForwardCache) or will be evicted from the cache (we will be
+  // notified via RenderFrameDeleted).
+  void MaybeStorePageLoadTrackerForBackForwardCache(
+      content::NavigationHandle* next_navigation_handle,
+      std::unique_ptr<PageLoadTracker> page_load_tracker);
+
+  // Try to restore a PageLoadTracker when a navigation restores corresponding
+  // page from back-forward cache. Returns true if the page was restored.
+  bool MaybeRestorePageLoadTrackerForBackForwardCache(
+      content::NavigationHandle* navigation_handle);
+
+  // Notify PageLoadTrackers about cookie read or write.
+  void OnCookiesAccessedImpl(const content::CookieAccessDetails& details);
+
   // True if the web contents is currently in the foreground.
   bool in_foreground_;
 
@@ -247,7 +271,7 @@ class MetricsWebContentsObserver
 
   // This map tracks all of the navigations ongoing that are not committed
   // yet. Once a navigation is committed, it moves from the map to
-  // committed_load_. Note that a PageLoadTrackers NavigationHandle is only
+  // |committed_load_|. Note that a PageLoadTrackers NavigationHandle is only
   // valid until commit time, when we remove it from the map.
   std::map<content::NavigationHandle*, std::unique_ptr<PageLoadTracker>>
       provisional_loads_;
@@ -260,6 +284,17 @@ class MetricsWebContentsObserver
   std::vector<std::unique_ptr<PageLoadTracker>> aborted_provisional_loads_;
 
   std::unique_ptr<PageLoadTracker> committed_load_;
+
+  // This is currently set only for the main frame.
+  base::ReadOnlySharedMemoryRegion ukm_smoothness_data_;
+
+  // A page can be stored in back-forward cache - in this case its
+  // PageLoadTracker should be preserved as well. Here we store PageLoadTracker
+  // for each main frame that we navigated away from until we are notified that
+  // it is deleted (would happen almost immediately if back-forward cache is not
+  // enabled or page is not stored).
+  base::flat_map<content::RenderFrameHost*, std::unique_ptr<PageLoadTracker>>
+      back_forward_cached_pages_;
 
   // Has the MWCO observed at least one navigation?
   bool has_navigated_;

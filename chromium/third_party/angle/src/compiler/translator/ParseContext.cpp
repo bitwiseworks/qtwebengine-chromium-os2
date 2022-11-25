@@ -210,6 +210,7 @@ TParseContext::TParseContext(TSymbolTable &symt,
       mMaxCombinedTextureImageUnits(resources.MaxCombinedTextureImageUnits),
       mMaxUniformLocations(resources.MaxUniformLocations),
       mMaxUniformBufferBindings(resources.MaxUniformBufferBindings),
+      mMaxVertexAttribs(resources.MaxVertexAttribs),
       mMaxAtomicCounterBindings(resources.MaxAtomicCounterBindings),
       mMaxShaderStorageBufferBindings(resources.MaxShaderStorageBufferBindings),
       mDeclaringFunction(false),
@@ -530,6 +531,7 @@ bool TParseContext::checkCanBeLValue(const TSourceLoc &line, const char *op, TIn
         case EvqVertexIn:
         case EvqGeometryIn:
         case EvqFlatIn:
+        case EvqNoPerspectiveIn:
         case EvqSmoothIn:
         case EvqCentroidIn:
             message = "can't modify an input";
@@ -1221,6 +1223,36 @@ bool TParseContext::declareVariable(const TSourceLoc &line,
             return false;
         }
     }
+    else if (type->isArray() && identifier == "gl_ClipDistance")
+    {
+        // gl_ClipDistance can be redeclared with smaller size than gl_MaxClipDistances
+        const TVariable *maxClipDistances = static_cast<const TVariable *>(
+            symbolTable.findBuiltIn(ImmutableString("gl_MaxClipDistances"), mShaderVersion));
+        if (!maxClipDistances)
+        {
+            // Unsupported extension
+            needsReservedCheck = true;
+        }
+        else if (type->isArrayOfArrays())
+        {
+            error(line, "redeclaration of gl_ClipDistance as an array of arrays", identifier);
+            return false;
+        }
+        else if (static_cast<int>(type->getOutermostArraySize()) <=
+                 maxClipDistances->getConstPointer()->getIConst())
+        {
+            if (const TSymbol *builtInSymbol = symbolTable.findBuiltIn(identifier, mShaderVersion))
+            {
+                needsReservedCheck = !checkCanUseExtension(line, builtInSymbol->extension());
+            }
+        }
+        else
+        {
+            error(line, "redeclaration of gl_ClipDistance with size > gl_MaxClipDistances",
+                  identifier);
+            return false;
+        }
+    }
 
     if (needsReservedCheck && !checkIsNotReserved(line, identifier))
         return false;
@@ -1510,6 +1542,18 @@ void TParseContext::nonEmptyDeclarationErrorCheck(const TPublicType &publicType,
         }
     }
 
+    if (mShaderVersion >= 300 && publicType.qualifier == EvqVertexIn)
+    {
+        // Valid vertex input declarations can't be unsized arrays since they can't be initialized.
+        // But invalid shaders may still reach here with an unsized array declaration.
+        TType type(publicType);
+        if (!type.isUnsizedArray())
+        {
+            checkAttributeLocationInRange(identifierLocation, type.getLocationCount(),
+                                          publicType.layoutQualifier);
+        }
+    }
+
     // check for layout qualifier issues
     const TLayoutQualifier layoutQualifier = publicType.layoutQualifier;
 
@@ -1757,9 +1801,30 @@ void TParseContext::checkUniformLocationInRange(const TSourceLoc &location,
                                                 const TLayoutQualifier &layoutQualifier)
 {
     int loc = layoutQualifier.location;
-    if (loc >= 0 && loc + objectLocationCount > mMaxUniformLocations)
+    if (loc >= 0)  // Shader-specified location
     {
-        error(location, "Uniform location out of range", "location");
+        if (loc >= mMaxUniformLocations || objectLocationCount > mMaxUniformLocations ||
+            static_cast<unsigned int>(loc) + static_cast<unsigned int>(objectLocationCount) >
+                static_cast<unsigned int>(mMaxUniformLocations))
+        {
+            error(location, "Uniform location out of range", "location");
+        }
+    }
+}
+
+void TParseContext::checkAttributeLocationInRange(const TSourceLoc &location,
+                                                  int objectLocationCount,
+                                                  const TLayoutQualifier &layoutQualifier)
+{
+    int loc = layoutQualifier.location;
+    if (loc >= 0)  // Shader-specified location
+    {
+        if (loc >= mMaxVertexAttribs || objectLocationCount > mMaxVertexAttribs ||
+            static_cast<unsigned int>(loc) + static_cast<unsigned int>(objectLocationCount) >
+                static_cast<unsigned int>(mMaxVertexAttribs))
+        {
+            error(location, "Attribute location out of range", "location");
+        }
     }
 }
 

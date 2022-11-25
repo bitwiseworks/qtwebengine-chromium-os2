@@ -16,6 +16,8 @@ group("web_app_test_group") {
 # Extension codepaths have been removed.
 source_set("common") {
   sources = [
+    "daily_metrics_helper.cc",
+    "daily_metrics_helper.h",
     "manifest_update_manager.cc",
     "manifest_update_manager.h",
     "manifest_update_task.cc",
@@ -34,15 +36,18 @@ source_set("common") {
     "//components/content_settings/core/browser",
     "//components/pref_registry",
     "//content/public/browser",
+    "//services/metrics/public/cpp:ukm_builders",
     "//skia",
   ]
 
   if (is_chromeos) {
     deps += [
       "//ash/public/cpp",
+      "//chromeos/components/diagnostics_ui",
       "//chromeos/components/help_app_ui",
       "//chromeos/components/media_app_ui",
       "//chromeos/components/print_management",
+      "//chromeos/components/scanning",
       "//chromeos/constants",
       "//chromeos/strings",
     ]
@@ -53,6 +58,8 @@ source_set("web_applications") {
   sources = [
     "external_web_app_manager.cc",
     "external_web_app_manager.h",
+    "external_web_app_utils.cc",
+    "external_web_app_utils.h",
     "file_utils_wrapper.cc",
     "file_utils_wrapper.h",
     "pending_app_install_task.cc",
@@ -61,6 +68,8 @@ source_set("web_applications") {
     "pending_app_manager_impl.h",
     "pending_app_registration_task.cc",
     "pending_app_registration_task.h",
+    "preinstalled_web_apps.cc",
+    "preinstalled_web_apps.h",
     "web_app.cc",
     "web_app.h",
     "web_app_database.cc",
@@ -77,6 +86,10 @@ source_set("web_applications") {
     "web_app_install_manager.h",
     "web_app_install_task.cc",
     "web_app_install_task.h",
+    "web_app_installation_utils.cc",
+    "web_app_installation_utils.h",
+    "web_app_proto_utils.cc",
+    "web_app_proto_utils.h",
     "web_app_registrar.cc",
     "web_app_registrar.h",
     "web_app_registry_update.cc",
@@ -94,19 +107,25 @@ source_set("web_applications") {
     "//chrome/browser/web_applications/components",
     "//chrome/common",
     "//components/performance_manager",
+    "//components/services/app_service/public/cpp:protocol_handling",
     "//components/sync",
     "//content/public/browser",
+    "//extensions/browser",
     "//skia",
   ]
 
   if (is_chromeos) {
     deps += [
+      "//chromeos/constants",
       "//components/arc:arc_base",
       "//components/arc/mojom",
     ]
 
     if (!is_official_build) {
-      deps += [ "//chromeos/components/sample_system_web_app_ui" ]
+      deps += [
+        "//chromeos/components/file_manager:file_manager_ui",
+        "//chromeos/components/sample_system_web_app_ui",
+      ]
     }
   }
 
@@ -122,8 +141,8 @@ source_set("web_applications_test_support") {
     "test/service_worker_registration_waiter.h",
     "test/test_app_registrar.cc",
     "test/test_app_registrar.h",
-    "test/test_app_shortcut_manager.cc",
-    "test/test_app_shortcut_manager.h",
+    "test/test_app_registry_controller.cc",
+    "test/test_app_registry_controller.h",
     "test/test_data_retriever.cc",
     "test/test_data_retriever.h",
     "test/test_file_handler_manager.cc",
@@ -132,8 +151,12 @@ source_set("web_applications_test_support") {
     "test/test_file_utils.h",
     "test/test_install_finalizer.cc",
     "test/test_install_finalizer.h",
+    "test/test_os_integration_manager.cc",
+    "test/test_os_integration_manager.h",
     "test/test_pending_app_manager.cc",
     "test/test_pending_app_manager.h",
+    "test/test_pending_app_manager_impl.cc",
+    "test/test_pending_app_manager_impl.h",
     "test/test_system_web_app_manager.cc",
     "test/test_system_web_app_manager.h",
     "test/test_system_web_app_url_data_source.cc",
@@ -152,10 +175,14 @@ source_set("web_applications_test_support") {
     "test/web_app_icon_test_utils.h",
     "test/web_app_install_observer.cc",
     "test/web_app_install_observer.h",
+    "test/web_app_install_test_utils.cc",
+    "test/web_app_install_test_utils.h",
     "test/web_app_registration_waiter.cc",
     "test/web_app_registration_waiter.h",
     "test/web_app_test.cc",
     "test/web_app_test.h",
+    "test/web_app_uninstall_waiter.cc",
+    "test/web_app_uninstall_waiter.h",
   ]
 
   deps = [
@@ -177,12 +204,18 @@ source_set("web_applications_unit_tests") {
   testonly = true
 
   sources = [
+    "daily_metrics_helper_unittest.cc",
     "external_web_app_manager_unittest.cc",
+    "external_web_app_utils_unittest.cc",
     "pending_app_manager_impl_unittest.cc",
+    "preinstalled_web_apps_unittest.cc",
+    "system_web_app_manager_unittest.cc",
     "web_app_database_unittest.cc",
     "web_app_icon_manager_unittest.cc",
     "web_app_install_manager_unittest.cc",
     "web_app_install_task_unittest.cc",
+    "web_app_installation_utils_unittest.cc",
+    "web_app_proto_utils_unittest.cc",
     "web_app_registrar_unittest.cc",
     "web_app_sync_bridge_unittest.cc",
     "web_app_unittest.cc",
@@ -199,15 +232,19 @@ source_set("web_applications_unit_tests") {
     "//chrome/browser/web_applications/components",
     "//chrome/common",
     "//chrome/test:test_support",
+    "//components/services/app_service/public/cpp:protocol_handling",
     "//content/public/browser",
     "//content/test:test_support",
+    "//services/metrics/public/cpp:ukm_builders",
     "//skia",
+    "//testing/gmock",
     "//testing/gtest",
   ]
 
   if (is_chromeos) {
     deps += [
       "//chrome/browser/chromeos",
+      "//chromeos/constants",
       "//components/arc:arc",
       "//components/arc:arc_test_support",
       "//components/arc/mojom",
@@ -224,6 +261,8 @@ source_set("web_applications_browser_tests") {
   testonly = true
 
   sources = [
+    "external_web_app_manager_browsertest.cc",
+    "external_web_app_migration_browsertest.cc",
     "manifest_update_manager_browsertest.cc",
     "pending_app_manager_impl_browsertest.cc",
     "system_web_app_manager_browsertest.cc",
@@ -231,6 +270,7 @@ source_set("web_applications_browser_tests") {
     "web_app_audio_focus_browsertest.cc",
     "web_app_icon_manager_browsertest.cc",
     "web_app_migration_manager_browsertest.cc",
+    "web_app_migration_user_display_mode_clean_up_browsertest.cc",
   ]
 
   defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
@@ -242,15 +282,23 @@ source_set("web_applications_browser_tests") {
     ":web_applications_on_extensions_test_support",
     ":web_applications_test_support",
     "//chrome/app:command_ids",
+    "//chrome/browser/apps/app_service:test_support",
+    "//chrome/browser/extensions:test_support",
     "//chrome/browser/web_applications/components",
-    "//chrome/services/app_service/public/cpp:app_update",
+    "//chrome/browser/web_applications/extensions",
     "//chrome/test:test_support",
     "//chrome/test:test_support_ui",
     "//components/permissions:permissions",
+    "//components/services/app_service/public/cpp:app_update",
+    "//components/services/app_service/public/cpp:intents",
+    "//extensions/browser:test_support",
   ]
 
   if (is_chromeos) {
-    deps += [ "//chrome/browser/ui" ]
+    deps += [
+      "//chrome/browser/chromeos",
+      "//chrome/browser/ui",
+    ]
   }
 }
 
@@ -260,6 +308,8 @@ source_set("web_applications_on_extensions") {
   sources = [
     "web_app_migration_manager.cc",
     "web_app_migration_manager.h",
+    "web_app_migration_user_display_mode_clean_up.cc",
+    "web_app_migration_user_display_mode_clean_up.h",
     "web_app_provider.cc",
     "web_app_provider.h",
     "web_app_provider_factory.cc",
@@ -303,6 +353,7 @@ source_set("web_applications_on_extensions_test_support") {
     "//chrome/browser",
     "//chrome/browser/web_applications/components",
     "//components/keyed_service/content",
+    "//ui/webui",
   ]
 }
 

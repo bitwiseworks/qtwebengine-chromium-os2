@@ -13,7 +13,7 @@
 namespace {
 const UChar32 kLeftBraceCodePoint = '{';
 const UChar32 kOverBraceCodePoint = 0x23DE;
-const UChar32 kArabicMathOperatorHahWithDalCodePoint = 0x1EEF1;
+const UChar32 kRightwardsFrontTiltedShadowedWhiteArrowCodePoint = 0x1F8AB;
 const UChar32 kNAryWhiteVerticalBarCodePoint = 0x2AFF;
 }  // namespace
 
@@ -300,7 +300,7 @@ TEST_F(OpenTypeMathSupportTest, MathVariantsWithTable) {
   // TODO(https://crbug.com/1057596): Find a better way to access these glyph
   // indices.
   auto v0 = math.PrimaryFont()->GlyphForCharacter(
-                kArabicMathOperatorHahWithDalCodePoint) +
+                kRightwardsFrontTiltedShadowedWhiteArrowCodePoint) +
             1;
   auto h0 = v0 + 1;
   auto v1 = h0 + 1;

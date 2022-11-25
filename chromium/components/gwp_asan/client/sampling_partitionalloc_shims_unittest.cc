@@ -12,6 +12,7 @@
 
 #include "base/allocator/partition_allocator/partition_alloc.h"
 #include "base/bind_helpers.h"
+#include "base/logging.h"
 #include "base/partition_alloc_buildflags.h"
 #include "base/process/process_metrics.h"
 #include "base/strings/string_number_conversions.h"
@@ -50,10 +51,15 @@ constexpr size_t kLoopIterations = kSamplingFrequency * 4;
 constexpr int kSuccess = 0;
 constexpr int kFailure = 1;
 
+static void HandleOOM(size_t unused_size) {
+  LOG(FATAL) << "Out of memory.";
+}
+
 class SamplingPartitionAllocShimsTest : public base::MultiProcessTest {
  public:
   static void multiprocessTestSetup() {
     crash_reporter::InitializeCrashKeys();
+    base::PartitionAllocGlobalInit(HandleOOM);
     InstallPartitionAllocHooks(
         AllocatorState::kMaxMetadata, AllocatorState::kMaxMetadata,
         AllocatorState::kMaxSlots, kSamplingFrequency, base::DoNothing());
@@ -72,7 +78,7 @@ class SamplingPartitionAllocShimsTest : public base::MultiProcessTest {
 MULTIPROCESS_TEST_MAIN_WITH_SETUP(
     BasicFunctionality,
     SamplingPartitionAllocShimsTest::multiprocessTestSetup) {
-  base::PartitionAllocatorGeneric allocator;
+  base::PartitionAllocator allocator;
   allocator.init();
   for (size_t i = 0; i < kLoopIterations; i++) {
     void* ptr = allocator.root()->Alloc(1, kFakeType);
@@ -92,7 +98,7 @@ TEST_F(SamplingPartitionAllocShimsTest, BasicFunctionality) {
 MULTIPROCESS_TEST_MAIN_WITH_SETUP(
     Realloc,
     SamplingPartitionAllocShimsTest::multiprocessTestSetup) {
-  base::PartitionAllocatorGeneric allocator;
+  base::PartitionAllocator allocator;
   allocator.init();
 
   void* alloc = GetPartitionAllocGpaForTesting().Allocate(base::GetPageSize());
@@ -121,7 +127,7 @@ TEST_F(SamplingPartitionAllocShimsTest, Realloc) {
 MULTIPROCESS_TEST_MAIN_WITH_SETUP(
     DifferentTypesDontOverlap,
     SamplingPartitionAllocShimsTest::multiprocessTestSetup) {
-  base::PartitionAllocatorGeneric allocator;
+  base::PartitionAllocator allocator;
   allocator.init();
 
   std::set<void*> type1, type2;

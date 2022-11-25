@@ -78,12 +78,14 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) ThrottlingNetworkTransaction
   void SetWebSocketHandshakeStreamCreateHelper(
       net::WebSocketHandshakeStreamBase::CreateHelper* create_helper) override;
   void SetBeforeNetworkStartCallback(
-      const BeforeNetworkStartCallback& callback) override;
+      BeforeNetworkStartCallback callback) override;
+  void SetConnectedCallback(const ConnectedCallback& callback) override;
   void SetRequestHeadersCallback(net::RequestHeadersCallback callback) override;
   void SetResponseHeadersCallback(
       net::ResponseHeadersCallback callback) override;
   int ResumeNetworkStart() override;
   void GetConnectionAttempts(net::ConnectionAttempts* out) const override;
+  void CloseConnectionOnDestruction() override;
 
  protected:
   friend class ThrottlingControllerTestHelper;

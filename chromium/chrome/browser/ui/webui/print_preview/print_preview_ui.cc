@@ -8,14 +8,18 @@
 #include <utility>
 #include <vector>
 
+#include "base/base_paths.h"
 #include "base/bind.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/id_map.h"
-#include "base/feature_list.h"
+#include "base/files/file_path.h"
+#include "base/files/file_util.h"
 #include "base/lazy_instance.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/numerics/safe_conversions.h"
+#include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -25,46 +29,47 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/browser_process_platform_part.h"
+#include "chrome/browser/pdf/pdf_extension_util.h"
 #include "chrome/browser/printing/background_printing_manager.h"
+#include "chrome/browser/printing/print_job_manager.h"
 #include "chrome/browser/printing/print_preview_data_service.h"
+#include "chrome/browser/printing/printer_query.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/webui/metrics_handler.h"
+#include "chrome/browser/ui/webui/plural_string_handler.h"
 #include "chrome/browser/ui/webui/print_preview/print_preview_handler.h"
 #include "chrome/browser/ui/webui/theme_source.h"
 #include "chrome/browser/ui/webui/webui_util.h"
-#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/browser_resources.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/component_extension_resources.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/print_preview_pdf_resources.h"
 #include "chrome/grit/print_preview_resources.h"
 #include "chrome/grit/print_preview_resources_map.h"
+#include "chromeos/constants/chromeos_features.h"
+#include "components/cloud_devices/common/cloud_devices_urls.h"
 #include "components/prefs/pref_service.h"
 #include "components/printing/common/print_messages.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/user_manager/user_manager.h"
+#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "extensions/common/constants.h"
-#include "printing/page_size_margins.h"
+#include "printing/mojom/print.mojom.h"
 #include "printing/print_job_constants.h"
+#include "services/network/public/mojom/content_security_policy.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/base/webui/web_ui_util.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/web_dialogs/web_dialog_delegate.h"
 #include "ui/web_dialogs/web_dialog_ui.h"
-
-#if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
-#elif defined(OS_WIN)
-#include "base/enterprise_util.h"
-#endif
 
 #if !BUILDFLAG(OPTIMIZE_WEBUI)
 #include "chrome/browser/ui/webui/managed_ui_handler.h"
@@ -76,7 +81,7 @@ namespace printing {
 
 namespace {
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
 // U+0028 U+21E7 U+2318 U+0050 U+0029 in UTF8
 const char kBasicPrintShortcut[] = "\x28\xE2\x8c\xA5\xE2\x8C\x98\x50\x29";
 #elif !defined(OS_CHROMEOS)
@@ -85,10 +90,24 @@ const char kBasicPrintShortcut[] = "(Ctrl+Shift+P)";
 
 #if !BUILDFLAG(OPTIMIZE_WEBUI)
 constexpr char kGeneratedPath[] =
-    "@out_folder@/gen/chrome/browser/resources/print_preview/";
+    "@out_folder@/gen/chrome/browser/resources/print_preview/preprocessed/";
 #endif
 
 PrintPreviewUI::TestDelegate* g_test_delegate = nullptr;
+
+void StopWorker(int document_cookie) {
+  if (document_cookie <= 0)
+    return;
+  scoped_refptr<PrintQueriesQueue> queue =
+      g_browser_process->print_job_manager()->queue();
+  std::unique_ptr<PrinterQuery> printer_query =
+      queue->PopPrinterQuery(document_cookie);
+  if (printer_query) {
+    content::GetIOThreadTaskRunner({})->PostTask(
+        FROM_HERE,
+        base::BindOnce(&PrinterQuery::StopWorker, std::move(printer_query)));
+  }
+}
 
 // Thread-safe wrapper around a base::flat_map to keep track of mappings from
 // PrintPreviewUI IDs to most recent print preview request IDs.
@@ -161,6 +180,22 @@ void HandleRequestCallback(const std::string& path,
     std::move(callback).Run(data.get());
     return;
   }
+
+  // May be a test request
+  if (base::EndsWith(path, "/test.pdf", base::CompareCase::SENSITIVE)) {
+    std::string test_pdf_content;
+    base::FilePath test_data_path;
+    CHECK(base::PathService::Get(base::DIR_TEST_DATA, &test_data_path));
+    base::FilePath pdf_path =
+        test_data_path.AppendASCII("pdf/test.pdf").NormalizePathSeparators();
+
+    CHECK(base::ReadFileToString(pdf_path, &test_pdf_content));
+    scoped_refptr<base::RefCountedString> response =
+        base::RefCountedString::TakeString(&test_pdf_content);
+    std::move(callback).Run(response.get());
+    return;
+  }
+
   // Invalid request.
   auto empty_bytes = base::MakeRefCounted<base::RefCountedBytes>();
   std::move(callback).Run(empty_bytes.get());
@@ -180,13 +215,14 @@ void AddPrintPreviewStrings(content::WebUIDataSource* source) {
      IDS_PRINT_PREVIEW_ADVANCED_SETTINGS_SEARCH_BOX_PLACEHOLDER},
     {"bottom", IDS_PRINT_PREVIEW_BOTTOM_MARGIN_LABEL},
     {"cancel", IDS_CANCEL},
-    {"cloudPrintPromotion", IDS_PRINT_PREVIEW_CLOUD_PRINT_PROMOTION},
+    {"clearSearch", IDS_CLEAR_SEARCH},
     {"copiesInstruction", IDS_PRINT_PREVIEW_COPIES_INSTRUCTION},
     {"copiesLabel", IDS_PRINT_PREVIEW_COPIES_LABEL},
     {"couldNotPrint", IDS_PRINT_PREVIEW_COULD_NOT_PRINT},
     {"customMargins", IDS_PRINT_PREVIEW_CUSTOM_MARGINS},
     {"defaultMargins", IDS_PRINT_PREVIEW_DEFAULT_MARGINS},
     {"destinationLabel", IDS_PRINT_PREVIEW_DESTINATION_LABEL},
+    {"destinationNotSupportedWarning", IDS_DESTINATION_NOT_SUPPORTED_WARNING},
     {"destinationSearchTitle", IDS_PRINT_PREVIEW_DESTINATION_SEARCH_TITLE},
     {"dpiItemLabel", IDS_PRINT_PREVIEW_DPI_ITEM_LABEL},
     {"dpiLabel", IDS_PRINT_PREVIEW_DPI_LABEL},
@@ -252,12 +288,6 @@ void AddPrintPreviewStrings(content::WebUIDataSource* source) {
     {"printButton", IDS_PRINT_PREVIEW_PRINT_BUTTON},
     {"printDestinationsTitle", IDS_PRINT_PREVIEW_PRINT_DESTINATIONS_TITLE},
     {"printPagesLabel", IDS_PRINT_PREVIEW_PRINT_PAGES_LABEL},
-    {"printPreviewPageLabelPlural", IDS_PRINT_PREVIEW_PAGE_LABEL_PLURAL},
-    {"printPreviewPageLabelSingular", IDS_PRINT_PREVIEW_PAGE_LABEL_SINGULAR},
-    {"printPreviewSheetsLabelPlural", IDS_PRINT_PREVIEW_SHEETS_LABEL_PLURAL},
-    {"printPreviewSheetsLabelSingular",
-     IDS_PRINT_PREVIEW_SHEETS_LABEL_SINGULAR},
-    {"printPreviewSummaryFormatShort", IDS_PRINT_PREVIEW_SUMMARY_FORMAT_SHORT},
     {"printToGoogleDrive", IDS_PRINT_PREVIEW_PRINT_TO_GOOGLE_DRIVE},
     {"printToPDF", IDS_PRINT_PREVIEW_PRINT_TO_PDF},
     {"printerSharingInviteText", IDS_PRINT_PREVIEW_INVITE_TEXT},
@@ -286,6 +316,7 @@ void AddPrintPreviewStrings(content::WebUIDataSource* source) {
     {"title", IDS_PRINT_PREVIEW_TITLE},
     {"top", IDS_PRINT_PREVIEW_TOP_MARGIN_LABEL},
     {"unsupportedCloudPrinter", IDS_PRINT_PREVIEW_UNSUPPORTED_CLOUD_PRINTER},
+    {"warningIconAriaLabel", IDS_WARNING_ICON_ARIA_LABEL},
 #if defined(OS_CHROMEOS)
     {"configuringFailedText", IDS_PRINT_CONFIGURING_FAILED_TEXT},
     {"configuringInProgressText", IDS_PRINT_CONFIGURING_IN_PROGRESS_TEXT},
@@ -293,8 +324,25 @@ void AddPrintPreviewStrings(content::WebUIDataSource* source) {
     {"pinErrorMessage", IDS_PRINT_PREVIEW_PIN_ERROR_MESSAGE},
     {"pinPlaceholder", IDS_PRINT_PREVIEW_PIN_PLACEHOLDER},
     {"printerEulaURL", IDS_PRINT_PREVIEW_EULA_URL},
+    {"printerStatusDeviceError", IDS_PRINT_PREVIEW_PRINTER_STATUS_DEVICE_ERROR},
+    {"printerStatusDoorOpen", IDS_PRINT_PREVIEW_PRINTER_STATUS_DOOR_OPEN},
+    {"printerStatusLowOnInk", IDS_PRINT_PREVIEW_PRINTER_STATUS_LOW_ON_INK},
+    {"printerStatusLowOnPaper", IDS_PRINT_PREVIEW_PRINTER_STATUS_LOW_ON_PAPER},
+    {"printerStatusOutOfInk", IDS_PRINT_PREVIEW_PRINTER_STATUS_OUT_OF_INK},
+    {"printerStatusOutOfPaper", IDS_PRINT_PREVIEW_PRINTER_STATUS_OUT_OF_PAPER},
+    {"printerStatusOutputAlmostFull",
+     IDS_PRINT_PREVIEW_PRINTER_STATUS_OUPUT_ALMOST_FULL},
+    {"printerStatusOutputFull", IDS_PRINT_PREVIEW_PRINTER_STATUS_OUPUT_FULL},
+    {"printerStatusPaperJam", IDS_PRINT_PREVIEW_PRINTER_STATUS_PAPER_JAM},
+    {"printerStatusPaused", IDS_PRINT_PREVIEW_PRINTER_STATUS_PAUSED},
+    {"printerStatusPrinterQueueFull",
+     IDS_PRINT_PREVIEW_PRINTER_STATUS_PRINTER_QUEUE_FULL},
+    {"printerStatusPrinterUnreachable",
+     IDS_PRINT_PREVIEW_PRINTER_STATUS_PRINTER_UNREACHABLE},
+    {"printerStatusStopped", IDS_PRINT_PREVIEW_PRINTER_STATUS_STOPPED},
+    {"printerStatusTrayMissing", IDS_PRINT_PREVIEW_PRINTER_STATUS_TRAY_MISSING},
 #endif
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
     {"openPdfInPreviewOption", IDS_PRINT_PREVIEW_OPEN_PDF_IN_PREVIEW_APP},
     {"openingPDFInPreview", IDS_PRINT_PREVIEW_OPENING_PDF_IN_PREVIEW_APP},
 #endif
@@ -304,12 +352,51 @@ void AddPrintPreviewStrings(content::WebUIDataSource* source) {
   source->AddString("gcpCertificateErrorLearnMoreURL",
                     chrome::kCloudPrintCertificateErrorLearnMoreURL);
 
+  const bool is_enterprise_managed = webui::IsEnterpriseManaged();
+  if (is_enterprise_managed) {
+    source->AddLocalizedString(
+        "cloudPrintingNotSupportedWarning",
+        IDS_CLOUD_PRINTING_NOT_SUPPORTED_WARNING_ENTERPRISE);
+    source->AddLocalizedString("printerNotSupportedWarning",
+                               IDS_PRINTER_NOT_SUPPORTED_WARNING_ENTERPRISE);
+  } else {
+    source->AddString(
+        "cloudPrintingNotSupportedWarning",
+        l10n_util::GetStringFUTF16(
+            IDS_CLOUD_PRINTING_NOT_SUPPORTED_WARNING,
+            base::ASCIIToUTF16(cloud_devices::kCloudPrintDeprecationHelpURL)));
+    source->AddString(
+        "printerNotSupportedWarning",
+        l10n_util::GetStringFUTF16(
+            IDS_PRINTER_NOT_SUPPORTED_WARNING,
+            base::ASCIIToUTF16(cloud_devices::kCloudPrintDeprecationHelpURL)));
+  }
+
 #if !defined(OS_CHROMEOS)
+  if (is_enterprise_managed) {
+    source->AddLocalizedString(
+        "saveToDriveNotSupportedWarning",
+        IDS_GOOGLE_DRIVE_OPTION_NOT_SUPPORTED_WARNING_ENTERPRISE);
+  } else {
+    source->AddString(
+        "saveToDriveNotSupportedWarning",
+        l10n_util::GetStringFUTF16(
+            IDS_GOOGLE_DRIVE_OPTION_NOT_SUPPORTED_WARNING,
+            base::ASCIIToUTF16(cloud_devices::kCloudPrintDeprecationHelpURL)));
+  }
+
   const base::string16 shortcut_text(base::UTF8ToUTF16(kBasicPrintShortcut));
   source->AddString("systemDialogOption",
                     l10n_util::GetStringFUTF16(
                         IDS_PRINT_PREVIEW_SYSTEM_DIALOG_OPTION, shortcut_text));
 #endif
+
+  // Register strings for the PDF viewer, so that $i18n{} replacements work.
+  base::Value pdf_strings(base::Value::Type::DICTIONARY);
+  pdf_extension_util::AddStrings(
+      pdf_extension_util::PdfViewerContext::kPrintPreview, &pdf_strings);
+  pdf_extension_util::AddAdditionalData(&pdf_strings);
+  source->AddLocalizedStrings(base::Value::AsDictionaryValue(pdf_strings));
 }
 
 void AddPrintPreviewFlags(content::WebUIDataSource* source, Profile* profile) {
@@ -321,73 +408,64 @@ void AddPrintPreviewFlags(content::WebUIDataSource* source, Profile* profile) {
   source->AddBoolean("useSystemDefaultPrinter", system_default_printer);
 #endif
 
-  bool enterprise_managed = false;
-#if defined(OS_CHROMEOS)
-  policy::BrowserPolicyConnectorChromeOS* connector =
-      g_browser_process->platform_part()->browser_policy_connector_chromeos();
-  enterprise_managed = connector->IsEnterpriseManaged();
-#elif defined(OS_WIN)
-  enterprise_managed = base::IsMachineExternallyManaged();
-#endif
-  source->AddBoolean("isEnterpriseManaged", enterprise_managed);
+  source->AddBoolean("isEnterpriseManaged", webui::IsEnterpriseManaged());
 
-  bool cloud_printer_handler_enabled =
-      base::FeatureList::IsEnabled(features::kCloudPrinterHandler);
-  source->AddBoolean("cloudPrinterHandlerEnabled",
-                     cloud_printer_handler_enabled);
+  bool cloud_print_deprecation_warnings_suppressed =
+      profile->GetPrefs()->GetBoolean(
+          prefs::kCloudPrintDeprecationWarningsSuppressed);
+  source->AddBoolean("cloudPrintDeprecationWarningsSuppressed",
+                     cloud_print_deprecation_warnings_suppressed);
+
+#if defined(OS_CHROMEOS)
+  source->AddBoolean(
+      "showPrinterStatus",
+      base::FeatureList::IsEnabled(chromeos::features::kPrinterStatus));
+  source->AddBoolean(
+      "showPrinterStatusInDialog",
+      base::FeatureList::IsEnabled(chromeos::features::kPrinterStatusDialog));
+  source->AddBoolean(
+      "printSaveToDrive",
+      base::FeatureList::IsEnabled(chromeos::features::kPrintSaveToDrive));
+#endif
 }
 
 void SetupPrintPreviewPlugin(content::WebUIDataSource* source) {
-  static constexpr struct {
-    const char* path;
-    int id;
-  } kPdfResources[] = {
-    {"pdf/browser_api.js", IDR_PDF_BROWSER_API_JS},
-    {"pdf/constants.js", IDR_PDF_CONSTANTS_JS},
-    {"pdf/controller.js", IDR_PDF_CONTROLLER_JS},
-    {"pdf/elements/icons.js", IDR_PDF_ICONS_JS},
-    {"pdf/elements/shared-vars.js", IDR_PDF_SHARED_VARS_JS},
-    {"pdf/elements/viewer-bookmark.js", IDR_PDF_VIEWER_BOOKMARK_JS},
-    {"pdf/elements/viewer-error-screen.js", IDR_PDF_VIEWER_ERROR_SCREEN_JS},
-#if defined(OS_CHROMEOS)
-    {"pdf/elements/viewer-ink-host.js", IDR_PDF_VIEWER_INK_HOST_JS},
-#endif
-    {"pdf/elements/viewer-page-indicator.js", IDR_PDF_VIEWER_PAGE_INDICATOR_JS},
-    {"pdf/elements/viewer-page-selector.js", IDR_PDF_VIEWER_PAGE_SELECTOR_JS},
-    {"pdf/elements/viewer-password-screen.js",
-     IDR_PDF_VIEWER_PASSWORD_SCREEN_JS},
-    {"pdf/elements/viewer-pdf-toolbar.js", IDR_PDF_VIEWER_PDF_TOOLBAR_JS},
-#if defined(OS_CHROMEOS)
-    {"pdf/elements/viewer-form-warning.js", IDR_PDF_VIEWER_FORM_WARNING_JS},
-    {"pdf/elements/viewer-pen-options.js", IDR_PDF_VIEWER_PEN_OPTIONS_JS},
-#endif
-    {"pdf/elements/viewer-toolbar-dropdown.js",
-     IDR_PDF_VIEWER_TOOLBAR_DROPDOWN_JS},
-    {"pdf/elements/viewer-zoom-button.js", IDR_PDF_VIEWER_ZOOM_BUTTON_JS},
-    {"pdf/elements/viewer-zoom-toolbar.js", IDR_PDF_VIEWER_ZOOM_SELECTOR_JS},
-    {"pdf/gesture_detector.js", IDR_PDF_GESTURE_DETECTOR_JS},
-    {"pdf/index.css", IDR_PDF_INDEX_CSS},
-    {"pdf/index.html", IDR_PDF_INDEX_HTML},
-    {"pdf/main.js", IDR_PDF_MAIN_JS},
-    {"pdf/metrics.js", IDR_PDF_METRICS_JS},
-    {"pdf/navigator.js", IDR_PDF_NAVIGATOR_JS},
-    {"pdf/open_pdf_params_parser.js", IDR_PDF_OPEN_PDF_PARAMS_PARSER_JS},
-    {"pdf/pdf_scripting_api.js", IDR_PDF_PDF_SCRIPTING_API_JS},
-    {"pdf/pdf_viewer.js", IDR_PDF_PDF_VIEWER_JS},
-    {"pdf/toolbar_manager.js", IDR_PDF_TOOLBAR_MANAGER_JS},
-    {"pdf/viewport.js", IDR_PDF_VIEWPORT_JS},
-    {"pdf/viewport_scroller.js", IDR_PDF_VIEWPORT_SCROLLER_JS},
-    {"pdf/zoom_manager.js", IDR_PDF_ZOOM_MANAGER_JS},
+  static constexpr webui::ResourcePath kPdfResources[] = {
+      {"pdf/browser_api.js", IDR_PDF_BROWSER_API_JS},
+      {"pdf/constants.js", IDR_PDF_CONSTANTS_JS},
+      {"pdf/controller.js", IDR_PDF_CONTROLLER_JS},
+      {"pdf/elements/icons.js", IDR_PDF_ICONS_JS},
+      {"pdf/elements/shared-vars.js", IDR_PDF_SHARED_VARS_JS},
+      {"pdf/elements/viewer-error-screen.js", IDR_PDF_VIEWER_ERROR_SCREEN_JS},
+      {"pdf/elements/viewer-page-indicator.js",
+       IDR_PRINT_PREVIEW_PDF_VIEWER_PAGE_INDICATOR_JS},
+      {"pdf/elements/viewer-zoom-button.js", IDR_PDF_VIEWER_ZOOM_BUTTON_JS},
+      {"pdf/elements/viewer-zoom-toolbar.js", IDR_PDF_VIEWER_ZOOM_SELECTOR_JS},
+      {"pdf/gesture_detector.js", IDR_PDF_GESTURE_DETECTOR_JS},
+      {"pdf/index.css", IDR_PDF_INDEX_CSS},
+      {"pdf/index.html", IDR_PRINT_PREVIEW_PDF_INDEX_PP_HTML},
+      {"pdf/main.js", IDR_PDF_MAIN_JS},
+      {"pdf/metrics.js", IDR_PDF_METRICS_JS},
+      {"pdf/open_pdf_params_parser.js", IDR_PDF_OPEN_PDF_PARAMS_PARSER_JS},
+      {"pdf/pdf_scripting_api.js", IDR_PDF_PDF_SCRIPTING_API_JS},
+      {"pdf/pdf_viewer_base.js", IDR_PDF_PDF_VIEWER_BASE_JS},
+      {"pdf/pdf_viewer.js", IDR_PRINT_PREVIEW_PDF_PDF_VIEWER_PP_JS},
+      {"pdf/pdf_viewer_shared_style.js", IDR_PDF_PDF_VIEWER_SHARED_STYLE_JS},
+      {"pdf/pdf_viewer_utils.js", IDR_PDF_PDF_VIEWER_UTILS_JS},
+      {"pdf/toolbar_manager.js", IDR_PDF_TOOLBAR_MANAGER_JS},
+      {"pdf/viewport.js", IDR_PDF_VIEWPORT_JS},
+      {"pdf/viewport_scroller.js", IDR_PDF_VIEWPORT_SCROLLER_JS},
+      {"pdf/zoom_manager.js", IDR_PDF_ZOOM_MANAGER_JS},
   };
-  for (const auto& resource : kPdfResources) {
-    source->AddResourcePath(resource.path, resource.id);
-  }
+  webui::AddResourcePathsBulk(source, kPdfResources);
 
   source->SetRequestFilter(base::BindRepeating(&ShouldHandleRequestCallback),
                            base::BindRepeating(&HandleRequestCallback));
-  source->OverrideContentSecurityPolicyChildSrc("child-src 'self';");
+  source->OverrideContentSecurityPolicy(
+      network::mojom::CSPDirectiveName::ChildSrc, "child-src 'self';");
   source->DisableDenyXFrameOptions();
-  source->OverrideContentSecurityPolicyObjectSrc("object-src 'self';");
+  source->OverrideContentSecurityPolicy(
+      network::mojom::CSPDirectiveName::ObjectSrc, "object-src 'self';");
 }
 
 content::WebUIDataSource* CreatePrintPreviewUISource(Profile* profile) {
@@ -414,6 +492,19 @@ PrintPreviewHandler* CreatePrintPreviewHandlers(content::WebUI* web_ui) {
   PrintPreviewHandler* handler_ptr = handler.get();
   web_ui->AddMessageHandler(std::move(handler));
   web_ui->AddMessageHandler(std::make_unique<MetricsHandler>());
+
+  // Add a handler to provide pluralized strings.
+  auto plural_string_handler = std::make_unique<PluralStringHandler>();
+  plural_string_handler->AddLocalizedString(
+      "printPreviewPageSummaryLabel", IDS_PRINT_PREVIEW_PAGE_SUMMARY_LABEL);
+  plural_string_handler->AddLocalizedString(
+      "printPreviewSheetSummaryLabel", IDS_PRINT_PREVIEW_SHEET_SUMMARY_LABEL);
+#if defined(OS_CHROMEOS)
+  plural_string_handler->AddLocalizedString(
+      "sheetsLimitErrorMessage", IDS_PRINT_PREVIEW_SHEETS_LIMIT_ERROR_MESSAGE);
+#endif
+  web_ui->AddMessageHandler(std::move(plural_string_handler));
+
   return handler_ptr;
 }
 
@@ -448,10 +539,20 @@ PrintPreviewUI::~PrintPreviewUI() {
   ClearPreviewUIId();
 }
 
+mojo::PendingAssociatedRemote<mojom::PrintPreviewUI>
+PrintPreviewUI::BindPrintPreviewUI() {
+  return receiver_.BindNewEndpointAndPassRemote();
+}
+
+bool PrintPreviewUI::IsBound() const {
+  return receiver_.is_bound();
+}
+
 void PrintPreviewUI::ClearPreviewUIId() {
   if (!id_)
     return;
 
+  receiver_.reset();
   PrintPreviewDataService::GetInstance()->RemoveEntry(*id_);
   g_print_preview_request_id_map.Get().Erase(*id_);
   g_print_preview_ui_id_map.Get().Remove(*id_);
@@ -476,6 +577,9 @@ bool PrintPreviewUI::ParseDataPath(const std::string& path,
                                    int* ui_id,
                                    int* page_index) {
   std::string file_path = path.substr(0, path.find_first_of('?'));
+  if (base::EndsWith(file_path, "/test.pdf", base::CompareCase::SENSITIVE))
+    return true;
+
   if (!base::EndsWith(file_path, "/print.pdf", base::CompareCase::SENSITIVE))
     return false;
 
@@ -508,19 +612,19 @@ void PrintPreviewUI::SetInitiatorTitle(
   initiator_title_ = job_title;
 }
 
-bool PrintPreviewUI::LastPageComposited(int page_number) const {
+bool PrintPreviewUI::LastPageComposited(uint32_t page_number) const {
   if (pages_to_render_.empty())
     return false;
 
   return page_number == pages_to_render_.back();
 }
 
-int PrintPreviewUI::GetPageToNupConvertIndex(int page_number) const {
+uint32_t PrintPreviewUI::GetPageToNupConvertIndex(uint32_t page_number) const {
   for (size_t index = 0; index < pages_to_render_.size(); ++index) {
     if (page_number == pages_to_render_[index])
       return index;
   }
-  return -1;
+  return kInvalidPageIndex;
 }
 
 std::vector<base::ReadOnlySharedMemoryRegion>
@@ -549,7 +653,7 @@ void PrintPreviewUI::SetInitialParams(
 }
 
 // static
-bool PrintPreviewUI::ShouldCancelRequest(const PrintHostMsg_PreviewIds& ids) {
+bool PrintPreviewUI::ShouldCancelRequest(const mojom::PreviewIds& ids) {
   int current_id = -1;
   if (!g_print_preview_request_id_map.Get().Get(ids.ui_id, &current_id))
     return true;
@@ -586,10 +690,6 @@ void PrintPreviewUI::OnInitiatorClosed() {
   }
 }
 
-void PrintPreviewUI::OnPrintPreviewCancelled(int request_id) {
-  handler_->OnPrintPreviewCancelled(request_id);
-}
-
 void PrintPreviewUI::OnPrintPreviewRequest(int request_id) {
   if (!initial_preview_start_time_.is_null()) {
     base::UmaHistogramTimes(
@@ -600,9 +700,10 @@ void PrintPreviewUI::OnPrintPreviewRequest(int request_id) {
 }
 
 void PrintPreviewUI::OnDidStartPreview(
-    const PrintHostMsg_DidStartPreview_Params& params,
+    const mojom::DidStartPreviewParams& params,
     int request_id) {
-  DCHECK_GT(params.page_count, 0);
+  DCHECK_GT(params.page_count, 0u);
+  DCHECK_LE(params.page_count, kMaxPageCount);
   DCHECK(!params.pages_to_render.empty());
 
   pages_to_render_ = params.pages_to_render;
@@ -613,12 +714,12 @@ void PrintPreviewUI::OnDidStartPreview(
 
   if (g_test_delegate)
     g_test_delegate->DidGetPreviewPageCount(params.page_count);
-  handler_->SendPageCountReady(params.page_count, params.fit_to_page_scaling,
-                               request_id);
+  handler_->SendPageCountReady(base::checked_cast<int>(params.page_count),
+                               params.fit_to_page_scaling, request_id);
 }
 
 void PrintPreviewUI::OnDidGetDefaultPageLayout(
-    const PageSizeMargins& page_layout,
+    const mojom::PageSizeMargins& page_layout,
     const gfx::Rect& printable_area,
     bool has_custom_page_size_style,
     int request_id) {
@@ -646,7 +747,7 @@ void PrintPreviewUI::OnDidGetDefaultPageLayout(
   handler_->SendPageLayoutReady(layout, has_custom_page_size_style, request_id);
 }
 
-bool PrintPreviewUI::OnPendingPreviewPage(int page_number) {
+bool PrintPreviewUI::OnPendingPreviewPage(uint32_t page_number) {
   if (pages_to_render_index_ >= pages_to_render_.size())
     return false;
 
@@ -656,16 +757,18 @@ bool PrintPreviewUI::OnPendingPreviewPage(int page_number) {
 }
 
 void PrintPreviewUI::OnDidPreviewPage(
-    int page_number,
+    uint32_t page_number,
     scoped_refptr<base::RefCountedMemory> data,
     int preview_request_id) {
-  DCHECK_GE(page_number, 0);
+  DCHECK_NE(page_number, kInvalidPageIndex);
 
-  SetPrintPreviewDataForIndex(page_number, std::move(data));
+  SetPrintPreviewDataForIndex(base::checked_cast<int>(page_number),
+                              std::move(data));
 
   if (g_test_delegate)
     g_test_delegate->DidRenderPreviewPage(web_ui()->GetWebContents());
-  handler_->SendPagePreviewReady(page_number, *id_, preview_request_id);
+  handler_->SendPagePreviewReady(base::checked_cast<int>(page_number), *id_,
+                                 preview_request_id);
 }
 
 void PrintPreviewUI::OnPreviewDataIsAvailable(
@@ -675,9 +778,6 @@ void PrintPreviewUI::OnPreviewDataIsAvailable(
     base::UmaHistogramTimes(
         "PrintPreview.InitialDisplayTime",
         base::TimeTicks::Now() - initial_preview_start_time_);
-    base::UmaHistogramCounts1M(
-        "PrintPreview.RegeneratePreviewRequest.BeforeFirstData",
-        handler_->regenerate_preview_request_count());
     initial_preview_start_time_ = base::TimeTicks();
   }
 
@@ -692,10 +792,6 @@ void PrintPreviewUI::OnCancelPendingPreviewRequest() {
 
 void PrintPreviewUI::OnPrintPreviewFailed(int request_id) {
   handler_->OnPrintPreviewFailed(request_id);
-}
-
-void PrintPreviewUI::OnInvalidPrinterSettings(int request_id) {
-  handler_->OnInvalidPrinterSettings(request_id);
 }
 
 void PrintPreviewUI::OnHidePreviewDialog() {
@@ -717,6 +813,7 @@ void PrintPreviewUI::OnHidePreviewDialog() {
 }
 
 void PrintPreviewUI::OnClosePrintPreviewDialog() {
+  receiver_.reset();
   if (dialog_closed_)
     return;
   dialog_closed_ = true;
@@ -727,11 +824,30 @@ void PrintPreviewUI::OnClosePrintPreviewDialog() {
   delegate->OnDialogCloseFromWebUI();
 }
 
-void PrintPreviewUI::OnSetOptionsFromDocument(
-    const PrintHostMsg_SetOptionsFromDocument_Params& params,
-    int request_id) {
-  handler_->SendPrintPresetOptions(params.is_scaling_disabled, params.copies,
-                                   params.duplex, request_id);
+void PrintPreviewUI::SetOptionsFromDocument(
+    const mojom::OptionsFromDocumentParamsPtr params,
+    int32_t request_id) {
+  handler_->SendPrintPresetOptions(params->is_scaling_disabled, params->copies,
+                                   params->duplex, request_id);
+}
+
+void PrintPreviewUI::PrintPreviewFailed(int32_t document_cookie,
+                                        int32_t request_id) {
+  StopWorker(document_cookie);
+  OnPrintPreviewFailed(request_id);
+}
+
+void PrintPreviewUI::PrintPreviewCancelled(int32_t document_cookie,
+                                           int32_t request_id) {
+  // Always need to stop the worker.
+  StopWorker(document_cookie);
+  handler_->OnPrintPreviewCancelled(request_id);
+}
+
+void PrintPreviewUI::PrinterSettingsInvalid(int32_t document_cookie,
+                                            int32_t request_id) {
+  StopWorker(document_cookie);
+  handler_->OnInvalidPrinterSettings(request_id);
 }
 
 // static

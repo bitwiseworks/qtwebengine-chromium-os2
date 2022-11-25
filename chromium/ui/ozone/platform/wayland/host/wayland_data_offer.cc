@@ -4,12 +4,8 @@
 
 #include "ui/ozone/platform/wayland/host/wayland_data_offer.h"
 
-#include <fcntl.h>
-#include <algorithm>
-
+#include "base/check.h"
 #include "base/files/file_util.h"
-#include "base/logging.h"
-#include "base/stl_util.h"
 #include "ui/base/clipboard/clipboard_constants.h"
 
 namespace ui {
@@ -30,7 +26,7 @@ WaylandDataOffer::~WaylandDataOffer() {
 
 void WaylandDataOffer::SetAction(uint32_t dnd_actions,
                                  uint32_t preferred_action) {
-  if (wl_data_offer_get_version(data_offer_.get()) >=
+  if (wl::get_version_of_object(data_offer_.get()) >=
       WL_DATA_OFFER_SET_ACTIONS_SINCE_VERSION) {
     wl_data_offer_set_actions(data_offer_.get(), dnd_actions, preferred_action);
   }
@@ -66,9 +62,10 @@ base::ScopedFD WaylandDataOffer::Receive(const std::string& mime_type) {
 }
 
 void WaylandDataOffer::FinishOffer() {
-  if (wl_data_offer_get_version(data_offer_.get()) >=
-      WL_DATA_OFFER_FINISH_SINCE_VERSION)
+  if (wl::get_version_of_object(data_offer_.get()) >=
+      WL_DATA_OFFER_FINISH_SINCE_VERSION) {
     wl_data_offer_finish(data_offer_.get());
+  }
 }
 
 uint32_t WaylandDataOffer::source_actions() const {

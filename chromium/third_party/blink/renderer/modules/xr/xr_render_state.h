@@ -26,8 +26,6 @@ class XRRenderState : public ScriptWrappable {
   double depthNear() const { return depth_near_; }
   double depthFar() const { return depth_far_; }
   base::Optional<double> inlineVerticalFieldOfView() const;
-  // TODO(crbug.com/1060971): Remove |is_null| version.
-  double inlineVerticalFieldOfView(bool& is_null) const;  // DEPRECATED
   XRWebGLLayer* baseLayer() const { return base_layer_; }
 
   HTMLCanvasElement* output_canvas() const;
@@ -38,7 +36,7 @@ class XRRenderState : public ScriptWrappable {
   // bound to a different session.
   void removeOutputContext();
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   bool immersive_;

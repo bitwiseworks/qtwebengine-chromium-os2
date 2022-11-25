@@ -12,6 +12,7 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
+#include "content/public/test/browser_test.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/switches.h"
@@ -84,8 +85,8 @@ IN_PROC_BROWSER_TEST_F(PermissionsApiTest, MAYBE_FaviconPermission) {
 
 // Test functions and APIs that are always allowed (even if you ask for no
 // permissions).
-// Flaky on MacOS (see crbug/1064929).
-#if defined(OS_MACOSX)
+// Flaky on MacOS and Linux (see crbug/1064929, crbug/1101043).
+#if (defined(OS_MAC) || defined(OS_CHROMEOS))
 #define MAYBE_AlwaysAllowed DISABLED_AlwaysAllowed
 #else
 #define MAYBE_AlwaysAllowed AlwaysAllowed

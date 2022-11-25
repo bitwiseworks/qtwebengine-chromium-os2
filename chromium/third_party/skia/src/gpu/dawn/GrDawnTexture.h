@@ -17,11 +17,11 @@ class GrDawnTexture : public GrTexture {
 public:
     static sk_sp<GrDawnTexture> Make(GrDawnGpu*, SkISize dimensions,
                                      wgpu::TextureFormat format, GrRenderable, int sampleCnt,
-                                     SkBudgeted, int mipLevels, GrMipMapsStatus);
+                                     SkBudgeted, int mipLevels, GrMipmapStatus);
 
     static sk_sp<GrDawnTexture> MakeWrapped(GrDawnGpu*, SkISize dimensions,
                                             GrRenderable, int sampleCnt,
-                                            GrMipMapsStatus, GrWrapCacheable, GrIOType,
+                                            GrMipmapStatus, GrWrapCacheable, GrIOType,
                                             const GrDawnTextureInfo&);
 
     ~GrDawnTexture() override;
@@ -37,10 +37,8 @@ public:
                 const SkIRect& dstRect, wgpu::CommandEncoder copyEncoder);
 
     wgpu::Texture texture() const { return fInfo.fTexture; }
-    wgpu::TextureView textureView() const { return fTextureView; }
 protected:
-    GrDawnTexture(GrDawnGpu*, SkISize dimensions, wgpu::TextureView,
-                  const GrDawnTextureInfo&, GrMipMapsStatus);
+    GrDawnTexture(GrDawnGpu*, SkISize dimensions, const GrDawnTextureInfo&, GrMipmapStatus);
 
     GrDawnGpu* getDawnGpu() const;
 
@@ -53,9 +51,8 @@ protected:
 
 private:
     GrDawnTextureInfo        fInfo;
-    wgpu::TextureView        fTextureView;
 
-    typedef GrTexture INHERITED;
+    using INHERITED = GrTexture;
 };
 
 #endif

@@ -7,12 +7,14 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/origin_trials/origin_trial_context.h"
 #include "third_party/blink/renderer/core/script/script.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/core/workers/global_scope_creation_params.h"
 #include "third_party/blink/renderer/core/workers/main_thread_worklet_reporting_proxy.h"
 #include "third_party/blink/renderer/core/workers/worklet_global_scope.h"
+#include "third_party/blink/renderer/core/workers/worklet_global_scope_test_helper.h"
 #include "third_party/blink/renderer/core/workers/worklet_module_responses_map.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
@@ -22,21 +24,14 @@ namespace blink {
 class MainThreadWorkletReportingProxyForTest final
     : public MainThreadWorkletReportingProxy {
  public:
-  explicit MainThreadWorkletReportingProxyForTest(Document* document)
-      : MainThreadWorkletReportingProxy(document) {}
+  explicit MainThreadWorkletReportingProxyForTest(LocalDOMWindow* window)
+      : MainThreadWorkletReportingProxy(window) {}
 
   void CountFeature(WebFeature feature) override {
     // Any feature should be reported only one time.
     EXPECT_FALSE(reported_features_[static_cast<size_t>(feature)]);
     reported_features_.set(static_cast<size_t>(feature));
     MainThreadWorkletReportingProxy::CountFeature(feature);
-  }
-
-  void CountDeprecation(WebFeature feature) override {
-    // Any feature should be reported only one time.
-    EXPECT_FALSE(reported_features_[static_cast<size_t>(feature)]);
-    reported_features_.set(static_cast<size_t>(feature));
-    MainThreadWorkletReportingProxy::CountDeprecation(feature);
   }
 
  private:
@@ -52,7 +47,7 @@ class MainThreadWorkletTest : public PageTestBase {
   void SetUpScope(const String& csp_header) {
     PageTestBase::SetUp(IntSize());
     NavigateTo(KURL("https://example.com/"));
-    Document* document = &GetDocument();
+    LocalDOMWindow* window = GetFrame().DomWindow();
 
     // Set up the CSP for Document before starting MainThreadWorklet because
     // MainThreadWorklet inherits the owner Document's CSP.
@@ -60,26 +55,28 @@ class MainThreadWorkletTest : public PageTestBase {
     csp->DidReceiveHeader(csp_header,
                           network::mojom::ContentSecurityPolicyType::kEnforce,
                           network::mojom::ContentSecurityPolicySource::kHTTP);
-    document->InitContentSecurityPolicy(csp);
+    window->GetSecurityContext().SetContentSecurityPolicy(csp);
 
     reporting_proxy_ =
-        std::make_unique<MainThreadWorkletReportingProxyForTest>(document);
+        std::make_unique<MainThreadWorkletReportingProxyForTest>(window);
     auto creation_params = std::make_unique<GlobalScopeCreationParams>(
-        document->Url(), mojom::ScriptType::kModule, "MainThreadWorklet",
-        document->UserAgent(),
-        document->GetFrame()->Loader().UserAgentMetadata(),
+        window->Url(), mojom::blink::ScriptType::kModule, "MainThreadWorklet",
+        window->UserAgent(), window->GetFrame()->Loader().UserAgentMetadata(),
         nullptr /* web_worker_fetch_context */,
-        document->GetContentSecurityPolicy()->Headers(),
-        document->GetReferrerPolicy(), document->GetSecurityOrigin(),
-        document->IsSecureContext(), document->GetHttpsState(),
+        window->GetContentSecurityPolicy()->Headers(),
+        window->GetReferrerPolicy(), window->GetSecurityOrigin(),
+        window->IsSecureContext(), window->GetHttpsState(),
         nullptr /* worker_clients */, nullptr /* content_settings_client */,
-        document->GetSecurityContext().AddressSpace(),
-        OriginTrialContext::GetTokens(document->ToExecutionContext()).get(),
+        window->AddressSpace(), OriginTrialContext::GetTokens(window).get(),
         base::UnguessableToken::Create(), nullptr /* worker_settings */,
-        kV8CacheOptionsDefault,
-        MakeGarbageCollected<WorkletModuleResponsesMap>());
-    global_scope_ = MakeGarbageCollected<WorkletGlobalScope>(
-        std::move(creation_params), *reporting_proxy_, &GetFrame());
+        mojom::blink::V8CacheOptions::kDefault,
+        MakeGarbageCollected<WorkletModuleResponsesMap>(),
+        mojo::NullRemote() /* browser_interface_broker */,
+        BeginFrameProviderParams(), nullptr /* parent_feature_policy */,
+        window->GetAgentClusterID(), window->GetExecutionContextToken());
+    global_scope_ = MakeGarbageCollected<FakeWorkletGlobalScope>(
+        std::move(creation_params), *reporting_proxy_, &GetFrame(),
+        false /* create_microtask_queue */);
     EXPECT_TRUE(global_scope_->IsMainThreadWorkletGlobalScope());
     EXPECT_FALSE(global_scope_->IsThreadedWorkletGlobalScope());
   }
@@ -103,21 +100,31 @@ TEST_F(MainThreadWorkletTest, SecurityOrigin) {
   EXPECT_FALSE(global_scope_->DocumentSecurityOrigin()->IsOpaque());
 }
 
+TEST_F(MainThreadWorkletTest, AgentCluster) {
+  // The worklet should be in the owner window's agent cluster.
+  ASSERT_TRUE(GetFrame().DomWindow()->GetAgentClusterID());
+  EXPECT_EQ(global_scope_->GetAgentClusterID(),
+            GetFrame().DomWindow()->GetAgentClusterID());
+}
+
 TEST_F(MainThreadWorkletTest, ContentSecurityPolicy) {
   ContentSecurityPolicy* csp = global_scope_->GetContentSecurityPolicy();
 
   // The "script-src 'self'" directive allows this.
   EXPECT_TRUE(csp->AllowScriptFromSource(
-      global_scope_->Url(), String(), IntegrityMetadataSet(), kParserInserted));
+      global_scope_->Url(), String(), IntegrityMetadataSet(), kParserInserted,
+      global_scope_->Url(), RedirectStatus::kNoRedirect));
 
   // The "script-src https://allowed.example.com" should allow this.
-  EXPECT_TRUE(csp->AllowScriptFromSource(KURL("https://allowed.example.com"),
-                                         String(), IntegrityMetadataSet(),
-                                         kParserInserted));
+  EXPECT_TRUE(csp->AllowScriptFromSource(
+      KURL("https://allowed.example.com"), String(), IntegrityMetadataSet(),
+      kParserInserted, KURL("https://allowed.example.com"),
+      RedirectStatus::kNoRedirect));
 
   EXPECT_FALSE(csp->AllowScriptFromSource(
       KURL("https://disallowed.example.com"), String(), IntegrityMetadataSet(),
-      kParserInserted));
+      kParserInserted, KURL("https://disallowed.example.com"),
+      RedirectStatus::kNoRedirect));
 }
 
 TEST_F(MainThreadWorkletTest, UseCounter) {

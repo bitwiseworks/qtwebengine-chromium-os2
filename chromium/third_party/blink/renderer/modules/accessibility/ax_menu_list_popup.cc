@@ -53,7 +53,11 @@ AXRestriction AXMenuListPopup::Restriction() const {
 
 bool AXMenuListPopup::ComputeAccessibilityIsIgnored(
     IgnoredReasons* ignored_reasons) const {
-  return AccessibilityIsIgnoredByDefault(ignored_reasons);
+  // Base whether the menupopup is ignored on the containing <select>.
+  if (parent_)
+    return parent_->ComputeAccessibilityIsIgnored(ignored_reasons);
+
+  return kIgnoreObject;
 }
 
 AXMenuListOption* AXMenuListPopup::MenuListOptionAXObject(
@@ -176,7 +180,7 @@ AXObject* AXMenuListPopup::ActiveDescendant() {
   if (parent_ && !parent_->IsFocused())
     return nullptr;
 
-  if (active_index_ < 0 || active_index_ >= static_cast<int>(Children().size()))
+  if (active_index_ < 0 || active_index_ >= ChildCountIncludingIgnored())
     return nullptr;
 
   return children_[active_index_].Get();

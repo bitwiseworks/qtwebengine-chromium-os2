@@ -4,6 +4,8 @@
 
 #include "cc/trees/property_tree.h"
 
+#include <utility>
+
 #include "cc/input/main_thread_scrolling_reason.h"
 #include "cc/test/geometry_test_utils.h"
 #include "cc/trees/clip_node.h"
@@ -419,45 +421,6 @@ TEST(PropertyTreeTest, ScreenSpaceOpacityUpdateTest) {
   EXPECT_EQ(tree.Node(child)->screen_space_opacity, 0.25f);
 }
 
-TEST(PropertyTreeTest, NonIntegerTranslationTest) {
-  // This tests that when a node has non-integer translation, the information
-  // is propagated to the subtree.
-  PropertyTrees property_trees;
-  TransformTree& tree = property_trees.transform_tree;
-
-  int parent = tree.Insert(TransformNode(), 0);
-  tree.Node(parent)->local.Translate(1.5f, 1.5f);
-
-  int child = tree.Insert(TransformNode(), parent);
-  tree.Node(child)->local.Translate(1, 1);
-  tree.set_needs_update(true);
-  draw_property_utils::ComputeTransforms(&tree);
-  EXPECT_FALSE(
-      tree.Node(parent)->node_and_ancestors_have_only_integer_translation);
-  EXPECT_FALSE(
-      tree.Node(child)->node_and_ancestors_have_only_integer_translation);
-
-  tree.Node(parent)->local.Translate(0.5f, 0.5f);
-  tree.Node(child)->local.Translate(0.5f, 0.5f);
-  tree.Node(parent)->needs_local_transform_update = true;
-  tree.Node(child)->needs_local_transform_update = true;
-  tree.set_needs_update(true);
-  draw_property_utils::ComputeTransforms(&tree);
-  EXPECT_TRUE(
-      tree.Node(parent)->node_and_ancestors_have_only_integer_translation);
-  EXPECT_FALSE(
-      tree.Node(child)->node_and_ancestors_have_only_integer_translation);
-
-  tree.Node(child)->local.Translate(0.5f, 0.5f);
-  tree.Node(child)->needs_local_transform_update = true;
-  tree.set_needs_update(true);
-  draw_property_utils::ComputeTransforms(&tree);
-  EXPECT_TRUE(
-      tree.Node(parent)->node_and_ancestors_have_only_integer_translation);
-  EXPECT_TRUE(
-      tree.Node(child)->node_and_ancestors_have_only_integer_translation);
-}
-
 TEST(PropertyTreeTest, SingularTransformSnapTest) {
   // This tests that to_target transform is not snapped when it has a singular
   // transform.
@@ -632,6 +595,38 @@ TEST(EffectTreeTest, CopyOutputRequestsThatBecomeIllegalAreDropped) {
   effect_tree.TakeCopyRequestsAndTransformToSurface(effect_node.id,
                                                     &requests_out);
   EXPECT_TRUE(requests_out.empty());
+}
+
+// Tests that GetPixelSnappedScrollOffset cannot return a negative offset, even
+// when the snap amount is larger than the scroll offset. The snap amount can be
+// (fractionally) larger due to floating point precision errors, and if the
+// scroll offset is near zero that can naively lead to a negative offset being
+// returned which is not desirable.
+TEST(ScrollTreeTest, GetPixelSnappedScrollOffsetNegativeOffset) {
+  PropertyTrees property_trees;
+  ScrollTree& scroll_tree = property_trees.scroll_tree;
+  TransformTree& transform_tree = property_trees.transform_tree;
+
+  ElementId element_id(5);
+  int transform_node_id = transform_tree.Insert(TransformNode(), 0);
+  int scroll_node_id = scroll_tree.Insert(ScrollNode(), 0);
+  scroll_tree.Node(scroll_node_id)->transform_id = transform_node_id;
+  scroll_tree.Node(scroll_node_id)->element_id = element_id;
+
+  // Set a scroll value close to 0.
+  scroll_tree.SetScrollOffset(element_id, gfx::ScrollOffset(0, 0.1));
+  transform_tree.Node(transform_node_id)->scrolls = true;
+  transform_tree.Node(transform_node_id)->scroll_offset =
+      gfx::ScrollOffset(0, 0.1);
+
+  // Pretend that the snap amount was slightly larger than 0.1.
+  transform_tree.Node(transform_node_id)->snap_amount = gfx::Vector2dF(0, 0.2);
+  transform_tree.Node(transform_node_id)->needs_local_transform_update = false;
+
+  // The returned offset should be clamped at a minimum of 0.
+  gfx::ScrollOffset offset =
+      scroll_tree.GetPixelSnappedScrollOffset(scroll_node_id);
+  EXPECT_EQ(offset.y(), 0);
 }
 
 }  // namespace

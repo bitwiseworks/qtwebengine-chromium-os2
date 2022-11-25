@@ -43,6 +43,7 @@ URLRequestContext::URLRequestContext()
       transport_security_state_(nullptr),
       cert_transparency_verifier_(nullptr),
       ct_policy_enforcer_(nullptr),
+      sct_auditing_delegate_(nullptr),
       http_transaction_factory_(nullptr),
       job_factory_(nullptr),
       throttler_manager_(nullptr),
@@ -55,6 +56,7 @@ URLRequestContext::URLRequestContext()
       url_requests_(std::make_unique<std::set<const URLRequest*>>()),
       enable_brotli_(false),
       check_cleartext_permitted_(false),
+      require_network_isolation_key_(false),
       name_("unknown") {
   base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
       this, "URLRequestContext", base::ThreadTaskRunnerHandle::Get());
@@ -103,8 +105,8 @@ std::unique_ptr<URLRequest> URLRequestContext::CreateRequest(
     RequestPriority priority,
     URLRequest::Delegate* delegate,
     NetworkTrafficAnnotationTag traffic_annotation) const {
-  return base::WrapUnique(new URLRequest(
-      url, priority, delegate, this, network_delegate_, traffic_annotation));
+  return base::WrapUnique(
+      new URLRequest(url, priority, delegate, this, traffic_annotation));
 }
 
 void URLRequestContext::set_cookie_store(CookieStore* cookie_store) {

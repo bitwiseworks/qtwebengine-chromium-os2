@@ -5,7 +5,7 @@
 #include "chrome/browser/ui/webui/chromeos/login/network_state_informer.h"
 
 #include "base/bind.h"
-#include "base/logging.h"
+#include "base/notreached.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/chromeos/login/screens/network_error.h"
@@ -48,16 +48,14 @@ NetworkStateInformer::State GetStateForDefaultNetwork() {
     // NetworkPortalDetector's state of current network is unknown.
     if (status == NetworkPortalDetector::CAPTIVE_PORTAL_STATUS_ONLINE ||
         (status == NetworkPortalDetector::CAPTIVE_PORTAL_STATUS_UNKNOWN &&
-         !NetworkHandler::Get()
-              ->ui_proxy_config_service()
+         !NetworkHandler::GetUiProxyConfigService()
               ->HasDefaultNetworkProxyConfigured() &&
          network->connection_state() == shill::kStateOnline)) {
       return NetworkStateInformer::ONLINE;
     }
     if (status ==
             NetworkPortalDetector::CAPTIVE_PORTAL_STATUS_PROXY_AUTH_REQUIRED &&
-        NetworkHandler::Get()
-            ->ui_proxy_config_service()
+        NetworkHandler::GetUiProxyConfigService()
             ->HasDefaultNetworkProxyConfigured()) {
       return NetworkStateInformer::PROXY_AUTH_REQUIRED;
     }
@@ -148,6 +146,53 @@ const char* NetworkStateInformer::StatusString(State state) {
       NOTREACHED();
       return NULL;
   }
+}
+
+// static
+// Returns network name by service path.
+std::string NetworkStateInformer::GetNetworkName(
+    const std::string& service_path) {
+  const NetworkState* network =
+      NetworkHandler::Get()->network_state_handler()->GetNetworkState(
+          service_path);
+  if (!network)
+    return std::string();
+  return network->name();
+}
+
+// static
+bool NetworkStateInformer::IsOnline(State state,
+                                    NetworkError::ErrorReason reason) {
+  switch (reason) {
+    case NetworkError::ERROR_REASON_PORTAL_DETECTED:
+    case NetworkError::ERROR_REASON_LOADING_TIMEOUT:
+      return false;
+    case NetworkError::ERROR_REASON_PROXY_AUTH_CANCELLED:
+    case NetworkError::ERROR_REASON_PROXY_AUTH_SUPPLIED:
+    case NetworkError::ERROR_REASON_PROXY_CONNECTION_FAILED:
+    case NetworkError::ERROR_REASON_PROXY_CONFIG_CHANGED:
+    case NetworkError::ERROR_REASON_NETWORK_STATE_CHANGED:
+    case NetworkError::ERROR_REASON_UPDATE:
+    case NetworkError::ERROR_REASON_FRAME_ERROR:
+    case NetworkError::ERROR_REASON_NONE:
+      return state == NetworkStateInformer::ONLINE;
+  }
+}
+
+// static
+bool NetworkStateInformer::IsBehindCaptivePortal(
+    State state,
+    NetworkError::ErrorReason reason) {
+  return state == NetworkStateInformer::CAPTIVE_PORTAL ||
+         reason == NetworkError::ERROR_REASON_PORTAL_DETECTED;
+}
+
+// static
+bool NetworkStateInformer::IsProxyError(State state,
+                                        NetworkError::ErrorReason reason) {
+  return state == NetworkStateInformer::PROXY_AUTH_REQUIRED ||
+         reason == NetworkError::ERROR_REASON_PROXY_AUTH_CANCELLED ||
+         reason == NetworkError::ERROR_REASON_PROXY_CONNECTION_FAILED;
 }
 
 bool NetworkStateInformer::UpdateState() {

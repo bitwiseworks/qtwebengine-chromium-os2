@@ -47,17 +47,14 @@ class CSSNumericLiteralValue;
 // The order of this enum should not change since its elements are used as
 // indices in the addSubtractResult matrix.
 enum CalculationCategory {
-  kCalcNumber = 0,
+  kCalcNumber,
   kCalcLength,
   kCalcPercent,
-  kCalcPercentNumber,
   kCalcPercentLength,
   kCalcAngle,
   kCalcTime,
   kCalcFrequency,
-  kCalcLengthNumber,
-  kCalcPercentLengthNumber,
-  kCalcOther
+  kCalcOther,
 };
 
 class CORE_EXPORT CSSMathExpressionNode
@@ -121,9 +118,7 @@ class CORE_EXPORT CSSMathExpressionNode
 
   CalculationCategory Category() const { return category_; }
   bool HasPercentage() const {
-    return category_ == kCalcPercent || category_ == kCalcPercentNumber ||
-           category_ == kCalcPercentLength ||
-           category_ == kCalcPercentLengthNumber;
+    return category_ == kCalcPercent || category_ == kCalcPercentLength;
   }
 
   // Returns the unit type of the math expression *without doing any type
@@ -146,7 +141,7 @@ class CORE_EXPORT CSSMathExpressionNode
   virtual bool InvolvesPercentageComparisons() const = 0;
 #endif
 
-  virtual void Trace(Visitor* visitor) {}
+  virtual void Trace(Visitor* visitor) const {}
 
  protected:
   CSSMathExpressionNode(CalculationCategory category,
@@ -197,7 +192,7 @@ class CORE_EXPORT CSSMathExpressionNumericLiteral final
   bool IsComputationallyIndependent() const final;
   bool operator==(const CSSMathExpressionNode& other) const final;
   CSSPrimitiveValue::UnitType ResolvedUnitType() const final;
-  void Trace(Visitor* visitor) final;
+  void Trace(Visitor* visitor) const final;
 
 #if DCHECK_IS_ON()
   bool InvolvesPercentageComparisons() const final;
@@ -255,7 +250,7 @@ class CORE_EXPORT CSSMathExpressionBinaryOperation final
   String CustomCSSText() const final;
   bool operator==(const CSSMathExpressionNode& exp) const final;
   CSSPrimitiveValue::UnitType ResolvedUnitType() const final;
-  void Trace(Visitor* visitor) final;
+  void Trace(Visitor* visitor) const final;
 
 #if DCHECK_IS_ON()
   bool InvolvesPercentageComparisons() const final;
@@ -323,7 +318,7 @@ class CSSMathExpressionVariadicOperation final : public CSSMathExpressionNode {
   bool IsComputationallyIndependent() const final;
   bool operator==(const CSSMathExpressionNode& other) const final;
   CSSPrimitiveValue::UnitType ResolvedUnitType() const final;
-  void Trace(Visitor* visitor) final;
+  void Trace(Visitor* visitor) const final;
 
 #if DCHECK_IS_ON()
   bool InvolvesPercentageComparisons() const final;

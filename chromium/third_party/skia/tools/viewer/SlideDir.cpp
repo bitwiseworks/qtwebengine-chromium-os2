@@ -26,7 +26,6 @@
 
 class SlideDir::Animator : public SkRefCnt {
 public:
-    virtual ~Animator() = default;
     Animator(const Animator&) = delete;
     Animator& operator=(const Animator&) = delete;
 
@@ -195,7 +194,7 @@ public:
     }
 
 protected:
-    void onTick(float t) {
+    void onTick(float t) override {
         if (!this->isAnimating())
             return;
 
@@ -396,7 +395,7 @@ bool SlideDir::onChar(SkUnichar c) {
 bool SlideDir::onMouse(SkScalar x, SkScalar y, skui::InputState state,
                        skui::ModifierKey modifiers) {
     modifiers &= ~skui::ModifierKey::kFirstPress;
-    if (state == skui::InputState::kMove || skstd::Any(modifiers))
+    if (state == skui::InputState::kMove || sknonstd::Any(modifiers))
         return false;
 
     if (fFocusController->hasFocus()) {

@@ -18,7 +18,6 @@
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
-#include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "base/trace_event/memory_dump_manager.h"
@@ -31,11 +30,11 @@
 #include "content/browser/devtools/devtools_stream_file.h"
 #include "content/browser/devtools/devtools_traceable_screenshot.h"
 #include "content/browser/devtools/devtools_video_consumer.h"
-#include "content/browser/frame_host/frame_tree.h"
-#include "content/browser/frame_host/frame_tree_node.h"
-#include "content/browser/frame_host/navigation_request.h"
-#include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/browser/gpu/gpu_process_host.h"
+#include "content/browser/renderer_host/frame_tree.h"
+#include "content/browser/renderer_host/frame_tree_node.h"
+#include "content/browser/renderer_host/navigation_request.h"
+#include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/tracing/tracing_controller_impl.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -142,8 +141,8 @@ class DevToolsStreamEndpoint : public TracingController::TraceDataEndpoint {
 
   void ReceiveTraceChunk(std::unique_ptr<std::string> chunk) override {
     if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-      base::PostTask(FROM_HERE, {BrowserThread::UI},
-                     base::BindOnce(&DevToolsStreamEndpoint::ReceiveTraceChunk,
+      GetUIThreadTaskRunner({})->PostTask(
+          FROM_HERE, base::BindOnce(&DevToolsStreamEndpoint::ReceiveTraceChunk,
                                     this, std::move(chunk)));
       return;
     }
@@ -153,8 +152,8 @@ class DevToolsStreamEndpoint : public TracingController::TraceDataEndpoint {
 
   void ReceivedTraceFinalContents() override {
     if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-      base::PostTask(
-          FROM_HERE, {BrowserThread::UI},
+      GetUIThreadTaskRunner({})->PostTask(
+          FROM_HERE,
           base::BindOnce(&DevToolsStreamEndpoint::ReceivedTraceFinalContents,
                          this));
       return;
@@ -194,9 +193,11 @@ void FillFrameData(base::trace_event::TracedValue* data,
   data->SetString("frame", node->devtools_frame_token().ToString());
   data->SetString("url", url.ReplaceComponents(strip_fragment).spec());
   data->SetString("name", node->frame_name());
-  if (node->parent())
-    data->SetString("parent",
-                    node->parent()->devtools_frame_token().ToString());
+  if (node->parent()) {
+    data->SetString(
+        "parent",
+        node->parent()->frame_tree_node()->devtools_frame_token().ToString());
+  }
   if (frame_host) {
     RenderProcessHost* process_host = frame_host->GetProcess();
     const base::Process& process_handle = process_host->GetProcess();
@@ -745,8 +746,11 @@ void TracingHandler::Start(Maybe<std::string> categories,
 
   trace_config_ = base::trace_event::TraceConfig();
   if (config.isJust()) {
-    std::unique_ptr<base::Value> value =
-        protocol::toBaseValue(config.fromJust()->toValue().get(), 1000);
+    std::unique_ptr<base::Value> value = protocol::toBaseValue(
+        protocol::ValueTypeConverter<Tracing::TraceConfig>::ToValue(
+            *config.fromJust())
+            .get(),
+        1000);
     if (value && value->is_dict()) {
       trace_config_ = GetTraceConfigFromDevToolsConfig(
           *static_cast<base::DictionaryValue*>(value.get()));
@@ -757,8 +761,8 @@ void TracingHandler::Start(Maybe<std::string> categories,
   }
 
   // GPU process id can only be retrieved on IO thread. Do some thread hopping.
-  base::PostTaskAndReplyWithResult(
-      FROM_HERE, {BrowserThread::IO}, base::BindOnce([]() {
+  GetIOThreadTaskRunner({})->PostTaskAndReplyWithResult(
+      FROM_HERE, base::BindOnce([]() {
         GpuProcessHost* gpu_process_host =
             GpuProcessHost::Get(GPU_PROCESS_KIND_SANDBOXED,
                                 /* force_create */ false);
@@ -951,10 +955,7 @@ void TracingHandler::OnFrameFromVideoConsumer(
     scoped_refptr<media::VideoFrame> frame) {
   const SkBitmap skbitmap = DevToolsVideoConsumer::GetSkBitmapFromFrame(frame);
 
-  base::TimeTicks reference_time;
-  const bool had_reference_time = frame->metadata()->GetTimeTicks(
-      media::VideoFrameMetadata::REFERENCE_TIME, &reference_time);
-  DCHECK(had_reference_time);
+  base::TimeTicks reference_time = *frame->metadata()->reference_time;
 
   TRACE_EVENT_OBJECT_SNAPSHOT_WITH_ID_AND_TIMESTAMP(
       TRACE_DISABLED_BY_DEFAULT("devtools.screenshot"), "Screenshot", 1,

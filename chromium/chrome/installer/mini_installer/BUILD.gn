@@ -7,6 +7,7 @@ import("//build/config/features.gni")
 import("//build/config/ui.gni")
 import("//chrome/process_version_rc_template.gni")
 import("//components/nacl/features.gni")
+import("//third_party/ffmpeg/ffmpeg_options.gni")
 import("//third_party/icu/config.gni")
 import("//tools/v8_context_snapshot/v8_context_snapshot.gni")
 import("//ui/base/ui_features.gni")
@@ -33,6 +34,8 @@ source_set("lib") {
     "configuration.h",
     "decompress.cc",
     "decompress.h",
+    "mini_file.cc",
+    "mini_file.h",
     "mini_installer.cc",
     "mini_installer.h",
     "mini_installer.ico",
@@ -42,6 +45,7 @@ source_set("lib") {
     "mini_installer_resource.h",
     "mini_string.cc",
     "mini_string.h",
+    "path_string.h",
     "pe_resource.cc",
     "pe_resource.h",
     "regkey.cc",
@@ -70,6 +74,7 @@ source_set("unit_tests") {
   sources = [
     "configuration_test.cc",
     "decompress_test.cc",
+    "mini_file_test.cc",
     "mini_installer_unittest.cc",
     "mini_string_test.cc",
   ]
@@ -181,6 +186,7 @@ template("generate_mini_installer") {
       "//chrome/browser/extensions/default_extensions",
       "//chrome/common/win:eventlog_provider",
       "//chrome/installer/setup",
+      "//mojo/core:shared_library",
       "//third_party/icu:icudata",
       chrome_dll_target,
     ]
@@ -190,6 +196,10 @@ template("generate_mini_installer") {
     }
     if (is_component_build) {
       args += [ "--component_build=1" ]
+    }
+
+    if (is_component_ffmpeg) {
+      args += [ "--component_ffmpeg_build=1" ]
     }
 
     if (skip_archive_compression) {
@@ -219,7 +229,7 @@ template("generate_mini_installer") {
     if (v8_use_external_startup_data) {
       deps += [ "//v8" ]
       if (use_v8_context_snapshot) {
-        inputs += [ "$root_out_dir/v8_context_snapshot.bin" ]
+        inputs += [ "$root_out_dir/$v8_context_snapshot_filename" ]
         deps += [ "//tools/v8_context_snapshot" ]
       } else {
         inputs += [ "$root_out_dir/snapshot_blob.bin" ]
@@ -268,6 +278,7 @@ template("generate_mini_installer") {
       ":$archive_name",
       ":lib",
       ":version",
+      "//base:clang_profiling_buildflags",
       "//build/win:default_exe_manifest",
     ]
 
@@ -282,10 +293,10 @@ template("generate_mini_installer") {
     # The net result is similar to linking with /NODEFAULTLIB, but more precise
     # as it just excludes the CRT.
     #
-    # But in asan builds we need to link against the asan runtime library, which
-    # in turn depends on the standard library and relies on it to run
-    # initializers.
-    if (!is_asan) {
+    # But in asan and clang profiling builds we need to link against a runtime
+    # library, which in turn depends on the standard library and relies on it
+    # to run initializers.
+    if (!is_asan && !use_clang_profiling) {
       no_default_deps = true
       ldflags += [ "/ENTRY:MainEntryPoint" ]
     }
@@ -295,7 +306,7 @@ template("generate_mini_installer") {
 generate_mini_installer("mini_installer") {
   out_dir = root_out_dir
   chrome_dll_file = "$root_out_dir/chrome.dll"
-  chrome_dll_target = "//chrome:main_dll"
+  chrome_dll_target = "//chrome:chrome_dll"
 }
 
 # previous_version_mini_installer.exe can't be generated in an x86 Debug

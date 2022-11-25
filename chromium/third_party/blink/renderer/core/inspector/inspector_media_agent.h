@@ -9,12 +9,13 @@
 #include <vector>
 
 #include "third_party/blink/public/web/web_media_inspector.h"
-#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/inspector/inspected_frames.h"
 #include "third_party/blink/renderer/core/inspector/inspector_base_agent.h"
 #include "third_party/blink/renderer/core/inspector/protocol/Media.h"
 
 namespace blink {
+
+class LocalFrame;
 
 class CORE_EXPORT InspectorMediaAgent final
     : public InspectorBaseAgent<protocol::Media::Metainfo> {
@@ -30,13 +31,17 @@ class CORE_EXPORT InspectorMediaAgent final
   protocol::Response disable() override;
 
   // Protocol send messages.
+  void PlayerErrorsRaised(const WebString&,
+                          const Vector<InspectorPlayerError>&);
+  void PlayerEventsAdded(const WebString&, const Vector<InspectorPlayerEvent>&);
+  void PlayerMessagesLogged(const WebString&,
+                            const Vector<InspectorPlayerMessage>&);
   void PlayerPropertiesChanged(const WebString&,
                                const Vector<InspectorPlayerProperty>&);
-  void PlayerEventsAdded(const WebString&, const Vector<InspectorPlayerEvent>&);
   void PlayersCreated(const Vector<WebString>&);
 
   // blink-gc methods.
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   void RegisterAgent();

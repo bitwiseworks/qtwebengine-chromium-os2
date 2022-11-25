@@ -73,16 +73,17 @@
 #include <vector>
 
 #include "base/base_export.h"
+#include "base/check_op.h"
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/gtest_prod_util.h"
-#include "base/logging.h"
 #include "base/macros.h"
 #include "base/metrics/bucket_ranges.h"
 #include "base/metrics/histogram_base.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/strings/string_piece.h"
 #include "base/time/time.h"
+#include "base/values.h"
 
 namespace base {
 
@@ -217,8 +218,8 @@ class BASE_EXPORT Histogram : public HistogramBase {
   std::unique_ptr<HistogramSamples> SnapshotFinalDelta() const override;
   void AddSamples(const HistogramSamples& samples) override;
   bool AddSamplesFromPickle(base::PickleIterator* iter) override;
-  void WriteHTMLGraph(std::string* output) const override;
   void WriteAscii(std::string* output) const override;
+  base::DictionaryValue ToGraphDict() const override;
 
   // Validates the histogram contents and CHECKs on errors.
   // TODO(bcwhite): Remove this after https://crbug/836875.
@@ -313,12 +314,9 @@ class BASE_EXPORT Histogram : public HistogramBase {
                                const uint32_t i,
                                std::string* output) const;
 
-  // WriteJSON calls these.
+  // Writes the type, min, max, and bucket count information of the histogram in
+  // |params|.
   void GetParameters(DictionaryValue* params) const override;
-
-  void GetCountAndBucketData(Count* count,
-                             int64_t* sum,
-                             ListValue* buckets) const override;
 
   // Samples that have not yet been logged with SnapshotDelta().
   std::unique_ptr<SampleVectorBase> unlogged_samples_;
@@ -469,6 +467,12 @@ class BASE_EXPORT ScaledLinearHistogram {
                         uint32_t bucket_count,
                         int32_t scale,
                         int32_t flags);
+  ScaledLinearHistogram(const std::string& name,
+                        Sample minimum,
+                        Sample maximum,
+                        uint32_t bucket_count,
+                        int32_t scale,
+                        int32_t flags);
 
   ~ScaledLinearHistogram();
 
@@ -478,12 +482,13 @@ class BASE_EXPORT ScaledLinearHistogram {
   void AddScaledCount(Sample value, int count);
 
   int32_t scale() const { return scale_; }
-  LinearHistogram* histogram() { return histogram_; }
+  HistogramBase* histogram() { return histogram_; }
 
  private:
   // Pointer to the underlying histogram. Ownership of it remains with
-  // the statistics-recorder.
-  LinearHistogram* const histogram_;
+  // the statistics-recorder. This is typed as HistogramBase because it may be a
+  // DummyHistogram if expired.
+  HistogramBase* const histogram_;
 
   // The scale factor of the sample counts.
   const int32_t scale_;

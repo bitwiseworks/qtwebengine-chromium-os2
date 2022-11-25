@@ -11,7 +11,6 @@
 
 namespace blink {
 
-class Document;
 class ExecutionContext;
 class ExceptionState;
 class StringOrTrustedHTMLOrTrustedScriptOrTrustedScriptURL;
@@ -23,12 +22,6 @@ enum class SpecificTrustedType {
   kScript,
   kScriptURL,
 };
-
-// TODO(crbug.com/1029822): Temporary helpers to ease migrating ExecutionContext
-// to LocalDOMWindow.
-CORE_EXPORT String TrustedTypesCheckForHTML(const String&,
-                                            const Document*,
-                                            ExceptionState&);
 
 // Perform Trusted Type checks, with the IDL union types as input. All of these
 // will call String& versions below to do the heavy lifting.
@@ -47,17 +40,17 @@ CORE_EXPORT String TrustedTypesCheckForScript(StringOrTrustedScript,
 // Returns the effective value (which may have been modified by the "default"
 // policy. We use WARN_UNUSED_RESULT to prevent erroneous usage.
 String TrustedTypesCheckFor(SpecificTrustedType,
-                            const String&,
+                            String,
                             const ExecutionContext*,
                             ExceptionState&) WARN_UNUSED_RESULT;
-CORE_EXPORT String TrustedTypesCheckForHTML(const String&,
+CORE_EXPORT String TrustedTypesCheckForHTML(String,
                                             const ExecutionContext*,
                                             ExceptionState&) WARN_UNUSED_RESULT;
-CORE_EXPORT String TrustedTypesCheckForScript(const String&,
+CORE_EXPORT String TrustedTypesCheckForScript(String,
                                               const ExecutionContext*,
                                               ExceptionState&)
     WARN_UNUSED_RESULT;
-CORE_EXPORT String TrustedTypesCheckForScriptURL(const String&,
+CORE_EXPORT String TrustedTypesCheckForScriptURL(String,
                                                  const ExecutionContext*,
                                                  ExceptionState&)
     WARN_UNUSED_RESULT;
@@ -65,10 +58,10 @@ CORE_EXPORT String TrustedTypesCheckForScriptURL(const String&,
 // Functionally equivalent to TrustedTypesCheckForScript(const String&, ...),
 // but with setup & error handling suitable for the asynchronous execution
 // cases.
-String TrustedTypesCheckForJavascriptURLinNavigation(const String&, Document*);
-CORE_EXPORT String GetStringForScriptExecution(const String&,
+String TrustedTypesCheckForJavascriptURLinNavigation(String, ExecutionContext*);
+CORE_EXPORT String GetStringForScriptExecution(String,
                                                ScriptElementBase::Type,
-                                               Document*);
+                                               ExecutionContext*);
 
 // Determine whether a Trusted Types check is needed in this execution context.
 //

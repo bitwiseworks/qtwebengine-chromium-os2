@@ -1024,6 +1024,7 @@ static void dealloc_compressor_data(VP9_COMP *cpi) {
 #if CONFIG_RATE_CTRL
   free_partition_info(cpi);
   free_motion_vector_info(cpi);
+  free_fp_motion_vector_info(cpi);
 #endif
 
   vp9_free_ref_frame_buffers(cm->buffer_pool);
@@ -1523,8 +1524,29 @@ static void init_config(struct VP9_COMP *cpi, const VP9EncoderConfig *oxcf) {
   vp9_noise_estimate_init(&cpi->noise_estimate, cm->width, cm->height);
 }
 
-static void set_rc_buffer_sizes(RATE_CONTROL *rc,
-                                const VP9EncoderConfig *oxcf) {
+void vp9_check_reset_rc_flag(VP9_COMP *cpi) {
+  RATE_CONTROL *rc = &cpi->rc;
+
+  if (cpi->common.current_video_frame >
+      (unsigned int)cpi->svc.number_spatial_layers) {
+    if (cpi->use_svc) {
+      vp9_svc_check_reset_layer_rc_flag(cpi);
+    } else {
+      if (rc->avg_frame_bandwidth > (3 * rc->last_avg_frame_bandwidth >> 1) ||
+          rc->avg_frame_bandwidth < (rc->last_avg_frame_bandwidth >> 1)) {
+        rc->rc_1_frame = 0;
+        rc->rc_2_frame = 0;
+        rc->bits_off_target = rc->optimal_buffer_level;
+        rc->buffer_level = rc->optimal_buffer_level;
+      }
+    }
+  }
+}
+
+void vp9_set_rc_buffer_sizes(VP9_COMP *cpi) {
+  RATE_CONTROL *rc = &cpi->rc;
+  const VP9EncoderConfig *oxcf = &cpi->oxcf;
+
   const int64_t bandwidth = oxcf->target_bandwidth;
   const int64_t starting = oxcf->starting_buffer_level_ms;
   const int64_t optimal = oxcf->optimal_buffer_level_ms;
@@ -1535,6 +1557,11 @@ static void set_rc_buffer_sizes(RATE_CONTROL *rc,
       (optimal == 0) ? bandwidth / 8 : optimal * bandwidth / 1000;
   rc->maximum_buffer_size =
       (maximum == 0) ? bandwidth / 8 : maximum * bandwidth / 1000;
+
+  // Under a configuration change, where maximum_buffer_size may change,
+  // keep buffer level clipped to the maximum allowed buffer size.
+  rc->bits_off_target = VPXMIN(rc->bits_off_target, rc->maximum_buffer_size);
+  rc->buffer_level = VPXMIN(rc->buffer_level, rc->maximum_buffer_size);
 }
 
 #if CONFIG_VP9_HIGHBITDEPTH
@@ -1991,12 +2018,7 @@ void vp9_change_config(struct VP9_COMP *cpi, const VP9EncoderConfig *oxcf) {
   }
   cpi->encode_breakout = cpi->oxcf.encode_breakout;
 
-  set_rc_buffer_sizes(rc, &cpi->oxcf);
-
-  // Under a configuration change, where maximum_buffer_size may change,
-  // keep buffer level clipped to the maximum allowed buffer size.
-  rc->bits_off_target = VPXMIN(rc->bits_off_target, rc->maximum_buffer_size);
-  rc->buffer_level = VPXMIN(rc->buffer_level, rc->maximum_buffer_size);
+  vp9_set_rc_buffer_sizes(cpi);
 
   // Set up frame rate and related parameters rate control values.
   vp9_new_framerate(cpi, cpi->framerate);
@@ -2057,23 +2079,7 @@ void vp9_change_config(struct VP9_COMP *cpi, const VP9EncoderConfig *oxcf) {
                                            (int)cpi->oxcf.target_bandwidth);
   }
 
-  // Check for resetting the rc flags (rc_1_frame, rc_2_frame) if the
-  // configuration change has a large change in avg_frame_bandwidth.
-  // For SVC check for resetting based on spatial layer average bandwidth.
-  // Also reset buffer level to optimal level.
-  if (cm->current_video_frame > (unsigned int)cpi->svc.number_spatial_layers) {
-    if (cpi->use_svc) {
-      vp9_svc_check_reset_layer_rc_flag(cpi);
-    } else {
-      if (rc->avg_frame_bandwidth > (3 * rc->last_avg_frame_bandwidth >> 1) ||
-          rc->avg_frame_bandwidth < (rc->last_avg_frame_bandwidth >> 1)) {
-        rc->rc_1_frame = 0;
-        rc->rc_2_frame = 0;
-        rc->bits_off_target = rc->optimal_buffer_level;
-        rc->buffer_level = rc->optimal_buffer_level;
-      }
-    }
-  }
+  vp9_check_reset_rc_flag(cpi);
 
   cpi->alt_ref_source = NULL;
   rc->is_src_frame_alt_ref = 0;
@@ -2656,6 +2662,7 @@ VP9_COMP *vp9_create_compressor(const VP9EncoderConfig *oxcf,
   encode_command_init(&cpi->encode_command);
   partition_info_init(cpi);
   motion_vector_info_init(cpi);
+  fp_motion_vector_info_init(cpi);
 #endif
 
   return cpi;
@@ -3742,15 +3749,19 @@ static void set_frame_size(VP9_COMP *cpi) {
   }
 #endif  // !CONFIG_REALTIME_ONLY
 
-  if (oxcf->pass == 0 && oxcf->rc_mode == VPX_CBR && !cpi->use_svc &&
+  if (oxcf->pass == 0 && oxcf->rc_mode == VPX_CBR &&
       oxcf->resize_mode == RESIZE_DYNAMIC && cpi->resize_pending != 0) {
-    oxcf->scaled_frame_width =
-        (oxcf->width * cpi->resize_scale_num) / cpi->resize_scale_den;
-    oxcf->scaled_frame_height =
-        (oxcf->height * cpi->resize_scale_num) / cpi->resize_scale_den;
-    // There has been a change in frame size.
-    vp9_set_size_literal(cpi, oxcf->scaled_frame_width,
-                         oxcf->scaled_frame_height);
+    // For SVC scaled width/height will have been set (svc->resize_set=1)
+    // in get_svc_params based on the layer width/height.
+    if (!cpi->use_svc || !cpi->svc.resize_set) {
+      oxcf->scaled_frame_width =
+          (oxcf->width * cpi->resize_scale_num) / cpi->resize_scale_den;
+      oxcf->scaled_frame_height =
+          (oxcf->height * cpi->resize_scale_num) / cpi->resize_scale_den;
+      // There has been a change in frame size.
+      vp9_set_size_literal(cpi, oxcf->scaled_frame_width,
+                           oxcf->scaled_frame_height);
+    }
 
     // TODO(agrange) Scale cpi->max_mv_magnitude if frame-size has changed.
     set_mv_search_params(cpi);
@@ -4035,8 +4046,11 @@ static int encode_without_recode_loop(VP9_COMP *cpi, size_t *size,
   // For 1 pass CBR SVC, only ZEROMV is allowed for spatial reference frame
   // when svc->force_zero_mode_spatial_ref = 1. Under those conditions we can
   // avoid this frame-level upsampling (for non intra_only frames).
+  // For SVC single_layer mode, dynamic resize is allowed and we need to
+  // scale references for this case.
   if (frame_is_intra_only(cm) == 0 &&
-      !(is_one_pass_cbr_svc(cpi) && svc->force_zero_mode_spatial_ref)) {
+      ((svc->single_layer_svc && cpi->oxcf.resize_mode == RESIZE_DYNAMIC) ||
+       !(is_one_pass_cbr_svc(cpi) && svc->force_zero_mode_spatial_ref))) {
     vp9_scale_references(cpi);
   }
 
@@ -4189,8 +4203,149 @@ static int get_qstep_adj(int rate_excess, int rate_limit) {
   return VPXMIN(qstep, MAX_QSTEP_ADJ);
 }
 
-static void encode_with_recode_loop(VP9_COMP *cpi, size_t *size,
-                                    uint8_t *dest) {
+#if CONFIG_RATE_CTRL
+static void init_rq_history(RATE_QINDEX_HISTORY *rq_history) {
+  rq_history->recode_count = 0;
+  rq_history->q_index_high = 255;
+  rq_history->q_index_low = 0;
+}
+
+static void update_rq_history(RATE_QINDEX_HISTORY *rq_history, int target_bits,
+                              int actual_bits, int q_index) {
+  rq_history->q_index_history[rq_history->recode_count] = q_index;
+  rq_history->rate_history[rq_history->recode_count] = actual_bits;
+  if (actual_bits <= target_bits) {
+    rq_history->q_index_high = q_index;
+  }
+  if (actual_bits >= target_bits) {
+    rq_history->q_index_low = q_index;
+  }
+  rq_history->recode_count += 1;
+}
+
+static int guess_q_index_from_model(const RATE_QSTEP_MODEL *rq_model,
+                                    int target_bits) {
+  // The model predicts bits as follows.
+  // target_bits = bias - ratio * log2(q_step)
+  // Given the target_bits, we compute the q_step as follows.
+  double q_step;
+  assert(rq_model->ratio > 0);
+  q_step = pow(2.0, (rq_model->bias - target_bits) / rq_model->ratio);
+  // TODO(angiebird): Make this function support highbitdepth.
+  return vp9_convert_q_to_qindex(q_step, VPX_BITS_8);
+}
+
+static int guess_q_index_linear(int prev_q_index, int target_bits,
+                                int actual_bits, int gap) {
+  int q_index = prev_q_index;
+  if (actual_bits < target_bits) {
+    q_index -= gap;
+    q_index = VPXMAX(q_index, 0);
+  } else {
+    q_index += gap;
+    q_index = VPXMIN(q_index, 255);
+  }
+  return q_index;
+}
+
+static double get_bits_percent_diff(int target_bits, int actual_bits) {
+  double diff;
+  target_bits = VPXMAX(target_bits, 1);
+  diff = abs(target_bits - actual_bits) * 1. / target_bits;
+  return diff * 100;
+}
+
+static int rq_model_predict_q_index(const RATE_QSTEP_MODEL *rq_model,
+                                    const RATE_QINDEX_HISTORY *rq_history,
+                                    int target_bits) {
+  int q_index = 128;
+  if (rq_history->recode_count > 0) {
+    const int actual_bits =
+        rq_history->rate_history[rq_history->recode_count - 1];
+    const int prev_q_index =
+        rq_history->q_index_history[rq_history->recode_count - 1];
+    const double percent_diff = get_bits_percent_diff(target_bits, actual_bits);
+    if (percent_diff > 50) {
+      // Binary search.
+      // When the actual_bits and target_bits are far apart, binary search
+      // q_index is faster.
+      q_index = (rq_history->q_index_low + rq_history->q_index_high) / 2;
+    } else {
+      if (rq_model->ready) {
+        q_index = guess_q_index_from_model(rq_model, target_bits);
+      } else {
+        // TODO(angiebird): Find a better way to set the gap.
+        q_index =
+            guess_q_index_linear(prev_q_index, target_bits, actual_bits, 20);
+      }
+    }
+  } else {
+    if (rq_model->ready) {
+      q_index = guess_q_index_from_model(rq_model, target_bits);
+    }
+  }
+
+  assert(rq_history->q_index_low <= rq_history->q_index_high);
+  if (q_index <= rq_history->q_index_low) {
+    q_index = rq_history->q_index_low + 1;
+  }
+  if (q_index >= rq_history->q_index_high) {
+    q_index = rq_history->q_index_high - 1;
+  }
+  return q_index;
+}
+
+static void rq_model_update(const RATE_QINDEX_HISTORY *rq_history,
+                            int target_bits, RATE_QSTEP_MODEL *rq_model) {
+  const int recode_count = rq_history->recode_count;
+  const double delta = 0.00001;
+  if (recode_count >= 2) {
+    const int q_index1 = rq_history->q_index_history[recode_count - 2];
+    const int q_index2 = rq_history->q_index_history[recode_count - 1];
+    const int r1 = rq_history->rate_history[recode_count - 2];
+    const int r2 = rq_history->rate_history[recode_count - 1];
+    int valid = 0;
+    // lower q_index should yield higher bit rate
+    if (q_index1 < q_index2) {
+      valid = r1 > r2;
+    } else if (q_index1 > q_index2) {
+      valid = r1 < r2;
+    }
+    // Only update the model when the q_index and rate behave normally.
+    if (valid) {
+      // Fit the ratio and bias of rq_model based on last two recode histories.
+      const double s1 = vp9_convert_qindex_to_q(q_index1, VPX_BITS_8);
+      const double s2 = vp9_convert_qindex_to_q(q_index2, VPX_BITS_8);
+      if (fabs(log2(s1) - log2(s2)) > delta) {
+        rq_model->ratio = (r2 - r1) / (log2(s1) - log2(s2));
+        rq_model->bias = r1 + (rq_model->ratio) * log2(s1);
+        if (rq_model->ratio > delta && rq_model->bias > delta) {
+          rq_model->ready = 1;
+        }
+      }
+    }
+  } else if (recode_count == 1) {
+    if (rq_model->ready) {
+      // Update the ratio only when the initial model exists and we only have
+      // one recode history.
+      const int prev_q = rq_history->q_index_history[recode_count - 1];
+      const double prev_q_step = vp9_convert_qindex_to_q(prev_q, VPX_BITS_8);
+      if (fabs(log2(prev_q_step)) > delta) {
+        const int actual_bits = rq_history->rate_history[recode_count - 1];
+        rq_model->ratio =
+            rq_model->ratio + (target_bits - actual_bits) / log2(prev_q_step);
+      }
+    }
+  }
+}
+#endif  // CONFIG_RATE_CTRL
+
+static void encode_with_recode_loop(VP9_COMP *cpi, size_t *size, uint8_t *dest
+#if CONFIG_RATE_CTRL
+                                    ,
+                                    RATE_QINDEX_HISTORY *rq_history
+#endif  // CONFIG_RATE_CTRL
+) {
   const VP9EncoderConfig *const oxcf = &cpi->oxcf;
   VP9_COMMON *const cm = &cpi->common;
   RATE_CONTROL *const rc = &cpi->rc;
@@ -4207,6 +4362,14 @@ static void encode_with_recode_loop(VP9_COMP *cpi, size_t *size,
 #ifdef AGGRESSIVE_VBR
   int qrange_adj = 1;
 #endif
+
+#if CONFIG_RATE_CTRL
+  const FRAME_UPDATE_TYPE update_type =
+      cpi->twopass.gf_group.update_type[cpi->twopass.gf_group.index];
+  const ENCODE_FRAME_TYPE frame_type = get_encode_frame_type(update_type);
+  RATE_QSTEP_MODEL *rq_model = &cpi->rq_model[frame_type];
+  init_rq_history(rq_history);
+#endif  // CONFIG_RATE_CTRL
 
   if (cm->show_existing_frame) {
     rc->this_frame_target = 0;
@@ -4254,6 +4417,11 @@ static void encode_with_recode_loop(VP9_COMP *cpi, size_t *size,
       loop_at_this_size = 0;
     }
 
+#if CONFIG_RATE_CTRL
+    if (cpi->encode_command.use_external_target_frame_bits) {
+      q = rq_model_predict_q_index(rq_model, rq_history, rc->this_frame_target);
+    }
+#endif  // CONFIG_RATE_CTRL
     // Decide frame size bounds first time through.
     if (loop_count == 0) {
       vp9_rc_compute_frame_size_bounds(cpi, rc->this_frame_target,
@@ -4347,7 +4515,28 @@ static void encode_with_recode_loop(VP9_COMP *cpi, size_t *size,
     if (cpi->encode_command.use_external_quantize_index) {
       break;
     }
-#endif
+
+    if (cpi->encode_command.use_external_target_frame_bits) {
+      const double percent_diff = get_bits_percent_diff(
+          rc->this_frame_target, rc->projected_frame_size);
+      update_rq_history(rq_history, rc->this_frame_target,
+                        rc->projected_frame_size, q);
+      loop_count += 1;
+
+      rq_model_update(rq_history, rc->this_frame_target, rq_model);
+
+      // Check if we hit the target bitrate.
+      if (percent_diff <= cpi->encode_command.target_frame_bits_error_percent ||
+          rq_history->recode_count >= RATE_CTRL_MAX_RECODE_NUM ||
+          rq_history->q_index_low >= rq_history->q_index_high) {
+        break;
+      }
+
+      loop = 1;
+      restore_coding_context(cpi);
+      continue;
+    }
+#endif  // CONFIG_RATE_CTRL
 
     if (oxcf->rc_mode == VPX_Q) {
       loop = 0;
@@ -5197,8 +5386,12 @@ static void encode_frame_to_data_rate(
     if (!encode_without_recode_loop(cpi, size, dest)) return;
   } else {
 #if !CONFIG_REALTIME_ONLY
+#if CONFIG_RATE_CTRL
+    encode_with_recode_loop(cpi, size, dest, &encode_frame_result->rq_history);
+#else   // CONFIG_RATE_CTRL
     encode_with_recode_loop(cpi, size, dest);
-#endif
+#endif  // CONFIG_RATE_CTRL
+#endif  // !CONFIG_REALTIME_ONLY
   }
 
   // TODO(jingning): When using show existing frame mode, we assume that the
@@ -7384,6 +7577,7 @@ void vp9_init_encode_frame_result(ENCODE_FRAME_RESULT *encode_frame_result) {
   encode_frame_result->frame_coding_index = -1;
   vp9_zero(encode_frame_result->coded_frame);
   encode_frame_result->coded_frame.allocated = 0;
+  init_rq_history(&encode_frame_result->rq_history);
 #endif  // CONFIG_RATE_CTRL
 }
 

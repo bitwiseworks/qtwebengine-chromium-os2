@@ -4,6 +4,8 @@
 
 #include "discovery/mdns/mdns_querier.h"
 
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "discovery/common/config.h"
@@ -240,7 +242,7 @@ void MdnsQuerier::StartQuery(const DomainName& name,
                              MdnsRecordChangedCallback* callback) {
   OSP_DCHECK(task_runner_->IsRunningOnTaskRunner());
   OSP_DCHECK(callback);
-  OSP_DCHECK(dns_type != DnsType::kNSEC);
+  OSP_DCHECK(CanBeQueried(dns_type));
 
   // Add a new callback if haven't seen it before
   auto callbacks_it = callbacks_.equal_range(name);
@@ -258,6 +260,7 @@ void MdnsQuerier::StartQuery(const DomainName& name,
   // Notify the new callback with previously cached records.
   // NOTE: In the future, could allow callers to fetch cached records after
   // adding a callback, for example to prime the UI.
+  std::vector<PendingQueryChange> pending_changes;
   const std::vector<RecordTrackerLruCache::RecordTrackerConstRef> trackers =
       records_.Find(name, dns_type, dns_class);
   for (const MdnsRecordTracker& tracker : trackers) {
@@ -265,23 +268,30 @@ void MdnsQuerier::StartQuery(const DomainName& name,
       MdnsRecord stored_record(name, tracker.dns_type(), tracker.dns_class(),
                                tracker.record_type(), tracker.ttl(),
                                tracker.rdata());
-      callback->OnRecordChanged(std::move(stored_record),
-                                RecordChangedEvent::kCreated);
+      std::vector<PendingQueryChange> new_changes = callback->OnRecordChanged(
+          std::move(stored_record), RecordChangedEvent::kCreated);
+      pending_changes.insert(pending_changes.end(), new_changes.begin(),
+                             new_changes.end());
     }
   }
 
   // Add a new question if haven't seen it before
   auto questions_it = questions_.equal_range(name);
-  for (auto entry = questions_it.first; entry != questions_it.second; ++entry) {
-    const MdnsQuestion& tracked_question = entry->second->question();
-    if (dns_type == tracked_question.dns_type() &&
-        dns_class == tracked_question.dns_class()) {
-      // Already have this question
-      return;
-    }
+  const bool is_question_already_tracked =
+      std::find_if(questions_it.first, questions_it.second,
+                   [dns_type, dns_class](const auto& entry) {
+                     const MdnsQuestion& tracked_question =
+                         entry.second->question();
+                     return dns_type == tracked_question.dns_type() &&
+                            dns_class == tracked_question.dns_class();
+                   }) != questions_it.second;
+  if (!is_question_already_tracked) {
+    AddQuestion(
+        MdnsQuestion(name, dns_type, dns_class, ResponseType::kMulticast));
   }
-  AddQuestion(
-      MdnsQuestion(name, dns_type, dns_class, ResponseType::kMulticast));
+
+  // Apply any pending changes from the OnRecordChanged() callbacks.
+  ApplyPendingChanges(std::move(pending_changes));
 }
 
 void MdnsQuerier::StopQuery(const DomainName& name,
@@ -290,7 +300,10 @@ void MdnsQuerier::StopQuery(const DomainName& name,
                             MdnsRecordChangedCallback* callback) {
   OSP_DCHECK(task_runner_->IsRunningOnTaskRunner());
   OSP_DCHECK(callback);
-  OSP_DCHECK(dns_type != DnsType::kNSEC);
+
+  if (!CanBeQueried(dns_type)) {
+    return;
+  }
 
   // Find and remove the callback.
   int callbacks_for_key = 0;
@@ -324,11 +337,6 @@ void MdnsQuerier::StopQuery(const DomainName& name,
       return;
     }
   }
-
-  // TODO(crbug.com/openscreen/83): Find and delete all records that no longer
-  // answer any questions, if a question was deleted.  It's possible the same
-  // query will be added back before the records expire, so this behavior could
-  // be configurable by the caller.
 }
 
 void MdnsQuerier::ReinitializeQueries(const DomainName& name) {
@@ -367,9 +375,7 @@ void MdnsQuerier::OnMessageReceived(const MdnsMessage& message) {
   for (const MdnsRecord& record : message.answers()) {
     if (ShouldAnswerRecordBeProcessed(record)) {
       ProcessRecord(record);
-      OSP_DVLOG << "\tProcessing answer record for domain '"
-                << record.name().ToString() << "' of type '"
-                << record.dns_type() << "'...";
+      OSP_DVLOG << "\tProcessing answer record (" << record.ToString() << ")";
       found_relevant_records = true;
       processed_count++;
     }
@@ -380,9 +386,8 @@ void MdnsQuerier::OnMessageReceived(const MdnsMessage& message) {
   // individual records relevant to this querier to update the cache.
   for (const MdnsRecord& record : message.additional_records()) {
     if (found_relevant_records || ShouldAnswerRecordBeProcessed(record)) {
-      OSP_DVLOG << "\tProcessing additional record for domain '"
-                << record.name().ToString() << "' of type '"
-                << record.dns_type() << "'...";
+      OSP_DVLOG << "\tProcessing additional record (" << record.ToString()
+                << ")";
       ProcessRecord(record);
       processed_count++;
     }
@@ -448,6 +453,16 @@ void MdnsQuerier::OnRecordExpired(const MdnsRecordTracker* tracker,
 
 void MdnsQuerier::ProcessRecord(const MdnsRecord& record) {
   OSP_DCHECK(task_runner_->IsRunningOnTaskRunner());
+
+  // Skip all records that can't be processed.
+  if (!CanBeProcessed(record.dns_type())) {
+    return;
+  }
+
+  // Ignore NSEC records if the embedder has configured us to do so.
+  if (config_.ignore_nsec_responses && record.dns_type() == DnsType::kNSEC) {
+    return;
+  }
 
   // Get the types which the received record is associated with. In most cases
   // this will only be the type of the provided record, but in the case of
@@ -525,16 +540,12 @@ void MdnsQuerier::ProcessUniqueRecord(const MdnsRecord& record,
     if (will_exist) {
       ProcessCallbacks(record, RecordChangedEvent::kCreated);
     }
-  }
-
-  // There is exactly one tracker associated with this key. This is the expected
-  // case when a record matching this one has already been seen.
-  else if (num_records_for_key == size_t{1}) {
+  } else if (num_records_for_key == size_t{1}) {
+    // There is exactly one tracker associated with this key. This is the
+    // expected case when a record matching this one has already been seen.
     ProcessSinglyTrackedUniqueRecord(record, trackers[0]);
-  }
-
-  // Multiple records with the same key.
-  else {
+  } else {
+    // Multiple records with the same key.
     ProcessMultiTrackedUniqueRecord(record, dns_type);
   }
 }
@@ -609,6 +620,7 @@ void MdnsQuerier::ProcessCallbacks(const MdnsRecord& record,
                                    RecordChangedEvent event) {
   OSP_DCHECK(task_runner_->IsRunningOnTaskRunner());
 
+  std::vector<PendingQueryChange> pending_changes;
   auto callbacks_it = callbacks_.equal_range(record.name());
   for (auto entry = callbacks_it.first; entry != callbacks_it.second; ++entry) {
     const CallbackInfo& callback_info = entry->second;
@@ -616,15 +628,19 @@ void MdnsQuerier::ProcessCallbacks(const MdnsRecord& record,
          record.dns_type() == callback_info.dns_type) &&
         (callback_info.dns_class == DnsClass::kANY ||
          record.dns_class() == callback_info.dns_class)) {
-      callback_info.callback->OnRecordChanged(record, event);
+      std::vector<PendingQueryChange> new_changes =
+          callback_info.callback->OnRecordChanged(record, event);
+      pending_changes.insert(pending_changes.end(), new_changes.begin(),
+                             new_changes.end());
     }
   }
+
+  ApplyPendingChanges(std::move(pending_changes));
 }
 
 void MdnsQuerier::AddQuestion(const MdnsQuestion& question) {
   auto tracker = std::make_unique<MdnsQuestionTracker>(
-      std::move(question), sender_, task_runner_, now_function_, random_delay_,
-      config_);
+      question, sender_, task_runner_, now_function_, random_delay_, config_);
   MdnsQuestionTracker* ptr = tracker.get();
   questions_.emplace(question.name(), std::move(tracker));
 
@@ -656,6 +672,22 @@ void MdnsQuerier::AddRecord(const MdnsRecord& record, DnsType type) {
       // NOTE: When the pointed to object is deleted, its dtor removes itself
       // from all associated queries.
       entry->second->AddAssociatedRecord(&tracker);
+    }
+  }
+}
+
+void MdnsQuerier::ApplyPendingChanges(
+    std::vector<PendingQueryChange> pending_changes) {
+  for (auto& pending_change : pending_changes) {
+    switch (pending_change.change_type) {
+      case PendingQueryChange::kStartQuery:
+        StartQuery(std::move(pending_change.name), pending_change.dns_type,
+                   pending_change.dns_class, pending_change.callback);
+        break;
+      case PendingQueryChange::kStopQuery:
+        StopQuery(std::move(pending_change.name), pending_change.dns_type,
+                  pending_change.dns_class, pending_change.callback);
+        break;
     }
   }
 }

@@ -51,19 +51,19 @@ class RegexRulesMatcher final : public RulesetMatcherBase {
   using RegexRulesList =
       ::flatbuffers::Vector<flatbuffers::Offset<flat::RegexRule>>;
   RegexRulesMatcher(const ExtensionId& extension_id,
-                    api::declarative_net_request::SourceType source_type,
+                    RulesetID ruleset_id,
                     const RegexRulesList* regex_list,
                     const ExtensionMetadataList* metadata_list);
 
   // RulesetMatcherBase override:
   ~RegexRulesMatcher() override;
-  uint8_t GetRemoveHeadersMask(
+  std::vector<RequestAction> GetModifyHeadersActions(
       const RequestParams& params,
-      uint8_t excluded_remove_headers_mask,
-      std::vector<RequestAction>* remove_headers_actions) const override;
+      base::Optional<uint64_t> min_priority) const override;
   bool IsExtraHeadersMatcher() const override {
     return is_extra_headers_matcher_;
   }
+  size_t GetRulesCount() const override { return regex_list_->size(); }
 
  private:
   // RulesetMatcherBase override:

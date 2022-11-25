@@ -6,9 +6,10 @@
 
 #include <utility>
 
+#include "base/logging.h"
 #include "build/build_config.h"
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
 #if !defined(TOOLKIT_QT)
 #include <drm_fourcc.h>
 #endif
@@ -22,7 +23,7 @@
 
 namespace gfx {
 
-#if defined(OS_LINUX)&& !defined(TOOLKIT_QT)
+#if (defined(OS_LINUX) || defined(OS_CHROMEOS)) && !defined(TOOLKIT_QT)
 static_assert(NativePixmapHandle::kNoModifier == DRM_FORMAT_MOD_INVALID,
               "gfx::NativePixmapHandle::kNoModifier should be an alias for"
               "DRM_FORMAT_MOD_INVALID");
@@ -33,7 +34,7 @@ NativePixmapPlane::NativePixmapPlane() : stride(0), offset(0), size(0) {}
 NativePixmapPlane::NativePixmapPlane(int stride,
                                      int offset,
                                      uint64_t size
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
                                      ,
                                      base::ScopedFD fd
 #elif defined(OS_FUCHSIA)
@@ -44,7 +45,7 @@ NativePixmapPlane::NativePixmapPlane(int stride,
     : stride(stride),
       offset(offset),
       size(size)
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
       ,
       fd(std::move(fd))
 #elif defined(OS_FUCHSIA)
@@ -72,7 +73,7 @@ NativePixmapHandle& NativePixmapHandle::operator=(NativePixmapHandle&& other) =
 NativePixmapHandle CloneHandleForIPC(const NativePixmapHandle& handle) {
   NativePixmapHandle clone;
   for (auto& plane : handle.planes) {
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
     DCHECK(plane.fd.is_valid());
     base::ScopedFD fd_dup(HANDLE_EINTR(dup(plane.fd.get())));
     if (!fd_dup.is_valid()) {
@@ -98,7 +99,7 @@ NativePixmapHandle CloneHandleForIPC(const NativePixmapHandle& handle) {
 #endif
   }
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
   clone.modifier = handle.modifier;
 #endif
 

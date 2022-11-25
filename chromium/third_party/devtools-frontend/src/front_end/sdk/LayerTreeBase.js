@@ -14,30 +14,35 @@ export class Layer {
    * @return {string}
    */
   id() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {?string}
    */
   parentId() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {?Layer}
    */
   parent() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {boolean}
    */
   isRoot() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {!Array.<!Layer>}
    */
   children() {
+    throw new Error('Not implemented');
   }
 
   /**
@@ -50,108 +55,127 @@ export class Layer {
    * @return {?DOMNode}
    */
   node() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {?DOMNode}
    */
   nodeForSelfOrAncestor() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {number}
    */
   offsetX() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {number}
    */
   offsetY() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {number}
    */
   width() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {number}
    */
   height() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {?Array.<number>}
    */
   transform() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {!Array.<number>}
    */
   quad() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {!Array.<number>}
    */
   anchorPoint() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {boolean}
    */
   invisible() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {number}
    */
   paintCount() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {?Protocol.DOM.Rect}
    */
   lastPaintRect() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {!Array.<!Protocol.LayerTree.ScrollRect>}
    */
   scrollRects() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {?StickyPositionConstraint}
    */
   stickyPositionConstraint() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {number}
    */
   gpuMemoryUsage() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {!Promise<!Array<string>>}
    */
   requestCompositingReasonIds() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {boolean}
    */
   drawsContent() {
+    throw new Error('Not implemented');
   }
 
   /**
    * @return {!Array<!Promise<?SnapshotWithRect>>}
    */
-  snapshots() {}
+  snapshots() {
+    throw new Error('Not implemented');
+  }
 }
 
 Layer.ScrollRectType = {
@@ -225,7 +249,8 @@ export class LayerTreeBase {
   constructor(target) {
     this._target = target;
     this._domModel = target ? target.model(DOMModel) : null;
-    this._layersById = {};
+    /** @type {!Map<(string|number), !Layer>} */
+    this.layersById = new Map();
     this._root = null;
     this._contentRoot = null;
     /** @type {!Map<number, ?DOMNode>} */
@@ -270,9 +295,9 @@ export class LayerTreeBase {
   }
 
   /**
-   * @param {function(!Layer)} callback
+   * @param {function(!Layer):*} callback
    * @param {?Layer=} root
-   * @return {boolean}
+   * @return {*}
    */
   forEachLayer(callback, root) {
     if (!root) {
@@ -289,12 +314,12 @@ export class LayerTreeBase {
    * @return {?Layer}
    */
   layerById(id) {
-    return this._layersById[id] || null;
+    return this.layersById.get(id) || null;
   }
 
   /**
    * @param {!Set<number>} requestedNodeIds
-   * @return {!Promise}
+   * @return {!Promise<void>}
    */
   async resolveBackendNodeIds(requestedNodeIds) {
     if (!requestedNodeIds.size || !this._domModel) {

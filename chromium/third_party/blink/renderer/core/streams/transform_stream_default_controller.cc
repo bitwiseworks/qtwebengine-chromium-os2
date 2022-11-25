@@ -39,21 +39,6 @@ base::Optional<double> TransformStreamDefaultController::desiredSize() const {
   return readable_controller->desiredSize();
 }
 
-double TransformStreamDefaultController::desiredSize(bool& is_null) const {
-  // https://streams.spec.whatwg.org/#ts-default-controller-desired-size
-  // 2. Let readableController be
-  //    this.[[controlledTransformStream]].[[readable]].
-  //    [[readableStreamController]].
-  const auto* readable_controller =
-      controlled_transform_stream_->readable_->GetController();
-
-  // 3. Return !
-  //    ReadableStreamDefaultControllerGetDesiredSize(readableController).
-  // Use the accessor instead as it already has the semantics we need and can't
-  // be interfered with from JavaScript.
-  return readable_controller->desiredSize(is_null);
-}
-
 // The handling of undefined arguments is implicit in the standard, but needs to
 // be done explicitly with IDL.
 void TransformStreamDefaultController::enqueue(
@@ -93,7 +78,7 @@ void TransformStreamDefaultController::terminate(ScriptState* script_state) {
   Terminate(script_state, this);
 }
 
-void TransformStreamDefaultController::Trace(Visitor* visitor) {
+void TransformStreamDefaultController::Trace(Visitor* visitor) const {
   visitor->Trace(controlled_transform_stream_);
   visitor->Trace(flush_algorithm_);
   visitor->Trace(transform_algorithm_);
@@ -136,7 +121,7 @@ class TransformStreamDefaultController::DefaultTransformAlgorithm final
     return PromiseResolveWithUndefined(script_state);
   }
 
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     visitor->Trace(controller_);
     StreamAlgorithm::Trace(visitor);
   }
@@ -349,7 +334,7 @@ v8::Local<v8::Promise> TransformStreamDefaultController::PerformTransform(
       return PromiseReject(GetScriptState(), r);
     }
 
-    void Trace(Visitor* visitor) override {
+    void Trace(Visitor* visitor) const override {
       visitor->Trace(stream_);
       PromiseHandlerWithValue::Trace(visitor);
     }

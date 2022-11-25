@@ -10,7 +10,6 @@
 #include "services/device/public/mojom/sensor.mojom-blink.h"
 #include "third_party/blink/public/mojom/feature_policy/feature_policy.mojom-blink.h"
 #include "third_party/blink/public/platform/task_type.h"
-#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/timing/dom_window_performance.h"
@@ -26,11 +25,11 @@ namespace {
 const double kWaitingIntervalThreshold = 0.01;
 
 bool AreFeaturesEnabled(
-    Document* document,
+    ExecutionContext* context,
     const Vector<mojom::blink::FeaturePolicyFeature>& features) {
   return std::all_of(features.begin(), features.end(),
-                     [document](mojom::blink::FeaturePolicyFeature feature) {
-                       return document->IsFeatureEnabled(
+                     [context](mojom::blink::FeaturePolicyFeature feature) {
+                       return context->IsFeatureEnabled(
                            feature, ReportOptions::kReportOnFailure);
                      });
 }
@@ -50,9 +49,8 @@ Sensor::Sensor(ExecutionContext* execution_context,
   // [SecureContext] in idl.
   DCHECK(execution_context->IsSecureContext());
   DCHECK(!features.IsEmpty());
-  Document* document = Document::From(execution_context);
 
-  if (!AreFeaturesEnabled(document, features)) {
+  if (!AreFeaturesEnabled(execution_context, features)) {
     exception_state.ThrowSecurityError(
         "Access to sensor features is disallowed by feature policy");
     return;
@@ -111,7 +109,7 @@ bool Sensor::activated() const {
 }
 
 bool Sensor::hasReading() const {
-  if (!IsActivated())
+  if (!activated())
     return false;
   DCHECK(sensor_proxy_);
   return sensor_proxy_->GetReading().timestamp() != 0.0;
@@ -142,14 +140,7 @@ base::Optional<DOMHighResTimeStamp> Sensor::timestamp(
       base::TimeDelta::FromSecondsD(sensor_proxy_->GetReading().timestamp()));
 }
 
-DOMHighResTimeStamp Sensor::timestamp(ScriptState* script_state,
-                                      bool& is_null) const {
-  base::Optional<DOMHighResTimeStamp> result = timestamp(script_state);
-  is_null = !result;
-  return result.value_or(0);
-}
-
-void Sensor::Trace(Visitor* visitor) {
+void Sensor::Trace(Visitor* visitor) const {
   visitor->Trace(sensor_proxy_);
   ActiveScriptWrappable::Trace(visitor);
   ExecutionContextLifecycleObserver::Trace(visitor);
@@ -184,15 +175,14 @@ void Sensor::InitSensorProxyIfNeeded() {
   if (sensor_proxy_)
     return;
 
-  Document* document = Document::From(GetExecutionContext());
-  if (!document || !document->GetFrame())
-    return;
-
-  auto* provider = SensorProviderProxy::From(document);
+  LocalDOMWindow* window = To<LocalDOMWindow>(GetExecutionContext());
+  auto* provider = SensorProviderProxy::From(window);
   sensor_proxy_ = provider->GetSensorProxy(type_);
 
-  if (!sensor_proxy_)
-    sensor_proxy_ = provider->CreateSensorProxy(type_, document->GetPage());
+  if (!sensor_proxy_) {
+    sensor_proxy_ =
+        provider->CreateSensorProxy(type_, window->GetFrame()->GetPage());
+  }
 }
 
 void Sensor::ContextDestroyed() {
@@ -273,11 +263,7 @@ void Sensor::Activate() {
   DCHECK_EQ(state_, SensorState::kActivating);
 
   InitSensorProxyIfNeeded();
-  if (!sensor_proxy_) {
-    HandleError(DOMExceptionCode::kInvalidStateError,
-                "The Sensor is no longer associated to a frame.");
-    return;
-  }
+  DCHECK(sensor_proxy_);
 
   if (sensor_proxy_->IsInitialized())
     RequestAddConfiguration();
@@ -356,7 +342,12 @@ void Sensor::NotifyActivated() {
   DCHECK_EQ(state_, SensorState::kActivating);
   state_ = SensorState::kActivated;
 
-  if (hasReading()) {
+  // Explicitly call the Sensor implementation of hasReading(). Subclasses may
+  // override the method and introduce additional requirements, but in this case
+  // we are really only interested in whether there is data in the shared
+  // buffer, so that we can then process it possibly for the first time in
+  // OnSensorReadingChanged().
+  if (Sensor::hasReading()) {
     // If reading has already arrived, process the reading values (a subclass
     // may do some filtering, for example) and then send an initial "reading"
     // event right away.

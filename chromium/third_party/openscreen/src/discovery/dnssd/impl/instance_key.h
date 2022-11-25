@@ -14,7 +14,7 @@
 namespace openscreen {
 namespace discovery {
 
-class DnsSdInstanceRecord;
+class DnsSdInstance;
 class DomainName;
 class MdnsRecord;
 class ServiceKey;
@@ -27,7 +27,7 @@ class InstanceKey : public ServiceKey {
   // labels.
   explicit InstanceKey(const MdnsRecord& record);
   explicit InstanceKey(const DomainName& domain);
-  explicit InstanceKey(const DnsSdInstanceRecord& record);
+  explicit InstanceKey(const DnsSdInstance& instance);
 
   // NOTE: The provided parameters must be valid instance,  service and domain
   // ids.
@@ -40,6 +40,8 @@ class InstanceKey : public ServiceKey {
 
   InstanceKey& operator=(const InstanceKey& rhs);
   InstanceKey& operator=(InstanceKey&& rhs);
+
+  DomainName GetName() const override;
 
   const std::string& instance_id() const { return instance_id_; }
 

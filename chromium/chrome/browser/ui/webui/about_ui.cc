@@ -319,8 +319,11 @@ class ChromeOSTermsHandler
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     // If we fail to load Chrome OS EULA from disk, load it from resources.
     // Do nothing if OEM EULA or Play Store ToS load failed.
-    if (contents_.empty() && path_.empty())
-      contents_ = l10n_util::GetStringUTF8(IDS_TERMS_HTML);
+    if (contents_.empty() && path_.empty()) {
+      contents_ =
+          ui::ResourceBundle::GetSharedInstance().LoadLocalizedResourceString(
+              IDS_TERMS_HTML);
+    }
     std::move(callback_).Run(base::RefCountedString::TakeString(&contents_));
   }
 
@@ -361,17 +364,17 @@ class ChromeOSCreditsHandler
   void StartOnUIThread() {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     if (path_ == kKeyboardUtilsPath) {
-      contents_ = ui::ResourceBundle::GetSharedInstance()
-                      .GetRawDataResource(IDR_KEYBOARD_UTILS_JS)
-                      .as_string();
+      contents_ =
+          ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(
+              IDR_KEYBOARD_UTILS_JS);
       ResponseOnUIThread();
       return;
     }
     // Load local Chrome OS credits from the disk.
     base::ThreadPool::PostTaskAndReply(
         FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
-        base::Bind(&ChromeOSCreditsHandler::LoadCreditsFileAsync, this),
-        base::Bind(&ChromeOSCreditsHandler::ResponseOnUIThread, this));
+        base::BindOnce(&ChromeOSCreditsHandler::LoadCreditsFileAsync, this),
+        base::BindOnce(&ChromeOSCreditsHandler::ResponseOnUIThread, this));
   }
 
   void LoadCreditsFileAsync() {
@@ -428,16 +431,16 @@ class CrostiniCreditsHandler
   void StartOnUIThread() {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     if (path_ == kKeyboardUtilsPath) {
-      contents_ = ui::ResourceBundle::GetSharedInstance()
-                      .GetRawDataResource(IDR_KEYBOARD_UTILS_JS)
-                      .as_string();
+      contents_ =
+          ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(
+              IDR_KEYBOARD_UTILS_JS);
       ResponseOnUIThread();
       return;
     }
-    auto* component_manager =
+    auto component_manager =
         g_browser_process->platform_part()->cros_component_manager();
     if (!component_manager) {
-      LoadCredits(base::FilePath(chrome::kLinuxCreditsPath));
+      RespondWithPlaceholder();
       return;
     }
     component_manager->Load(
@@ -458,8 +461,8 @@ class CrostiniCreditsHandler
 
   void LoadCrostiniCreditsFileAsync(base::FilePath credits_file_path) {
     if (!base::ReadFileToString(credits_file_path, &contents_)) {
-      // File with credits not found, ResponseOnUIThread will load credits
-      // from resources if contents_ is empty.
+      // File with credits not found, ResponseOnUIThread will load a placeholder
+      // if contents_ is empty.
       contents_.clear();
     }
   }
@@ -470,18 +473,19 @@ class CrostiniCreditsHandler
       LoadCredits(path.Append(kTerminaCreditsPath));
       return;
     }
-    LoadCredits(base::FilePath(chrome::kLinuxCreditsPath));
+    RespondWithPlaceholder();
+  }
+
+  void RespondWithPlaceholder() {
+    contents_.clear();
+    ResponseOnUIThread();
   }
 
   void ResponseOnUIThread() {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
-    // If we fail to load Linux credits from disk, load the placeholder from
-    // resources.
-    // TODO(rjwright): Add a linux-specific placeholder in resources.
+    // If we fail to load Linux credits from disk, use the placeholder.
     if (contents_.empty() && path_ != kKeyboardUtilsPath) {
-      contents_ =
-          ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(
-              IDR_OS_CREDITS_HTML);
+      contents_ = l10n_util::GetStringUTF8(IDS_CROSTINI_CREDITS_PLACEHOLDER);
     }
     std::move(callback_).Run(base::RefCountedString::TakeString(&contents_));
   }
@@ -541,14 +545,28 @@ std::string ChromeURLs() {
   std::string html;
   AppendHeader(&html, 0, "Chrome URLs");
   AppendBody(&html);
+
   html += "<h2>List of Chrome URLs</h2>\n<ul>\n";
   std::vector<std::string> hosts(
       chrome::kChromeHostURLs,
       chrome::kChromeHostURLs + chrome::kNumberOfChromeHostURLs);
   std::sort(hosts.begin(), hosts.end());
-  for (std::vector<std::string>::const_iterator i = hosts.begin();
-       i != hosts.end(); ++i)
-    html += "<li><a href='chrome://" + *i + "/'>chrome://" + *i + "</a></li>\n";
+  for (const std::string& host : hosts) {
+    html +=
+        "<li><a href='chrome://" + host + "/'>chrome://" + host + "</a></li>\n";
+  }
+
+  html += "</ul><h2>List of chrome://internals pages</h2>\n<ul>\n";
+  std::vector<std::string> internals_paths(
+      chrome::kChromeInternalsPathURLs,
+      chrome::kChromeInternalsPathURLs +
+          chrome::kNumberOfChromeInternalsPathURLs);
+  std::sort(internals_paths.begin(), internals_paths.end());
+  for (const std::string& path : internals_paths) {
+    html += "<li><a href='chrome://internals/" + path +
+            "'>chrome://internals/" + path + "</a></li>\n";
+  }
+
   html += "</ul>\n<h2>For Debug</h2>\n"
       "<p>The following pages are for debugging purposes only. Because they "
       "crash or hang the renderer, they're not linked directly; you can type "
@@ -556,11 +574,12 @@ std::string ChromeURLs() {
   for (size_t i = 0; i < chrome::kNumberOfChromeDebugURLs; i++)
     html += "<li>" + std::string(chrome::kChromeDebugURLs[i]) + "</li>\n";
   html += "</ul>\n";
+
   AppendFooter(&html);
   return html;
 }
 
-#if defined(OS_LINUX) || defined(OS_OPENBSD)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_OPENBSD)
 std::string AboutLinuxProxyConfig() {
   std::string data;
   AppendHeader(&data, 0,
@@ -616,7 +635,7 @@ void AboutUIHTMLSource::StartDataRequest(
       response =
           ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(idr);
     }
-#if defined(OS_LINUX) || defined(OS_OPENBSD)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_OPENBSD)
   } else if (source_name_ == chrome::kChromeUILinuxProxyConfigHost) {
     response = AboutLinuxProxyConfig();
 #endif
@@ -636,7 +655,9 @@ void AboutUIHTMLSource::StartDataRequest(
       return;
     }
 #endif
-    response = l10n_util::GetStringUTF8(IDS_TERMS_HTML);
+    response =
+        ui::ResourceBundle::GetSharedInstance().LoadLocalizedResourceString(
+            IDS_TERMS_HTML);
 #endif
   }
 
@@ -670,6 +691,15 @@ bool AboutUIHTMLSource::ShouldAddContentSecurityPolicy() {
   }
 #endif
   return content::URLDataSource::ShouldAddContentSecurityPolicy();
+}
+
+std::string AboutUIHTMLSource::GetContentSecurityPolicy(
+    network::mojom::CSPDirectiveName directive) {
+  if (source_name_ == chrome::kChromeUICreditsHost &&
+      directive == network::mojom::CSPDirectiveName::TrustedTypes) {
+    return "trusted-types credits-static;";
+  }
+  return content::URLDataSource::GetContentSecurityPolicy(directive);
 }
 
 std::string AboutUIHTMLSource::GetAccessControlAllowOriginForOrigin(

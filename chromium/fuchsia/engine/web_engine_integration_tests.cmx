@@ -13,12 +13,14 @@
       "fuchsia.logger.LogSink",
       "fuchsia.media.Audio",
       "fuchsia.media.SessionAudioConsumerFactory",
+      "fuchsia.memorypressure.Provider",
       "fuchsia.net.NameLookup",
       "fuchsia.netstack.Netstack",
       "fuchsia.posix.socket.Provider",
       "fuchsia.process.Launcher",
       "fuchsia.sys.Launcher",
       "fuchsia.sysmem.Allocator",
+      "fuchsia.vulkan.loader.Loader",
       "fuchsia.web.ContextProvider"
     ]
   }

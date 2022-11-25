@@ -15,11 +15,8 @@
 #include "content/browser/dom_storage/session_storage_namespace_impl.h"
 #include "content/common/content_export.h"
 #include "content/common/render_message_filter.mojom.h"
-#include "content/common/widget.mojom.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "net/base/load_states.h"
-
-class GURL;
 
 namespace IPC {
 class Message;
@@ -28,6 +25,9 @@ class Message;
 namespace blink {
 namespace mojom {
 class RendererPreferences;
+}
+namespace web_pref {
+struct WebPreferences;
 }
 }  // namespace blink
 
@@ -38,7 +38,6 @@ class Size;
 
 namespace content {
 
-class BrowserContext;
 class FrameTree;
 class RenderFrameHostImpl;
 class RenderViewHost;
@@ -92,23 +91,15 @@ class CONTENT_EXPORT RenderViewHostDelegate {
   // RenderView is going to be destroyed
   virtual void RenderViewDeleted(RenderViewHost* render_view_host) {}
 
-  // The destination URL has changed should be updated.
-  virtual void UpdateTargetURL(RenderViewHost* render_view_host,
-                               const GURL& url) {}
-
   // The page is trying to close the RenderView's representation in the client.
   virtual void Close(RenderViewHost* render_view_host) {}
 
   // The page is trying to move the RenderView's representation in the client.
   virtual void RequestSetBounds(const gfx::Rect& new_bounds) {}
 
-  // The page wants to close the active view in this tab.
-  virtual void RouteCloseEvent(RenderViewHost* rvh) {}
-
   // Return a dummy RendererPreferences object that will be used by the renderer
   // associated with the owning RenderViewHost.
-  virtual blink::mojom::RendererPreferences GetRendererPrefs(
-      BrowserContext* browser_context) const = 0;
+  virtual blink::mojom::RendererPreferences GetRendererPrefs() const = 0;
 
   // Notification from the renderer host that blocked UI event occurred.
   // This happens when there are tab-modal dialogs. In this case, the
@@ -153,6 +144,34 @@ class CONTENT_EXPORT RenderViewHostDelegate {
   // created by the RenderViewHost.
   virtual FrameTree* GetFrameTree();
 
+  // Returns a copy of the current WebPreferences associated with this
+  // RenderViewHost's WebContents. If it does not exist, this will create one
+  // and send the newly computed value to all renderers.
+  // Note that this will not trigger a recomputation of WebPreferences if it
+  // already exists - this will return the last computed/set value of
+  // WebPreferences. If we want to guarantee that the value reflects the current
+  // state of the WebContents, NotifyPreferencesChanged() should be called
+  // before calling this.
+  virtual const blink::web_pref::WebPreferences&
+  GetOrCreateWebPreferences() = 0;
+
+  // Returns true if the WebPreferences for this RenderViewHost is not null.
+  virtual bool IsWebPreferencesSet() const;
+
+  // Sets the WebPreferences for the WebContents associated with this
+  // RenderViewHost to |prefs| and send the new value to all renderers in the
+  // WebContents.
+  virtual void SetWebPreferences(const blink::web_pref::WebPreferences& prefs) {
+  }
+
+  // Triggers a total recomputation of WebPreferences by resetting the current
+  // cached WebPreferences to null and triggering the recomputation path for
+  // both the "slow" attributes (hardware configurations/things that require
+  // slow platform/device polling) which normally won't get recomputed after
+  // the first time we set it and "fast" attributes (which always gets
+  // recomputed).
+  virtual void RecomputeWebPreferencesSlow() {}
+
   // Whether the user agent is overridden using the Chrome for Android "Request
   // Desktop Site" feature.
   virtual bool IsOverridingUserAgent();
@@ -180,11 +199,15 @@ class CONTENT_EXPORT RenderViewHostDelegate {
   virtual void DidFirstVisuallyNonEmptyPaint(RenderViewHostImpl* source) {}
 
   // Returns true if the render view is rendering a portal.
-  virtual bool IsPortal() const;
+  virtual bool IsPortal();
 
   // Called when the theme color for the underlying document as specified
   // by theme-color meta tag has changed.
   virtual void OnThemeColorChanged(RenderViewHostImpl* source) {}
+
+  // Called when the CSS background color for the underlying document has
+  // changed.
+  virtual void OnBackgroundColorChanged(RenderViewHostImpl* source) {}
 
  protected:
   virtual ~RenderViewHostDelegate() {}

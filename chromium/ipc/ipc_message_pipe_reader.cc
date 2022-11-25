@@ -10,6 +10,7 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/containers/span.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -29,12 +30,12 @@ MessagePipeReader::MessagePipeReader(
     : delegate_(delegate),
       sender_(std::move(sender)),
       receiver_(this, std::move(receiver)) {
-  sender_.set_disconnect_handler(base::BindRepeating(
-      &MessagePipeReader::OnPipeError, base::Unretained(this),
-      MOJO_RESULT_FAILED_PRECONDITION));
-  receiver_.set_disconnect_handler(base::BindRepeating(
-      &MessagePipeReader::OnPipeError, base::Unretained(this),
-      MOJO_RESULT_FAILED_PRECONDITION));
+  sender_.set_disconnect_handler(
+      base::BindOnce(&MessagePipeReader::OnPipeError, base::Unretained(this),
+                     MOJO_RESULT_FAILED_PRECONDITION));
+  receiver_.set_disconnect_handler(
+      base::BindOnce(&MessagePipeReader::OnPipeError, base::Unretained(this),
+                     MOJO_RESULT_FAILED_PRECONDITION));
 }
 
 MessagePipeReader::~MessagePipeReader() {
@@ -51,9 +52,8 @@ void MessagePipeReader::Close() {
 
 bool MessagePipeReader::Send(std::unique_ptr<Message> message) {
   CHECK(message->IsValid());
-  TRACE_EVENT_WITH_FLOW0(TRACE_DISABLED_BY_DEFAULT("toplevel.flow"),
-                         "MessagePipeReader::Send", message->flags(),
-                         TRACE_EVENT_FLAG_FLOW_OUT);
+  TRACE_EVENT_WITH_FLOW0("toplevel.flow", "MessagePipeReader::Send",
+                         message->flags(), TRACE_EVENT_FLAG_FLOW_OUT);
   base::Optional<std::vector<mojo::native::SerializedHandlePtr>> handles;
   MojoResult result = MOJO_RESULT_OK;
   result = ChannelMojo::ReadFromMessageAttachmentSet(message.get(), &handles);
@@ -63,7 +63,9 @@ bool MessagePipeReader::Send(std::unique_ptr<Message> message) {
   if (!sender_)
     return false;
 
-  sender_->Receive(MessageView(*message, std::move(handles)));
+  base::span<const uint8_t> bytes(static_cast<const uint8_t*>(message->data()),
+                                  message->size());
+  sender_->Receive(MessageView(bytes, std::move(handles)));
   DVLOG(4) << "Send " << message->type() << ": " << message->size();
   return true;
 }
@@ -83,11 +85,12 @@ void MessagePipeReader::SetPeerPid(int32_t peer_pid) {
 }
 
 void MessagePipeReader::Receive(MessageView message_view) {
-  if (!message_view.size()) {
+  if (message_view.bytes().empty()) {
     delegate_->OnBrokenDataReceived();
     return;
   }
-  Message message(message_view.data(), message_view.size());
+  Message message(reinterpret_cast<const char*>(message_view.bytes().data()),
+                  message_view.bytes().size());
   if (!message.IsValid()) {
     delegate_->OnBrokenDataReceived();
     return;
@@ -101,9 +104,8 @@ void MessagePipeReader::Receive(MessageView message_view) {
     return;
   }
 
-  TRACE_EVENT_WITH_FLOW0(TRACE_DISABLED_BY_DEFAULT("toplevel.flow"),
-                         "MessagePipeReader::Receive", message.flags(),
-                         TRACE_EVENT_FLAG_FLOW_IN);
+  TRACE_EVENT_WITH_FLOW0("toplevel.flow", "MessagePipeReader::Receive",
+                         message.flags(), TRACE_EVENT_FLAG_FLOW_IN);
   delegate_->OnMessageReceived(message);
 }
 

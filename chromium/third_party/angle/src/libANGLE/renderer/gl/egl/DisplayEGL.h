@@ -11,6 +11,7 @@
 
 #include <map>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "libANGLE/renderer/gl/DisplayGL.h"
@@ -90,6 +91,16 @@ class DisplayEGL : public DisplayGL
 
     void populateFeatureList(angle::FeatureList *features) override;
 
+    egl::Error validateImageClientBuffer(const gl::Context *context,
+                                         EGLenum target,
+                                         EGLClientBuffer clientBuffer,
+                                         const egl::AttributeMap &attribs) const override;
+
+    ExternalImageSiblingImpl *createExternalImageSibling(const gl::Context *context,
+                                                         EGLenum target,
+                                                         EGLClientBuffer buffer,
+                                                         const egl::AttributeMap &attribs) override;
+
   protected:
     egl::Error initializeContext(EGLContext shareContext,
                                  const egl::AttributeMap &eglAttributes,
@@ -118,10 +129,20 @@ class DisplayEGL : public DisplayGL
     egl::AttributeMap mDisplayAttributes;
     std::vector<EGLint> mConfigAttribList;
 
+    struct CurrentNativeContext
+    {
+        EGLSurface surface = EGL_NO_SURFACE;
+        EGLContext context = EGL_NO_CONTEXT;
+    };
+    std::unordered_map<std::thread::id, CurrentNativeContext> mCurrentNativeContexts;
+
   private:
     void generateCaps(egl::Caps *outCaps) const override;
 
     std::map<EGLint, EGLint> mConfigIds;
+
+    bool mHasEXTCreateContextRobustness;
+    bool mHasNVRobustnessVideoMemoryPurge;
 };
 
 }  // namespace rx

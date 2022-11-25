@@ -11,7 +11,6 @@
 #include "base/command_line.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -27,6 +26,7 @@
 #include "content/public/common/content_constants.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/mock_render_thread.h"
 #include "content/public/test/test_utils.h"
@@ -64,11 +64,11 @@ TEST_F(ChromeContentRendererClientSearchBoxTest, RewriteThumbnailURL) {
       render_frame->GetRenderView()->GetRoutingID()));
 
   GURL result;
-  bool attach_same_site_cookies;
+  bool force_ignore_site_for_cookies;
   // Make sure the SearchBox rewrites a thumbnail request from the main frame.
   client->WillSendRequest(GetMainFrame(), ui::PAGE_TRANSITION_LINK,
                           blink::WebURL(thumbnail_url), net::SiteForCookies(),
-                          nullptr, &result, &attach_same_site_cookies);
+                          nullptr, &result, &force_ignore_site_for_cookies);
   EXPECT_NE(result, thumbnail_url);
 
   // Make sure the SearchBox rewrites a thumbnail request from the iframe.
@@ -79,7 +79,7 @@ TEST_F(ChromeContentRendererClientSearchBoxTest, RewriteThumbnailURL) {
       static_cast<blink::WebLocalFrame*>(child_frame);
   client->WillSendRequest(local_child, ui::PAGE_TRANSITION_LINK,
                           blink::WebURL(thumbnail_url), net::SiteForCookies(),
-                          nullptr, &result, &attach_same_site_cookies);
+                          nullptr, &result, &force_ignore_site_for_cookies);
   EXPECT_NE(result, thumbnail_url);
 }
 
@@ -135,8 +135,8 @@ class ChromeContentRendererClientBrowserTest :
 
     EXPECT_EQ(request.relative_url, GetParam().expected_url)
         << "URL is wrong for test " << GetParam().name;
-    base::PostTask(FROM_HERE, {content::BrowserThread::UI},
-                   message_runner_->QuitClosure());
+    content::GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE, message_runner_->QuitClosure());
   }
 
   void WaitForYouTubeRequest() {
@@ -147,7 +147,7 @@ class ChromeContentRendererClientBrowserTest :
     host_resolver()->AddRule("*", "127.0.0.1");
 
     https_server_->ServeFilesFromSourceDirectory(GetChromeTestDataDir());
-    https_server_->RegisterRequestMonitor(base::Bind(
+    https_server_->RegisterRequestMonitor(base::BindRepeating(
         &ChromeContentRendererClientBrowserTest::MonitorRequestHandler,
         base::Unretained(this)));
     ASSERT_TRUE(https_server_->Start());

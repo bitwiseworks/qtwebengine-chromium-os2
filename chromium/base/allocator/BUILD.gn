@@ -4,8 +4,14 @@
 
 import("//base/allocator/allocator.gni")
 import("//build/buildflag_header.gni")
-import("//build/config/allocator.gni")
 import("//build/config/compiler/compiler.gni")
+
+# This file depends on the legacy global sources assignment filter. It should
+# be converted to check target platform before assigning source files to the
+# sources variable. Remove this import and set_sources_assignment_filter call
+# when the file has been converted. See https://crbug.com/1018739 for details.
+import("//build/config/deprecated_default_sources_assignment_filter.gni")
+set_sources_assignment_filter(deprecated_default_sources_assignment_filter)
 
 declare_args() {
   # Provide a way to force disable debugallocation in Debug builds,
@@ -64,7 +70,7 @@ config("tcmalloc_flags") {
     cflags = []
   }
 
-  if (is_linux || is_android) {
+  if (is_linux || is_chromeos || is_android) {
     # We enable all warnings by default, but upstream disables a few.
     # Keep "-Wno-*" flags in sync with upstream by comparing against:
     # http://code.google.com/p/google-perftools/source/browse/trunk/Makefile.am
@@ -233,7 +239,7 @@ if (use_allocator == "tcmalloc") {
       defines += [ "ENABLE_PROFILING=1" ]
     }
 
-    if (is_linux || is_android) {
+    if (is_linux || is_chromeos || is_android) {
       sources -= [
         "$tcmalloc_dir/src/system-alloc.h",
         "$tcmalloc_dir/src/windows/port.cc",
@@ -276,12 +282,14 @@ if (use_allocator == "tcmalloc") {
 
 buildflag_header("buildflags") {
   header = "buildflags.h"
-  flags = [ "USE_ALLOCATOR_SHIM=$use_allocator_shim" ]
-  if (use_allocator == "tcmalloc") {
-    flags += [ "USE_TCMALLOC=1" ]
-  } else {
-    flags += [ "USE_TCMALLOC=0" ]
-  }
+  _use_partition_alloc = use_allocator == "partition"
+  _use_tcmalloc = use_allocator == "tcmalloc"
+
+  flags = [
+    "USE_ALLOCATOR_SHIM=$use_allocator_shim",
+    "USE_TCMALLOC=$_use_tcmalloc",
+    "USE_PARTITION_ALLOC_AS_MALLOC=$_use_partition_alloc",
+  ]
 }
 
 # Used to shim malloc symbols on Android. see //base/allocator/README.md.
@@ -295,5 +303,9 @@ config("wrap_malloc_symbols") {
     "-Wl,-wrap,pvalloc",
     "-Wl,-wrap,realloc",
     "-Wl,-wrap,valloc",
+
+    # <string.h> functions
+    "-Wl,-wrap,strdup",
+    "-Wl,-wrap,strndup",
   ]
 }

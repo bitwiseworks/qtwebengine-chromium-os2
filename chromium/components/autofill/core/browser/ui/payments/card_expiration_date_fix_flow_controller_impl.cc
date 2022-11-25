@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "build/branding_buildflags.h"
@@ -41,7 +41,7 @@ void CardExpirationDateFixFlowControllerImpl::Show(
   DCHECK(!callback.is_null());
   DCHECK(card_expiration_date_fix_flow_view);
 
-  card_label_ = card.NetworkAndLastFourDigits();
+  card_label_ = card.CardIdentifierStringForAutofillDisplay();
 
   if (card_expiration_date_fix_flow_view_)
     card_expiration_date_fix_flow_view_->ControllerGone();

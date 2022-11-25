@@ -7,27 +7,32 @@
 #include <stdint.h>
 
 #include "base/bind.h"
+#include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
-#include "content/public/browser/render_frame_host.h"
-#include "content/public/browser/web_contents.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "third_party/blink/public/common/manifest/manifest.h"
 
 namespace content {
 
-ManifestManagerHost::ManifestManagerHost(WebContents* web_contents)
-    : WebContentsObserver(web_contents),
-      manifest_url_change_observer_receivers_(web_contents, this) {}
-
-ManifestManagerHost::~ManifestManagerHost() {
-  OnConnectionError();
+ManifestManagerHost::ManifestManagerHost(RenderFrameHost* render_frame_host)
+    : manifest_manager_frame_(
+          static_cast<RenderFrameHostImpl*>(render_frame_host)) {
+  // Check that |manifest_manager_frame_| is a main frame.
+  DCHECK(!manifest_manager_frame_->GetParent());
 }
 
-void ManifestManagerHost::RenderFrameDeleted(
-    RenderFrameHost* render_frame_host) {
-  if (render_frame_host == manifest_manager_frame_)
-    OnConnectionError();
+ManifestManagerHost::~ManifestManagerHost() {
+  DispatchPendingCallbacks();
+}
+
+void ManifestManagerHost::BindObserver(
+    mojo::PendingAssociatedReceiver<blink::mojom::ManifestUrlChangeObserver>
+        receiver) {
+  manifest_url_change_observer_receiver_.Bind(std::move(receiver));
+  manifest_url_change_observer_receiver_.SetFilter(
+      manifest_manager_frame_->CreateMessageFilterForAssociatedReceiver(
+          blink::mojom::ManifestUrlChangeObserver::Name_));
 }
 
 void ManifestManagerHost::GetManifest(GetManifestCallback callback) {
@@ -45,11 +50,7 @@ void ManifestManagerHost::RequestManifestDebugInfo(
 }
 
 blink::mojom::ManifestManager& ManifestManagerHost::GetManifestManager() {
-  if (manifest_manager_frame_ != web_contents()->GetMainFrame())
-    OnConnectionError();
-
   if (!manifest_manager_) {
-    manifest_manager_frame_ = web_contents()->GetMainFrame();
     manifest_manager_frame_->GetRemoteInterfaces()->GetInterface(
         manifest_manager_.BindNewPipeAndPassReceiver());
     manifest_manager_.set_disconnect_handler(base::BindOnce(
@@ -58,9 +59,7 @@ blink::mojom::ManifestManager& ManifestManagerHost::GetManifestManager() {
   return *manifest_manager_;
 }
 
-void ManifestManagerHost::OnConnectionError() {
-  manifest_manager_frame_ = nullptr;
-  manifest_manager_.reset();
+void ManifestManagerHost::DispatchPendingCallbacks() {
   std::vector<GetManifestCallback> callbacks;
   for (CallbackMap::iterator it(&callbacks_); !it.IsAtEnd(); it.Advance()) {
     callbacks.push_back(std::move(*it.GetCurrentValue()));
@@ -68,6 +67,13 @@ void ManifestManagerHost::OnConnectionError() {
   callbacks_.Clear();
   for (auto& callback : callbacks)
     std::move(callback).Run(GURL(), blink::Manifest());
+}
+
+void ManifestManagerHost::OnConnectionError() {
+  DispatchPendingCallbacks();
+  if (GetForCurrentDocument(manifest_manager_frame_)) {
+    DeleteForCurrentDocument(manifest_manager_frame_);
+  }
 }
 
 void ManifestManagerHost::OnRequestManifestResponse(
@@ -81,12 +87,14 @@ void ManifestManagerHost::OnRequestManifestResponse(
 
 void ManifestManagerHost::ManifestUrlChanged(
     const base::Optional<GURL>& manifest_url) {
-  if (manifest_url_change_observer_receivers_.GetCurrentTargetFrame() !=
-      web_contents()->GetMainFrame()) {
+  if (!manifest_manager_frame_->IsCurrent())
     return;
-  }
-  static_cast<WebContentsImpl*>(web_contents())
-      ->NotifyManifestUrlChanged(manifest_url);
+
+  WebContents* web_contents =
+      WebContents::FromRenderFrameHost(manifest_manager_frame_);
+  static_cast<WebContentsImpl*>(web_contents)
+      ->NotifyManifestUrlChanged(manifest_manager_frame_, manifest_url);
 }
 
+RENDER_DOCUMENT_HOST_USER_DATA_KEY_IMPL(ManifestManagerHost)
 }  // namespace content

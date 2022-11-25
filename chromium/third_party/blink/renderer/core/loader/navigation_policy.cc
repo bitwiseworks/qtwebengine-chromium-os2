@@ -52,7 +52,7 @@ NavigationPolicy NavigationPolicyFromEventModifiers(int16_t button,
                                                     bool shift,
                                                     bool alt,
                                                     bool meta) {
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   const bool new_tab_modifier = (button == 1) || meta;
 #else
   const bool new_tab_modifier = (button == 1) || ctrl;
@@ -102,7 +102,7 @@ NavigationPolicy NavigationPolicyFromCurrentEvent() {
     return kNavigationPolicyCurrentTab;
 
   int16_t button = 0;
-  if (event->GetType() == WebInputEvent::kMouseUp) {
+  if (event->GetType() == WebInputEvent::Type::kMouseUp) {
     const WebMouseEvent* mouse_event = static_cast<const WebMouseEvent*>(event);
 
     switch (mouse_event->button) {

@@ -11,7 +11,7 @@
 #include "include/core/SkPictureRecorder.h"
 #include "include/core/SkStream.h"
 #include "include/core/SkSurface.h"
-#include "include/gpu/GrContext.h"
+#include "include/gpu/GrDirectContext.h"
 #include "include/private/SkTo.h"
 #include "include/utils/SkPaintFilterCanvas.h"
 #include "src/core/SkColorSpacePriv.h"
@@ -19,12 +19,15 @@
 #include "src/core/SkMD5.h"
 #include "src/core/SkOSFile.h"
 #include "src/core/SkScan.h"
+#include "src/core/SkTSort.h"
 #include "src/core/SkTaskGroup.h"
+#include "src/core/SkTextBlobPriv.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrPersistentCacheUtils.h"
 #include "src/gpu/GrShaderUtils.h"
 #include "src/gpu/ccpr/GrCoverageCountingPathRenderer.h"
+#include "src/image/SkImage_Base.h"
 #include "src/utils/SkJSONWriter.h"
 #include "src/utils/SkOSPath.h"
 #include "tools/Resources.h"
@@ -49,8 +52,15 @@
 #include "imgui.h"
 #include "misc/cpp/imgui_stdlib.h"  // For ImGui support of std::string
 
+#ifdef SK_VULKAN
+#include "spirv-tools/libspirv.hpp"
+#endif
+
 #if defined(SK_ENABLE_SKOTTIE)
     #include "tools/viewer/SkottieSlide.h"
+#endif
+#if defined(SK_ENABLE_SKRIVE)
+    #include "tools/viewer/SkRiveSlide.h"
 #endif
 
 class CapturingShaderErrorHandler : public GrContextOptions::ShaderErrorHandler {
@@ -71,6 +81,8 @@ public:
 
 static CapturingShaderErrorHandler gShaderErrorHandler;
 
+GrContextOptions::ShaderErrorHandler* Viewer::ShaderErrorHandler() { return &gShaderErrorHandler; }
+
 using namespace sk_app;
 
 static std::map<GpuPathRenderers, std::string> gPathRendererNames;
@@ -82,15 +94,34 @@ Application* Application::Create(int argc, char** argv, void* platformData) {
 static DEFINE_string(slide, "", "Start on this sample.");
 static DEFINE_bool(list, false, "List samples?");
 
-#if defined(SK_VULKAN)
-#    define BACKENDS_STR "\"sw\", \"gl\", and \"vk\""
-#elif defined(SK_METAL) && defined(SK_BUILD_FOR_MAC)
-#    define BACKENDS_STR "\"sw\", \"gl\", and \"mtl\""
-#elif defined(SK_DAWN)
-#    define BACKENDS_STR "\"sw\", \"gl\", and \"dawn\""
+#ifdef SK_GL
+#define GL_BACKEND_STR ", \"gl\""
 #else
-#    define BACKENDS_STR "\"sw\" and \"gl\""
+#define GL_BACKEND_STR
 #endif
+#ifdef SK_VULKAN
+#define VK_BACKEND_STR ", \"vk\""
+#else
+#define VK_BACKEND_STR
+#endif
+#ifdef SK_METAL
+#define MTL_BACKEND_STR ", \"mtl\""
+#else
+#define MTL_BACKEND_STR
+#endif
+#ifdef SK_DIRECT3D
+#define D3D_BACKEND_STR ", \"d3d\""
+#else
+#define D3D_BACKEND_STR
+#endif
+#ifdef SK_DAWN
+#define DAWN_BACKEND_STR ", \"dawn\""
+#else
+#define DAWN_BACKEND_STR
+#endif
+#define BACKENDS_STR_EVALUATOR(sw, gl, vk, mtl, d3d, dawn) sw gl vk mtl d3d dawn
+#define BACKENDS_STR BACKENDS_STR_EVALUATOR( \
+    "\"sw\"", GL_BACKEND_STR, VK_BACKEND_STR, MTL_BACKEND_STR, D3D_BACKEND_STR, DAWN_BACKEND_STR)
 
 static DEFINE_string2(backend, b, "sw", "Backend to use. Allowed values are " BACKENDS_STR ".");
 
@@ -115,10 +146,13 @@ static DEFINE_string2(match, m, nullptr,
     static DEFINE_string(skps, "/data/local/tmp/skps", "Directory to read skps from.");
     static DEFINE_string(lotties, "/data/local/tmp/lotties",
                          "Directory to read (Bodymovin) jsons from.");
+    static DEFINE_string(rives, "/data/local/tmp/rives",
+                         "Directory to read Rive (Flare) files from.");
 #else
     static DEFINE_string(jpgs, "jpgs", "Directory to read jpgs from.");
     static DEFINE_string(skps, "skps", "Directory to read skps from.");
     static DEFINE_string(lotties, "lotties", "Directory to read (Bodymovin) jsons from.");
+    static DEFINE_string(rives, "rives", "Directory to read Rive (Flare) files from.");
 #endif
 
 static DEFINE_string(svgs, "", "Directory to read SVGs from, or a single SVG file.");
@@ -130,7 +164,10 @@ static DEFINE_int_2(threads, j, -1,
 static DEFINE_bool(redraw, false, "Toggle continuous redraw.");
 
 static DEFINE_bool(offscreen, false, "Force rendering to an offscreen surface.");
-static DEFINE_bool(skvm, false, "Try to use skvm blitters for raster.");
+static DEFINE_bool(skvm, false, "Force skvm blitters for raster.");
+static DEFINE_bool(jit, true, "JIT SkVM?");
+static DEFINE_bool(dylib, false, "JIT via dylib (much slower compile but easier to debug/profile)");
+static DEFINE_bool(stats, false, "Display stats overlay on startup.");
 
 #ifndef SK_GL
 static_assert(false, "viewer requires GL backend for raster.")
@@ -149,6 +186,9 @@ const char* kBackendTypeStrings[sk_app::Window::kBackendTypeCount] = {
 #endif
 #ifdef SK_METAL
     "Metal",
+#endif
+#ifdef SK_DIRECT3D
+    "Direct3D",
 #endif
     "Raster"
 };
@@ -174,6 +214,12 @@ static sk_app::Window::BackendType get_backend_type(const char* str) {
         return sk_app::Window::kMetal_BackendType;
     } else
 #endif
+#ifdef SK_DIRECT3D
+    if (0 == strcmp(str, "d3d")) {
+        return sk_app::Window::kDirect3D_BackendType;
+    } else
+#endif
+
     if (0 == strcmp(str, "gl")) {
         return sk_app::Window::kNativeGL_BackendType;
     } else if (0 == strcmp(str, "sw")) {
@@ -238,21 +284,21 @@ class NullSlide : public Slide {
     }
 };
 
-const char* kName = "name";
-const char* kValue = "value";
-const char* kOptions = "options";
-const char* kSlideStateName = "Slide";
-const char* kBackendStateName = "Backend";
-const char* kMSAAStateName = "MSAA";
-const char* kPathRendererStateName = "Path renderer";
-const char* kSoftkeyStateName = "Softkey";
-const char* kSoftkeyHint = "Please select a softkey";
-const char* kFpsStateName = "FPS";
-const char* kON = "ON";
-const char* kOFF = "OFF";
-const char* kRefreshStateName = "Refresh";
+static const char kName[] = "name";
+static const char kValue[] = "value";
+static const char kOptions[] = "options";
+static const char kSlideStateName[] = "Slide";
+static const char kBackendStateName[] = "Backend";
+static const char kMSAAStateName[] = "MSAA";
+static const char kPathRendererStateName[] = "Path renderer";
+static const char kSoftkeyStateName[] = "Softkey";
+static const char kSoftkeyHint[] = "Please select a softkey";
+static const char kON[] = "ON";
+static const char kRefreshStateName[] = "Refresh";
 
 extern bool gUseSkVMBlitter;
+extern bool gSkVMAllowJIT;
+extern bool gSkVMJITViaDylib;
 
 Viewer::Viewer(int argc, char** argv, void* platformData)
     : fCurrentSlide(-1)
@@ -303,6 +349,8 @@ Viewer::Viewer(int argc, char** argv, void* platformData)
 #endif
 
     gUseSkVMBlitter = FLAGS_skvm;
+    gSkVMAllowJIT = FLAGS_jit;
+    gSkVMJITViaDylib = FLAGS_dylib;
 
     ToolUtils::SetDefaultFontMgr();
 
@@ -324,7 +372,7 @@ Viewer::Viewer(int argc, char** argv, void* platformData)
     fRefresh = FLAGS_redraw;
 
     // Configure timers
-    fStatsLayer.setActive(false);
+    fStatsLayer.setActive(FLAGS_stats);
     fAnimateTimer = fStatsLayer.addTimer("Animate", SK_ColorMAGENTA, 0xffff66ff);
     fPaintTimer = fStatsLayer.addTimer("Paint", SK_ColorGREEN);
     fFlushTimer = fStatsLayer.addTimer("Flush", SK_ColorRED, 0xffff6666);
@@ -612,8 +660,13 @@ Viewer::Viewer(int argc, char** argv, void* platformData)
         this->updateTitle();
         fWindow->inval();
     });
-    fCommands.addCommand('!', "SkVM", "Toggle SkVM", [this]() {
+    fCommands.addCommand('!', "SkVM", "Toggle SkVM blitter", [this]() {
         gUseSkVMBlitter = !gUseSkVMBlitter;
+        this->updateTitle();
+        fWindow->inval();
+    });
+    fCommands.addCommand('@', "SkVM", "Toggle SkVM JIT", [this]() {
+        gSkVMAllowJIT = !gSkVMAllowJIT;
         this->updateTitle();
         fWindow->inval();
     });
@@ -663,6 +716,12 @@ void Viewer::initSlides() {
                 return sk_make_sp<SkottieSlide>(name, path);}
         },
 #endif
+    #if defined(SK_ENABLE_SKRIVE)
+            { ".flr", "skrive-dir", FLAGS_rives,
+                [](const SkString& name, const SkString& path) -> sk_sp<Slide> {
+                    return sk_make_sp<SkRiveSlide>(name, path);}
+            },
+    #endif
 #if defined(SK_XML)
         { ".svg", "svg-dir", FLAGS_svgs,
             [](const SkString& name, const SkString& path) -> sk_sp<Slide> {
@@ -765,10 +824,21 @@ void Viewer::initSlides() {
                 addSlide(SkOSPath::Basename(flag.c_str()), flag, info.fFactory);
             } else {
                 // directory
-                SkOSFile::Iter it(flag.c_str(), info.fExtension);
                 SkString name;
+                SkTArray<SkString> sortedFilenames;
+                SkOSFile::Iter it(flag.c_str(), info.fExtension);
                 while (it.next(&name)) {
-                    addSlide(name, SkOSPath::Join(flag.c_str(), name.c_str()), info.fFactory);
+                    sortedFilenames.push_back(name);
+                }
+                if (sortedFilenames.count()) {
+                    SkTQSort(sortedFilenames.begin(), sortedFilenames.end(),
+                             [](const SkString& a, const SkString& b) {
+                                 return strcmp(a.c_str(), b.c_str()) < 0;
+                             });
+                }
+                for (const SkString& filename : sortedFilenames) {
+                    addSlide(filename, SkOSPath::Join(flag.c_str(), filename.c_str()),
+                             info.fFactory);
                 }
             }
             if (!dirSlides.empty()) {
@@ -788,6 +858,10 @@ void Viewer::initSlides() {
 
 
 Viewer::~Viewer() {
+    for(auto& slide : fSlides) {
+        slide->gpuTeardown();
+    }
+
     fWindow->detach();
     delete fWindow;
 }
@@ -834,7 +908,10 @@ void Viewer::updateTitle() {
         title.append(" <serialize>");
     }
     if (gUseSkVMBlitter) {
-        title.append(" <skvm>");
+        title.append(" <SkVMBlitter>");
+    }
+    if (!gSkVMAllowJIT) {
+        title.append(" <SkVM interpreter>");
     }
 
     SkPaintTitleUpdater paintTitle(&title);
@@ -1119,8 +1196,13 @@ SkMatrix Viewer::computeMatrix() {
 
 void Viewer::setBackend(sk_app::Window::BackendType backendType) {
     fPersistentCache.reset();
-    fCachedGLSL.reset();
+    fCachedShaders.reset();
     fBackendType = backendType;
+
+    // The active context is going away in 'detach'
+    for(auto& slide : fSlides) {
+        slide->gpuTeardown();
+    }
 
     fWindow->detach();
 
@@ -1408,7 +1490,7 @@ void Viewer::drawSlide(SkSurface* surface) {
 
     // Force a flush so we can time that, too
     fStatsLayer.beginTiming(fFlushTimer);
-    slideSurface->flush();
+    slideSurface->flushAndSubmit();
     fStatsLayer.endTiming(fFlushTimer);
 
     // If we rendered offscreen, snap an image and push the results to the window's canvas
@@ -1448,9 +1530,11 @@ void Viewer::onPaint(SkSurface* surface) {
 
     this->drawImGui();
 
-    if (GrContext* ctx = fWindow->getGrContext()) {
+    fLastImage.reset();
+
+    if (auto direct = fWindow->directContext()) {
         // Clean out cache items that haven't been used in more than 10 seconds.
-        ctx->performDeferredCleanup(std::chrono::seconds(10));
+        direct->performDeferredCleanup(std::chrono::seconds(10));
     }
 }
 
@@ -1633,6 +1717,35 @@ static bool ImGui_DragQuad(SkPoint* pts) {
     return dc.fDragging;
 }
 
+static SkSL::String build_sksl_highlight_shader() {
+    return SkSL::String("out half4 sk_FragColor;\n"
+                        "void main() { sk_FragColor = half4(1, 0, 1, 0.5); }");
+}
+
+static SkSL::String build_metal_highlight_shader(const SkSL::String& inShader) {
+    // Metal fragment shaders need a lot of non-trivial boilerplate that we don't want to recompute
+    // here. So keep all shader code, but right before `return *_out;`, swap out the sk_FragColor.
+    size_t pos = inShader.rfind("return *_out;\n");
+    if (pos == std::string::npos) {
+        return inShader;
+    }
+
+    SkSL::String replacementShader = inShader;
+    replacementShader.insert(pos, "_out->sk_FragColor = float4(1.0, 0.0, 1.0, 0.5); ");
+    return replacementShader;
+}
+
+static SkSL::String build_glsl_highlight_shader(const GrShaderCaps& shaderCaps) {
+    const char* versionDecl = shaderCaps.versionDeclString();
+    SkSL::String highlight = versionDecl ? versionDecl : "";
+    if (shaderCaps.usesPrecisionModifiers()) {
+        highlight.append("precision mediump float;\n");
+    }
+    highlight.appendf("out vec4 sk_FragColor;\n"
+                      "void main() { sk_FragColor = vec4(1, 0, 1, 0.5); }");
+    return highlight;
+}
+
 void Viewer::drawImGui() {
     // Support drawing the ImGui demo window. Superfluous, but gives a good idea of what's possible
     if (fShowImGuiTestWindow) {
@@ -1645,7 +1758,7 @@ void Viewer::drawImGui() {
         ImGui::SetNextWindowSize(ImVec2(400, 400), ImGuiCond_FirstUseEver);
         DisplayParams params = fWindow->getRequestedDisplayParams();
         bool paramsChanged = false;
-        const GrContext* ctx = fWindow->getGrContext();
+        auto ctx = fWindow->directContext();
 
         if (ImGui::Begin("Tools", &fShowImGuiDebugWindow,
                          ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
@@ -1670,6 +1783,10 @@ void Viewer::drawImGui() {
                 ImGui::SameLine();
                 ImGui::RadioButton("Metal", &newBackend, sk_app::Window::kMetal_BackendType);
 #endif
+#if defined(SK_DIRECT3D)
+                ImGui::SameLine();
+                ImGui::RadioButton("Direct3D", &newBackend, sk_app::Window::kDirect3D_BackendType);
+#endif
                 if (newBackend != fBackendType) {
                     fDeferredActions.push_back([=]() {
                         this->setBackend(static_cast<sk_app::Window::BackendType>(newBackend));
@@ -1682,12 +1799,27 @@ void Viewer::drawImGui() {
                 }
 
                 if (ctx) {
+                    // Determine the context's max sample count for MSAA radio buttons.
                     int sampleCount = fWindow->sampleCount();
-                    ImGui::Text("MSAA: "); ImGui::SameLine();
-                    ImGui::RadioButton("1", &sampleCount, 1); ImGui::SameLine();
-                    ImGui::RadioButton("4", &sampleCount, 4); ImGui::SameLine();
-                    ImGui::RadioButton("8", &sampleCount, 8); ImGui::SameLine();
-                    ImGui::RadioButton("16", &sampleCount, 16);
+                    int maxMSAA = (fBackendType != sk_app::Window::kRaster_BackendType) ?
+                            ctx->maxSurfaceSampleCountForColorType(kRGBA_8888_SkColorType) :
+                            1;
+
+                    // Only display the MSAA radio buttons when there are options above 1x MSAA.
+                    if (maxMSAA >= 4) {
+                        ImGui::Text("MSAA: ");
+
+                        for (int curMSAA = 1; curMSAA <= maxMSAA; curMSAA *= 2) {
+                            // 2x MSAA works, but doesn't offer much of a visual improvement, so we
+                            // don't show it in the list.
+                            if (curMSAA == 2) {
+                                continue;
+                            }
+                            ImGui::SameLine();
+                            ImGui::RadioButton(SkStringPrintf("%d", curMSAA).c_str(),
+                                               &sampleCount, curMSAA);
+                        }
+                    }
 
                     if (sampleCount != params.fMSAASampleCount) {
                         params.fMSAASampleCount = sampleCount;
@@ -2118,30 +2250,22 @@ void Viewer::drawImGui() {
                 }
             }
 
-            bool backendIsGL = Window::kNativeGL_BackendType == fBackendType
-#if SK_ANGLE && defined(SK_BUILD_FOR_WIN)
-                            || Window::kANGLE_BackendType == fBackendType
+            if (ImGui::CollapsingHeader("Shaders")) {
+                bool sksl = params.fGrContextOptions.fShaderCacheStrategy ==
+                            GrContextOptions::ShaderCacheStrategy::kSkSL;
+#if defined(SK_VULKAN)
+                const bool isVulkan = fBackendType == sk_app::Window::kVulkan_BackendType;
+#else
+                const bool isVulkan = false;
 #endif
-                ;
 
-            // HACK: If we get here when SKSL caching isn't enabled, and we're on a backend other
-            // than GL, we need to force it on. Just do that on the first frame after the backend
-            // switch, then resume normal operation.
-            if (!backendIsGL &&
-                params.fGrContextOptions.fShaderCacheStrategy !=
-                        GrContextOptions::ShaderCacheStrategy::kSkSL) {
-                params.fGrContextOptions.fShaderCacheStrategy =
-                        GrContextOptions::ShaderCacheStrategy::kSkSL;
-                paramsChanged = true;
-                fPersistentCache.reset();
-            } else if (ImGui::CollapsingHeader("Shaders")) {
-                // To re-load shaders from the currently active programs, we flush all caches on one
-                // frame, then set a flag to poll the cache on the next frame.
+                // To re-load shaders from the currently active programs, we flush all
+                // caches on one frame, then set a flag to poll the cache on the next frame.
                 static bool gLoadPending = false;
                 if (gLoadPending) {
                     auto collectShaders = [this](sk_sp<const SkData> key, sk_sp<SkData> data,
                                                  int hitCount) {
-                        CachedGLSL& entry(fCachedGLSL.push_back());
+                        CachedShader& entry(fCachedShaders.push_back());
                         entry.fKey = key;
                         SkMD5 hash;
                         hash.write(key->bytes(), key->size());
@@ -2150,37 +2274,47 @@ void Viewer::drawImGui() {
                             entry.fKeyString.appendf("%02x", digest.data[i]);
                         }
 
-                        SkReader32 reader(data->data(), data->size());
+                        SkReadBuffer reader(data->data(), data->size());
                         entry.fShaderType = GrPersistentCacheUtils::GetType(&reader);
                         GrPersistentCacheUtils::UnpackCachedShaders(&reader, entry.fShader,
                                                                     entry.fInputs,
                                                                     kGrShaderTypeCount);
                     };
-                    fCachedGLSL.reset();
+                    fCachedShaders.reset();
                     fPersistentCache.foreach(collectShaders);
                     gLoadPending = false;
+
+#if defined(SK_VULKAN)
+                    if (isVulkan && !sksl) {
+                        spvtools::SpirvTools tools(SPV_ENV_VULKAN_1_0);
+                        for (auto& entry : fCachedShaders) {
+                            for (int i = 0; i < kGrShaderTypeCount; ++i) {
+                                const SkSL::String& spirv(entry.fShader[i]);
+                                std::string disasm;
+                                tools.Disassemble((const uint32_t*)spirv.c_str(), spirv.size() / 4,
+                                                  &disasm);
+                                entry.fShader[i].assign(disasm);
+                            }
+                        }
+                    }
+#endif
                 }
 
                 // Defer actually doing the load/save logic so that we can trigger a save when we
                 // start or finish hovering on a tree node in the list below:
                 bool doLoad = ImGui::Button("Load"); ImGui::SameLine();
-                bool doSave = ImGui::Button("Save");
-                if (backendIsGL) {
-                    ImGui::SameLine();
-                    bool sksl = params.fGrContextOptions.fShaderCacheStrategy ==
-                                GrContextOptions::ShaderCacheStrategy::kSkSL;
-                    if (ImGui::Checkbox("SkSL", &sksl)) {
-                        params.fGrContextOptions.fShaderCacheStrategy = sksl
-                                ? GrContextOptions::ShaderCacheStrategy::kSkSL
-                                : GrContextOptions::ShaderCacheStrategy::kBackendSource;
-                        paramsChanged = true;
-                        doLoad = true;
-                        fDeferredActions.push_back([=]() { fPersistentCache.reset(); });
-                    }
+                bool doSave = ImGui::Button("Save"); ImGui::SameLine();
+                if (ImGui::Checkbox("SkSL", &sksl)) {
+                    params.fGrContextOptions.fShaderCacheStrategy =
+                            sksl ? GrContextOptions::ShaderCacheStrategy::kSkSL
+                                 : GrContextOptions::ShaderCacheStrategy::kBackendSource;
+                    paramsChanged = true;
+                    doLoad = true;
+                    fDeferredActions.push_back([=]() { fPersistentCache.reset(); });
                 }
 
                 ImGui::BeginChild("##ScrollingRegion");
-                for (auto& entry : fCachedGLSL) {
+                for (auto& entry : fCachedShaders) {
                     bool inTreeNode = ImGui::TreeNode(entry.fKeyString.c_str());
                     bool hovered = ImGui::IsItemHovered();
                     if (hovered != entry.fHovered) {
@@ -2189,12 +2323,14 @@ void Viewer::drawImGui() {
                         doSave = true;
                     }
                     if (inTreeNode) {
-                        // Full width, and a reasonable amount of space for each shader.
-                        ImVec2 boxSize(-1.0f, ImGui::GetTextLineHeight() * 20.0f);
-                        ImGui::InputTextMultiline("##VP", &entry.fShader[kVertex_GrShaderType],
-                                                  boxSize);
-                        ImGui::InputTextMultiline("##FP", &entry.fShader[kFragment_GrShaderType],
-                                                  boxSize);
+                        auto stringBox = [](const char* label, std::string* str) {
+                            // Full width, and not too much space for each shader
+                            int lines = std::count(str->begin(), str->end(), '\n') + 2;
+                            ImVec2 boxSize(-1.0f, ImGui::GetTextLineHeight() * std::min(lines, 30));
+                            ImGui::InputTextMultiline(label, str, boxSize);
+                        };
+                        stringBox("##VP", &entry.fShader[kVertex_GrShaderType]);
+                        stringBox("##FP", &entry.fShader[kFragment_GrShaderType]);
                         ImGui::TreePop();
                     }
                 }
@@ -2202,33 +2338,38 @@ void Viewer::drawImGui() {
 
                 if (doLoad) {
                     fPersistentCache.reset();
-                    fWindow->getGrContext()->priv().getGpu()->resetShaderCacheForTesting();
+                    ctx->priv().getGpu()->resetShaderCacheForTesting();
                     gLoadPending = true;
                 }
+                // We don't support updating SPIRV shaders. We could re-assemble them (with edits),
+                // but I'm not sure anyone wants to do that.
+                if (isVulkan && !sksl) {
+                    doSave = false;
+                }
                 if (doSave) {
-                    // The hovered item (if any) gets a special shader to make it identifiable
-                    auto shaderCaps = ctx->priv().caps()->shaderCaps();
-                    bool sksl = params.fGrContextOptions.fShaderCacheStrategy ==
-                                GrContextOptions::ShaderCacheStrategy::kSkSL;
-
-                    SkSL::String highlight;
-                    if (!sksl) {
-                        highlight = shaderCaps->versionDeclString();
-                        if (shaderCaps->usesPrecisionModifiers()) {
-                            highlight.append("precision mediump float;\n");
-                        }
-                    }
-                    const char* f4Type = sksl ? "half4" : "vec4";
-                    highlight.appendf("out %s sk_FragColor;\n"
-                                      "void main() { sk_FragColor = %s(1, 0, 1, 0.5); }",
-                                      f4Type, f4Type);
-
                     fPersistentCache.reset();
-                    fWindow->getGrContext()->priv().getGpu()->resetShaderCacheForTesting();
-                    for (auto& entry : fCachedGLSL) {
+                    ctx->priv().getGpu()->resetShaderCacheForTesting();
+                    for (auto& entry : fCachedShaders) {
                         SkSL::String backup = entry.fShader[kFragment_GrShaderType];
                         if (entry.fHovered) {
-                            entry.fShader[kFragment_GrShaderType] = highlight;
+                            // The hovered item (if any) gets a special shader to make it
+                            // identifiable.
+                            SkSL::String& fragShader = entry.fShader[kFragment_GrShaderType];
+                            switch (entry.fShaderType) {
+                                case SkSetFourByteTag('S', 'K', 'S', 'L'): {
+                                    fragShader = build_sksl_highlight_shader();
+                                    break;
+                                }
+                                case SkSetFourByteTag('G', 'L', 'S', 'L'): {
+                                    fragShader = build_glsl_highlight_shader(
+                                        *ctx->priv().caps()->shaderCaps());
+                                    break;
+                                }
+                                case SkSetFourByteTag('M', 'S', 'L', ' '): {
+                                    fragShader = build_metal_highlight_shader(fragShader);
+                                    break;
+                                }
+                            }
                         }
 
                         auto data = GrPersistentCacheUtils::PackCachedShaders(entry.fShaderType,
@@ -2254,7 +2395,7 @@ void Viewer::drawImGui() {
 
     if (gShaderErrorHandler.fErrors.count()) {
         ImGui::SetNextWindowSize(ImVec2(400, 400), ImGuiCond_FirstUseEver);
-        ImGui::Begin("Shader Errors");
+        ImGui::Begin("Shader Errors", nullptr, ImGuiWindowFlags_NoFocusOnAppearing);
         for (int i = 0; i < gShaderErrorHandler.fErrors.count(); ++i) {
             ImGui::TextWrapped("%s", gShaderErrorHandler.fErrors[i].c_str());
             SkSL::String sksl(gShaderErrorHandler.fShaders[i].c_str());
@@ -2290,7 +2431,8 @@ void Viewer::drawImGui() {
 
             uint32_t pixel = 0;
             SkImageInfo info = SkImageInfo::MakeN32Premul(1, 1);
-            if (fLastImage->readPixels(info, &pixel, info.minRowBytes(), xInt, yInt)) {
+            auto dContext = fWindow->directContext();
+            if (fLastImage->readPixels(dContext, info, &pixel, info.minRowBytes(), xInt, yInt)) {
                 ImGui::SameLine();
                 ImGui::Text("(X, Y): %d, %d RGBA: %X %X %X %X",
                             xInt, yInt,
@@ -2403,7 +2545,7 @@ void Viewer::updateUIState() {
     GpuPathRenderers pr = fWindow->getRequestedDisplayParams().fGrContextOptions.fGpuPathRenderers;
     WriteStateObject(writer, kPathRendererStateName, gPathRendererNames[pr].c_str(),
         [this](SkJSONWriter& writer) {
-            const GrContext* ctx = fWindow->getGrContext();
+            auto ctx = fWindow->directContext();
             if (!ctx) {
                 writer.appendString("Software");
             } else {
@@ -2470,6 +2612,9 @@ void Viewer::onUIStateChanged(const SkString& stateName, const SkString& stateVa
             if (stateValue.equals(kBackendTypeStrings[i])) {
                 if (fBackendType != i) {
                     fBackendType = (sk_app::Window::BackendType)i;
+                    for(auto& slide : fSlides) {
+                        slide->gpuTeardown();
+                    }
                     fWindow->detach();
                     fWindow->attach(backend_type_for_window(fBackendType));
                 }

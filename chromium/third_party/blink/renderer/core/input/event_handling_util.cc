@@ -187,16 +187,15 @@ LocalFrame* GetTargetSubframe(
     const MouseEventWithHitTestResults& hit_test_result,
     Node* capturing_node,
     bool* is_remote_frame) {
-  if (!RuntimeEnabledFeatures::UnifiedPointerCaptureInBlinkEnabled() &&
-      capturing_node) {
-    return event_handling_util::SubframeForTargetNode(capturing_node,
-                                                      is_remote_frame);
-  }
-
   if (!hit_test_result.IsOverEmbeddedContentView())
     return nullptr;
 
   return SubframeForTargetNode(hit_test_result.InnerNode(), is_remote_frame);
+}
+
+void PointerEventTarget::Trace(Visitor* visitor) const {
+  visitor->Trace(target_element);
+  visitor->Trace(target_frame);
 }
 
 }  // namespace event_handling_util

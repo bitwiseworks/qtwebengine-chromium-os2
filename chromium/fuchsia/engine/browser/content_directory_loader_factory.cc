@@ -12,6 +12,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/command_line.h"
 #include "base/files/memory_mapped_file.h"
 #include "base/fuchsia/fuchsia_logging.h"
 #include "base/json/json_reader.h"
@@ -19,7 +20,9 @@
 #include "base/logging.h"
 #include "base/no_destructor.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
+#include "base/strings/string_util.h"
 #include "base/task/post_task.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
@@ -103,21 +106,23 @@ ContentDirectoriesMap* GetContentDirectories() {
 scoped_refptr<net::HttpResponseHeaders> CreateHeaders(
     base::StringPiece mime_type,
     const base::Optional<std::string>& charset) {
-  constexpr char kXFrameOptionsHeader[] = "X-Frame-Options: DENY";
-  constexpr char kCacheHeader[] = "Cache-Control: no-cache";
-  constexpr char kContentTypePrefix[] = "Content-Type: ";
+  constexpr char kXFrameOptions[] = "X-Frame-Options";
+  constexpr char kXFrameOptionsValue[] = "DENY";
+  constexpr char kCacheControl[] = "Cache-Control";
+  constexpr char kCacheControlValue[] = "no-cache";
+  constexpr char kContentType[] = "Content-Type";
   constexpr char kCharsetSeparator[] = "; charset=";
 
   auto headers =
       base::MakeRefCounted<net::HttpResponseHeaders>("HTTP/1.1 200 OK\r\n");
-  headers->AddHeader(kXFrameOptionsHeader);
-  headers->AddHeader(kCacheHeader);
+  headers->SetHeader(kXFrameOptions, kXFrameOptionsValue);
+  headers->SetHeader(kCacheControl, kCacheControlValue);
 
   if (charset) {
-    headers->AddHeader(base::StrCat(
-        {kContentTypePrefix, mime_type, kCharsetSeparator, *charset}));
+    headers->SetHeader(kContentType,
+                       base::StrCat({mime_type, kCharsetSeparator, *charset}));
   } else {
-    headers->AddHeader(base::StrCat({kContentTypePrefix, mime_type}));
+    headers->SetHeader(kContentType, mime_type);
   }
 
   return headers;
@@ -247,11 +252,12 @@ class ContentDirectoryURLLoader : public network::mojom::URLLoader {
     // If a MIME type wasn't specified, then fall back on inferring the type
     // from the file's contents.
     if (!mime_type) {
-      if (!net::SniffMimeType(reinterpret_cast<char*>(mmap_.data()),
-                              std::min(mmap_.length(), kMaxBytesToSniff),
-                              request.url, {} /* type_hint */,
-                              net::ForceSniffFileUrlsForHtml::kDisabled,
-                              &mime_type.emplace())) {
+      if (!net::SniffMimeType(
+              base::StringPiece(reinterpret_cast<char*>(mmap_.data()),
+                                std::min(mmap_.length(), kMaxBytesToSniff)),
+              request.url, {} /* type_hint */,
+              net::ForceSniffFileUrlsForHtml::kDisabled,
+              &mime_type.emplace())) {
         if (!mime_type) {
           // Only set the fallback type if SniffMimeType completely gave up on
           // generating a suggestion.
@@ -302,9 +308,11 @@ class ContentDirectoryURLLoader : public network::mojom::URLLoader {
   }
 
   // network::mojom::URLLoader implementation:
-  void FollowRedirect(const std::vector<std::string>& removed_headers,
-                      const net::HttpRequestHeaders& modified_request_headers,
-                      const base::Optional<GURL>& new_url) override {}
+  void FollowRedirect(
+      const std::vector<std::string>& removed_headers,
+      const net::HttpRequestHeaders& modified_request_headers,
+      const net::HttpRequestHeaders& modified_cors_exempt_request_headers,
+      const base::Optional<GURL>& new_url) override {}
   void SetPriority(net::RequestPriority priority,
                    int32_t intra_priority_value) override {}
   void PauseReadingBodyFromNet() override {}
@@ -342,8 +350,23 @@ class ContentDirectoryURLLoader : public network::mojom::URLLoader {
 
 }  // namespace
 
-ContentDirectoryLoaderFactory::ContentDirectoryLoaderFactory()
-    : task_runner_(base::ThreadPool::CreateSequencedTaskRunner(
+// static
+mojo::PendingRemote<network::mojom::URLLoaderFactory>
+ContentDirectoryLoaderFactory::Create() {
+  mojo::PendingRemote<network::mojom::URLLoaderFactory> pending_remote;
+
+  // The ContentDirectoryLoaderFactory will delete itself when there are no more
+  // receivers - see the NonNetworkURLLoaderFactoryBase::OnDisconnect method.
+  new ContentDirectoryLoaderFactory(
+      pending_remote.InitWithNewPipeAndPassReceiver());
+
+  return pending_remote;
+}
+
+ContentDirectoryLoaderFactory::ContentDirectoryLoaderFactory(
+    mojo::PendingReceiver<network::mojom::URLLoaderFactory> factory_receiver)
+    : content::NonNetworkURLLoaderFactoryBase(std::move(factory_receiver)),
+      task_runner_(base::ThreadPool::CreateSequencedTaskRunner(
           {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
            base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN})) {}
 
@@ -400,7 +423,7 @@ void ContentDirectoryLoaderFactory::CreateLoaderAndStart(
   // Fuchsia paths do not support the notion of absolute paths, so strip the
   // leading slash from the URL's path fragment.
   base::StringPiece requested_path = request.url.path_piece();
-  DCHECK(requested_path.starts_with("/"));
+  DCHECK(base::StartsWith(requested_path, "/"));
   requested_path.remove_prefix(1);
 
   fidl::InterfaceHandle<fuchsia::io::Node> file_handle;
@@ -435,11 +458,6 @@ void ContentDirectoryLoaderFactory::CreateLoaderAndStart(
                                 base::Passed(std::move(client)),
                                 base::Passed(std::move(file_handle)),
                                 base::Passed(std::move(metadata_handle))));
-}
-
-void ContentDirectoryLoaderFactory::Clone(
-    mojo::PendingReceiver<network::mojom::URLLoaderFactory> loader) {
-  receivers_.Add(this, std::move(loader));
 }
 
 void ContentDirectoryLoaderFactory::SetContentDirectoriesForTest(

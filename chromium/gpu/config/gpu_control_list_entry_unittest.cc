@@ -1117,11 +1117,6 @@ TEST_F(GpuControlListEntryTest, IntelDriverVendorEntry) {
   GPUInfo gpu_info;
   gpu_info.gpu.driver_vendor = "Intel(R) UHD Graphics 630";
   gpu_info.gpu.driver_version = "25.20.100.5000";
-  EXPECT_TRUE(entry.Contains(kOsLinux, "", gpu_info));
-  gpu_info.gpu.driver_version = "23.20.100.6500";
-  EXPECT_FALSE(entry.Contains(kOsLinux, "", gpu_info));
-
-  gpu_info.gpu.driver_version = "25.20.100.5000";
   EXPECT_FALSE(entry.Contains(kOsWin, "", gpu_info));
   gpu_info.gpu.driver_version = "23.20.100.6500";
   EXPECT_TRUE(entry.Contains(kOsWin, "", gpu_info));
@@ -1132,11 +1127,6 @@ TEST_F(GpuControlListEntryTest, IntelDriverVersionEntry) {
       GetEntry(kGpuControlListEntryTest_IntelDriverVersionEntry);
   GPUInfo gpu_info;
   gpu_info.gpu.vendor_id = 0x8086;
-  gpu_info.gpu.driver_version = "23.20.100.8000";
-  EXPECT_TRUE(entry.Contains(kOsLinux, "", gpu_info));
-  gpu_info.gpu.driver_version = "25.20.100.6000";
-  EXPECT_FALSE(entry.Contains(kOsLinux, "", gpu_info));
-
   gpu_info.gpu.driver_version = "23.20.100.8000";
   EXPECT_FALSE(entry.Contains(kOsWin, "", gpu_info));
   gpu_info.gpu.driver_version = "25.20.100.6000";
@@ -1165,5 +1155,39 @@ TEST_F(GpuControlListEntryTest, IntelOldDriverVersionEntry) {
   gpu_info.gpu.driver_version = "25.20.9.7000";
   EXPECT_TRUE(entry.Contains(kOsWin, "", gpu_info));
 }
+
+#if defined(OS_WIN)
+TEST_F(GpuControlListEntryTest, DeviceRevisionEntry) {
+  const Entry& entry = GetEntry(kGpuControlListEntryTest_DeviceRevisionEntry);
+  GPUInfo gpu_info;
+  gpu_info.gpu.vendor_id = 0x1002;
+  gpu_info.gpu.device_id = 0x15DD;
+  gpu_info.gpu.revision = 0x86;
+  gpu_info.gpu.driver_version = "26.20.12055.1000";
+  EXPECT_TRUE(entry.Contains(kOsWin, "", gpu_info));
+  gpu_info.gpu.driver_version = "26.20.15023.6032";
+  EXPECT_FALSE(entry.Contains(kOsWin, "", gpu_info));
+  gpu_info.gpu.device_id = 0x15D8;
+  gpu_info.gpu.revision = 0xE1;
+  gpu_info.gpu.driver_version = "26.20.12055.1000";
+  EXPECT_FALSE(entry.Contains(kOsWin, "", gpu_info));
+  gpu_info.gpu.revision = 0xE3;
+  EXPECT_TRUE(entry.Contains(kOsWin, "", gpu_info));
+}
+
+TEST_F(GpuControlListEntryTest, DeviceRevisionUnspecifiedEntry) {
+  const Entry& entry =
+      GetEntry(kGpuControlListEntryTest_DeviceRevisionUnspecifiedEntry);
+  GPUInfo gpu_info;
+  gpu_info.gpu.vendor_id = 0x1002;
+  gpu_info.gpu.device_id = 0x15DD;
+  gpu_info.gpu.revision = 0x86;
+  EXPECT_TRUE(entry.Contains(kOsWin, "", gpu_info));
+  gpu_info.gpu.revision = 0x91;
+  EXPECT_TRUE(entry.Contains(kOsWin, "", gpu_info));
+  gpu_info.gpu.revision = 0x0;
+  EXPECT_TRUE(entry.Contains(kOsWin, "", gpu_info));
+}
+#endif  // OS_WIN
 
 }  // namespace gpu

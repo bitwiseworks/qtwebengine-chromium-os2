@@ -26,6 +26,17 @@ bool LoadUrlAndExpectResponse(
 base::Optional<base::Value> ExecuteJavaScript(fuchsia::web::Frame* frame,
                                               base::StringPiece script);
 
+// Creates and returns a LoadUrlParams with was_user_activated set to true.
+// This allows user actions to propagate to the frame, allowing features such as
+// autoplay to be used, which is used by many media tests.
+fuchsia::web::LoadUrlParams CreateLoadUrlParamsWithUserActivation();
+
+// Creates a WebMessage with one outgoing transferable set to
+// |message_port_request| and data set to |buffer|.
+fuchsia::web::WebMessage CreateWebMessageWithMessagePortRequest(
+    fidl::InterfaceRequest<fuchsia::web::MessagePort> message_port_request,
+    fuchsia::mem::Buffer buffer);
+
 }  // namespace cr_fuchsia
 
 #endif  // FUCHSIA_BASE_FRAME_TEST_UTIL_H_

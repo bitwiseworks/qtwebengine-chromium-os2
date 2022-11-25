@@ -8,8 +8,6 @@
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "components/password_manager/core/browser/sql_table_builder.h"
-#include "components/password_manager/core/common/password_manager_features.h"
-#include "components/safe_browsing/core/features.h"
 #include "sql/database.h"
 #include "sql/statement.h"
 
@@ -75,18 +73,11 @@ bool operator==(const CompromisedCredentials& lhs,
 }
 
 void CompromisedCredentialsTable::Init(sql::Database* db) {
-  bool password_protection_show_domains_for_saved_password_is_on =
-      base::FeatureList::IsEnabled(
-          safe_browsing::kPasswordProtectionShowDomainsForSavedPasswords);
-  if (password_protection_show_domains_for_saved_password_is_on ||
-      base::FeatureList::IsEnabled(password_manager::features::kPasswordCheck))
     db_ = db;
 }
 
 bool CompromisedCredentialsTable::CreateTableIfNecessary() {
-  if (!db_)
-    return false;
-
+  DCHECK(db_);
   if (db_->DoesTableExist(kCompromisedCredentialsTableName))
     return true;
 
@@ -97,7 +88,8 @@ bool CompromisedCredentialsTable::CreateTableIfNecessary() {
 
 bool CompromisedCredentialsTable::AddRow(
     const CompromisedCredentials& compromised_credentials) {
-  if (!db_ || compromised_credentials.signon_realm.empty())
+  DCHECK(db_);
+  if (compromised_credentials.signon_realm.empty())
     return false;
 
   DCHECK(db_->DoesTableExist(kCompromisedCredentialsTableName));
@@ -138,17 +130,31 @@ bool CompromisedCredentialsTable::AddRow(
 std::vector<CompromisedCredentials> CompromisedCredentialsTable::GetRows(
     const std::string& signon_realm,
     const base::string16& username) const {
-  if (!db_ || signon_realm.empty())
+  DCHECK(db_);
+  if (signon_realm.empty())
     return std::vector<CompromisedCredentials>{};
 
   DCHECK(db_->DoesTableExist(kCompromisedCredentialsTableName));
 
   sql::Statement s(db_->GetCachedStatement(
       SQL_FROM_HERE,
-      "SELECT url, username, create_time, compromise_type FROM "
-      "compromised_credentials WHERE url = ? AND username = ? "));
+      "SELECT * FROM compromised_credentials WHERE url = ? AND username = ? "));
   s.BindString(0, signon_realm);
   s.BindString16(1, username);
+  return StatementToCompromisedCredentials(&s);
+}
+
+std::vector<CompromisedCredentials> CompromisedCredentialsTable::GetRows(
+    const std::string& signon_realm) const {
+  DCHECK(db_);
+  if (signon_realm.empty())
+    return std::vector<CompromisedCredentials>{};
+
+  DCHECK(db_->DoesTableExist(kCompromisedCredentialsTableName));
+
+  sql::Statement s(db_->GetCachedStatement(
+      SQL_FROM_HERE, "SELECT * FROM compromised_credentials WHERE url = ? "));
+  s.BindString(0, signon_realm);
   return StatementToCompromisedCredentials(&s);
 }
 
@@ -157,7 +163,8 @@ bool CompromisedCredentialsTable::UpdateRow(
     const base::string16& new_username,
     const std::string& old_signon_realm,
     const base::string16& old_username) const {
-  if (!db_ || new_signon_realm.empty() || old_signon_realm.empty())
+  DCHECK(db_);
+  if (new_signon_realm.empty() || old_signon_realm.empty())
     return false;
 
   DCHECK(db_->DoesTableExist(kCompromisedCredentialsTableName));
@@ -188,7 +195,8 @@ bool CompromisedCredentialsTable::RemoveRow(
     const std::string& signon_realm,
     const base::string16& username,
     RemoveCompromisedCredentialsReason reason) {
-  if (!db_ || signon_realm.empty())
+  DCHECK(db_);
+  if (signon_realm.empty())
     return false;
 
   DCHECK(db_->DoesTableExist(kCompromisedCredentialsTableName));
@@ -215,13 +223,46 @@ bool CompromisedCredentialsTable::RemoveRow(
   return s.Run();
 }
 
+bool CompromisedCredentialsTable::RemoveRowByCompromiseType(
+    const std::string& signon_realm,
+    const base::string16& username,
+    const CompromiseType& compromise_type,
+    RemoveCompromisedCredentialsReason reason) {
+  DCHECK(db_);
+  if (signon_realm.empty())
+    return false;
+
+  DCHECK(db_->DoesTableExist(kCompromisedCredentialsTableName));
+
+  // Retrieve the rows that are to be removed to log.
+  const std::vector<CompromisedCredentials> compromised_credentials =
+      GetRowByCompromiseType(signon_realm, username, compromise_type);
+  if (compromised_credentials.empty())
+    return false;
+
+  for (const auto& compromised_credential : compromised_credentials) {
+    base::UmaHistogramEnumeration(
+        "PasswordManager.CompromisedCredentials.Remove",
+        compromised_credential.compromise_type);
+    base::UmaHistogramEnumeration(
+        "PasswordManager.RemoveCompromisedCredentials.RemoveReason", reason);
+  }
+
+  sql::Statement s(db_->GetCachedStatement(
+      SQL_FROM_HERE,
+      "DELETE FROM compromised_credentials WHERE "
+      "url = ? AND username = ? AND compromise_type = ?"));
+  s.BindString(0, signon_realm);
+  s.BindString16(1, username);
+  s.BindInt64(2, static_cast<int>(compromise_type));
+  return s.Run();
+}
+
 bool CompromisedCredentialsTable::RemoveRowsByUrlAndTime(
     const base::RepeatingCallback<bool(const GURL&)>& url_filter,
     base::Time remove_begin,
     base::Time remove_end) {
-  if (!db_)
-    return false;
-
+  DCHECK(db_);
   DCHECK(db_->DoesTableExist(kCompromisedCredentialsTableName));
 
   const int64_t remove_begin_us =
@@ -271,9 +312,7 @@ bool CompromisedCredentialsTable::RemoveRowsByUrlAndTime(
 }
 
 std::vector<CompromisedCredentials> CompromisedCredentialsTable::GetAllRows() {
-  if (!db_)
-    return std::vector<CompromisedCredentials>{};
-
+  DCHECK(db_);
   DCHECK(db_->DoesTableExist(kCompromisedCredentialsTableName));
 
   static constexpr char query[] = "SELECT * FROM compromised_credentials";
@@ -282,8 +321,7 @@ std::vector<CompromisedCredentials> CompromisedCredentialsTable::GetAllRows() {
 }
 
 void CompromisedCredentialsTable::ReportMetrics(BulkCheckDone bulk_check_done) {
-  if (!db_)
-    return;
+  DCHECK(db_);
   sql::Statement s(
       db_->GetCachedStatement(SQL_FROM_HERE,
                               "SELECT COUNT(*) FROM compromised_credentials "
@@ -307,6 +345,27 @@ void CompromisedCredentialsTable::ReportMetrics(BulkCheckDone bulk_check_done) {
     base::UmaHistogramCounts100(
         "PasswordManager.CompromisedCredentials.CountPhished", count);
   }
+}
+
+std::vector<CompromisedCredentials>
+CompromisedCredentialsTable::GetRowByCompromiseType(
+    const std::string& signon_realm,
+    const base::string16& username,
+    const CompromiseType& compromise_type) const {
+  DCHECK(db_);
+  if (signon_realm.empty())
+    return std::vector<CompromisedCredentials>{};
+  DCHECK(db_->DoesTableExist(kCompromisedCredentialsTableName));
+
+  sql::Statement s(db_->GetCachedStatement(
+      SQL_FROM_HERE,
+      "SELECT url, username, create_time, compromise_type FROM "
+      "compromised_credentials WHERE url = ? AND username = ? AND "
+      "compromise_type = ?"));
+  s.BindString(0, signon_realm);
+  s.BindString16(1, username);
+  s.BindInt64(2, static_cast<int>(compromise_type));
+  return StatementToCompromisedCredentials(&s);
 }
 
 }  // namespace password_manager

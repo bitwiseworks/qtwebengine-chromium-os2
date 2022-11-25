@@ -34,7 +34,6 @@
 #include "components/update_client/unzipper.h"
 #include "components/update_client/update_client.h"
 #include "components/update_client/update_client_errors.h"
-#include "services/service_manager/public/cpp/connector.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -99,6 +98,13 @@ class MockUpdateClient : public UpdateClient {
     std::move(callback).Run(update_client::Error::NONE);
   }
 
+  void SendRegistrationPing(const std::string& id,
+                            const base::Version& version,
+                            Callback callback) override {
+    DoSendRegistrationPing(id, version);
+    std::move(callback).Run(update_client::Error::NONE);
+  }
+
   MOCK_METHOD1(AddObserver, void(Observer* observer));
   MOCK_METHOD1(RemoveObserver, void(Observer* observer));
   MOCK_METHOD2(DoInstall,
@@ -115,6 +121,8 @@ class MockUpdateClient : public UpdateClient {
                void(const std::string& id,
                     const base::Version& version,
                     int reason));
+  MOCK_METHOD2(DoSendRegistrationPing,
+               void(const std::string& id, const base::Version& version));
 
  private:
   ~MockUpdateClient() override = default;
@@ -353,7 +361,7 @@ TEST_F(ComponentInstallerTest, UnpackPathInstallSuccess) {
   base_dir = base_dir.Append(relative_install_dir);
   EXPECT_TRUE(base::CreateDirectory(base_dir));
   installer->Install(
-      unpack_path, update_client::jebg_public_key, nullptr,
+      unpack_path, update_client::jebg_public_key, nullptr, base::DoNothing(),
       base::BindOnce([](const update_client::CrxInstaller::Result& result) {
         EXPECT_EQ(0, result.error);
       }));
@@ -382,7 +390,7 @@ TEST_F(ComponentInstallerTest, UnpackPathInstallError) {
 
   // Calling |Install| fails since DIR_COMPONENT_USER does not exist.
   installer->Install(
-      unpack_path, update_client::jebg_public_key, nullptr,
+      unpack_path, update_client::jebg_public_key, nullptr, base::DoNothing(),
       base::BindOnce([](const update_client::CrxInstaller::Result& result) {
         EXPECT_EQ(static_cast<int>(
                       update_client::InstallError::NO_DIR_COMPONENT_USER),

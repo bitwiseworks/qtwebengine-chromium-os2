@@ -6,8 +6,6 @@
  * @fileoverview Polymer element for displaying the IP Config properties for
  * a network state.
  */
-(function() {
-'use strict';
 
 /**
  * Returns the routing prefix as a string for a given prefix length. If
@@ -49,11 +47,14 @@ const getRoutingPrefixAsNetmask = function(prefixLength) {
  */
 const getRoutingPrefixAsLength = function(netmask) {
   'use strict';
-  let prefixLength = 0;
+  if (!netmask) {
+    return chromeos.networkConfig.mojom.NO_ROUTING_PREFIX;
+  }
   const tokens = netmask.split('.');
   if (tokens.length !== 4) {
-    return -1;
+    return chromeos.networkConfig.mojom.NO_ROUTING_PREFIX;
   }
+  let prefixLength = 0;
   for (let i = 0; i < tokens.length; ++i) {
     const token = tokens[i];
     // If we already found the last mask and the current one is not
@@ -134,6 +135,14 @@ Polymer({
       },
       readOnly: true
     },
+  },
+
+  /**
+   * Returns the automatically configure IP CrToggleElement.
+   * @return {?CrToggleElement}
+   */
+  getAutoConfigIpToggle() {
+    return /** @type {?CrToggleElement} */ (this.$$('#autoConfigIpToggle'));
   },
 
   /**
@@ -348,4 +357,3 @@ Polymer({
     });
   },
 });
-})();

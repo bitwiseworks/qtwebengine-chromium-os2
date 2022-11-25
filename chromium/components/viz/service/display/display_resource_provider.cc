@@ -22,7 +22,9 @@
 #include "gpu/command_buffer/client/context_support.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
 #include "gpu/command_buffer/common/shared_image_trace_utils.h"
+#include "gpu/ipc/scheduler_sequence.h"
 #include "third_party/skia/include/gpu/GrBackendSurface.h"
+#include "third_party/skia/include/gpu/GrDirectContext.h"
 #include "ui/gl/trace_util.h"
 
 using gpu::gles2::GLES2Interface;
@@ -35,6 +37,19 @@ namespace {
 base::AtomicSequenceNumber g_next_display_resource_provider_tracing_id;
 
 }  // namespace
+
+class ScopedAllowGpuAccessForDisplayResourceProvider {
+ public:
+  ~ScopedAllowGpuAccessForDisplayResourceProvider() = default;
+
+  explicit ScopedAllowGpuAccessForDisplayResourceProvider(
+      DisplayResourceProvider* provider) {
+    DCHECK(provider->can_access_gpu_thread_);
+  }
+
+ private:
+  gpu::ScopedAllowScheduleGpuTask allow_gpu_;
+};
 
 class ScopedSetActiveTexture {
  public:
@@ -166,47 +181,6 @@ bool DisplayResourceProvider::OnMemoryDump(
   }
 
   return true;
-}
-
-void DisplayResourceProvider::SendPromotionHints(
-    const std::map<ResourceId, gfx::RectF>& promotion_hints,
-    const ResourceIdSet& requestor_set) {
-#if defined(OS_ANDROID)
-  GLES2Interface* gl = ContextGL();
-  if (!gl)
-    return;
-
-  for (const auto& id : requestor_set) {
-    auto it = resources_.find(id);
-    if (it == resources_.end())
-      continue;
-
-    if (it->second.marked_for_deletion)
-      continue;
-
-    const ChildResource* resource = LockForRead(id);
-    // TODO(ericrk): We should never fail LockForRead, but we appear to be
-    // doing so on Android in rare cases. Handle this gracefully until a better
-    // solution can be found. https://crbug.com/811858
-    if (!resource)
-      return;
-
-    DCHECK(resource->transferable.wants_promotion_hint);
-
-    // Insist that this is backed by a GPU texture.
-    if (resource->is_gpu_resource_type()) {
-      DCHECK(resource->gl_id);
-      auto iter = promotion_hints.find(id);
-      bool promotable = iter != promotion_hints.end();
-      gl->OverlayPromotionHintCHROMIUM(resource->gl_id, promotable,
-                                       promotable ? iter->second.x() : 0,
-                                       promotable ? iter->second.y() : 0,
-                                       promotable ? iter->second.width() : 0,
-                                       promotable ? iter->second.height() : 0);
-    }
-    UnlockForRead(id);
-  }
-#endif
 }
 
 #if defined(OS_ANDROID)
@@ -479,7 +453,7 @@ GLES2Interface* DisplayResourceProvider::ContextGL() const {
 }
 
 const DisplayResourceProvider::ChildResource*
-DisplayResourceProvider::LockForRead(ResourceId id) {
+DisplayResourceProvider::LockForRead(ResourceId id, bool overlay_only) {
   // TODO(ericrk): We should never fail TryGetResource, but we appear to be
   // doing so on Android in rare cases. Handle this gracefully until a better
   // solution can be found. https://crbug.com/811858
@@ -505,10 +479,27 @@ DisplayResourceProvider::LockForRead(ResourceId id) {
       }
       resource->SetLocallyUsed();
     }
-    if (mailbox.IsSharedImage() && enable_shared_images_ &&
-        resource->lock_for_read_count == 0) {
-      gl->BeginSharedImageAccessDirectCHROMIUM(
-          resource->gl_id, GL_SHARED_IMAGE_ACCESS_MODE_READ_CHROMIUM);
+    if (mailbox.IsSharedImage() && enable_shared_images_) {
+      if (overlay_only) {
+        if (resource->lock_for_overlay_count == 0) {
+          // If |lock_for_read_count| > 0, then BeginSharedImageAccess has
+          // already been called with READ, so don't re-lock with OVERLAY.
+          if (resource->lock_for_read_count == 0) {
+            gl->BeginSharedImageAccessDirectCHROMIUM(
+                resource->gl_id, GL_SHARED_IMAGE_ACCESS_MODE_OVERLAY_CHROMIUM);
+          }
+        }
+      } else {
+        if (resource->lock_for_read_count == 0) {
+          // If |lock_for_overlay_count| > 0, then we have already begun access
+          // for OVERLAY. End this access and "upgrade" it to READ.
+          // See https://crbug.com/1113925 for how this can go wrong.
+          if (resource->lock_for_overlay_count > 0)
+            gl->EndSharedImageAccessDirectCHROMIUM(resource->gl_id);
+          gl->BeginSharedImageAccessDirectCHROMIUM(
+              resource->gl_id, GL_SHARED_IMAGE_ACCESS_MODE_READ_CHROMIUM);
+        }
+      }
     }
   }
 
@@ -526,7 +517,10 @@ DisplayResourceProvider::LockForRead(ResourceId id) {
     }
   }
 
-  resource->lock_for_read_count++;
+  if (overlay_only)
+    resource->lock_for_overlay_count++;
+  else
+    resource->lock_for_read_count++;
   if (resource->transferable.read_lock_fences_enabled) {
     if (current_read_lock_fence_.get())
       current_read_lock_fence_->Set();
@@ -536,7 +530,7 @@ DisplayResourceProvider::LockForRead(ResourceId id) {
   return resource;
 }
 
-void DisplayResourceProvider::UnlockForRead(ResourceId id) {
+void DisplayResourceProvider::UnlockForRead(ResourceId id, bool overlay_only) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   auto it = resources_.find(id);
   // TODO(ericrk): We should never fail to find id, but we appear to be
@@ -546,16 +540,23 @@ void DisplayResourceProvider::UnlockForRead(ResourceId id) {
     return;
 
   ChildResource* resource = &it->second;
-  DCHECK_GT(resource->lock_for_read_count, 0);
   if (resource->transferable.mailbox_holder.mailbox.IsSharedImage() &&
-      resource->is_gpu_resource_type() && enable_shared_images_ &&
-      resource->lock_for_read_count == 1) {
-    DCHECK(resource->gl_id);
-    GLES2Interface* gl = ContextGL();
-    DCHECK(gl);
-    gl->EndSharedImageAccessDirectCHROMIUM(resource->gl_id);
+      resource->is_gpu_resource_type() && enable_shared_images_) {
+    // If this is the last READ or OVERLAY access, then end access.
+    if (resource->lock_for_read_count + resource->lock_for_overlay_count == 1) {
+      DCHECK(resource->gl_id);
+      GLES2Interface* gl = ContextGL();
+      DCHECK(gl);
+      gl->EndSharedImageAccessDirectCHROMIUM(resource->gl_id);
+    }
   }
-  resource->lock_for_read_count--;
+  if (overlay_only) {
+    DCHECK_GT(resource->lock_for_overlay_count, 0);
+    resource->lock_for_overlay_count--;
+  } else {
+    DCHECK_GT(resource->lock_for_read_count, 0);
+    resource->lock_for_read_count--;
+  }
   TryReleaseResource(id, resource);
 }
 
@@ -622,8 +623,11 @@ void DisplayResourceProvider::DeleteAndReturnUnusedResourcesToChild(
   if (unused.empty() && !child_info->marked_for_deletion)
     return;
 
-  // Store unused resources while batching is enabled.
-  if (batch_return_resources_lock_count_ > 0) {
+  // Store unused resources while batching is enabled or we can't access gpu
+  // thread right now.
+  // TODO(vasilyt): Technically we need to delay only resources with
+  // |image_context|.
+  if (batch_return_resources_lock_count_ > 0 || !can_access_gpu_thread_) {
     int child_id = child_it->first;
     // Ensure that we have an entry in |batched_returning_resources_| for child
     // even if |unused| is empty, in case child is marked for deletion.
@@ -644,7 +648,9 @@ void DisplayResourceProvider::DeleteAndReturnUnusedResourcesToChild(
 
   std::vector<std::unique_ptr<ExternalUseClient::ImageContext>>
       image_contexts_to_return;
+  std::vector<ReturnedResource*> external_used_resources;
   image_contexts_to_return.reserve(unused.size());
+  external_used_resources.reserve(unused.size());
 
   GLES2Interface* gl = ContextGL();
   for (ResourceId local_id : unused) {
@@ -681,9 +687,6 @@ void DisplayResourceProvider::DeleteAndReturnUnusedResourcesToChild(
       is_lost = true;
     }
 
-    if (resource.image_context)
-      image_contexts_to_return.emplace_back(std::move(resource.image_context));
-
     if (resource.is_gpu_resource_type() &&
         resource.gl_id &&
         resource.filter != resource.transferable.filter) {
@@ -703,12 +706,20 @@ void DisplayResourceProvider::DeleteAndReturnUnusedResourcesToChild(
                            resource.imported_count, is_lost);
     auto& returned = to_return.back();
 
-    if (resource.is_gpu_resource_type()) {
-      if (resource.needs_sync_token()) {
-        need_synchronization_resources.push_back(&returned);
-      } else if (returned.sync_token.HasData() &&
-                 !returned.sync_token.verified_flush()) {
-        unverified_sync_tokens.push_back(returned.sync_token.GetData());
+    if (external_use_client_) {
+      if (resource.image_context) {
+        image_contexts_to_return.emplace_back(
+            std::move(resource.image_context));
+        external_used_resources.push_back(&returned);
+      }
+    } else {
+      if (resource.is_gpu_resource_type()) {
+        if (resource.needs_sync_token()) {
+          need_synchronization_resources.push_back(&returned);
+        } else if (returned.sync_token.HasData() &&
+                   !returned.sync_token.verified_flush()) {
+          unverified_sync_tokens.push_back(returned.sync_token.GetData());
+        }
       }
     }
 
@@ -720,28 +731,33 @@ void DisplayResourceProvider::DeleteAndReturnUnusedResourcesToChild(
     DeleteResourceInternal(it, style);
   }
 
-  gpu::SyncToken new_sync_token;
-  if (!need_synchronization_resources.empty()) {
-    DCHECK(gl);
-    gl->GenUnverifiedSyncTokenCHROMIUM(new_sync_token.GetData());
-    unverified_sync_tokens.push_back(new_sync_token.GetData());
+  if (external_use_client_) {
+    if (!image_contexts_to_return.empty()) {
+      ScopedAllowGpuAccessForDisplayResourceProvider allow_gpu(this);
+      gpu::SyncToken sync_token = external_use_client_->ReleaseImageContexts(
+          std::move(image_contexts_to_return));
+      for (auto* resource : external_used_resources) {
+        resource->sync_token = sync_token;
+      }
+    }
+  } else {
+    gpu::SyncToken new_sync_token;
+    if (!need_synchronization_resources.empty()) {
+      DCHECK(gl);
+      gl->GenUnverifiedSyncTokenCHROMIUM(new_sync_token.GetData());
+      unverified_sync_tokens.push_back(new_sync_token.GetData());
+    }
+
+    if (!unverified_sync_tokens.empty()) {
+      DCHECK(gl);
+      gl->VerifySyncTokensCHROMIUM(unverified_sync_tokens.data(),
+                                   unverified_sync_tokens.size());
+    }
+
+    // Set sync token after verification.
+    for (ReturnedResource* returned : need_synchronization_resources)
+      returned->sync_token = new_sync_token;
   }
-
-  if (!unverified_sync_tokens.empty()) {
-    DCHECK(gl);
-    gl->VerifySyncTokensCHROMIUM(unverified_sync_tokens.data(),
-                                 unverified_sync_tokens.size());
-  }
-
-  // Set sync token after verification.
-  for (ReturnedResource* returned : need_synchronization_resources)
-    returned->sync_token = new_sync_token;
-
-  if (external_use_client_ && !image_contexts_to_return.empty()) {
-    external_use_client_->ReleaseImageContexts(
-        std::move(image_contexts_to_return));
-  }
-
   if (!to_return.empty())
     child_info->return_callback.Run(to_return);
 
@@ -771,39 +787,44 @@ void DisplayResourceProvider::DestroyChildInternal(ChildMap::iterator it,
   DeleteAndReturnUnusedResourcesToChild(it, style, resources_for_child);
 }
 
+void DisplayResourceProvider::TryFlushBatchedResources() {
+  if (batch_return_resources_lock_count_ == 0 && can_access_gpu_thread_) {
+    for (auto& child_resources_kv : batched_returning_resources_) {
+      auto child_it = children_.find(child_resources_kv.first);
+
+      // Remove duplicates from child's unused resources.  Duplicates are
+      // possible when batching is enabled because resources are saved in
+      // |batched_returning_resources_| for removal, and not removed from the
+      // child's |child_to_parent_map|, so the same set of resources can be
+      // saved again using DeclareUsedResourcesForChild() or DestroyChild().
+      auto& unused_resources = child_resources_kv.second;
+      std::sort(unused_resources.begin(), unused_resources.end());
+      auto last = std::unique(unused_resources.begin(), unused_resources.end());
+      unused_resources.erase(last, unused_resources.end());
+
+      DeleteAndReturnUnusedResourcesToChild(child_it, NORMAL, unused_resources);
+    }
+    batched_returning_resources_.clear();
+  }
+}
+
 void DisplayResourceProvider::SetBatchReturnResources(bool batch) {
   if (batch) {
     DCHECK_GE(batch_return_resources_lock_count_, 0);
-    if (!scoped_batch_read_access_) {
-      scoped_batch_read_access_ =
-          std::make_unique<ScopedBatchReadAccess>(ContextGL());
-    }
     batch_return_resources_lock_count_++;
   } else {
     DCHECK_GT(batch_return_resources_lock_count_, 0);
     batch_return_resources_lock_count_--;
     if (batch_return_resources_lock_count_ == 0) {
-      DCHECK(scoped_batch_read_access_);
-      scoped_batch_read_access_.reset();
-      for (auto& child_resources_kv : batched_returning_resources_) {
-        auto child_it = children_.find(child_resources_kv.first);
-
-        // Remove duplicates from child's unused resources.  Duplicates are
-        // possible when batching is enabled because resources are saved in
-        // |batched_returning_resources_| for removal, and not removed from the
-        // child's |child_to_parent_map|, so the same set of resources can be
-        // saved again using DeclareUsedResourcesForChild() or DestroyChild().
-        auto& unused_resources = child_resources_kv.second;
-        std::sort(unused_resources.begin(), unused_resources.end());
-        auto last =
-            std::unique(unused_resources.begin(), unused_resources.end());
-        unused_resources.erase(last, unused_resources.end());
-
-        DeleteAndReturnUnusedResourcesToChild(child_it, NORMAL,
-                                              unused_resources);
-      }
-      batched_returning_resources_.clear();
+      TryFlushBatchedResources();
     }
+  }
+}
+
+void DisplayResourceProvider::SetAllowAccessToGPUThread(bool allow) {
+  can_access_gpu_thread_ = allow;
+  if (allow) {
+    TryFlushBatchedResources();
   }
 }
 
@@ -812,7 +833,8 @@ DisplayResourceProvider::ScopedReadLockGL::ScopedReadLockGL(
     ResourceId resource_id)
     : resource_provider_(resource_provider), resource_id_(resource_id),
       target_(GL_TEXTURE_2D) {
-  const ChildResource* resource = resource_provider->LockForRead(resource_id);
+  const ChildResource* resource =
+      resource_provider->LockForRead(resource_id, false /* overlay_only */);
   // TODO(ericrk): We should never fail LockForRead, but we appear to be
   // doing so on Android in rare cases. Handle this gracefully until a better
   // solution can be found. https://crbug.com/811858
@@ -826,7 +848,23 @@ DisplayResourceProvider::ScopedReadLockGL::ScopedReadLockGL(
 }
 
 DisplayResourceProvider::ScopedReadLockGL::~ScopedReadLockGL() {
-  resource_provider_->UnlockForRead(resource_id_);
+  resource_provider_->UnlockForRead(resource_id_, false /* overlay_only */);
+}
+
+DisplayResourceProvider::ScopedOverlayLockGL::ScopedOverlayLockGL(
+    DisplayResourceProvider* resource_provider,
+    ResourceId resource_id)
+    : resource_provider_(resource_provider), resource_id_(resource_id) {
+  const ChildResource* resource =
+      resource_provider->LockForRead(resource_id, true /* overlay_only */);
+  if (!resource)
+    return;
+
+  texture_id_ = resource->gl_id;
+}
+
+DisplayResourceProvider::ScopedOverlayLockGL::~ScopedOverlayLockGL() {
+  resource_provider_->UnlockForRead(resource_id_, true /* overlay_only */);
 }
 
 DisplayResourceProvider::ScopedSamplerGL::ScopedSamplerGL(
@@ -854,7 +892,8 @@ DisplayResourceProvider::ScopedReadLockSkImage::ScopedReadLockSkImage(
     SkAlphaType alpha_type,
     GrSurfaceOrigin origin)
     : resource_provider_(resource_provider), resource_id_(resource_id) {
-  const ChildResource* resource = resource_provider->LockForRead(resource_id);
+  const ChildResource* resource =
+      resource_provider->LockForRead(resource_id, false /* overlay_only */);
   DCHECK(resource);
 
   // Use cached SkImage if possible.
@@ -903,7 +942,7 @@ DisplayResourceProvider::ScopedReadLockSkImage::ScopedReadLockSkImage(
 }
 
 DisplayResourceProvider::ScopedReadLockSkImage::~ScopedReadLockSkImage() {
-  resource_provider_->UnlockForRead(resource_id_);
+  resource_provider_->UnlockForRead(resource_id_, false /* overlay_only */);
 }
 
 DisplayResourceProvider::ScopedReadLockSharedImage::ScopedReadLockSharedImage(
@@ -962,7 +1001,7 @@ DisplayResourceProvider::LockSetForExternalUse::~LockSetForExternalUse() {
 ExternalUseClient::ImageContext*
 DisplayResourceProvider::LockSetForExternalUse::LockResource(
     ResourceId id,
-    bool is_video_plane) {
+    bool use_skia_color_conversion) {
   auto it = resource_provider_->resources_.find(id);
   DCHECK(it != resource_provider_->resources_.end());
 
@@ -975,9 +1014,10 @@ DisplayResourceProvider::LockSetForExternalUse::LockResource(
 
     if (!resource.image_context) {
       sk_sp<SkColorSpace> image_color_space;
-      // Video color conversion is handled externally in SkiaRenderer using a
-      // special color filter.
-      if (!is_video_plane)
+      // Video (YUV with PQ or half float RGBA with linear HDR) color conversion
+      // is handled externally in SkiaRenderer using a special color filter, and
+      // |use_skia_color_conversion| is false in that case.
+      if (use_skia_color_conversion)
         image_color_space = resource.transferable.color_space.ToSkColorSpace();
       resource.image_context =
           resource_provider_->external_use_client_->CreateImageContext(
@@ -1047,14 +1087,21 @@ void DisplayResourceProvider::SynchronousFence::Synchronize() {
 }
 
 DisplayResourceProvider::ScopedBatchReturnResources::ScopedBatchReturnResources(
-    DisplayResourceProvider* resource_provider)
-    : resource_provider_(resource_provider) {
+    DisplayResourceProvider* resource_provider,
+    bool allow_access_to_gpu_thread)
+    : resource_provider_(resource_provider),
+      was_access_to_gpu_thread_allowed_(
+          resource_provider_->can_access_gpu_thread_) {
   resource_provider_->SetBatchReturnResources(true);
+  if (allow_access_to_gpu_thread)
+    resource_provider_->SetAllowAccessToGPUThread(true);
 }
 
 DisplayResourceProvider::ScopedBatchReturnResources::
     ~ScopedBatchReturnResources() {
   resource_provider_->SetBatchReturnResources(false);
+  resource_provider_->SetAllowAccessToGPUThread(
+      was_access_to_gpu_thread_allowed_);
 }
 
 DisplayResourceProvider::Child::Child() = default;
@@ -1091,18 +1138,6 @@ void DisplayResourceProvider::ChildResource::UpdateSyncToken(
   // the gpu process or in case of context loss.
   sync_token_ = sync_token;
   synchronization_state_ = sync_token.HasData() ? NEEDS_WAIT : SYNCHRONIZED;
-}
-
-DisplayResourceProvider::ScopedBatchReadAccess::ScopedBatchReadAccess(
-    gpu::gles2::GLES2Interface* gl)
-    : gl_(gl) {
-  if (gl_)
-    gl_->BeginBatchReadAccessSharedImageCHROMIUM();
-}
-
-DisplayResourceProvider::ScopedBatchReadAccess::~ScopedBatchReadAccess() {
-  if (gl_)
-    gl_->EndBatchReadAccessSharedImageCHROMIUM();
 }
 
 }  // namespace viz

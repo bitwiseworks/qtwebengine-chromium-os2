@@ -8,8 +8,10 @@
 #define QUICHE_QUIC_CORE_CONGESTION_CONTROL_LOSS_DETECTION_INTERFACE_H_
 
 #include "net/third_party/quiche/src/quic/core/congestion_control/send_algorithm_interface.h"
+#include "net/third_party/quiche/src/quic/core/quic_config.h"
 #include "net/third_party/quiche/src/quic/core/quic_packets.h"
 #include "net/third_party/quiche/src/quic/core/quic_time.h"
+#include "net/third_party/quiche/src/quic/core/quic_types.h"
 #include "net/third_party/quiche/src/quic/platform/api/quic_export.h"
 
 namespace quic {
@@ -20,13 +22,27 @@ class RttStats;
 class QUIC_EXPORT_PRIVATE LossDetectionInterface {
  public:
   virtual ~LossDetectionInterface() {}
+
+  virtual void SetFromConfig(const QuicConfig& config,
+                             Perspective perspective) = 0;
+
+  struct QUIC_NO_EXPORT DetectionStats {
+    // Maximum sequence reordering observed in newly acked packets.
+    QuicPacketCount sent_packets_max_sequence_reordering = 0;
+    QuicPacketCount sent_packets_num_borderline_time_reorderings = 0;
+    // Total detection response time for lost packets from this detection.
+    // See QuicConnectionStats for the definition of detection response time.
+    float total_loss_detection_response_time = 0.0;
+  };
+
   // Called when a new ack arrives or the loss alarm fires.
-  virtual void DetectLosses(const QuicUnackedPacketMap& unacked_packets,
-                            QuicTime time,
-                            const RttStats& rtt_stats,
-                            QuicPacketNumber largest_newly_acked,
-                            const AckedPacketVector& packets_acked,
-                            LostPacketVector* packets_lost) = 0;
+  virtual DetectionStats DetectLosses(
+      const QuicUnackedPacketMap& unacked_packets,
+      QuicTime time,
+      const RttStats& rtt_stats,
+      QuicPacketNumber largest_newly_acked,
+      const AckedPacketVector& packets_acked,
+      LostPacketVector* packets_lost) = 0;
 
   // Get the time the LossDetectionAlgorithm wants to re-evaluate losses.
   // Returns QuicTime::Zero if no alarm needs to be set.
@@ -44,7 +60,14 @@ class QUIC_EXPORT_PRIVATE LossDetectionInterface {
 
   virtual void OnMinRttAvailable() = 0;
 
+  virtual void OnUserAgentIdKnown() = 0;
+
   virtual void OnConnectionClosed() = 0;
+
+  // Called when a reordering is detected by the loss algorithm, but _before_
+  // the reordering_shift and reordering_threshold are consulted to see whether
+  // it is a loss.
+  virtual void OnReorderingDetected() = 0;
 };
 
 }  // namespace quic

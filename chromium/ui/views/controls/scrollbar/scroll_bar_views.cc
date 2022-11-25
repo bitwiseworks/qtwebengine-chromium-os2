@@ -8,7 +8,8 @@
 #include <memory>
 #include <utility>
 
-#include "base/logging.h"
+#include "base/check.h"
+#include "base/notreached.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/canvas.h"
 #include "ui/views/controls/button/button.h"
@@ -94,7 +95,7 @@ void ScrollBarButton::PaintButtonContents(gfx::Canvas* canvas) {
 ui::NativeTheme::ExtraParams ScrollBarButton::GetNativeThemeParams() const {
   ui::NativeTheme::ExtraParams params;
 
-  switch (state()) {
+  switch (GetState()) {
     case Button::STATE_HOVERED:
       params.scrollbar_arrow.is_hovering = true;
       break;
@@ -123,7 +124,7 @@ ui::NativeTheme::Part ScrollBarButton::GetNativeThemePart() const {
 }
 
 ui::NativeTheme::State ScrollBarButton::GetNativeThemeState() const {
-  switch (state()) {
+  switch (GetState()) {
     case Button::STATE_HOVERED:
       return ui::NativeTheme::kHovered;
     case Button::STATE_PRESSED:
@@ -330,8 +331,7 @@ gfx::Rect ScrollBarViews::GetTrackBounds() const {
   return bounds;
 }
 
-BEGIN_METADATA(ScrollBarViews)
-METADATA_PARENT_CLASS(ScrollBar)
-END_METADATA()
+BEGIN_METADATA(ScrollBarViews, ScrollBar)
+END_METADATA
 
 }  // namespace views

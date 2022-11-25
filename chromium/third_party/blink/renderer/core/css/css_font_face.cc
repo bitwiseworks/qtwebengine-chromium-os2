@@ -125,6 +125,11 @@ scoped_refptr<SimpleFontData> CSSFontFace::GetFontData(
 
     if (scoped_refptr<SimpleFontData> result = source->GetFontData(
             font_description, font_face_->GetFontSelectionCapabilities())) {
+      if (font_face_->HasFontMetricsOverride()) {
+        // TODO(xiaochengh): Try not to create a temporary SimpleFontData.
+        result = result->MetricsOverriddenFontData(
+            font_face_->GetFontMetricsOverride());
+      }
       // The active source may already be loading or loaded. Adjust our
       // FontFace status accordingly.
       if (LoadStatus() == FontFace::kUnloaded &&
@@ -228,7 +233,18 @@ void CSSFontFace::SetLoadStatus(FontFace::LoadStatusType new_status) {
   }
 }
 
-void CSSFontFace::Trace(Visitor* visitor) {
+bool CSSFontFace::UpdatePeriod() {
+  if (LoadStatus() == FontFace::kLoaded)
+    return false;
+  bool changed = false;
+  for (CSSFontFaceSource* source : sources_) {
+    if (source->UpdatePeriod())
+      changed = true;
+  }
+  return changed;
+}
+
+void CSSFontFace::Trace(Visitor* visitor) const {
   visitor->Trace(segmented_font_faces_);
   visitor->Trace(sources_);
   visitor->Trace(font_face_);

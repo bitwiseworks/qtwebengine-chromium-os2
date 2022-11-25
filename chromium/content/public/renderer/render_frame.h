@@ -13,13 +13,14 @@
 #include "base/callback_forward.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
+#include "base/supports_user_data.h"
 #include "content/common/content_export.h"
-#include "content/public/common/previews_state.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
 #include "ppapi/buildflags/buildflags.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
+#include "third_party/blink/public/common/loader/previews_state.h"
 #include "third_party/blink/public/common/navigation/triggering_event_info.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
 #include "third_party/blink/public/platform/task_type.h"
@@ -28,6 +29,9 @@
 #include "ui/accessibility/ax_tree_update.h"
 
 namespace blink {
+namespace web_pref {
+struct WebPreferences;
+}  // namespace web_pref
 class AssociatedInterfaceProvider;
 class AssociatedInterfaceRegistry;
 class BrowserInterfaceBrokerProxy;
@@ -67,7 +71,6 @@ class RenderFrameVisitor;
 class RenderView;
 struct UntrustworthyContextMenuParams;
 struct WebPluginInfo;
-struct WebPreferences;
 
 // A class that takes a snapshot of the accessibility tree. Accessibility
 // support in Blink is enabled for the lifetime of this object, which can
@@ -88,7 +91,8 @@ class AXTreeSnapshotter {
 // navigation. It provides communication with a corresponding RenderFrameHost
 // in the browser process.
 class CONTENT_EXPORT RenderFrame : public IPC::Listener,
-                                   public IPC::Sender {
+                                   public IPC::Sender,
+                                   public base::SupportsUserData {
  public:
   // These numeric values are used in UMA logs; do not change them.
   enum PeripheralContentStatus {
@@ -99,7 +103,7 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
     // Content is essential even though it's cross-origin, because it's large.
     CONTENT_STATUS_ESSENTIAL_CROSS_ORIGIN_BIG = 2,
     // Content is essential because there's large content from the same origin.
-    CONTENT_STATUS_ESSENTIAL_CROSS_ORIGIN_WHITELISTED = 3,
+    CONTENT_STATUS_ESSENTIAL_CROSS_ORIGIN_ALLOWLISTED = 3,
     // Content is tiny in size. These are usually blocked.
     CONTENT_STATUS_TINY = 4,
     // Deprecated, as now entirely obscured content is treated as tiny.
@@ -143,7 +147,7 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
   virtual blink::WebLocalFrame* GetWebFrame() = 0;
 
   // Gets WebKit related preferences associated with this frame.
-  virtual const WebPreferences& GetWebkitPreferences() = 0;
+  virtual const blink::web_pref::WebPreferences& GetBlinkPreferences() = 0;
 
   // Shows a context menu with the given information. The given client will
   // be called with the result.
@@ -210,7 +214,7 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
 
 #if BUILDFLAG(ENABLE_PLUGINS)
   // Registers a plugin that has been marked peripheral. If the origin
-  // whitelist is later updated and includes |content_origin|, then
+  // allowlist is later updated and includes |content_origin|, then
   // |unthrottle_callback| will be called.
   virtual void RegisterPeripheralPlugin(
       const url::Origin& content_origin,
@@ -238,9 +242,9 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
       const gfx::Size& unobscured_size,
       RecordPeripheralDecision record_decision) = 0;
 
-  // Whitelists a |content_origin| so its content will never be throttled in
-  // this RenderFrame. Whitelist is cleared by top level navigation.
-  virtual void WhitelistContentOrigin(const url::Origin& content_origin) = 0;
+  // Allowlists a |content_origin| so its content will never be throttled in
+  // this RenderFrame. Allowlist is cleared by top level navigation.
+  virtual void AllowlistContentOrigin(const url::Origin& content_origin) = 0;
 
   // Used by plugins that load data in this RenderFrame to update the loading
   // notifications.
@@ -263,7 +267,7 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
 
   // Returns the PreviewsState of this frame, a bitmask of potentially several
   // Previews optimizations.
-  virtual PreviewsState GetPreviewsState() = 0;
+  virtual blink::PreviewsState GetPreviewsState() = 0;
 
   // Whether or not this frame is currently pasting.
   virtual bool IsPasting() = 0;
@@ -304,12 +308,6 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
   GetRenderFrameMediaPlaybackOptions() = 0;
   virtual void SetRenderFrameMediaPlaybackOptions(
       const RenderFrameMediaPlaybackOptions& opts) = 0;
-
-  // Synchronously performs the complete set of document lifecycle phases,
-  // including updates to the compositor state and rasterization, then sending
-  // a frame to the viz display compositor. Does nothing if RenderFrame is not
-  // a local root.
-  virtual void UpdateAllLifecyclePhasesAndCompositeForTesting() = 0;
 
   // Sets that cross browsing instance frame lookup is allowed.
   virtual void SetAllowsCrossBrowsingInstanceFrameLookup() = 0;

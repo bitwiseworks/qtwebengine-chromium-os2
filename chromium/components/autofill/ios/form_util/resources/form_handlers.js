@@ -110,10 +110,16 @@ function formActivity_(evt) {
   if (target !== lastFocusedElement) {
     return;
   }
+  __gCrWeb.fill.setUniqueIDIfNeeded(target.form);
+  __gCrWeb.fill.setUniqueIDIfNeeded(target);
+  const formUniqueId = __gCrWeb.fill.getUniqueID(target.form);
+  const fieldUniqueId = __gCrWeb.fill.getUniqueID(target);
   const msg = {
     'command': 'form.activity',
-    'formName': __gCrWeb.form.getFormIdentifier(evt.target.form),
+    'formName': __gCrWeb.form.getFormIdentifier(target.form),
+    'uniqueFormID': formUniqueId,
     'fieldIdentifier': __gCrWeb.form.getFieldIdentifier(target),
+    'uniqueFieldID': fieldUniqueId,
     'fieldType': fieldType,
     'type': evt.type,
     'value': value,
@@ -245,9 +251,50 @@ __gCrWeb.formHandlers['trackFormMutations'] = function(delay) {
         const msg = {
           'command': 'form.activity',
           'formName': '',
+          'uniqueFormID': '',
           'fieldIdentifier': '',
+          'uniqueFieldID': '',
           'fieldType': '',
           'type': 'form_changed',
+          'value': '',
+          'hasUserGesture': false
+        };
+        return sendFormMutationMessageAfterDelay_(msg, delay);
+      }
+
+      const removedElements = [];
+      for (let j = 0; j < mutation.removedNodes.length; j++) {
+        const node = mutation.removedNodes[j];
+        // Ignore non-element nodes.
+        if (node.nodeType !== Node.ELEMENT_NODE) {
+          continue;
+        }
+        removedElements.push(node);
+        [].push.apply(
+            removedElements, [].slice.call(node.getElementsByTagName('FORM')));
+      }
+      const formGone = removedElements.find(function(element) {
+        if (element.tagName.match(/(FORM)/)) {
+          for (let k = 0; k < element.elements.length; k++) {
+            if (element.elements[k].tagName.match(/(INPUT)/) &&
+                element.elements[k].type === 'password') {
+              return true;
+            }
+          }
+          return false;
+        }
+        return false;
+      });
+      const uniqueFormId = __gCrWeb.fill.getUniqueID(formGone);
+      if (formGone) {
+        const msg = {
+          'command': 'form.activity',
+          'formName': '',
+          'uniqueFormID': uniqueFormId,
+          'fieldIdentifier': '',
+          'uniqueFieldID': '',
+          'fieldType': '',
+          'type': 'password_form_removed',
           'value': '',
           'hasUserGesture': false
         };

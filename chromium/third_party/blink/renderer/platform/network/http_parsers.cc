@@ -36,6 +36,8 @@
 #include "net/http/http_content_disposition.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
+#include "services/network/public/cpp/parsed_headers.h"
+#include "services/network/public/mojom/parsed_headers.mojom-blink.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_response.h"
 #include "third_party/blink/renderer/platform/network/header_field_tokenizer.h"
@@ -49,6 +51,141 @@
 #include "third_party/blink/renderer/platform/wtf/text/string_utf8_adaptor.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/wtf.h"
+
+// We would like finding a way to convert from/to blink type automatically.
+// The following attempt has been withdrawn:
+// https://chromium-review.googlesource.com/c/chromium/src/+/2126933/7
+namespace network {
+namespace mojom {
+
+blink::CSPSourcePtr ConvertToBlink(CSPSourcePtr source) {
+  return blink::CSPSource::New(
+      String::FromUTF8(source->scheme), String::FromUTF8(source->host),
+      source->port, String::FromUTF8(source->path), source->is_host_wildcard,
+      source->is_port_wildcard);
+}
+
+blink::CSPHashSourcePtr ConvertToBlink(CSPHashSourcePtr hash) {
+  return blink::CSPHashSource::New(hash->algorithm,
+                                   String::FromUTF8(hash->value));
+}
+
+blink::CSPSourceListPtr ConvertToBlink(CSPSourceListPtr source_list) {
+  WTF::Vector<blink::CSPSourcePtr> sources;
+  for (auto& it : source_list->sources)
+    sources.push_back(ConvertToBlink(std::move(it)));
+
+  WTF::Vector<String> nonces;
+  for (const auto& nonce : source_list->nonces)
+    nonces.push_back(String::FromUTF8(std::move(nonce)));
+
+  WTF::Vector<blink::CSPHashSourcePtr> hashes;
+  for (auto& it : source_list->hashes)
+    hashes.push_back(ConvertToBlink(std::move(it)));
+
+  return blink::CSPSourceList::New(
+      std::move(sources), std::move(nonces), std::move(hashes),
+      source_list->allow_self, source_list->allow_star,
+      source_list->allow_response_redirects, source_list->allow_inline,
+      source_list->allow_eval, source_list->allow_wasm_eval,
+      source_list->allow_dynamic, source_list->allow_unsafe_hashes,
+      source_list->report_sample);
+}
+
+blink::CSPDirectiveName ConvertToBlink(CSPDirectiveName name) {
+  return static_cast<blink::CSPDirectiveName>(name);
+}
+
+blink::ContentSecurityPolicyHeaderPtr ConvertToBlink(
+    ContentSecurityPolicyHeaderPtr header) {
+  return blink::ContentSecurityPolicyHeader::New(
+      String::FromUTF8(header->header_value), header->type, header->source);
+}
+
+WTF::HashMap<blink::CSPDirectiveName, blink::CSPSourceListPtr> ConvertToBlink(
+    base::flat_map<CSPDirectiveName, CSPSourceListPtr> directives) {
+  WTF::HashMap<blink::CSPDirectiveName, blink::CSPSourceListPtr> out;
+
+  for (auto& list : directives) {
+    out.insert(ConvertToBlink(list.first),
+               ConvertToBlink(std::move(list.second)));
+  }
+
+  return out;
+}
+
+WTF::Vector<WTF::String> ConvertToBlink(std::vector<std::string> in) {
+  WTF::Vector<WTF::String> out;
+  for (auto& el : in)
+    out.push_back(String::FromUTF8(el));
+  return out;
+}
+
+blink::ContentSecurityPolicyPtr ConvertToBlink(
+    ContentSecurityPolicyPtr policy_in) {
+  return blink::ContentSecurityPolicy::New(
+      ConvertToBlink(std::move(policy_in->directives)),
+      policy_in->upgrade_insecure_requests, policy_in->treat_as_public_address,
+      policy_in->sandbox, ConvertToBlink(std::move(policy_in->header)),
+      policy_in->use_reporting_api,
+      ConvertToBlink(std::move(policy_in->report_endpoints)),
+      policy_in->plugin_types.has_value()
+          ? base::Optional<WTF::Vector<WTF::String>>(
+                ConvertToBlink(std::move(policy_in->plugin_types.value())))
+          : base::nullopt,
+      ConvertToBlink(std::move(policy_in->parsing_errors)));
+}
+
+WTF::Vector<blink::ContentSecurityPolicyPtr> ConvertToBlink(
+    std::vector<ContentSecurityPolicyPtr> policies) {
+  WTF::Vector<blink::ContentSecurityPolicyPtr> blink_policies;
+  for (auto& policy : policies)
+    blink_policies.push_back(ConvertToBlink(std::move(policy)));
+
+  return blink_policies;
+}
+
+blink::AllowCSPFromHeaderValuePtr ConvertToBlink(
+    AllowCSPFromHeaderValuePtr allow_csp_from) {
+  if (!allow_csp_from)
+    return nullptr;
+  switch (allow_csp_from->which()) {
+    case AllowCSPFromHeaderValue::Tag::ALLOW_STAR:
+      return blink::AllowCSPFromHeaderValue::NewAllowStar(
+          allow_csp_from->get_allow_star());
+    case AllowCSPFromHeaderValue::Tag::ORIGIN:
+      return blink::AllowCSPFromHeaderValue::NewOrigin(
+          ::blink::SecurityOrigin::CreateFromUrlOrigin(
+              allow_csp_from->get_origin()));
+    case AllowCSPFromHeaderValue::Tag::ERROR_MESSAGE:
+      return blink::AllowCSPFromHeaderValue::NewErrorMessage(
+          String::FromUTF8(allow_csp_from->get_error_message()));
+  }
+}
+
+WTF::Vector<network::mojom::blink::WebClientHintsType> ConvertToBlink(
+    const std::vector<network::mojom::WebClientHintsType>& accept_ch) {
+  WTF::Vector<network::mojom::blink::WebClientHintsType> blink_accept_ch;
+  blink_accept_ch.AppendRange(accept_ch.begin(), accept_ch.end());
+  return blink_accept_ch;
+}
+
+blink::ParsedHeadersPtr ConvertToBlink(ParsedHeadersPtr parsed_headers) {
+  return blink::ParsedHeaders::New(
+      ConvertToBlink(std::move(parsed_headers->content_security_policy)),
+      ConvertToBlink(std::move(parsed_headers->allow_csp_from)),
+      std::move(parsed_headers->cross_origin_embedder_policy),
+      std::move(parsed_headers->cross_origin_opener_policy),
+      parsed_headers->origin_isolation,
+      parsed_headers->accept_ch.has_value()
+          ? base::make_optional(
+                ConvertToBlink(parsed_headers->accept_ch.value()))
+          : base::nullopt,
+      parsed_headers->accept_ch_lifetime);
+}
+
+}  // namespace mojom
+}  // namespace network
 
 namespace blink {
 
@@ -598,6 +735,17 @@ std::unique_ptr<ServerTimingHeaderVector> ParseServerTimingHeader(
     }
   }
   return headers;
+}
+
+// This function is simply calling network::ParseHeaders and convert from/to
+// blink types. It is used for navigation requests served by a ServiceWorker. It
+// is tested by FetchResponseDataTest.ContentSecurityPolicy.
+network::mojom::blink::ParsedHeadersPtr ParseHeaders(const String& raw_headers,
+                                                     const KURL& url) {
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(raw_headers.Latin1()));
+  return network::mojom::ConvertToBlink(
+      network::PopulateParsedHeaders(headers, url));
 }
 
 }  // namespace blink

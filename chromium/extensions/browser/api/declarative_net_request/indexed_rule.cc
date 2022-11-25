@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/check_op.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -391,8 +393,6 @@ bool DoesActionSupportPriority(dnr_api::RuleActionType type) {
     case dnr_api::RULE_ACTION_TYPE_ALLOWALLREQUESTS:
     case dnr_api::RULE_ACTION_TYPE_MODIFYHEADERS:
       return true;
-    case dnr_api::RULE_ACTION_TYPE_REMOVEHEADERS:
-      return false;
     case dnr_api::RULE_ACTION_TYPE_NONE:
       break;
   }
@@ -412,7 +412,6 @@ uint8_t GetActionTypePriority(dnr_api::RuleActionType action_type) {
       return 2;
     case dnr_api::RULE_ACTION_TYPE_REDIRECT:
       return 1;
-    case dnr_api::RULE_ACTION_TYPE_REMOVEHEADERS:
     case dnr_api::RULE_ACTION_TYPE_MODIFYHEADERS:
       return 0;
     case dnr_api::RULE_ACTION_TYPE_NONE:
@@ -437,6 +436,25 @@ ParseResult ValidateHeaders(
   for (const auto& header_info : headers) {
     if (!net::HttpUtil::IsValidHeaderName(header_info.header))
       return ParseResult::ERROR_INVALID_HEADER_NAME;
+
+    // Ensure that request headers cannot be appended.
+    if (are_request_headers &&
+        header_info.operation == dnr_api::HEADER_OPERATION_APPEND) {
+      return ParseResult::ERROR_APPEND_REQUEST_HEADER_UNSUPPORTED;
+    }
+
+    if (header_info.value) {
+      if (!net::HttpUtil::IsValidHeaderValue(*header_info.value))
+        return ParseResult::ERROR_INVALID_HEADER_VALUE;
+
+      // Check that a remove operation must not specify a value.
+      if (header_info.operation == dnr_api::HEADER_OPERATION_REMOVE)
+        return ParseResult::ERROR_HEADER_VALUE_PRESENT;
+    } else if (header_info.operation == dnr_api::HEADER_OPERATION_APPEND ||
+               header_info.operation == dnr_api::HEADER_OPERATION_SET) {
+      // Check that an append or set operation must specify a value.
+      return ParseResult::ERROR_HEADER_VALUE_NOT_SPECIFIED;
+    }
   }
 
   return ParseResult::SUCCESS;
@@ -585,17 +603,6 @@ ParseResult IndexedRule::CreateIndexedRule(dnr_api::Rule parsed_rule,
   // Lower-case case-insensitive patterns as required by url pattern index.
   if (indexed_rule->options & flat_rule::OptionFlag_IS_CASE_INSENSITIVE)
     indexed_rule->url_pattern = base::ToLowerASCII(indexed_rule->url_pattern);
-
-  if (parsed_rule.action.type == dnr_api::RULE_ACTION_TYPE_REMOVEHEADERS) {
-    if (!parsed_rule.action.remove_headers_list ||
-        parsed_rule.action.remove_headers_list->empty()) {
-      return ParseResult::ERROR_EMPTY_REMOVE_HEADERS_LIST;
-    }
-
-    indexed_rule->remove_headers_set.insert(
-        parsed_rule.action.remove_headers_list->begin(),
-        parsed_rule.action.remove_headers_list->end());
-  }
 
   if (parsed_rule.action.type == dnr_api::RULE_ACTION_TYPE_MODIFYHEADERS) {
     if (!parsed_rule.action.request_headers &&

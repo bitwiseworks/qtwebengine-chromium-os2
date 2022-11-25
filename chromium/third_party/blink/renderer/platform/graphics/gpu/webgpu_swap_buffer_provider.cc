@@ -43,7 +43,7 @@ WebGPUSwapBufferProvider::WebGPUSwapBufferProvider(
 
   layer_->SetIsDrawable(true);
   layer_->SetBlendBackgroundColor(false);
-  layer_->SetNearestNeighbor(true);
+  layer_->SetNearestNeighbor(false);
   layer_->SetFlipped(false);
   // TODO(cwallez@chromium.org): These flags aren't taken into account when the
   // layer is promoted to an overlay. Make sure we have fallback / emulation
@@ -59,6 +59,13 @@ WebGPUSwapBufferProvider::~WebGPUSwapBufferProvider() {
 cc::Layer* WebGPUSwapBufferProvider::CcLayer() {
   DCHECK(!neutered_);
   return layer_.get();
+}
+
+void WebGPUSwapBufferProvider::SetFilterQuality(
+    SkFilterQuality filter_quality) {
+  if (layer_) {
+    layer_->SetNearestNeighbor(filter_quality == kNone_SkFilterQuality);
+  }
 }
 
 void WebGPUSwapBufferProvider::Neuter() {
@@ -95,9 +102,11 @@ WGPUTexture WebGPUSwapBufferProvider::GetNewTexture(const IntSize& size) {
   // TODO(cwallez@chromium.org): have some recycling mechanism.
   gpu::Mailbox mailbox = sii->CreateSharedImage(
       format_, static_cast<gfx::Size>(size), gfx::ColorSpace::CreateSRGB(),
+      kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType,
       gpu::SHARED_IMAGE_USAGE_WEBGPU |
           gpu::SHARED_IMAGE_USAGE_WEBGPU_SWAP_CHAIN_TEXTURE |
-          gpu::SHARED_IMAGE_USAGE_DISPLAY);
+          gpu::SHARED_IMAGE_USAGE_DISPLAY,
+      gpu::kNullSurfaceHandle);
   gpu::SyncToken creation_token = sii->GenUnverifiedSyncToken();
 
   current_swap_buffer_ = base::AdoptRef(new SwapBuffer(
@@ -139,7 +148,7 @@ bool WebGPUSwapBufferProvider::PrepareTransferableResource(
   client_->OnTextureTransferred();
 
   // Make Dawn relinquish access to the texture so it can be used by the
-  // compositor. This will call dawn::Texture::Destroy so that further accesses
+  // compositor. This will call wgpu::Texture::Destroy so that further accesses
   // to the texture are errors.
   gpu::webgpu::WebGPUInterface* webgpu = dawn_control_client_->GetInterface();
   DCHECK_NE(wire_texture_id_, 0u);
@@ -156,7 +165,7 @@ bool WebGPUSwapBufferProvider::PrepareTransferableResource(
   // eglBindTexImage (on ANGLE or system drivers) so they use the 2D texture
   // target.
   const uint32_t texture_target =
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
       GL_TEXTURE_RECTANGLE_ARB
 #else
       GL_TEXTURE_2D

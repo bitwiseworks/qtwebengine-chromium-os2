@@ -13,6 +13,7 @@
 #include "chrome/browser/apps/platform_apps/app_browsertest_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_paths.h"
+#include "content/public/test/browser_test.h"
 #include "extensions/browser/api/file_system/file_system_api.h"
 #include "extensions/browser/api/file_system/saved_file_entry.h"
 #include "extensions/browser/extension_prefs.h"
@@ -31,8 +32,9 @@ namespace {
 
 class AppLoadObserver : public ExtensionRegistryObserver {
  public:
-  AppLoadObserver(content::BrowserContext* browser_context,
-                  base::Callback<void(const Extension*)> callback)
+  AppLoadObserver(
+      content::BrowserContext* browser_context,
+      const base::RepeatingCallback<void(const Extension*)>& callback)
       : callback_(callback) {
     extension_registry_observer_.Add(ExtensionRegistry::Get(browser_context));
   }
@@ -43,7 +45,7 @@ class AppLoadObserver : public ExtensionRegistryObserver {
   }
 
  private:
-  base::Callback<void(const Extension*)> callback_;
+  base::RepeatingCallback<void(const Extension*)> callback_;
   ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
       extension_registry_observer_{this};
   DISALLOW_COPY_AND_ASSIGN(AppLoadObserver);
@@ -175,7 +177,7 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTest, FileSystemApiGetDisplayPathPrettify) {
 }
 #endif
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
 IN_PROC_BROWSER_TEST_F(FileSystemApiTest,
     FileSystemApiGetDisplayPathPrettifyMac) {
   base::FilePath test_file;
@@ -214,10 +216,10 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTest,
   FileSystemChooseEntryFunction::
       SkipPickerAndSelectSuggestedPathForTest();
   {
-    AppLoadObserver observer(profile(),
-                             base::Bind(SetLastChooseEntryDirectory,
-                                        test_file.DirName(),
-                                        ExtensionPrefs::Get(profile())));
+    AppLoadObserver observer(
+        profile(),
+        base::BindRepeating(SetLastChooseEntryDirectory, test_file.DirName(),
+                            ExtensionPrefs::Get(profile())));
     ASSERT_TRUE(RunPlatformAppTest("api_test/file_system/open_existing"))
         << message_;
   }
@@ -238,10 +240,11 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTest,
   {
     AppLoadObserver observer(
         profile(),
-        base::Bind(SetLastChooseEntryDirectory,
-                   test_file.DirName().Append(base::FilePath::FromUTF8Unsafe(
-                       "fake_directory_does_not_exist")),
-                   ExtensionPrefs::Get(profile())));
+        base::BindRepeating(
+            SetLastChooseEntryDirectory,
+            test_file.DirName().Append(base::FilePath::FromUTF8Unsafe(
+                "fake_directory_does_not_exist")),
+            ExtensionPrefs::Get(profile())));
     ASSERT_TRUE(RunPlatformAppTest("api_test/file_system/open_existing"))
         << message_;
   }
@@ -432,14 +435,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTest,
   CheckStoredDirectoryMatches(base::FilePath());
 }
 
-// http://crbug.com/177163
-#if defined(OS_WIN) && !defined(NDEBUG)
-#define MAYBE_FileSystemApiOpenExistingFileWithWriteTest DISABLED_FileSystemApiOpenExistingFileWithWriteTest
-#else
-#define MAYBE_FileSystemApiOpenExistingFileWithWriteTest FileSystemApiOpenExistingFileWithWriteTest
-#endif
 IN_PROC_BROWSER_TEST_F(FileSystemApiTest,
-    MAYBE_FileSystemApiOpenExistingFileWithWriteTest) {
+                       FileSystemApiOpenExistingFileWithWriteTest) {
   base::FilePath test_file = TempFilePath("open_existing.txt", true);
   ASSERT_FALSE(test_file.empty());
   FileSystemChooseEntryFunction::SkipPickerAndAlwaysSelectPathForTest(
@@ -649,11 +646,9 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTest, FileSystemApiRestoreEntry) {
   ASSERT_FALSE(test_file.empty());
   FileSystemChooseEntryFunction::SkipPickerAndAlwaysSelectPathForTest(
       &test_file);
-  AppLoadObserver observer(profile(),
-                           base::Bind(AddSavedEntry,
-                                      test_file,
-                                      false,
-                                      apps::SavedFilesService::Get(profile())));
+  AppLoadObserver observer(
+      profile(), base::BindRepeating(AddSavedEntry, test_file, false,
+                                     apps::SavedFilesService::Get(profile())));
   ASSERT_TRUE(RunPlatformAppTest("api_test/file_system/restore_entry"))
       << message_;
 }
@@ -664,11 +659,9 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTest, FileSystemApiRestoreDirectoryEntry) {
   base::FilePath test_directory = test_file.DirName();
   FileSystemChooseEntryFunction::SkipPickerAndAlwaysSelectPathForTest(
       &test_file);
-  AppLoadObserver observer(profile(),
-                           base::Bind(AddSavedEntry,
-                                      test_directory,
-                                      true,
-                                      apps::SavedFilesService::Get(profile())));
+  AppLoadObserver observer(
+      profile(), base::BindRepeating(AddSavedEntry, test_directory, true,
+                                     apps::SavedFilesService::Get(profile())));
   ASSERT_TRUE(RunPlatformAppTest("api_test/file_system/restore_directory"))
       << message_;
 }

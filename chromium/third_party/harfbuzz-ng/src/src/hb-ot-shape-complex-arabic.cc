@@ -228,8 +228,6 @@ collect_features_arabic (hb_ot_shape_planner_t *plan)
   map->enable_feature (HB_TAG('c','a','l','t'), F_MANUAL_ZWJ);
   map->add_gsub_pause (nullptr);
 
-  /* And undo here. */
-
   /* The spec includes 'cswh'.  Earlier versions of Windows
    * used to enable this by default, but testing suggests
    * that Windows 8 and later do not enable it by default,
@@ -271,7 +269,7 @@ data_create_arabic (const hb_ot_shape_plan_t *plan)
     arabic_plan->mask_array[i] = plan->map.get_1_mask (arabic_features[i]);
     arabic_plan->do_fallback = arabic_plan->do_fallback &&
 			       (FEATURE_IS_SYRIAC (arabic_features[i]) ||
-			        plan->map.needs_fallback (arabic_features[i]));
+				plan->map.needs_fallback (arabic_features[i]));
   }
 
   return arabic_plan;

@@ -23,18 +23,6 @@ NodeBase::~NodeBase() {
 }
 
 // static
-int64_t NodeBase::GetSerializationId(NodeBase* node) {
-  if (!node)
-    return 0u;
-
-  if (!node->serialization_id_)
-    node->serialization_id_ = node->graph()->GetNextNodeSerializationId();
-
-  DCHECK_NE(0u, node->serialization_id_);
-  return node->serialization_id_;
-}
-
-// static
 const NodeBase* NodeBase::FromNode(const Node* node) {
   CHECK_EQ(kNodeBaseType, node->GetImplType());
   return reinterpret_cast<const NodeBase*>(node->GetImpl());
@@ -52,16 +40,12 @@ void NodeBase::JoinGraph(GraphImpl* graph) {
   DCHECK(graph->NodeInGraph(this));
 
   graph_ = graph;
-
-  OnJoiningGraph();
 }
 
 void NodeBase::LeaveGraph() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(graph_);
   DCHECK(graph_->NodeInGraph(this));
-
-  OnBeforeLeavingGraph();
 
   graph_ = nullptr;
 }

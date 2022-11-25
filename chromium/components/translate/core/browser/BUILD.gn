@@ -26,6 +26,9 @@ static_library("browser") {
     "translate_language_list.h",
     "translate_manager.cc",
     "translate_manager.h",
+    "translate_metrics_logger.h",
+    "translate_metrics_logger_impl.cc",
+    "translate_metrics_logger_impl.h",
     "translate_prefs.cc",
     "translate_prefs.h",
     "translate_ranker.h",
@@ -47,6 +50,7 @@ static_library("browser") {
   deps = [
     "//base",
     "//base:i18n",
+    "//base/util/values:values_util",
     "//components/assist_ranker",
     "//components/assist_ranker/proto",
     "//components/keyed_service/core",

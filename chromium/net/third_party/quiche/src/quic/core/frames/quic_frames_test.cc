@@ -15,6 +15,7 @@
 #include "net/third_party/quiche/src/quic/core/frames/quic_stream_frame.h"
 #include "net/third_party/quiche/src/quic/core/frames/quic_window_update_frame.h"
 #include "net/third_party/quiche/src/quic/core/quic_interval.h"
+#include "net/third_party/quiche/src/quic/core/quic_types.h"
 #include "net/third_party/quiche/src/quic/platform/api/quic_expect_bug.h"
 #include "net/third_party/quiche/src/quic/platform/api/quic_test.h"
 #include "net/third_party/quiche/src/quic/test_tools/quic_test_utils.h"
@@ -94,11 +95,14 @@ TEST_F(QuicFramesTest, StopSendingFrameToString) {
   SetControlFrameId(1, &frame);
   EXPECT_EQ(1u, GetControlFrameId(frame));
   stop_sending.stream_id = 321;
-  stop_sending.application_error_code = QUIC_STREAM_CANCELLED;
+  stop_sending.error_code = QUIC_STREAM_CANCELLED;
+  stop_sending.ietf_error_code =
+      static_cast<uint64_t>(QuicHttp3ErrorCode::REQUEST_CANCELLED);
   std::ostringstream stream;
   stream << stop_sending;
   EXPECT_EQ(
-      "{ control_frame_id: 1, stream_id: 321, application_error_code: 6 }\n",
+      "{ control_frame_id: 1, stream_id: 321, error_code: 6, ietf_error_code: "
+      "268 }\n",
       stream.str());
   EXPECT_TRUE(IsControlFrame(frame.type));
 }
@@ -147,11 +151,9 @@ TEST_F(QuicFramesTest, ConnectionCloseFrameToString) {
   // indicating that, in fact, no extended error code was available from the
   // underlying frame.
   EXPECT_EQ(
-      "{ Close type: GOOGLE_QUIC_CONNECTION_CLOSE, error_code: 25, "
-      "extracted_error_code: QUIC_NO_ERROR, "
-      "error_details: 'No recent "
-      "network activity.'"
-      "}\n",
+      "{ Close type: GOOGLE_QUIC_CONNECTION_CLOSE, "
+      "quic_error_code: QUIC_NETWORK_IDLE_TIMEOUT, "
+      "error_details: 'No recent network activity.'}\n",
       stream.str());
   QuicFrame quic_frame(&frame);
   EXPECT_FALSE(IsControlFrame(quic_frame.type));
@@ -160,16 +162,16 @@ TEST_F(QuicFramesTest, ConnectionCloseFrameToString) {
 TEST_F(QuicFramesTest, TransportConnectionCloseFrameToString) {
   QuicConnectionCloseFrame frame;
   frame.close_type = IETF_QUIC_TRANSPORT_CONNECTION_CLOSE;
-  frame.transport_error_code = FINAL_SIZE_ERROR;
-  frame.extracted_error_code = QUIC_NETWORK_IDLE_TIMEOUT;
+  frame.wire_error_code = FINAL_SIZE_ERROR;
+  frame.quic_error_code = QUIC_NETWORK_IDLE_TIMEOUT;
   frame.error_details = "No recent network activity.";
   frame.transport_close_frame_type = IETF_STREAM;
   std::ostringstream stream;
   stream << frame;
   EXPECT_EQ(
-      "{ Close type: IETF_QUIC_TRANSPORT_CONNECTION_CLOSE, error_code: "
-      "FINAL_SIZE_ERROR, "
-      "extracted_error_code: QUIC_NETWORK_IDLE_TIMEOUT, "
+      "{ Close type: IETF_QUIC_TRANSPORT_CONNECTION_CLOSE, "
+      "wire_error_code: FINAL_SIZE_ERROR, "
+      "quic_error_code: QUIC_NETWORK_IDLE_TIMEOUT, "
       "error_details: 'No recent "
       "network activity.', "
       "frame_type: IETF_STREAM"
@@ -242,6 +244,25 @@ TEST_F(QuicFramesTest, HandshakeDoneFrameToString) {
   std::ostringstream stream;
   stream << frame.handshake_done_frame;
   EXPECT_EQ("{ control_frame_id: 6 }\n", stream.str());
+  EXPECT_TRUE(IsControlFrame(frame.type));
+}
+
+TEST_F(QuicFramesTest, QuicAckFreuqncyFrameToString) {
+  QuicAckFrequencyFrame ack_frequency_frame;
+  ack_frequency_frame.sequence_number = 1;
+  ack_frequency_frame.packet_tolerance = 2;
+  ack_frequency_frame.max_ack_delay = QuicTime::Delta::FromMilliseconds(25);
+  ack_frequency_frame.ignore_order = false;
+  QuicFrame frame(&ack_frequency_frame);
+  ASSERT_EQ(ACK_FREQUENCY_FRAME, frame.type);
+  SetControlFrameId(6, &frame);
+  EXPECT_EQ(6u, GetControlFrameId(frame));
+  std::ostringstream stream;
+  stream << *frame.ack_frequency_frame;
+  EXPECT_EQ(
+      "{ control_frame_id: 6, sequence_number: 1, packet_tolerance: 2, "
+      "max_ack_delay_ms: 25, ignore_order: 0 }\n",
+      stream.str());
   EXPECT_TRUE(IsControlFrame(frame.type));
 }
 
@@ -559,6 +580,9 @@ TEST_F(QuicFramesTest, CopyQuicFrames) {
         break;
       case HANDSHAKE_DONE_FRAME:
         frames.push_back(QuicFrame(QuicHandshakeDoneFrame()));
+        break;
+      case ACK_FREQUENCY_FRAME:
+        frames.push_back(QuicFrame(new QuicAckFrequencyFrame()));
         break;
       default:
         ASSERT_TRUE(false)

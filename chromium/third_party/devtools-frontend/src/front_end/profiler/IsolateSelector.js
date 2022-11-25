@@ -2,7 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
+import * as Platform from '../platform/platform.js';
 import * as SDK from '../sdk/sdk.js';
 import * as UI from '../ui/ui.js';
 
@@ -18,7 +22,6 @@ export class IsolateSelector extends UI.Widget.VBox {
     this._items = new UI.ListModel.ListModel();
     /** @type {!UI.ListControl.ListControl<!ListItem>} */
     this._list = new UI.ListControl.ListControl(this._items, this, UI.ListControl.ListMode.NonViewport);
-    this._list.element.tabIndex = 0;
     this._list.element.classList.add('javascript-vm-instances-list');
     UI.ARIAUtils.setAccessibleName(this._list.element, ls`JavaScript VM instances`);
     this.contentElement.appendChild(this._list.element);
@@ -26,7 +29,9 @@ export class IsolateSelector extends UI.Widget.VBox {
     /** @type {!Map<!SDK.IsolateManager.Isolate, !ListItem>} */
     this._itemByIsolate = new Map();
 
-    this._totalElement = createElementWithClass('div', 'profile-memory-usage-item hbox');
+    this._totalElement = document.createElement('div');
+    this._totalElement.classList.add('profile-memory-usage-item');
+    this._totalElement.classList.add('hbox');
     this._totalValueDiv = this._totalElement.createChild('div', 'profile-memory-usage-item-size');
     this._totalTrendDiv = this._totalElement.createChild('div', 'profile-memory-usage-item-trend');
     this._totalElement.createChild('div').textContent = ls`Total JS heap size`;
@@ -34,7 +39,7 @@ export class IsolateSelector extends UI.Widget.VBox {
     this._totalTrendDiv.title = ls`Total page JS heap size change trend over the last ${trendIntervalMinutes} minutes.`;
     this._totalValueDiv.title = ls`Total page JS heap size across all VM instances.`;
 
-    self.SDK.isolateManager.observeIsolates(this);
+    SDK.IsolateManager.IsolateManager.instance().observeIsolates(this);
     SDK.SDKModel.TargetManager.instance().addEventListener(SDK.SDKModel.Events.NameChanged, this._targetChanged, this);
     SDK.SDKModel.TargetManager.instance().addEventListener(
         SDK.SDKModel.Events.InspectedURLChanged, this._targetChanged, this);
@@ -44,14 +49,16 @@ export class IsolateSelector extends UI.Widget.VBox {
    * @override
    */
   wasShown() {
-    self.SDK.isolateManager.addEventListener(SDK.IsolateManager.Events.MemoryChanged, this._heapStatsChanged, this);
+    SDK.IsolateManager.IsolateManager.instance().addEventListener(
+        SDK.IsolateManager.Events.MemoryChanged, this._heapStatsChanged, this);
   }
 
   /**
    * @override
    */
   willHide() {
-    self.SDK.isolateManager.removeEventListener(SDK.IsolateManager.Events.MemoryChanged, this._heapStatsChanged, this);
+    SDK.IsolateManager.IsolateManager.instance().removeEventListener(
+        SDK.IsolateManager.Events.MemoryChanged, this._heapStatsChanged, this);
   }
 
   /**
@@ -59,6 +66,7 @@ export class IsolateSelector extends UI.Widget.VBox {
    * @param {!SDK.IsolateManager.Isolate} isolate
    */
   isolateAdded(isolate) {
+    this._list.element.tabIndex = 0;
     const item = new ListItem(isolate);
     const index = item.model().target() === SDK.SDKModel.TargetManager.instance().mainTarget() ? 0 : this._items.length;
     this._items.insert(index, item);
@@ -87,6 +95,9 @@ export class IsolateSelector extends UI.Widget.VBox {
     const item = this._itemByIsolate.get(isolate);
     this._items.remove(this._items.indexOf(item));
     this._itemByIsolate.delete(isolate);
+    if (this._items.length === 0) {
+      this._list.element.tabIndex = -1;
+    }
     this._update();
   }
 
@@ -99,7 +110,7 @@ export class IsolateSelector extends UI.Widget.VBox {
     if (!model) {
       return;
     }
-    const isolate = self.SDK.isolateManager.isolateByModel(model);
+    const isolate = SDK.IsolateManager.IsolateManager.instance().isolateByModel(model);
     const item = isolate && this._itemByIsolate.get(isolate);
     if (item) {
       item.updateTitle();
@@ -121,11 +132,11 @@ export class IsolateSelector extends UI.Widget.VBox {
   _updateTotal() {
     let total = 0;
     let trend = 0;
-    for (const isolate of self.SDK.isolateManager.isolates()) {
+    for (const isolate of SDK.IsolateManager.IsolateManager.instance().isolates()) {
       total += isolate.usedHeapSize();
       trend += isolate.usedHeapSizeGrowRate();
     }
-    this._totalValueDiv.textContent = Number.bytesToString(total);
+    this._totalValueDiv.textContent = Platform.NumberUtilities.bytesToString(total);
     IsolateSelector._formatTrendElement(trend, this._totalTrendDiv);
   }
 
@@ -139,7 +150,7 @@ export class IsolateSelector extends UI.Widget.VBox {
     if (Math.abs(changeRateBytesPerSecond) < changeRateThresholdBytesPerSecond) {
       return;
     }
-    const changeRateText = Number.bytesToString(Math.abs(changeRateBytesPerSecond));
+    const changeRateText = Platform.NumberUtilities.bytesToString(Math.abs(changeRateBytesPerSecond));
     let changeText, changeLabel;
     if (changeRateBytesPerSecond > 0) {
       changeText = ls`\u2B06${changeRateText}/s`;
@@ -212,8 +223,9 @@ export class IsolateSelector extends UI.Widget.VBox {
       toElement.classList.add('selected');
     }
     const model = to && to.model();
-    self.UI.context.setFlavor(SDK.HeapProfilerModel.HeapProfilerModel, model && model.heapProfilerModel());
-    self.UI.context.setFlavor(
+    UI.Context.Context.instance().setFlavor(
+        SDK.HeapProfilerModel.HeapProfilerModel, model && model.heapProfilerModel());
+    UI.Context.Context.instance().setFlavor(
         SDK.CPUProfilerModel.CPUProfilerModel, model && model.target().model(SDK.CPUProfilerModel.CPUProfilerModel));
   }
 
@@ -230,7 +242,9 @@ export class ListItem {
   constructor(isolate) {
     this._isolate = isolate;
     const trendIntervalMinutes = Math.round(SDK.IsolateManager.MemoryTrendWindowMs / 60e3);
-    this.element = createElementWithClass('div', 'profile-memory-usage-item hbox');
+    this.element = document.createElement('div');
+    this.element.classList.add('profile-memory-usage-item');
+    this.element.classList.add('hbox');
     UI.ARIAUtils.markAsOption(this.element);
     this._heapDiv = this.element.createChild('div', 'profile-memory-usage-item-size');
     this._heapDiv.title = ls`Heap size in use by live JS objects.`;
@@ -248,7 +262,7 @@ export class ListItem {
   }
 
   updateStats() {
-    this._heapDiv.textContent = Number.bytesToString(this._isolate.usedHeapSize());
+    this._heapDiv.textContent = Platform.NumberUtilities.bytesToString(this._isolate.usedHeapSize());
     IsolateSelector._formatTrendElement(this._isolate.usedHeapSizeGrowRate(), this._trendDiv);
   }
 

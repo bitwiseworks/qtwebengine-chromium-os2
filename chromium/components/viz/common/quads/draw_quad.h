@@ -37,7 +37,10 @@ class VIZ_COMMON_EXPORT DrawQuad {
     kInvalid,
     kDebugBorder,
     kPictureContent,
-    kRenderPass,
+    // This is the compositor, pre-aggregation, draw quad.
+    kCompositorRenderPass,
+    // This is the viz, post-aggregation, draw quad.
+    kAggregatedRenderPass,
     kSolidColor,
     kStreamVideoContent,
     kSurfaceContent,
@@ -73,7 +76,7 @@ class VIZ_COMMON_EXPORT DrawQuad {
 
   bool IsDebugQuad() const { return material == Material::kDebugBorder; }
 
-  bool ShouldDrawWithBlending(bool=false) const {
+  bool ShouldDrawWithBlending() const {
     return needs_blending || shared_quad_state->opacity < 1.0f ||
            shared_quad_state->blend_mode != SkBlendMode::kSrcOver ||
            !shared_quad_state->rounded_corner_bounds.IsEmpty();

@@ -5,9 +5,9 @@
 import {Keys} from './KeyboardShortcut.js';
 import {registerCustomElement} from './utils/register-custom-element.js';
 
-/**
- * @unrestricted
- */
+/** @type {?function():!Element} */
+let _constructor = null;
+
 export class HistoryInput extends HTMLInputElement {
   constructor() {
     super();
@@ -20,11 +20,11 @@ export class HistoryInput extends HTMLInputElement {
    * @return {!HistoryInput}
    */
   static create() {
-    if (!HistoryInput._constructor) {
-      HistoryInput._constructor = registerCustomElement('input', 'history-input', HistoryInput);
+    if (!_constructor) {
+      _constructor = registerCustomElement('input', 'history-input', HistoryInput);
     }
 
-    return /** @type {!HistoryInput} */ (HistoryInput._constructor());
+    return /** @type {!HistoryInput} */ (_constructor());
   }
 
   /**
@@ -37,9 +37,10 @@ export class HistoryInput extends HTMLInputElement {
   }
 
   /**
-   * @param {!Event} event
+   * @param {!Event} ev
    */
-  _onKeyDown(event) {
+  _onKeyDown(ev) {
+    const event = /** @type {!KeyboardEvent} */ (ev);
     if (event.keyCode === Keys.Up.code) {
       this._historyPosition = Math.max(this._historyPosition - 1, 0);
       this.value = this._history[this._historyPosition];

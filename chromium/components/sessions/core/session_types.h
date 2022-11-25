@@ -16,6 +16,7 @@
 #include "base/time/time.h"
 #include "base/token.h"
 #include "components/sessions/core/serialized_navigation_entry.h"
+#include "components/sessions/core/serialized_user_agent_override.h"
 #include "components/sessions/core/session_id.h"
 #include "components/sessions/core/sessions_export.h"
 #include "components/tab_groups/tab_group_id.h"
@@ -82,7 +83,7 @@ struct SESSIONS_EXPORT SessionTab {
 
   // If non-empty, this string is used as the user agent whenever the tab's
   // NavigationEntries need it overridden.
-  std::string user_agent_override;
+  SerializedUserAgentOverride user_agent_override;
 
   // Timestamp for when this tab was last modified.
   base::Time timestamp;
@@ -99,6 +100,9 @@ struct SESSIONS_EXPORT SessionTab {
 
   // guid associated with the tab, may be empty.
   std::string guid;
+
+  // Data associated with the tab by the embedder.
+  std::map<std::string, std::string> data;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(SessionTab);
@@ -183,6 +187,9 @@ struct SESSIONS_EXPORT SessionWindow {
   ui::WindowShowState show_state;
 
   std::string app_name;
+
+  // The user-configured title for this window, may be empty.
+  std::string user_title;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(SessionWindow);

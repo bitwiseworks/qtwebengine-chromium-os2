@@ -2,8 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as FormatterModule from '../formatter/formatter.js';
+import * as Persistence from '../persistence/persistence.js';
 import * as UI from '../ui/ui.js';
 import * as Workspace from '../workspace/workspace.js';
 
@@ -54,7 +58,10 @@ export class ScriptFormatterEditorAction {
   _updateButton(uiSourceCode) {
     const isFormattable = this._isFormatableScript(uiSourceCode);
     this._button.element.classList.toggle('hidden', !isFormattable);
-    if (isFormattable) {
+    if (uiSourceCode) {
+      // We always update the title of the button, even if the {uiSourceCode} is
+      // not formattable, since we use the title (the aria-label actually) as a
+      // signal for the E2E tests that the source code loading is done.
       this._button.setTitle(Common.UIString.UIString(`Pretty print ${uiSourceCode.name()}`));
     }
   }
@@ -98,10 +105,18 @@ export class ScriptFormatterEditorAction {
     if (uiSourceCode.project().type() === Workspace.Workspace.projectTypes.Formatter) {
       return false;
     }
-    if (self.Persistence.persistence.binding(uiSourceCode)) {
+    if (Persistence.Persistence.PersistenceImpl.instance().binding(uiSourceCode)) {
+      return false;
+    }
+    if (uiSourceCode.mimeType() === 'application/wasm') {
       return false;
     }
     return uiSourceCode.contentType().hasScripts();
+  }
+
+  isCurrentUISourceCodeFormatable() {
+    const uiSourceCode = this._sourcesView.currentUISourceCode();
+    return this._isFormatableScript(uiSourceCode);
   }
 
   /**

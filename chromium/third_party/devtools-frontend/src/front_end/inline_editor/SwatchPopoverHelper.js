@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as UI from '../ui/ui.js';
 
@@ -27,7 +30,7 @@ export class SwatchPopoverHelper extends Common.ObjectWrapper.ObjectWrapper {
    * @param {!Event} event
    */
   _onFocusOut(event) {
-    if (!event.relatedTarget || event.relatedTarget.isSelfOrDescendant(this._view.contentElement)) {
+    if (this._isHidden || !event.relatedTarget || event.relatedTarget.isSelfOrDescendant(this._view.contentElement)) {
       return;
     }
     this._hideProxy();
@@ -69,6 +72,10 @@ export class SwatchPopoverHelper extends Common.ObjectWrapper.ObjectWrapper {
   }
 
   reposition() {
+    // This protects against trying to reposition the popover after it has been hidden.
+    if (this._isHidden) {
+      return;
+    }
     // Unbind "blur" listener to avoid reenterability: |popover.show()| will hide the popover and trigger it synchronously.
     this._view.contentElement.removeEventListener('focusout', this._boundFocusOut, false);
     this._view.show(this._popover.contentElement);

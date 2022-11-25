@@ -30,6 +30,9 @@ class ExtensionsAPIClient;
 class ShellExtensionsBrowserClient : public ExtensionsBrowserClient {
  public:
   ShellExtensionsBrowserClient();
+  ShellExtensionsBrowserClient(const ShellExtensionsBrowserClient&) = delete;
+  ShellExtensionsBrowserClient& operator=(const ShellExtensionsBrowserClient&) =
+      delete;
   ~ShellExtensionsBrowserClient() override;
 
   // ExtensionsBrowserClient overrides:
@@ -91,8 +94,7 @@ class ShellExtensionsBrowserClient : public ExtensionsBrowserClient {
   bool IsLoggedInAsPublicAccount() override;
   ExtensionSystemProvider* GetExtensionSystemFactory() override;
   void RegisterBrowserInterfaceBindersForFrame(
-      service_manager::BinderMapWithContext<content::RenderFrameHost*>*
-          binder_map,
+      mojo::BinderMapWithContext<content::RenderFrameHost*>* binder_map,
       content::RenderFrameHost* render_frame_host,
       const Extension* extension) const override;
   std::unique_ptr<RuntimeAPIDelegate> CreateRuntimeAPIDelegate(
@@ -138,8 +140,6 @@ class ShellExtensionsBrowserClient : public ExtensionsBrowserClient {
   std::unique_ptr<ExtensionCache> extension_cache_;
 
   std::unique_ptr<KioskDelegate> kiosk_delegate_;
-
-  DISALLOW_COPY_AND_ASSIGN(ShellExtensionsBrowserClient);
 };
 
 }  // namespace extensions

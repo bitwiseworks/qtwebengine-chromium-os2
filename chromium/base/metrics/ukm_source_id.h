@@ -13,15 +13,17 @@ namespace base {
 
 // An ID used to identify a Source to UKM, for recording information about it.
 // These objects are copyable, assignable, and occupy 64-bits per instance.
-// Prefer passing them by value.
+// Prefer passing them by value. When a new type is added, please also update
+// the enum type in third_party/metrics_proto/ukm/source.proto and the
+// converting function ToProtobufSourceType.
 class BASE_EXPORT UkmSourceId {
  public:
   enum class Type : int64_t {
     // Source ids of this type are created via ukm::AssignNewSourceId, to denote
-    // 'custom' source other than the 4 types below. Source of this type has
+    // 'custom' source other than the types below. Source of this type has
     // additional restrictions with logging, as determined by
     // IsWhitelistedSourceId.
-    UKM = 0,
+    DEFAULT = 0,
     // Sources created by navigation. They will be kept in memory as long as
     // the associated tab is still alive and the number of sources are within
     // the max threshold.
@@ -44,7 +46,18 @@ class BASE_EXPORT UkmSourceId {
     // type and associated events are expected to be recorded within the same
     // report interval; it will not be kept in memory between different reports.
     PAYMENT_APP_ID = 5,
-    kMaxValue = PAYMENT_APP_ID,
+    // Source ID for desktop web apps, based on the start_url in the web app
+    // manifest. A new source of this type and associated events are expected to
+    // be recorded within the same report interval; it will not be kept in
+    // memory between different reports.
+    DESKTOP_WEB_APP_ID = 6,
+    // Source ID for web workers, namely SharedWorkers and ServiceWorkers. Web
+    // workers may inherit a source ID from the spawner context (in the case of
+    // dedicated workers), or may have their own source IDs (in the case of
+    // shared workers and service workers). Shared workers and service workers
+    // can be connected to multiple clients (e.g. documents or other workers).
+    WORKER_ID = 7,
+    kMaxValue = WORKER_ID,
   };
 
   // Default constructor has the invalid value.

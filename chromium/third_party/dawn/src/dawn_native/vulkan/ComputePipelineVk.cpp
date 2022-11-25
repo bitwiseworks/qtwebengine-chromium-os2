@@ -18,6 +18,7 @@
 #include "dawn_native/vulkan/FencedDeleter.h"
 #include "dawn_native/vulkan/PipelineLayoutVk.h"
 #include "dawn_native/vulkan/ShaderModuleVk.h"
+#include "dawn_native/vulkan/UtilsVulkan.h"
 #include "dawn_native/vulkan/VulkanError.h"
 
 namespace dawn_native { namespace vulkan {
@@ -26,10 +27,9 @@ namespace dawn_native { namespace vulkan {
     ResultOrError<ComputePipeline*> ComputePipeline::Create(
         Device* device,
         const ComputePipelineDescriptor* descriptor) {
-        std::unique_ptr<ComputePipeline> pipeline =
-            std::make_unique<ComputePipeline>(device, descriptor);
+        Ref<ComputePipeline> pipeline = AcquireRef(new ComputePipeline(device, descriptor));
         DAWN_TRY(pipeline->Initialize(descriptor));
-        return pipeline.release();
+        return pipeline.Detach();
     }
 
     MaybeError ComputePipeline::Initialize(const ComputePipelineDescriptor* descriptor) {
@@ -50,6 +50,19 @@ namespace dawn_native { namespace vulkan {
         createInfo.stage.pSpecializationInfo = nullptr;
 
         Device* device = ToBackend(GetDevice());
+
+        PNextChainBuilder extChain(&createInfo);
+
+        VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT subgroupSizeInfo = {};
+        uint32_t computeSubgroupSize = device->GetComputeSubgroupSize();
+        if (computeSubgroupSize != 0u) {
+            ASSERT(device->GetDeviceInfo().HasExt(DeviceExt::SubgroupSizeControl));
+            subgroupSizeInfo.requiredSubgroupSize = computeSubgroupSize;
+            extChain.Add(
+                &subgroupSizeInfo,
+                VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT);
+        }
+
         return CheckVkSuccess(
             device->fn.CreateComputePipelines(device->GetVkDevice(), ::VK_NULL_HANDLE, 1,
                                               &createInfo, nullptr, &*mHandle),

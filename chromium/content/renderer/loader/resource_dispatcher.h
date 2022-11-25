@@ -14,13 +14,11 @@
 #include <string>
 #include <vector>
 
-#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
-#include "content/public/common/previews_state.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
@@ -30,6 +28,7 @@
 #include "services/network/public/mojom/fetch_api.mojom-forward.h"
 #include "services/network/public/mojom/url_loader.mojom-forward.h"
 #include "services/network/public/mojom/url_response_head.mojom-forward.h"
+#include "third_party/blink/public/common/loader/previews_state.h"
 #include "third_party/blink/public/common/loader/url_loader_throttle.h"
 #include "third_party/blink/public/mojom/blob/blob_registry.mojom-forward.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom-shared.h"
@@ -58,7 +57,6 @@ class URLLoaderFactory;
 }
 
 namespace content {
-struct NavigationResponseOverrideParameters;
 class RequestPeer;
 class ResourceDispatcherDelegate;
 struct SyncLoadResponse;
@@ -124,9 +122,7 @@ class CONTENT_EXPORT ResourceDispatcher {
       uint32_t loader_options,
       std::unique_ptr<RequestPeer> peer,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-      std::vector<std::unique_ptr<blink::URLLoaderThrottle>> throttles,
-      std::unique_ptr<NavigationResponseOverrideParameters>
-          response_override_params);
+      std::vector<std::unique_ptr<blink::URLLoaderThrottle>> throttles);
 
   // Removes a request from the |pending_requests_| list, returning true if the
   // request was found and removed.
@@ -159,6 +155,13 @@ class CONTENT_EXPORT ResourceDispatcher {
 
   void OnTransferSizeUpdated(int request_id, int32_t transfer_size_diff);
 
+  // Sets the CORS exempt header list for sanity checking.
+  void SetCorsExemptHeaderList(const std::vector<std::string>& list);
+
+  std::vector<std::string> cors_exempt_header_list() const {
+    return cors_exempt_header_list_;
+  }
+
   // This is used only when |this| is created for a worker thread.
   // Sets |terminate_sync_load_event_| which will be signaled from the main
   // thread when the worker thread is being terminated so that the sync requests
@@ -177,9 +180,7 @@ class CONTENT_EXPORT ResourceDispatcher {
     PendingRequestInfo(std::unique_ptr<RequestPeer> peer,
                        network::mojom::RequestDestination request_destination,
                        int render_frame_id,
-                       const GURL& request_url,
-                       std::unique_ptr<NavigationResponseOverrideParameters>
-                           response_override_params);
+                       const GURL& request_url);
 
     ~PendingRequestInfo();
 
@@ -197,15 +198,14 @@ class CONTENT_EXPORT ResourceDispatcher {
     base::TimeTicks local_response_start;
     base::TimeTicks remote_request_start;
     net::LoadTimingInfo load_timing_info;
-    std::unique_ptr<NavigationResponseOverrideParameters>
-        navigation_response_override;
     bool should_follow_redirect = true;
     bool redirect_requires_loader_restart = false;
     // Network error code the request completed with, or net::ERR_IO_PENDING if
     // it's not completed. Used both to distinguish completion from
     // cancellation, and to log histograms.
     int net_error = net::ERR_IO_PENDING;
-    PreviewsState previews_state = PreviewsTypes::PREVIEWS_UNSPECIFIED;
+    blink::PreviewsState previews_state =
+        blink::PreviewsTypes::PREVIEWS_UNSPECIFIED;
 
     // These stats will be sent to the browser process.
     blink::mojom::ResourceLoadInfoPtr resource_load_info;
@@ -213,6 +213,9 @@ class CONTENT_EXPORT ResourceDispatcher {
     // For mojo loading.
     std::unique_ptr<blink::ThrottlingURLLoader> url_loader;
     std::unique_ptr<URLLoaderClientImpl> url_loader_client;
+
+    // The Client Hints headers that need to be removed from a redirect.
+    std::vector<std::string> removed_headers;
   };
   using PendingRequestMap = std::map<int, std::unique_ptr<PendingRequestInfo>>;
 
@@ -241,14 +244,14 @@ class CONTENT_EXPORT ResourceDispatcher {
       const PendingRequestInfo& request_info,
       network::mojom::URLResponseHead& response_head) const;
 
-  void ContinueForNavigation(int request_id);
-
   // All pending requests issued to the host
   PendingRequestMap pending_requests_;
 
   ResourceDispatcherDelegate* delegate_;
 
   base::WaitableEvent* terminate_sync_load_event_ = nullptr;
+
+  std::vector<std::string> cors_exempt_header_list_;
 
   base::WeakPtrFactory<ResourceDispatcher> weak_factory_{this};
 

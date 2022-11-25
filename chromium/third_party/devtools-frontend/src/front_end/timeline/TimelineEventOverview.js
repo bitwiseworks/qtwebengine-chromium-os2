@@ -27,6 +27,8 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
 
 import * as Common from '../common/common.js';
 import * as Coverage from '../coverage/coverage.js';
@@ -491,7 +493,8 @@ export class TimelineFilmStripOverview extends TimelineEventOverview {
      * @return {?Element}
      */
     function createFrameElement(image) {
-      const element = createElementWithClass('div', 'frame');
+      const element = document.createElement('div');
+      element.classList.add('frame');
       if (image) {
         element.createChild('div', 'thumbnail').appendChild(image);
       }
@@ -699,7 +702,8 @@ export class TimelineEventOverviewMemory extends TimelineEventOverview {
     ctx.stroke();
 
     this._heapSizeLabel.textContent = Common.UIString.UIString(
-        '%s \u2013 %s', Number.bytesToString(minUsedHeapSize), Number.bytesToString(maxUsedHeapSize));
+        '%s \u2013 %s', Platform.NumberUtilities.bytesToString(minUsedHeapSize),
+        Platform.NumberUtilities.bytesToString(maxUsedHeapSize));
   }
 }
 

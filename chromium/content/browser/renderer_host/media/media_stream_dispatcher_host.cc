@@ -8,7 +8,7 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/task/post_task.h"
 #include "base/task_runner_util.h"
 #include "content/browser/bad_message.h"
@@ -102,8 +102,8 @@ MediaStreamDispatcherHost::GetMediaStreamDeviceObserver() {
   media_stream_device_observer_.set_disconnect_handler(base::BindOnce(
       &MediaStreamDispatcherHost::OnMediaStreamDeviceObserverConnectionError,
       weak_factory_.GetWeakPtr()));
-  base::PostTask(
-      FROM_HERE, {BrowserThread::UI},
+  GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce(&BindMediaStreamDeviceObserverReceiver, render_process_id_,
                      render_frame_id_, std::move(dispatcher_receiver)));
   return media_stream_device_observer_;
@@ -138,7 +138,7 @@ void MediaStreamDispatcherHost::GenerateStream(
   }
 
   base::PostTaskAndReplyWithResult(
-      base::CreateSingleThreadTaskRunner({BrowserThread::UI}).get(), FROM_HERE,
+      GetUIThreadTaskRunner({}).get(), FROM_HERE,
       base::BindOnce(salt_and_origin_callback_, render_process_id_,
                      render_frame_id_),
       base::BindOnce(&MediaStreamDispatcherHost::DoGenerateStream,
@@ -159,8 +159,8 @@ void MediaStreamDispatcherHost::DoGenerateStream(
                                            salt_and_origin.origin)) {
     std::move(callback).Run(
         blink::mojom::MediaStreamRequestResult::INVALID_SECURITY_ORIGIN,
-        std::string(), blink::MediaStreamDevices(),
-        blink::MediaStreamDevices());
+        std::string(), blink::MediaStreamDevices(), blink::MediaStreamDevices(),
+        /*pan_tilt_zoom_allowed=*/false);
     return;
   }
 
@@ -205,7 +205,7 @@ void MediaStreamDispatcherHost::OpenDevice(int32_t page_request_id,
   }
 
   base::PostTaskAndReplyWithResult(
-      base::CreateSingleThreadTaskRunner({BrowserThread::UI}).get(), FROM_HERE,
+      GetUIThreadTaskRunner({}).get(), FROM_HERE,
       base::BindOnce(salt_and_origin_callback_, render_process_id_,
                      render_frame_id_),
       base::BindOnce(&MediaStreamDispatcherHost::DoOpenDevice,

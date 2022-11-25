@@ -8,7 +8,6 @@
 #include "base/macros.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
-#include "chromeos/dbus/power/power_manager_client.h"
 
 namespace base {
 class ListValue;
@@ -29,8 +28,7 @@ class AccessibilityHandler : public ::settings::SettingsPageUIHandler {
   void OnJavascriptAllowed() override {}
   void OnJavascriptDisallowed() override {}
 
-  // Callback which updates if startup sound is enabled and if tablet
-  // mode is supported. Visible for testing.
+  // Callback which updates if startup sound is enabled. Visible for testing.
   void HandleManageA11yPageReady(const base::ListValue* args);
 
  private:
@@ -41,11 +39,6 @@ class AccessibilityHandler : public ::settings::SettingsPageUIHandler {
   void HandleSetStartupSoundEnabled(const base::ListValue* args);
   void HandleRecordSelectedShowShelfNavigationButtonsValue(
       const base::ListValue* args);
-
-  // Callback which updates visibility for the shelf navigation buttons
-  // accessibility setting, depending on whether tablet mode is supported.
-  void OnReceivedSwitchStates(
-      base::Optional<chromeos::PowerManagerClient::SwitchStates> switch_states);
 
   void OpenExtensionOptionsPage(const char extension_id[]);
 

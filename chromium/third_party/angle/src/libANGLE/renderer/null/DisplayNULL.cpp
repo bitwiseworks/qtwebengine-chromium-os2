@@ -184,6 +184,11 @@ StreamProducerImpl *DisplayNULL::createStreamProducerD3DTexture(
     return nullptr;
 }
 
+ShareGroupImpl *DisplayNULL::createShareGroup()
+{
+    return new ShareGroupNULL();
+}
+
 void DisplayNULL::generateExtensions(egl::DisplayExtensions *outExtensions) const
 {
     outExtensions->createContextRobustness            = true;
@@ -206,6 +211,7 @@ void DisplayNULL::generateExtensions(egl::DisplayExtensions *outExtensions) cons
     outExtensions->pixelFormatFloat                   = true;
     outExtensions->surfacelessContext                 = true;
     outExtensions->displayTextureShareGroup           = true;
+    outExtensions->displaySemaphoreShareGroup         = true;
     outExtensions->createContextClientArrays          = true;
     outExtensions->programCacheControl                = true;
     outExtensions->robustResourceInitialization       = true;

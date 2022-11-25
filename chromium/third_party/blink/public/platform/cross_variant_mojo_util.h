@@ -46,7 +46,6 @@
 #include <type_traits>
 #include <utility>
 
-#include "base/logging.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -79,6 +78,10 @@ class CrossVariantMojoReceiver {
   CrossVariantMojoReceiver(mojo::PendingReceiver<VariantInterface> receiver)
       : pipe_(receiver.PassPipe()) {}
 
+  CrossVariantMojoReceiver(const mojo::NullReceiver&) {}
+
+  explicit operator bool() const { return pipe_.is_valid(); }
+
  private:
   friend struct mojo::PendingReceiverConverter<CrossVariantMojoReceiver>;
 
@@ -105,6 +108,10 @@ class CrossVariantMojoRemote {
   CrossVariantMojoRemote(mojo::PendingRemote<VariantInterface> remote)
       : version_(remote.version()), pipe_(remote.PassPipe()) {}
 
+  CrossVariantMojoRemote(const mojo::NullRemote&) {}
+
+  explicit operator bool() const { return pipe_.is_valid(); }
+
  private:
   friend struct mojo::PendingRemoteConverter<CrossVariantMojoRemote>;
 
@@ -123,8 +130,8 @@ class CrossVariantMojoAssociatedReceiver {
   CrossVariantMojoAssociatedReceiver() = default;
   ~CrossVariantMojoAssociatedReceiver() = default;
 
-  CrossVariantMojoAssociatedReceiver(
-      CrossVariantMojoAssociatedReceiver&&) = default;
+  CrossVariantMojoAssociatedReceiver(CrossVariantMojoAssociatedReceiver&&) =
+      default;
   CrossVariantMojoAssociatedReceiver& operator=(
       CrossVariantMojoAssociatedReceiver&&) = default;
 
@@ -141,6 +148,10 @@ class CrossVariantMojoAssociatedReceiver {
       mojo::PendingAssociatedReceiver<VariantInterface> receiver)
       : handle_(receiver.PassHandle()) {}
 
+  CrossVariantMojoAssociatedReceiver(const mojo::NullAssociatedReceiver&) {}
+
+  explicit operator bool() const { return handle_.is_valid(); }
+
  private:
   friend struct mojo::PendingAssociatedReceiverConverter<
       CrossVariantMojoAssociatedReceiver>;
@@ -154,8 +165,8 @@ class CrossVariantMojoAssociatedRemote {
   CrossVariantMojoAssociatedRemote() = default;
   ~CrossVariantMojoAssociatedRemote() = default;
 
-  CrossVariantMojoAssociatedRemote(
-      CrossVariantMojoAssociatedRemote&&) = default;
+  CrossVariantMojoAssociatedRemote(CrossVariantMojoAssociatedRemote&&) =
+      default;
   CrossVariantMojoAssociatedRemote& operator=(
       CrossVariantMojoAssociatedRemote&&) = default;
 
@@ -171,6 +182,10 @@ class CrossVariantMojoAssociatedRemote {
   CrossVariantMojoAssociatedRemote(
       mojo::PendingAssociatedRemote<VariantInterface> remote)
       : version_(remote.version()), handle_(remote.PassHandle()) {}
+
+  CrossVariantMojoAssociatedRemote(const mojo::NullAssociatedRemote&) {}
+
+  explicit operator bool() const { return handle_.is_valid(); }
 
  private:
   friend struct mojo::PendingAssociatedRemoteConverter<

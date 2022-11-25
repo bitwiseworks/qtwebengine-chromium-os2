@@ -115,8 +115,6 @@ void RawResource::AppendData(const char* data, size_t length) {
 class RawResource::PreloadBytesConsumerClient final
     : public GarbageCollected<PreloadBytesConsumerClient>,
       public BytesConsumer::Client {
-  USING_GARBAGE_COLLECTED_MIXIN(PreloadBytesConsumerClient);
-
  public:
   PreloadBytesConsumerClient(BytesConsumer& bytes_consumer,
                              RawResource& resource,
@@ -148,7 +146,7 @@ class RawResource::PreloadBytesConsumerClient final
 
   String DebugName() const override { return "PreloadBytesConsumerClient"; }
 
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     visitor->Trace(bytes_consumer_);
     visitor->Trace(resource_);
     visitor->Trace(client_);
@@ -242,7 +240,7 @@ scoped_refptr<BlobDataHandle> RawResource::DownloadedBlob() const {
   return downloaded_blob_;
 }
 
-void RawResource::Trace(Visitor* visitor) {
+void RawResource::Trace(Visitor* visitor) const {
   visitor->Trace(bytes_consumer_for_preload_);
   Resource::Trace(visitor);
 }
@@ -350,15 +348,10 @@ void RawResource::DidDownloadToBlob(scoped_refptr<BlobDataHandle> blob) {
     c->DidDownloadToBlob(this, blob);
 }
 
-bool RawResource::MatchPreload(const FetchParameters& params,
-                               base::SingleThreadTaskRunner* task_runner) {
-  if (!Resource::MatchPreload(params, task_runner))
-    return false;
-
+void RawResource::MatchPreload(const FetchParameters& params) {
+  Resource::MatchPreload(params);
   matched_with_non_streaming_destination_ =
       !params.GetResourceRequest().UseStreamOnResponse();
-
-  return true;
 }
 
 static bool ShouldIgnoreHeaderForCacheReuse(AtomicString header_name) {

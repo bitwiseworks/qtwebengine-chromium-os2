@@ -58,60 +58,73 @@ BluetoothGattCharacteristicServiceProviderImpl::
   // org.freedesktop.DBus.Properties interface:
   exported_object_->ExportMethod(
       dbus::kDBusPropertiesInterface, dbus::kDBusPropertiesGet,
-      base::Bind(&BluetoothGattCharacteristicServiceProviderImpl::Get,
-                 weak_ptr_factory_.GetWeakPtr()),
-      base::Bind(&BluetoothGattCharacteristicServiceProviderImpl::OnExported,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindRepeating(&BluetoothGattCharacteristicServiceProviderImpl::Get,
+                          weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(
+          &BluetoothGattCharacteristicServiceProviderImpl::OnExported,
+          weak_ptr_factory_.GetWeakPtr()));
   exported_object_->ExportMethod(
       dbus::kDBusPropertiesInterface, dbus::kDBusPropertiesSet,
-      base::Bind(&BluetoothGattCharacteristicServiceProviderImpl::Set,
-                 weak_ptr_factory_.GetWeakPtr()),
-      base::Bind(&BluetoothGattCharacteristicServiceProviderImpl::OnExported,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindRepeating(&BluetoothGattCharacteristicServiceProviderImpl::Set,
+                          weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(
+          &BluetoothGattCharacteristicServiceProviderImpl::OnExported,
+          weak_ptr_factory_.GetWeakPtr()));
   exported_object_->ExportMethod(
       dbus::kDBusPropertiesInterface, dbus::kDBusPropertiesGetAll,
-      base::Bind(&BluetoothGattCharacteristicServiceProviderImpl::GetAll,
-                 weak_ptr_factory_.GetWeakPtr()),
-      base::Bind(&BluetoothGattCharacteristicServiceProviderImpl::OnExported,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindRepeating(
+          &BluetoothGattCharacteristicServiceProviderImpl::GetAll,
+          weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(
+          &BluetoothGattCharacteristicServiceProviderImpl::OnExported,
+          weak_ptr_factory_.GetWeakPtr()));
 
   // org.bluez.GattCharacteristic1 interface:
   exported_object_->ExportMethod(
       bluetooth_gatt_characteristic::kBluetoothGattCharacteristicInterface,
       bluetooth_gatt_characteristic::kReadValue,
-      base::Bind(&BluetoothGattCharacteristicServiceProviderImpl::ReadValue,
-                 weak_ptr_factory_.GetWeakPtr()),
-      base::Bind(&BluetoothGattCharacteristicServiceProviderImpl::OnExported,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindRepeating(
+          &BluetoothGattCharacteristicServiceProviderImpl::ReadValue,
+          weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(
+          &BluetoothGattCharacteristicServiceProviderImpl::OnExported,
+          weak_ptr_factory_.GetWeakPtr()));
   exported_object_->ExportMethod(
       bluetooth_gatt_characteristic::kBluetoothGattCharacteristicInterface,
       bluetooth_gatt_characteristic::kWriteValue,
-      base::Bind(&BluetoothGattCharacteristicServiceProviderImpl::WriteValue,
-                 weak_ptr_factory_.GetWeakPtr()),
-      base::Bind(&BluetoothGattCharacteristicServiceProviderImpl::OnExported,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindRepeating(
+          &BluetoothGattCharacteristicServiceProviderImpl::WriteValue,
+          weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(
+          &BluetoothGattCharacteristicServiceProviderImpl::OnExported,
+          weak_ptr_factory_.GetWeakPtr()));
   exported_object_->ExportMethod(
       bluetooth_gatt_characteristic::kBluetoothGattCharacteristicInterface,
       bluetooth_gatt_characteristic::kPrepareWriteValue,
-      base::Bind(
+      base::BindRepeating(
           &BluetoothGattCharacteristicServiceProviderImpl::PrepareWriteValue,
           weak_ptr_factory_.GetWeakPtr()),
-      base::Bind(&BluetoothGattCharacteristicServiceProviderImpl::OnExported,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(
+          &BluetoothGattCharacteristicServiceProviderImpl::OnExported,
+          weak_ptr_factory_.GetWeakPtr()));
   exported_object_->ExportMethod(
       bluetooth_gatt_characteristic::kBluetoothGattCharacteristicInterface,
       bluetooth_gatt_characteristic::kStartNotify,
-      base::Bind(&BluetoothGattCharacteristicServiceProviderImpl::StartNotify,
-                 weak_ptr_factory_.GetWeakPtr()),
-      base::Bind(&BluetoothGattCharacteristicServiceProviderImpl::OnExported,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindRepeating(
+          &BluetoothGattCharacteristicServiceProviderImpl::StartNotify,
+          weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(
+          &BluetoothGattCharacteristicServiceProviderImpl::OnExported,
+          weak_ptr_factory_.GetWeakPtr()));
   exported_object_->ExportMethod(
       bluetooth_gatt_characteristic::kBluetoothGattCharacteristicInterface,
       bluetooth_gatt_characteristic::kStopNotify,
-      base::Bind(&BluetoothGattCharacteristicServiceProviderImpl::StopNotify,
-                 weak_ptr_factory_.GetWeakPtr()),
-      base::Bind(&BluetoothGattCharacteristicServiceProviderImpl::OnExported,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindRepeating(
+          &BluetoothGattCharacteristicServiceProviderImpl::StopNotify,
+          weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(
+          &BluetoothGattCharacteristicServiceProviderImpl::OnExported,
+          weak_ptr_factory_.GetWeakPtr()));
 }
 
 BluetoothGattCharacteristicServiceProviderImpl::
@@ -404,12 +417,12 @@ void BluetoothGattCharacteristicServiceProviderImpl::PrepareWriteValue(
   DCHECK(delegate_);
   delegate_->PrepareSetValue(
       device_path, value, offset, has_subsequent_write,
-      base::Bind(&BluetoothGattCharacteristicServiceProviderImpl::OnWriteValue,
-                 weak_ptr_factory_.GetWeakPtr(), method_call,
-                 response_sender_adapted),
-      base::Bind(&BluetoothGattCharacteristicServiceProviderImpl::OnFailure,
-                 weak_ptr_factory_.GetWeakPtr(), method_call,
-                 response_sender_adapted));
+      base::BindOnce(
+          &BluetoothGattCharacteristicServiceProviderImpl::OnWriteValue,
+          weak_ptr_factory_.GetWeakPtr(), method_call, response_sender_adapted),
+      base::BindOnce(&BluetoothGattCharacteristicServiceProviderImpl::OnFailure,
+                     weak_ptr_factory_.GetWeakPtr(), method_call,
+                     response_sender_adapted));
 }
 
 void BluetoothGattCharacteristicServiceProviderImpl::StartNotify(

@@ -58,10 +58,19 @@ class AutomationAXTreeWrapper : public ui::AXTreeObserver,
   // ignored.
   ui::AXNode* GetUnignoredNodeFromId(int32_t id);
 
+  // Accessibility focus is globally set via automation API from js.
+  void SetAccessibilityFocus(int32_t node_id);
+  ui::AXNode* GetAccessibilityFocusedNode();
+
+  int32_t accessibility_focused_id() { return accessibility_focused_id_; }
+
   // Updates or gets this wrapper with the latest state of listeners in js.
-  void EventListenerAdded(ax::mojom::Event event_type, ui::AXNode* node);
-  void EventListenerRemoved(ax::mojom::Event event_type, ui::AXNode* node);
-  bool HasEventListener(ax::mojom::Event event_type, ui::AXNode* node);
+  void EventListenerAdded(api::automation::EventType event_type,
+                          ui::AXNode* node);
+  void EventListenerRemoved(api::automation::EventType event_type,
+                            ui::AXNode* node);
+  bool HasEventListener(api::automation::EventType event_type,
+                        ui::AXNode* node);
 
   // AXTreeManager overrides.
   ui::AXNode* GetNodeFromTree(const ui::AXTreeID tree_id,
@@ -82,11 +91,6 @@ class AutomationAXTreeWrapper : public ui::AXTreeObserver,
                               bool root_changed,
                               const std::vector<Change>& changes) override;
 
-  // Given an event, return true if the event is handled by
-  // AXEventGenerator, and false if it's not. Temporary, this will be
-  // removed with the AXEventGenerator refactoring is complete.
-  bool IsEventTypeHandledByAXEventGenerator(api::automation::EventType) const;
-
   ui::AXTreeID tree_id_;
   ui::AXTree tree_;
   AutomationInternalCustomBindings* owner_;
@@ -94,13 +98,15 @@ class AutomationAXTreeWrapper : public ui::AXTreeObserver,
   std::vector<int> text_changed_node_ids_;
   ui::AXEventGenerator event_generator_;
 
+  int32_t accessibility_focused_id_ = ui::AXNode::kInvalidAXID;
+
   // Tracks whether a tree change event was sent during unserialization. Tree
   // changes outside of unserialization do not get reflected here. The value is
   // reset after unserialization.
   bool did_send_tree_change_during_unserialization_ = false;
 
   // Maps a node to a set containing events for which the node has listeners.
-  std::map<int32_t, std::set<ax::mojom::Event>> node_id_to_events_;
+  std::map<int32_t, std::set<api::automation::EventType>> node_id_to_events_;
 
   DISALLOW_COPY_AND_ASSIGN(AutomationAXTreeWrapper);
 };

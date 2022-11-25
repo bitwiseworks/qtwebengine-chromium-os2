@@ -33,7 +33,7 @@ const struct {
     {kGLImplementationDesktopName, kGLImplementationDesktopGL},
     {kGLImplementationCoreProfileName, kGLImplementationDesktopGLCoreProfile},
     {kGLImplementationSwiftShaderName, kGLImplementationSwiftShaderGL},
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
     {kGLImplementationAppleName, kGLImplementationAppleGL},
 #endif
     {kGLImplementationEGLName, kGLImplementationEGLGLES2},

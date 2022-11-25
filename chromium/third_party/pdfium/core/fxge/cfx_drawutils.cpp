@@ -6,6 +6,7 @@
 
 #include "core/fxge/cfx_drawutils.h"
 
+#include "core/fxge/cfx_fillrenderoptions.h"
 #include "core/fxge/cfx_graphstatedata.h"
 #include "core/fxge/cfx_pathdata.h"
 #include "core/fxge/cfx_renderdevice.h"
@@ -17,16 +18,16 @@ void CFX_DrawUtils::DrawFocusRect(CFX_RenderDevice* render_device,
   ASSERT(render_device);
   CFX_PathData path;
   path.AppendPoint(CFX_PointF(view_bounding_box.left, view_bounding_box.top),
-                   FXPT_TYPE::MoveTo, /*closeFigure=*/false);
+                   FXPT_TYPE::MoveTo);
   path.AppendPoint(CFX_PointF(view_bounding_box.left, view_bounding_box.bottom),
-                   FXPT_TYPE::LineTo, /*closeFigure=*/false);
+                   FXPT_TYPE::LineTo);
   path.AppendPoint(
       CFX_PointF(view_bounding_box.right, view_bounding_box.bottom),
-      FXPT_TYPE::LineTo, /*closeFigure=*/false);
+      FXPT_TYPE::LineTo);
   path.AppendPoint(CFX_PointF(view_bounding_box.right, view_bounding_box.top),
-                   FXPT_TYPE::LineTo, /*closeFigure=*/false);
+                   FXPT_TYPE::LineTo);
   path.AppendPoint(CFX_PointF(view_bounding_box.left, view_bounding_box.top),
-                   FXPT_TYPE::LineTo, /*closeFigure=*/false);
+                   FXPT_TYPE::LineTo);
 
   CFX_GraphStateData graph_state_data;
   graph_state_data.m_DashArray = {1.0f};
@@ -34,5 +35,6 @@ void CFX_DrawUtils::DrawFocusRect(CFX_RenderDevice* render_device,
   graph_state_data.m_LineWidth = 1.0f;
 
   render_device->DrawPath(&path, &user_to_device, &graph_state_data, 0,
-                          ArgbEncode(255, 0, 0, 0), FXFILL_ALTERNATE);
+                          ArgbEncode(255, 0, 0, 0),
+                          CFX_FillRenderOptions::EvenOddOptions());
 }

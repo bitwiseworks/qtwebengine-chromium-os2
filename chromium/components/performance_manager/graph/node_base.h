@@ -17,8 +17,6 @@
 #include "components/performance_manager/graph/graph_impl.h"
 #include "components/performance_manager/graph/node_type.h"
 #include "components/performance_manager/graph/properties.h"
-#include "mojo/public/cpp/bindings/interface_request.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
 
 namespace performance_manager {
 
@@ -53,11 +51,6 @@ class NodeBase {
     return graph_;
   }
 
-  // Returns an opaque ID for |node|, unique across all nodes in the same graph,
-  // zero for nullptr. This should never be used to look up nodes, only to
-  // provide a stable ID for serialization.
-  static int64_t GetSerializationId(NodeBase* node);
-
   // Helper functions for casting from a node type to its underlying NodeBase.
   // This CHECKs that the cast is valid. These functions work happily with
   // public and private node class inputs.
@@ -78,13 +71,10 @@ class NodeBase {
     return graph->GetObservers<Observer>();
   }
 
-  // Joins the |graph|. Assigns |graph_| and invokes OnJoiningGraph() to allow
-  // subclasses to initialize.
+  // Joins the |graph|.
   void JoinGraph(GraphImpl* graph);
 
-  // Leaves the graph that this node is a part of. Invokes
-  // OnBeforeLeavingGraph() to allow subclasses to uninitialize then clears
-  // |graph_|.
+  // Leaves the graph that this node is a part of.
   void LeaveGraph();
 
   // Called as this node is joining |graph_|, a good opportunity to initialize
@@ -99,9 +89,6 @@ class NodeBase {
   // Assigned when JoinGraph() is called, up until LeaveGraph() is called, where
   // it is reset to null.
   GraphImpl* graph_ = nullptr;
-
-  // Assigned on first use, immutable from that point forward.
-  int64_t serialization_id_ = 0u;
 
   SEQUENCE_CHECKER(sequence_checker_);
 

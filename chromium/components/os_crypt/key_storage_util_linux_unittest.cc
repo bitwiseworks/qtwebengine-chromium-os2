@@ -5,7 +5,6 @@
 #include "components/os_crypt/key_storage_util_linux.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/logging.h"
 #include "base/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -21,7 +20,7 @@ class KeyStorageUtilLinuxPreferenceTest : public testing::Test {
   }
 
   void TearDown() override {
-    ASSERT_TRUE(base::DeleteFileRecursively(fake_user_data_dir_));
+    ASSERT_TRUE(base::DeletePathRecursively(fake_user_data_dir_));
   }
 
  protected:

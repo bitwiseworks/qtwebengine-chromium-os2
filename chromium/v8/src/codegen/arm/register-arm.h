@@ -181,7 +181,10 @@ class DwVfpRegister : public RegisterBase<DwVfpRegister, kDoubleAfterLast> {
  public:
   static constexpr int kSizeInBytes = 8;
 
-  inline static int NumRegisters();
+  // This function differs from kNumRegisters by returning the number of double
+  // registers supported by the current CPU, while kNumRegisters always returns
+  // 32.
+  inline static int SupportedRegisterCount();
 
   static void split_code(int reg_code, int* vm, int* m) {
     DCHECK(from_code(reg_code).is_valid());
@@ -350,6 +353,8 @@ constexpr Register kWasmCompileLazyFuncIndexRegister = r4;
 // Give alias names to registers
 constexpr Register cp = r7;              // JavaScript context pointer.
 constexpr Register kRootRegister = r10;  // Roots array pointer.
+
+constexpr DoubleRegister kFPReturnRegister0 = d0;
 
 }  // namespace internal
 }  // namespace v8

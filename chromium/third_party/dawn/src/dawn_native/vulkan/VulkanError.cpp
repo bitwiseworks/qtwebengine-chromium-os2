@@ -19,9 +19,9 @@
 namespace dawn_native { namespace vulkan {
 
     const char* VkResultAsString(::VkResult result) {
-        // Convert to a uint32_t to silence and MSVC warning that the fake errors don't appear in
+        // Convert to a int32_t to silence and MSVC warning that the fake errors don't appear in
         // the original VkResult enum.
-        uint32_t code = static_cast<uint32_t>(result);
+        int32_t code = static_cast<int32_t>(result);
 
         switch (code) {
             case VK_SUCCESS:
@@ -90,7 +90,8 @@ namespace dawn_native { namespace vulkan {
 
         std::string message = std::string(context) + " failed with " + VkResultAsString(result);
 
-        if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY || result == VK_FAKE_DEVICE_OOM_FOR_TESTING) {
+        if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY || result == VK_ERROR_OUT_OF_HOST_MEMORY ||
+            result == VK_FAKE_DEVICE_OOM_FOR_TESTING) {
             return DAWN_OUT_OF_MEMORY_ERROR(message);
         } else if (result == VK_ERROR_DEVICE_LOST) {
             return DAWN_DEVICE_LOST_ERROR(message);

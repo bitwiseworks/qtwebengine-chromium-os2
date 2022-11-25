@@ -28,6 +28,7 @@
 
 #include "third_party/blink/public/mojom/speech/speech_synthesis.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/modules/event_target_modules.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/modules/speech/speech_synthesis_utterance.h"
@@ -35,30 +36,34 @@
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_receiver.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
-#include "third_party/blink/renderer/platform/mojo/heap_mojo_wrapper_mode.h"
+#include "third_party/blink/renderer/platform/supplementable.h"
 
 namespace blink {
+
+class LocalDOMWindow;
 
 class MODULES_EXPORT SpeechSynthesis final
     : public EventTargetWithInlineData,
       public ExecutionContextClient,
+      public Supplement<LocalDOMWindow>,
       public mojom::blink::SpeechSynthesisVoiceListObserver {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(SpeechSynthesis);
 
  public:
-  static SpeechSynthesis* Create(ExecutionContext*);
-  static SpeechSynthesis* CreateForTesting(
-      ExecutionContext*,
+  static const char kSupplementName[];
+
+  static SpeechSynthesis* speechSynthesis(LocalDOMWindow&);
+  static void CreateForTesting(
+      LocalDOMWindow&,
       mojo::PendingRemote<mojom::blink::SpeechSynthesis>);
 
-  explicit SpeechSynthesis(ExecutionContext*);
+  explicit SpeechSynthesis(LocalDOMWindow&);
 
   bool pending() const;
   bool speaking() const;
   bool paused() const;
 
-  void speak(SpeechSynthesisUtterance*);
+  void speak(ScriptState*, SpeechSynthesisUtterance*);
   void cancel();
   void pause();
   void resume();
@@ -72,7 +77,7 @@ class MODULES_EXPORT SpeechSynthesis final
   }
 
   // GarbageCollected
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   // mojom::blink::SpeechSynthesisVoiceListObserver
   void OnSetVoiceList(
@@ -118,17 +123,16 @@ class MODULES_EXPORT SpeechSynthesis final
 
   bool IsAllowedToStartByAutoplay() const;
 
+  void RecordVoicesForIdentifiability() const;
+
   void SetMojomSynthesisForTesting(
       mojo::PendingRemote<mojom::blink::SpeechSynthesis>);
-  void InitializeMojomSynthesis();
-  void InitializeMojomSynthesisIfNeeded();
+  mojom::blink::SpeechSynthesis* TryEnsureMojomSynthesis();
 
   HeapMojoReceiver<mojom::blink::SpeechSynthesisVoiceListObserver,
-                   HeapMojoWrapperMode::kWithoutContextObserver>
+                   SpeechSynthesis>
       receiver_;
-  HeapMojoRemote<mojom::blink::SpeechSynthesis,
-                 HeapMojoWrapperMode::kWithoutContextObserver>
-      mojom_synthesis_;
+  HeapMojoRemote<mojom::blink::SpeechSynthesis> mojom_synthesis_;
   HeapVector<Member<SpeechSynthesisVoice>> voice_list_;
   HeapDeque<Member<SpeechSynthesisUtterance>> utterance_queue_;
   bool is_paused_ = false;

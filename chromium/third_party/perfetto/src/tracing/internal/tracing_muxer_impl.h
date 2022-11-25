@@ -124,6 +124,10 @@ class TracingMuxerImpl : public TracingMuxer {
   void ReadTracingSessionData(
       TracingSessionGlobalID,
       std::function<void(TracingSession::ReadTraceCallbackArgs)>);
+  void GetTraceStats(TracingSessionGlobalID,
+                     TracingSession::GetTraceStatsCallback);
+  void QueryServiceState(TracingSessionGlobalID,
+                         TracingSession::QueryServiceStateCallback);
 
  private:
   // For each TracingBackend we create and register one ProducerImpl instance.
@@ -135,7 +139,9 @@ class TracingMuxerImpl : public TracingMuxer {
   // because the Producer virtual methods don't allow to identify the service.
   class ProducerImpl : public Producer {
    public:
-    ProducerImpl(TracingMuxerImpl*, TracingBackendId);
+    ProducerImpl(TracingMuxerImpl*,
+                 TracingBackendId,
+                 uint32_t shmem_batch_commits_duration_ms);
     ~ProducerImpl() override;
 
     void Initialize(std::unique_ptr<ProducerEndpoint> endpoint);
@@ -159,6 +165,8 @@ class TracingMuxerImpl : public TracingMuxer {
     TracingMuxerImpl* const muxer_;
     TracingBackendId const backend_id_;
     bool connected_ = false;
+
+    const uint32_t shmem_batch_commits_duration_ms_ = 0;
 
     // Set of data sources that have been actually registered on this producer.
     // This can be a subset of the global |data_sources_|, because data sources
@@ -211,6 +219,10 @@ class TracingMuxerImpl : public TracingMuxer {
     // need to wait until the session has started before stopping it.
     bool stop_pending_ = false;
 
+    // Similarly we need to buffer a call to get trace statistics if the
+    // consumer wasn't connected yet.
+    bool get_trace_stats_pending_ = false;
+
     // Whether this session was already stopped. This will happen in response to
     // Stop{,Blocking}, but also if the service stops the session for us
     // automatically (e.g., when there are no data sources).
@@ -220,6 +232,10 @@ class TracingMuxerImpl : public TracingMuxer {
     // it more than once.
     std::shared_ptr<TraceConfig> trace_config_;
     base::ScopedFile trace_fd_;
+
+    // If the API client passes a callback to start, we should invoke this when
+    // NotifyStartComplete() is invoked.
+    std::function<void()> start_complete_callback_;
 
     // An internal callback used to implement StartBlocking().
     std::function<void()> blocking_start_complete_callback_;
@@ -234,6 +250,12 @@ class TracingMuxerImpl : public TracingMuxer {
     // Callback passed to ReadTrace().
     std::function<void(TracingSession::ReadTraceCallbackArgs)>
         read_trace_callback_;
+
+    // Callback passed to GetTraceStats().
+    TracingSession::GetTraceStatsCallback get_trace_stats_callback_;
+
+    // Callback for a pending call to QueryServiceState().
+    TracingSession::QueryServiceStateCallback query_service_state_callback_;
 
     // The states of all data sources in this tracing session. |true| means the
     // data source has started tracing.
@@ -253,10 +275,13 @@ class TracingMuxerImpl : public TracingMuxer {
     void Setup(const TraceConfig&, int fd) override;
     void Start() override;
     void StartBlocking() override;
+    void SetOnStartCallback(std::function<void()>) override;
     void Stop() override;
     void StopBlocking() override;
     void ReadTrace(ReadTraceCallback) override;
     void SetOnStopCallback(std::function<void()>) override;
+    void GetTraceStats(GetTraceStatsCallback) override;
+    void QueryServiceState(QueryServiceStateCallback) override;
 
    private:
     TracingMuxerImpl* const muxer_;

@@ -23,14 +23,12 @@
 #include "core/fpdfapi/parser/cpdf_reference.h"
 #include "core/fpdfapi/parser/cpdf_stream.h"
 #include "core/fpdfapi/parser/cpdf_string.h"
-#include "core/fxcodec/fx_codec.h"
 #include "core/fxcodec/jpeg/jpegmodule.h"
 #include "core/fxcrt/fx_memory_wrappers.h"
 #include "core/fxcrt/fx_stream.h"
 #include "core/fxge/dib/cfx_dibitmap.h"
 #include "core/fxge/fx_dib.h"
 #include "third_party/base/numerics/safe_conversions.h"
-#include "third_party/base/ptr_util.h"
 
 // static
 bool CPDF_Image::IsValidJpegComponent(int32_t comps) {
@@ -83,8 +81,7 @@ CPDF_Dictionary* CPDF_Image::GetDict() const {
 
 RetainPtr<CPDF_Dictionary> CPDF_Image::InitJPEG(
     pdfium::span<uint8_t> src_span) {
-  Optional<JpegModule::JpegImageInfo> info_opt =
-      fxcodec::ModuleMgr::GetInstance()->GetJpegModule()->LoadInfo(src_span);
+  Optional<JpegModule::JpegImageInfo> info_opt = JpegModule::LoadInfo(src_span);
   if (!info_opt.has_value())
     return nullptr;
 
@@ -131,7 +128,7 @@ void CPDF_Image::SetJpegImage(const RetainPtr<IFX_SeekableReadStream>& pFile) {
     return;
 
   uint32_t dwEstimateSize = std::min(size, 8192U);
-  std::vector<uint8_t> data(dwEstimateSize);
+  std::vector<uint8_t, FxAllocAllocator<uint8_t>> data(dwEstimateSize);
   if (!pFile->ReadBlockAtOffset(data.data(), 0, dwEstimateSize))
     return;
 
@@ -153,7 +150,7 @@ void CPDF_Image::SetJpegImageInline(
   if (!size)
     return;
 
-  std::vector<uint8_t> data(size);
+  std::vector<uint8_t, FxAllocAllocator<uint8_t>> data(size);
   if (!pFile->ReadBlockAtOffset(data.data(), 0, size))
     return;
 
@@ -353,7 +350,7 @@ RetainPtr<CFX_DIBBase> CPDF_Image::DetachMask() {
 }
 
 bool CPDF_Image::StartLoadDIBBase(const CPDF_Dictionary* pFormResource,
-                                  CPDF_Dictionary* pPageResource,
+                                  const CPDF_Dictionary* pPageResource,
                                   bool bStdCS,
                                   uint32_t GroupFamily,
                                   bool bLoadMask) {

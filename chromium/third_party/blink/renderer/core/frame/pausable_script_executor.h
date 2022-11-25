@@ -24,8 +24,6 @@ class WebScriptExecutionCallback;
 class CORE_EXPORT PausableScriptExecutor final
     : public GarbageCollected<PausableScriptExecutor>,
       public ExecutionContextLifecycleObserver {
-  USING_GARBAGE_COLLECTED_MIXIN(PausableScriptExecutor);
-
  public:
   enum BlockingOption { kNonBlocking, kOnloadBlocking };
 
@@ -44,7 +42,7 @@ class CORE_EXPORT PausableScriptExecutor final
 
     virtual Vector<v8::Local<v8::Value>> Execute(LocalFrame*) = 0;
 
-    virtual void Trace(Visitor* visitor) {}
+    virtual void Trace(Visitor* visitor) const {}
   };
 
   PausableScriptExecutor(LocalFrame*,
@@ -62,10 +60,10 @@ class CORE_EXPORT PausableScriptExecutor final
   void RunAsync(BlockingOption);
   void ContextDestroyed() override;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
-
+  void PostExecuteAndDestroySelf(ExecutionContext* context);
   void ExecuteAndDestroySelf();
   void Dispose();
 

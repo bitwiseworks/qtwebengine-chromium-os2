@@ -4,14 +4,18 @@
 
 #include "base/trace_event/heap_profiler_allocation_context_tracker.h"
 
+#include <string.h>
+
 #include <algorithm>
 #include <iterator>
 
 #include "base/atomicops.h"
+#include "base/check_op.h"
 #include "base/debug/debugging_buildflags.h"
 #include "base/debug/leak_annotations.h"
 #include "base/debug/stack_trace.h"
 #include "base/no_destructor.h"
+#include "base/notreached.h"
 #include "base/stl_util.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_local_storage.h"
@@ -22,7 +26,7 @@
 #include "base/trace_event/cfi_backtrace_android.h"
 #endif
 
-#if defined(OS_LINUX) || defined(OS_ANDROID)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_ANDROID)
 #include <sys/prctl.h>
 #endif
 
@@ -58,7 +62,7 @@ ThreadLocalStorage::Slot& AllocationContextTrackerTLS() {
 // are used to tag allocations even after the thread dies.
 const char* GetAndLeakThreadName() {
   char name[16];
-#if defined(OS_LINUX) || defined(OS_ANDROID)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_ANDROID)
   // If the thread name is not set, try to get it from prctl. Thread name might
   // not be set in cases where the thread started before heap profiling was
   // enabled.
@@ -66,7 +70,7 @@ const char* GetAndLeakThreadName() {
   if (!err) {
     return strdup(name);
   }
-#endif  // defined(OS_LINUX) || defined(OS_ANDROID)
+#endif  // defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_ANDROID)
 
   // Use tid if we don't have a thread name.
   snprintf(name, sizeof(name), "%lu",

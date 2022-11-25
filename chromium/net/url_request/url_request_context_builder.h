@@ -51,6 +51,7 @@ class ApplicationStatusListener;
 namespace net {
 
 class CertVerifier;
+class ClientSocketFactory;
 class CookieStore;
 class CTPolicyEnforcer;
 class CTVerifier;
@@ -278,6 +279,8 @@ class NET_EXPORT URLRequestContextBuilder {
   void set_ct_verifier(std::unique_ptr<CTVerifier> ct_verifier);
   void set_ct_policy_enforcer(
       std::unique_ptr<CTPolicyEnforcer> ct_policy_enforcer);
+  void set_sct_auditing_delegate(
+      std::unique_ptr<SCTAuditingDelegate> sct_auditing_delegate);
   void set_quic_context(std::unique_ptr<QuicContext> quic_context);
 
   void SetCertVerifier(std::unique_ptr<CertVerifier> cert_verifier);
@@ -311,6 +314,13 @@ class NET_EXPORT URLRequestContextBuilder {
       CreateHttpTransactionFactoryCallback
           create_http_network_transaction_factory);
 
+  // Sets a ClientSocketFactory so a test can mock out sockets. The
+  // ClientSocketFactory must be destroyed after the creates URLRequestContext.
+  void set_client_socket_factory_for_testing(
+      ClientSocketFactory* client_socket_factory_for_testing) {
+    client_socket_factory_for_testing_ = client_socket_factory_for_testing;
+  }
+
   // Creates a mostly self-contained URLRequestContext. May only be called once
   // per URLRequestContextBuilder. After this is called, the Builder can be
   // safely destroyed.
@@ -326,7 +336,8 @@ class NET_EXPORT URLRequestContextBuilder {
       URLRequestContext* url_request_context,
       HostResolver* host_resolver,
       NetworkDelegate* network_delegate,
-      NetLog* net_log);
+      NetLog* net_log,
+      bool pac_quick_check_enabled);
 
  private:
   std::string name_;
@@ -366,6 +377,7 @@ class NET_EXPORT URLRequestContextBuilder {
   std::unique_ptr<CertVerifier> cert_verifier_;
   std::unique_ptr<CTVerifier> ct_verifier_;
   std::unique_ptr<CTPolicyEnforcer> ct_policy_enforcer_;
+  std::unique_ptr<SCTAuditingDelegate> sct_auditing_delegate_;
   std::unique_ptr<QuicContext> quic_context_;
 #if BUILDFLAG(ENABLE_REPORTING)
   std::unique_ptr<ReportingPolicy> reporting_policy_;
@@ -376,6 +388,8 @@ class NET_EXPORT URLRequestContextBuilder {
   std::unique_ptr<HttpServerProperties> http_server_properties_;
   std::map<std::string, std::unique_ptr<URLRequestJobFactory::ProtocolHandler>>
       protocol_handlers_;
+
+  ClientSocketFactory* client_socket_factory_for_testing_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(URLRequestContextBuilder);
 };

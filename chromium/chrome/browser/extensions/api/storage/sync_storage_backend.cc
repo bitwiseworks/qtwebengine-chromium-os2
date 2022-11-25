@@ -24,8 +24,8 @@ void AddAllSyncData(const std::string& extension_id,
                     syncer::ModelType type,
                     syncer::SyncDataList* dst) {
   for (base::DictionaryValue::Iterator it(src); !it.IsAtEnd(); it.Advance()) {
-    dst->push_back(settings_sync_util::CreateData(
-        extension_id, it.key(), it.value(), type));
+    dst->push_back(settings_sync_util::CreateData(extension_id, it.key(),
+                                                  it.value(), type));
   }
 }
 
@@ -96,9 +96,10 @@ SyncableSettingsStorage* SyncStorageBackend::GetOrCreateStorageWithSyncData(
   storage_objs_[extension_id] = std::move(syncable_storage);
 
   if (sync_processor_.get()) {
-    syncer::SyncError error = raw_syncable_storage->StartSyncing(
-        std::move(sync_data), CreateSettingsSyncProcessor(extension_id));
-    if (error.IsSet())
+    base::Optional<syncer::ModelError> error =
+        raw_syncable_storage->StartSyncing(
+            std::move(sync_data), CreateSettingsSyncProcessor(extension_id));
+    if (error.has_value())
       raw_syncable_storage->StopSyncing();
   }
   return raw_syncable_storage;
@@ -109,16 +110,10 @@ void SyncStorageBackend::DeleteStorage(const std::string& extension_id) {
 
   // Clear settings when the extension is uninstalled.  Leveldb implementations
   // will also delete the database from disk when the object is destroyed as a
-  // result of being removed from |storage_objs_|.
-  //
-  // TODO(kalman): always GetStorage here (rather than only clearing if it
-  // exists) since the storage area may have been unloaded, but we still want
-  // to clear the data from disk.
-  // However, this triggers http://crbug.com/111072.
-  auto maybe_storage = storage_objs_.find(extension_id);
-  if (maybe_storage == storage_objs_.end())
-    return;
-  maybe_storage->second->Clear();
+  // result of being removed from |storage_objs_|. Note that we always
+  // GetStorage here (rather than only clearing if it exists) since the storage
+  // area may have been unloaded, but we still want to clear the data from disk.
+  GetStorage(extension_id)->Clear();
   storage_objs_.erase(extension_id);
 }
 
@@ -170,7 +165,7 @@ syncer::SyncDataList SyncStorageBackend::GetAllSyncDataForTesting(
   return all_sync_data;
 }
 
-syncer::SyncMergeResult SyncStorageBackend::MergeDataAndStartSyncing(
+base::Optional<syncer::ModelError> SyncStorageBackend::MergeDataAndStartSyncing(
     syncer::ModelType type,
     const syncer::SyncDataList& initial_sync_data,
     std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
@@ -195,9 +190,9 @@ syncer::SyncMergeResult SyncStorageBackend::MergeDataAndStartSyncing(
     base::DictionaryValue*& settings = grouped_sync_data[data.extension_id()];
     if (!settings)
       settings = new base::DictionaryValue();
-    DCHECK(!settings->HasKey(data.key())) << "Duplicate settings for "
-                                          << data.extension_id() << "/"
-                                          << data.key();
+    DCHECK(!settings->HasKey(data.key()))
+        << "Duplicate settings for " << data.extension_id() << "/"
+        << data.key();
     settings->SetWithoutPathExpansion(data.key(), data.PassValue());
   }
 
@@ -208,7 +203,7 @@ syncer::SyncMergeResult SyncStorageBackend::MergeDataAndStartSyncing(
     SyncableSettingsStorage* storage = storage_obj.second.get();
 
     auto group = grouped_sync_data.find(extension_id);
-    syncer::SyncError error;
+    base::Optional<syncer::ModelError> error;
     if (group != grouped_sync_data.end()) {
       error = storage->StartSyncing(base::WrapUnique(group->second),
                                     CreateSettingsSyncProcessor(extension_id));
@@ -218,7 +213,7 @@ syncer::SyncMergeResult SyncStorageBackend::MergeDataAndStartSyncing(
                                     CreateSettingsSyncProcessor(extension_id));
     }
 
-    if (error.IsSet())
+    if (error.has_value())
       storage->StopSyncing();
   }
 
@@ -229,10 +224,10 @@ syncer::SyncMergeResult SyncStorageBackend::MergeDataAndStartSyncing(
     GetOrCreateStorageWithSyncData(group.first, base::WrapUnique(group.second));
   }
 
-  return syncer::SyncMergeResult(type);
+  return base::nullopt;
 }
 
-syncer::SyncError SyncStorageBackend::ProcessSyncChanges(
+base::Optional<syncer::ModelError> SyncStorageBackend::ProcessSyncChanges(
     const base::Location& from_here,
     const syncer::SyncChangeList& sync_changes) {
   DCHECK(IsOnBackendSequence());
@@ -255,13 +250,13 @@ syncer::SyncError SyncStorageBackend::ProcessSyncChanges(
   for (const auto& group : grouped_sync_data) {
     SyncableSettingsStorage* storage =
         GetOrCreateStorageWithSyncData(group.first, EmptyDictionaryValue());
-    syncer::SyncError error =
+    base::Optional<syncer::ModelError> error =
         storage->ProcessSyncChanges(base::WrapUnique(group.second));
-    if (error.IsSet())
+    if (error.has_value())
       storage->StopSyncing();
   }
 
-  return syncer::SyncError();
+  return base::nullopt;
 }
 
 void SyncStorageBackend::StopSyncing(syncer::ModelType type) {

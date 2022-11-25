@@ -131,6 +131,9 @@ bool AsyncLayerTreeFrameSink::BindToClient(LayerTreeFrameSinkClient* client) {
   if (wants_animate_only_begin_frames_)
     compositor_frame_sink_->SetWantsAnimateOnlyBeginFrames();
 
+  compositor_frame_sink_ptr_->InitializeCompositorFrameSinkType(
+      viz::mojom::CompositorFrameSinkType::kLayerTree);
+
   return true;
 }
 
@@ -353,8 +356,9 @@ void AsyncLayerTreeFrameSink::OnNeedsBeginFrames(bool needs_begin_frames) {
 void AsyncLayerTreeFrameSink::OnMojoConnectionError(
     uint32_t custom_reason,
     const std::string& description) {
+  // TODO(sgilhuly): Use DLOG(FATAL) once crbug.com/1043899 is resolved.
   if (custom_reason)
-    DLOG(FATAL) << description;
+    DLOG(ERROR) << description;
   if (client_)
     client_->DidLoseLayerTreeFrameSink();
 }

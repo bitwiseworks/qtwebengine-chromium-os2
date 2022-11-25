@@ -13,10 +13,13 @@
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
 #include "base/threading/sequenced_task_runner_handle.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_change_dispatcher.h"
+#include "net/cookies/cookie_inclusion_status.h"
 #include "net/cookies/cookie_store.h"
 #include "net/cookies/site_for_cookies.h"
+#include "services/network/public/mojom/cookie_access_observer.mojom.h"
 #include "services/network/public/mojom/restricted_cookie_manager.mojom.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -26,10 +29,6 @@ class CookieStore;
 }  // namespace net
 
 namespace network {
-
-namespace mojom {
-class NetworkContextClient;
-}  // namespace mojom
 
 class CookieSettings;
 
@@ -42,19 +41,14 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) RestrictedCookieManager
  public:
   // All the pointers passed to the constructor are expected to point to
   // objects that will outlive |this|.
-  //
-  // |is_service_worker|, |process_id| and |frame_id| will be used when
-  // reporting activity to |network_context_client|.
-  RestrictedCookieManager(mojom::RestrictedCookieManagerRole role,
-                          net::CookieStore* cookie_store,
-                          const CookieSettings* cookie_settings,
-                          const url::Origin& origin,
-                          const net::SiteForCookies& site_for_cookies,
-                          const url::Origin& top_frame_origin,
-                          mojom::NetworkContextClient* network_context_client,
-                          bool is_service_worker,
-                          int32_t process_id,
-                          int32_t frame_id);
+  RestrictedCookieManager(
+      mojom::RestrictedCookieManagerRole role,
+      net::CookieStore* cookie_store,
+      const CookieSettings* cookie_settings,
+      const url::Origin& origin,
+      const net::SiteForCookies& site_for_cookies,
+      const url::Origin& top_frame_origin,
+      mojo::PendingRemote<mojom::CookieAccessObserver> cookie_observer);
 
   ~RestrictedCookieManager() override;
 
@@ -118,18 +112,17 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) RestrictedCookieManager
       const net::CookieOptions& net_options,
       mojom::CookieManagerGetOptionsPtr options,
       GetAllForUrlCallback callback,
-      const net::CookieStatusList& cookie_list,
-      const net::CookieStatusList& excluded_cookies);
+      const net::CookieAccessResultList& cookie_list,
+      const net::CookieAccessResultList& excluded_cookies);
 
   // Reports the result of setting the cookie to |network_context_client_|, and
   // invokes the user callback.
-  void SetCanonicalCookieResult(
-      const GURL& url,
-      const net::SiteForCookies& site_for_cookies,
-      const net::CanonicalCookie& cookie,
-      const net::CookieOptions& net_options,
-      SetCanonicalCookieCallback user_callback,
-      net::CanonicalCookie::CookieInclusionStatus status);
+  void SetCanonicalCookieResult(const GURL& url,
+                                const net::SiteForCookies& site_for_cookies,
+                                const net::CanonicalCookie& cookie,
+                                const net::CookieOptions& net_options,
+                                SetCanonicalCookieCallback user_callback,
+                                net::CookieAccessResult access_result);
 
   // Called when the Mojo pipe associated with a listener is closed.
   void RemoveChangeListener(Listener* listener);
@@ -139,11 +132,16 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) RestrictedCookieManager
   // Returns true if the access should be allowed, or false if it should be
   // blocked.
   //
+  // |cookie_being_set| should be non-nullptr if setting a cookie, and should be
+  // nullptr otherwise (getting cookies, subscribing to cookie changes).
+  //
   // If the access would not be allowed, this helper calls
   // mojo::ReportBadMessage(), which closes the pipe.
-  bool ValidateAccessToCookiesAt(const GURL& url,
-                                 const net::SiteForCookies& site_for_cookies,
-                                 const url::Origin& top_frame_origin);
+  bool ValidateAccessToCookiesAt(
+      const GURL& url,
+      const net::SiteForCookies& site_for_cookies,
+      const url::Origin& top_frame_origin,
+      const net::CanonicalCookie* cookie_being_set = nullptr);
 
   const mojom::RestrictedCookieManagerRole role_;
   net::CookieStore* const cookie_store_;
@@ -151,10 +149,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) RestrictedCookieManager
   url::Origin origin_;
   net::SiteForCookies site_for_cookies_;
   url::Origin top_frame_origin_;
-  mojom::NetworkContextClient* const network_context_client_;
-  const bool is_service_worker_;
-  const int32_t process_id_;
-  const int32_t frame_id_;
+  mojo::Remote<mojom::CookieAccessObserver> cookie_observer_;
 
   base::LinkedList<Listener> listeners_;
 

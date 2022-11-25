@@ -97,7 +97,6 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
       data_provider.ConsumeBool() ? 1 : 0;
   params.close_sessions_on_ip_change = data_provider.ConsumeBool();
   params.allow_server_migration = data_provider.ConsumeBool();
-  params.race_cert_verification = data_provider.ConsumeBool();
   params.estimate_initial_rtt = data_provider.ConsumeBool();
   params.headers_include_h2_stream_dependency = data_provider.ConsumeBool();
   params.enable_socket_recv_optimization = data_provider.ConsumeBool();
@@ -136,7 +135,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           env->ssl_config_service.get(), &socket_factory,
           &http_server_properties, env->cert_verifier.get(),
           &env->ct_policy_enforcer, &env->transport_security_state,
-          env->cert_transparency_verifier.get(), nullptr,
+          env->cert_transparency_verifier.get(), nullptr, nullptr,
           &env->crypto_client_stream_factory, &env->quic_context);
 
   QuicStreamRequest request(factory.get());

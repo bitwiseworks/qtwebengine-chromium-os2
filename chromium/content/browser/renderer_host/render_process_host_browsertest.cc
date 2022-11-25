@@ -7,13 +7,12 @@
 #include "base/command_line.h"
 #include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/task/post_task.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/test/test_timeouts.h"
 #include "build/build_config.h"
-#include "content/browser/frame_host/render_frame_host_impl.h"
+#include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -27,6 +26,8 @@
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
+#include "content/public/test/back_forward_cache_util.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -186,11 +187,6 @@ class RenderProcessHostTest : public ContentBrowserTest,
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-#if defined(OS_LINUX)
-    // Due to problems with PulseAudio failing to start, use a fake audio
-    // stream. https://crbug.com/1047655#c70
-    command_line->AppendSwitch(switches::kDisableAudioOutput);
-#endif
     command_line->AppendSwitchASCII(
         switches::kAutoplayPolicy,
         switches::autoplay::kNoUserGestureRequiredPolicy);
@@ -284,8 +280,8 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest,
   RenderProcessHost* rph =
       shell()->web_contents()->GetMainFrame()->GetProcess();
   // Make it believe it's a guest.
-  reinterpret_cast<RenderProcessHostImpl*>(rph)->
-      set_is_for_guests_only_for_testing(true);
+  static_cast<RenderProcessHostImpl*>(rph)->set_is_for_guests_only_for_testing(
+      true);
   EXPECT_EQ(1, RenderProcessHost::GetCurrentRenderProcessCountForTesting());
 
   // Navigate to a different page.
@@ -504,24 +500,17 @@ class CustomStoragePartitionForSomeSites : public TestContentBrowserClient {
   explicit CustomStoragePartitionForSomeSites(const GURL& site_to_isolate)
       : site_to_isolate_(site_to_isolate) {}
 
-  void GetStoragePartitionConfigForSite(BrowserContext* browser_context,
-                                        const GURL& site,
-                                        bool can_be_default,
-                                        std::string* partition_domain,
-                                        std::string* partition_name,
-                                        bool* in_memory) override {
-    // Default to the browser-wide storage partition and override based on
-    // |site| below.
-    partition_domain->clear();
-    partition_name->clear();
-    *in_memory = false;
-
+  StoragePartitionConfig GetStoragePartitionConfigForSite(
+      BrowserContext* browser_context,
+      const GURL& site) override {
     // Override for |site_to_isolate_|.
     if (site == site_to_isolate_) {
-      *partition_domain = "blah_isolated_storage";
-      *partition_name = "blah_isolated_storage";
-      *in_memory = false;
+      return StoragePartitionConfig::Create("blah_isolated_storage",
+                                            "blah_isolated_storage",
+                                            false /* in_memory */);
     }
+
+    return StoragePartitionConfig::CreateDefault();
   }
 
   std::string GetStoragePartitionIdForSite(BrowserContext* browser_context,
@@ -819,21 +808,47 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, KillProcessOnBadMojoMessage) {
     rph->RemoveObserver(this);
 }
 
+// Observes a WebContents and a specific frame within it, and waits until they
+// both indicate that they are audible.
 class AudioStartObserver : public WebContentsObserver {
  public:
   AudioStartObserver(WebContents* web_contents,
+                     RenderFrameHost* render_frame_host,
                      base::OnceClosure audible_closure)
       : WebContentsObserver(web_contents),
-        audible_closure_(std::move(audible_closure)) {}
-  ~AudioStartObserver() override {}
+        render_frame_host_(
+            static_cast<RenderFrameHostImpl*>(render_frame_host)),
+        contents_audible_(web_contents->IsCurrentlyAudible()),
+        frame_audible_(render_frame_host_->is_audible()),
+        audible_closure_(std::move(audible_closure)) {
+    MaybeFireClosure();
+  }
+  ~AudioStartObserver() override = default;
 
   // WebContentsObserver:
   void OnAudioStateChanged(bool audible) override {
-    if (audible && audible_closure_)
-      std::move(audible_closure_).Run();
+    DCHECK_NE(audible, contents_audible_);
+    contents_audible_ = audible;
+    MaybeFireClosure();
+  }
+  void OnFrameAudioStateChanged(RenderFrameHost* render_frame_host,
+                                bool audible) override {
+    if (render_frame_host_ != render_frame_host)
+      return;
+    DCHECK_NE(frame_audible_, audible);
+    frame_audible_ = audible;
+    MaybeFireClosure();
   }
 
  private:
+  void MaybeFireClosure() {
+    if (contents_audible_ && frame_audible_)
+      std::move(audible_closure_).Run();
+  }
+
+  RenderFrameHostImpl* render_frame_host_ = nullptr;
+  bool contents_audible_ = false;
+  bool frame_audible_ = false;
   base::OnceClosure audible_closure_;
 };
 
@@ -860,9 +875,11 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, KillProcessZerosAudioStreams) {
       shell()->web_contents()->GetMainFrame()->GetProcess());
 
   {
-    // Start audio and wait for it to become audible.
+    // Start audio and wait for it to become audible, in both the frame *and*
+    // the page.
     base::RunLoop run_loop;
     AudioStartObserver observer(shell()->web_contents(),
+                                shell()->web_contents()->GetMainFrame(),
                                 run_loop.QuitClosure());
 
     std::string result;
@@ -898,8 +915,8 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, KillProcessZerosAudioStreams) {
     // Cycle UI and IO loop once to ensure OnChannelClosing() has been delivered
     // to audio stream owners and they get a chance to notify of stream closure.
     base::RunLoop run_loop;
-    base::PostTask(FROM_HERE, {BrowserThread::IO},
-                   media::BindToCurrentLoop(run_loop.QuitClosure()));
+    GetIOThreadTaskRunner({})->PostTask(
+        FROM_HERE, media::BindToCurrentLoop(run_loop.QuitClosure()));
     run_loop.Run();
   }
 
@@ -1010,8 +1027,8 @@ IN_PROC_BROWSER_TEST_F(CaptureStreamRenderProcessHostTest,
     // Cycle UI and IO loop once to ensure OnChannelClosing() has been delivered
     // to audio stream owners and they get a chance to notify of stream closure.
     base::RunLoop run_loop;
-    base::PostTask(FROM_HERE, {BrowserThread::IO},
-                   media::BindToCurrentLoop(run_loop.QuitClosure()));
+    GetIOThreadTaskRunner({})->PostTask(
+        FROM_HERE, media::BindToCurrentLoop(run_loop.QuitClosure()));
     run_loop.Run();
   }
 
@@ -1076,8 +1093,8 @@ IN_PROC_BROWSER_TEST_F(CaptureStreamRenderProcessHostTest,
     // Cycle UI and IO loop once to ensure OnChannelClosing() has been delivered
     // to audio stream owners and they get a chance to notify of stream closure.
     base::RunLoop run_loop;
-    base::PostTask(FROM_HERE, {BrowserThread::IO},
-                   media::BindToCurrentLoop(run_loop.QuitClosure()));
+    GetIOThreadTaskRunner({})->PostTask(
+        FROM_HERE, media::BindToCurrentLoop(run_loop.QuitClosure()));
     run_loop.Run();
   }
 
@@ -1107,6 +1124,11 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, KeepAliveRendererProcess) {
       shell()->web_contents()->GetMainFrame());
   RenderProcessHostImpl* rph =
       static_cast<RenderProcessHostImpl*>(rfh->GetProcess());
+
+  // Disable the BackForwardCache to ensure the old process is going to be
+  // released.
+  DisableBackForwardCacheForTesting(shell()->web_contents(),
+                                    BackForwardCache::TEST_ASSUMES_NO_CACHING);
 
   host_destructions_ = 0;
   process_exits_ = 0;
@@ -1278,8 +1300,7 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, LowPriorityFramesDisabled) {
   RenderProcessHost::SetRunRendererInProcess(true);
   RenderProcessHostImpl* process = static_cast<RenderProcessHostImpl*>(
       RenderProcessHostImpl::CreateRenderProcessHost(
-          ShellContentBrowserClient::Get()->browser_context(), nullptr,
-          nullptr));
+          ShellContentBrowserClient::Get()->browser_context(), nullptr));
   // It starts off as normal priority.
   EXPECT_FALSE(process->IsProcessBackgrounded());
   // With the feature off it stays low priority when adding low priority frames.
@@ -1300,8 +1321,7 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, PriorityOverride) {
   RenderProcessHost::SetRunRendererInProcess(true);
   RenderProcessHostImpl* process = static_cast<RenderProcessHostImpl*>(
       RenderProcessHostImpl::CreateRenderProcessHost(
-          ShellContentBrowserClient::Get()->browser_context(), nullptr,
-          nullptr));
+          ShellContentBrowserClient::Get()->browser_context(), nullptr));
 
   // It starts off as normal priority with no override.
   EXPECT_FALSE(process->HasPriorityOverride());
@@ -1342,7 +1362,7 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, PriorityOverride) {
 // is called.
 IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, ConstructedButNotInitializedYet) {
   RenderProcessHost* process = RenderProcessHostImpl::CreateRenderProcessHost(
-      ShellContentBrowserClient::Get()->browser_context(), nullptr, nullptr);
+      ShellContentBrowserClient::Get()->browser_context(), nullptr);
 
   // Just verifying that the arguments of CreateRenderProcessHost got processed
   // correctly.
@@ -1372,7 +1392,7 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, ConstructedButNotInitializedYet) {
 // This test verifies that a fast shutdown is possible for a starting process.
 IN_PROC_BROWSER_TEST_F(RenderProcessHostTest, FastShutdownForStartingProcess) {
   RenderProcessHost* process = RenderProcessHostImpl::CreateRenderProcessHost(
-      ShellContentBrowserClient::Get()->browser_context(), nullptr, nullptr);
+      ShellContentBrowserClient::Get()->browser_context(), nullptr);
   process->Init();
   EXPECT_TRUE(process->FastShutdownIfPossible());
   process->Cleanup();
@@ -1423,8 +1443,7 @@ class RenderProcessHostFramePriorityTest : public RenderProcessHostTest {
     // Create the process itself.
     process_ = static_cast<RenderProcessHostImpl*>(
         RenderProcessHostImpl::CreateRenderProcessHost(
-            ShellContentBrowserClient::Get()->browser_context(), nullptr,
-            nullptr));
+            ShellContentBrowserClient::Get()->browser_context(), nullptr));
     // For these tests, assume something is always visible.
     SetVisibleClients(process_, 1);
     // Any advancement before Init is ignored.

@@ -52,8 +52,6 @@ class MockQuicSpdyClientSession : public QuicSpdyClientSession {
 
   void set_authorized(bool authorized) { authorized_ = authorized; }
 
-  MOCK_METHOD1(CloseStream, void(QuicStreamId stream_id));
-
  private:
   QuicCryptoClientConfig crypto_config_;
 
@@ -227,7 +225,6 @@ TEST_F(QuicClientPromisedInfoTest, PushPromiseMismatch) {
   EXPECT_CALL(*connection_, SendControlFrame(_));
   EXPECT_CALL(*connection_,
               OnStreamReset(promise_id_, QUIC_PROMISE_VARY_MISMATCH));
-  EXPECT_CALL(session_, CloseStream(promise_id_));
 
   promised->HandleClientRequest(client_request_, &delegate);
 }
@@ -303,7 +300,6 @@ TEST_F(QuicClientPromisedInfoTest, PushPromiseWaitCancels) {
   session_.GetOrCreateStream(promise_id_);
 
   // Cancel the promised stream.
-  EXPECT_CALL(session_, CloseStream(promise_id_));
   EXPECT_CALL(*connection_, SendControlFrame(_));
   EXPECT_CALL(*connection_, OnStreamReset(promise_id_, QUIC_STREAM_CANCELLED));
   promised->Cancel();
@@ -327,11 +323,10 @@ TEST_F(QuicClientPromisedInfoTest, PushPromiseDataClosed) {
   promise_stream->OnStreamHeaderList(false, headers.uncompressed_header_bytes(),
                                      headers);
 
-  EXPECT_CALL(session_, CloseStream(promise_id_));
   EXPECT_CALL(*connection_, SendControlFrame(_));
   EXPECT_CALL(*connection_,
               OnStreamReset(promise_id_, QUIC_STREAM_PEER_GOING_AWAY));
-  session_.SendRstStream(promise_id_, QUIC_STREAM_PEER_GOING_AWAY, 0);
+  session_.ResetStream(promise_id_, QUIC_STREAM_PEER_GOING_AWAY);
 
   // Now initiate rendezvous.
   TestPushPromiseDelegate delegate(/*match=*/true);

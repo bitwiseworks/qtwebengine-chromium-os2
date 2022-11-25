@@ -19,22 +19,12 @@
 namespace content {
 class BrowserAccessibilityWin;
 
-// {3761326A-34B2-465A-835D-7A3D8F4EFB92}
-static const GUID kUiaTestCompleteSentinelGuid = {
-    0x3761326a,
-    0x34b2,
-    0x465a,
-    {0x83, 0x5d, 0x7a, 0x3d, 0x8f, 0x4e, 0xfb, 0x92}};
-static const wchar_t kUiaTestCompleteSentinel[] = L"kUiaTestCompleteSentinel";
-
 // Manages a tree of BrowserAccessibilityWin objects.
 class CONTENT_EXPORT BrowserAccessibilityManagerWin
     : public BrowserAccessibilityManager {
  public:
-  BrowserAccessibilityManagerWin(
-      const ui::AXTreeUpdate& initial_tree,
-      BrowserAccessibilityDelegate* delegate,
-      BrowserAccessibilityFactory* factory = new BrowserAccessibilityFactory());
+  BrowserAccessibilityManagerWin(const ui::AXTreeUpdate& initial_tree,
+                                 BrowserAccessibilityDelegate* delegate);
 
   ~BrowserAccessibilityManagerWin() override;
 
@@ -86,10 +76,41 @@ class CONTENT_EXPORT BrowserAccessibilityManagerWin
       bool root_changed,
       const std::vector<ui::AXTreeObserver::Change>& changes) override;
 
-  bool ShouldFireEventForNode(BrowserAccessibility* node) const;
-
  private:
-  void HandleSelectedStateChanged(BrowserAccessibility* node);
+  struct SelectionEvents {
+    std::vector<BrowserAccessibility*> added;
+    std::vector<BrowserAccessibility*> removed;
+    SelectionEvents();
+    ~SelectionEvents();
+  };
+
+  using SelectionEventsMap = std::map<BrowserAccessibility*, SelectionEvents>;
+  using IsSelectedPredicate =
+      base::RepeatingCallback<bool(BrowserAccessibility*)>;
+  using FirePlatformSelectionEventsCallback =
+      base::RepeatingCallback<void(BrowserAccessibility*,
+                                   BrowserAccessibility*,
+                                   const SelectionEvents&)>;
+
+  static bool IsIA2NodeSelected(BrowserAccessibility* node);
+  static bool IsUIANodeSelected(BrowserAccessibility* node);
+
+  void FireIA2SelectionEvents(BrowserAccessibility* container,
+                              BrowserAccessibility* only_selected_child,
+                              const SelectionEvents& changes);
+  void FireUIASelectionEvents(BrowserAccessibility* container,
+                              BrowserAccessibility* only_selected_child,
+                              const SelectionEvents& changes);
+
+  static void HandleSelectedStateChanged(
+      SelectionEventsMap& selection_events_map,
+      BrowserAccessibility* node,
+      bool is_selected);
+
+  static void FinalizeSelectionEvents(
+      SelectionEventsMap& selection_events_map,
+      IsSelectedPredicate is_selected_predicate,
+      FirePlatformSelectionEventsCallback fire_platform_events_callback);
 
   // Give BrowserAccessibilityManager::Create access to our constructor.
   friend class BrowserAccessibilityManager;
@@ -121,13 +142,8 @@ class CONTENT_EXPORT BrowserAccessibilityManagerWin
   // Keep track of selection changes so we can optimize UIA event firing.
   // Pointers are only stored for the duration of |OnAccessibilityEvents|, and
   // the map is cleared in |FinalizeAccessibilityEvents|.
-  struct SelectionEvents {
-    std::vector<BrowserAccessibility*> added;
-    std::vector<BrowserAccessibility*> removed;
-    SelectionEvents();
-    ~SelectionEvents();
-  };
-  std::map<BrowserAccessibility*, SelectionEvents> selection_events_;
+  SelectionEventsMap ia2_selection_events_;
+  SelectionEventsMap uia_selection_events_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserAccessibilityManagerWin);
 };

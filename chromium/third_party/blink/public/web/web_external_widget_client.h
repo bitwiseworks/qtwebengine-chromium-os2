@@ -5,11 +5,15 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_EXTERNAL_WIDGET_CLIENT_H_
 #define THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_EXTERNAL_WIDGET_CLIENT_H_
 
+#include <vector>
+
+#include "cc/trees/layer_tree_host.h"
 #include "third_party/blink/public/platform/web_input_event_result.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace blink {
 class WebCoalescedInputEvent;
+class WebGestureEvent;
 
 // The interface from blink to Widgets with implementations outside of blink.
 class WebExternalWidgetClient {
@@ -36,6 +40,37 @@ class WebExternalWidgetClient {
   // Record the time it took for the first paint after the widget transitioned
   // from background inactive to active.
   virtual void RecordTimeToFirstActivePaint(base::TimeDelta duration) {}
+
+  using LayerTreeFrameSinkCallback = base::OnceCallback<void(
+      std::unique_ptr<cc::LayerTreeFrameSink>,
+      std::unique_ptr<cc::RenderFrameMetadataObserver>)>;
+
+  // Requests a LayerTreeFrameSink to submit CompositorFrames to.
+  virtual void RequestNewLayerTreeFrameSink(
+      LayerTreeFrameSinkCallback callback) = 0;
+
+  // Notification that the BeginMainFrame completed, was committed into the
+  // compositor (thread) and submitted to the display compositor.
+  virtual void DidCommitAndDrawCompositorFrame() = 0;
+
+  // Called before gesture events are processed and allows the
+  // client to handle the event itself. Return true if event was handled
+  // and further processing should stop.
+  virtual bool WillHandleGestureEvent(const WebGestureEvent& event) {
+    return false;
+  }
+
+  virtual bool SupportsBufferedTouchEvents() { return false; }
+
+  // Returns whether we handled a GestureScrollEvent.
+  virtual void DidHandleGestureScrollEvent(
+      const WebGestureEvent& gesture_event,
+      const gfx::Vector2dF& unused_delta,
+      const cc::OverscrollBehavior& overscroll_behavior,
+      bool event_processed) {}
+
+  // Callback to notify new visual properties have been applied.
+  virtual void DidUpdateVisualProperties() {}
 };
 
 }  // namespace blink

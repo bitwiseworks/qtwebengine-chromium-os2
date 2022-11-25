@@ -28,10 +28,6 @@ const char kEnableExperimentalAccessibilityLanguageDetection[] =
 const char kEnableExperimentalAccessibilityLanguageDetectionDynamic[] =
     "enable-experimental-accessibility-language-detection-dynamic";
 
-// Shows setting to enable Switch Access before it has launched.
-const char kEnableExperimentalAccessibilitySwitchAccess[] =
-    "enable-experimental-accessibility-switch-access";
-
 // Enables in progress Switch Access features for text input.
 const char kEnableExperimentalAccessibilitySwitchAccessText[] =
     "enable-experimental-accessibility-switch-access-text";
@@ -40,13 +36,18 @@ const char kEnableExperimentalAccessibilitySwitchAccessText[] =
 const char kEnableExperimentalAccessibilityChromeVoxAnnotations[] =
     "enable-experimental-accessibility-chromevox-annotations";
 
-// Enables language switching feature that hasn't launched yet.
-const char kEnableExperimentalAccessibilityChromeVoxLanguageSwitching[] =
-    "enable-experimental-accessibility-chromevox-language-switching";
+// Enables interactive tutorial for ChromeVox.
+const char kEnableExperimentalAccessibilityChromeVoxTutorial[] =
+    "enable-experimental-accessibility-chromevox-tutorial";
 
-// Enables search bar to search the ChromeVox menus.
-const char kEnableExperimentalAccessibilityChromeVoxSearchMenus[] =
-    "enable-experimental-accessibility-chromevox-search-menus";
+// Enables new magnifier focus following feature, which provides richer focus
+// following experience.
+const char kEnableExperimentalAccessibilityMagnifierNewFocusFollowing[] =
+    "enable-experimental-accessibility-magnifier-new-focus-following";
+
+// Enables Switch Access point scanning. This feature hasn't launched yet.
+const char kEnableSwitchAccessPointScanning[] =
+    "enable-switch-access-point-scanning";
 
 bool IsExperimentalAccessibilityLanguageDetectionEnabled() {
   return base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -63,6 +64,11 @@ bool IsExperimentalAccessibilitySwitchAccessTextEnabled() {
       ::switches::kEnableExperimentalAccessibilitySwitchAccessText);
 }
 
+bool IsSwitchAccessPointScanningEnabled() {
+  return base::CommandLine::ForCurrentProcess()->HasSwitch(
+      ::switches::kEnableSwitchAccessPointScanning);
+}
+
 #if defined(OS_WIN)
 // Enables UI Automation platform API in addition to the IAccessible API.
 const char kEnableExperimentalUIAutomation[] =
@@ -77,5 +83,9 @@ bool IsExperimentalAccessibilityPlatformUIAEnabled() {
   return false;
 #endif
 }
+
+// Optionally disable AXMenuList, which makes the internal pop-up menu
+// UI for a select element directly accessible.
+const char kDisableAXMenuList[] = "disable-ax-menu-list";
 
 }  // namespace switches

@@ -28,6 +28,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+import * as TextUtils from '../text_utils/text_utils.js';  // eslint-disable-line no-unused-vars
+
 import * as ARIAUtils from './ARIAUtils.js';
 import {Size} from './Geometry.js';
 import {AnchorBehavior, GlassPane} from './GlassPane.js';
@@ -57,7 +59,7 @@ export class SuggestBoxDelegate {
 }
 
 /**
- * @implements {ListDelegate}
+ * @implements {ListDelegate<!Suggestion>}
  */
 export class SuggestBox {
   /**
@@ -154,8 +156,8 @@ export class SuggestBox {
     }
     // TODO(dgozman): take document as a parameter.
     this._glassPane.show(document);
-    this._rowHeight =
-        measurePreferredSize(this.createElementForItem({text: '1', subtitle: '12'}), this._element).height;
+    const suggestion = /** @type {!Suggestion} */ ({text: '1', subtitle: '12'});
+    this._rowHeight = measurePreferredSize(this.createElementForItem(suggestion), this._element).height;
   }
 
   hide() {
@@ -206,7 +208,9 @@ export class SuggestBox {
    */
   createElementForItem(item) {
     const query = this._userEnteredText;
-    const element = createElementWithClass('div', 'suggest-box-content-item source-code');
+    const element = document.createElement('div');
+    element.classList.add('suggest-box-content-item');
+    element.classList.add('source-code');
     if (item.iconType) {
       const icon = Icon.create(item.iconType, 'suggestion-icon');
       element.appendChild(icon);
@@ -229,7 +233,7 @@ export class SuggestBox {
     titleElement.createChild('span').textContent = displayText.substring(index > -1 ? index + query.length : 0);
     titleElement.createChild('span', 'spacer');
     if (item.subtitleRenderer) {
-      const subtitleElement = item.subtitleRenderer.call(null);
+      const subtitleElement = /** @type {!HTMLElement} */ (item.subtitleRenderer.call(null));
       subtitleElement.classList.add('suggestion-subtitle');
       element.appendChild(subtitleElement);
     } else if (item.subtitle) {
@@ -399,25 +403,28 @@ export class SuggestBox {
   *      iconType: (string|undefined),
   *      priority: (number|undefined),
   *      isSecondary: (boolean|undefined),
-  *      subtitleRenderer: (function():!Element|undefined),
+  *      subtitleRenderer: ((function():!Element)|undefined),
   *      selectionRange: ({startColumn: number, endColumn: number}|undefined),
   *      hideGhostText: (boolean|undefined)
   * }}
   */
+// @ts-ignore typedef
 export let Suggestion;
 
 /**
   * @typedef {!Array<!Suggestion>}
   */
+// @ts-ignore typedef
 export let Suggestions;
 
 /**
   * @typedef {{
-    *     substituteRangeCallback: ((function(number, number):?TextUtils.TextRange)|undefined),
+    *     substituteRangeCallback: ((function(number, number):?TextUtils.TextRange.TextRange)|undefined),
     *     tooltipCallback: ((function(number, number):!Promise<?Element>)|undefined),
-    *     suggestionsCallback: ((function(!TextUtils.TextRange, !TextUtils.TextRange, boolean=):?Promise.<!Suggestions>)|undefined),
+    *     suggestionsCallback: ((function(!TextUtils.TextRange.TextRange, !TextUtils.TextRange.TextRange, boolean=):?Promise.<!Suggestions>)|undefined),
     *     isWordChar: ((function(string):boolean)|undefined),
     *     anchorBehavior: (AnchorBehavior|undefined)
     * }}
     */
+// @ts-ignore typedef
 export let AutocompleteConfig;

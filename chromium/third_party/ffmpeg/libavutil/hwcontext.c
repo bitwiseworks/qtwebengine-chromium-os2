@@ -422,7 +422,7 @@ static int transfer_data_alloc(AVFrame *dst, const AVFrame *src, int flags)
     frame_tmp->width  = ctx->width;
     frame_tmp->height = ctx->height;
 
-    ret = av_frame_get_buffer(frame_tmp, 32);
+    ret = av_frame_get_buffer(frame_tmp, 0);
     if (ret < 0)
         goto fail;
 
@@ -557,6 +557,8 @@ int av_hwframe_get_buffer(AVBufferRef *hwframe_ref, AVFrame *frame, int flags)
         return ret;
     }
 
+    frame->extended_data = frame->data;
+
     return 0;
 }
 
@@ -641,9 +643,10 @@ fail:
     return ret;
 }
 
-int av_hwdevice_ctx_create_derived(AVBufferRef **dst_ref_ptr,
-                                   enum AVHWDeviceType type,
-                                   AVBufferRef *src_ref, int flags)
+int av_hwdevice_ctx_create_derived_opts(AVBufferRef **dst_ref_ptr,
+                                        enum AVHWDeviceType type,
+                                        AVBufferRef *src_ref,
+                                        AVDictionary *options, int flags)
 {
     AVBufferRef *dst_ref = NULL, *tmp_ref;
     AVHWDeviceContext *dst_ctx, *tmp_ctx;
@@ -676,6 +679,7 @@ int av_hwdevice_ctx_create_derived(AVBufferRef **dst_ref_ptr,
         if (dst_ctx->internal->hw_type->device_derive) {
             ret = dst_ctx->internal->hw_type->device_derive(dst_ctx,
                                                             tmp_ctx,
+                                                            options,
                                                             flags);
             if (ret == 0) {
                 dst_ctx->internal->source_device = av_buffer_ref(src_ref);
@@ -705,6 +709,14 @@ fail:
     av_buffer_unref(&dst_ref);
     *dst_ref_ptr = NULL;
     return ret;
+}
+
+int av_hwdevice_ctx_create_derived(AVBufferRef **dst_ref_ptr,
+                                   enum AVHWDeviceType type,
+                                   AVBufferRef *src_ref, int flags)
+{
+    return av_hwdevice_ctx_create_derived_opts(dst_ref_ptr, type, src_ref,
+                                               NULL, flags);
 }
 
 static void ff_hwframe_unmap(void *opaque, uint8_t *data)

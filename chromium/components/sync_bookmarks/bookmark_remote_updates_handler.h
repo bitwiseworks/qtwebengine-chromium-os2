@@ -52,6 +52,15 @@ class BookmarkRemoteUpdatesHandler {
   static std::vector<const syncer::UpdateResponseData*> ReorderUpdatesForTest(
       const syncer::UpdateResponseDataList* updates);
 
+  size_t valid_updates_without_full_title_for_uma() const {
+    return valid_updates_without_full_title_;
+  }
+
+  static size_t ComputeChildNodeIndexForTest(
+      const bookmarks::BookmarkNode* parent,
+      const sync_pb::UniquePosition& unique_position,
+      const SyncedBookmarkTracker* bookmark_tracker);
+
  private:
   // Reorders incoming updates such that parent creation is before child
   // creation and child deletion is before parent deletion, and deletions should
@@ -106,13 +115,18 @@ class BookmarkRemoteUpdatesHandler {
   // from |bookmark_tracker_|.
   void RemoveEntityAndChildrenFromTracker(const bookmarks::BookmarkNode* node);
 
+  // Initiate reupload for the update with |entity_data|. |tracked_entity| must
+  // not be nullptr.
   void ReuploadEntityIfNeeded(
-      const sync_pb::BookmarkSpecifics& specifics,
+      const syncer::EntityData& entity_data,
       const SyncedBookmarkTracker::Entity* tracked_entity);
 
   bookmarks::BookmarkModel* const bookmark_model_;
   favicon::FaviconService* const favicon_service_;
   SyncedBookmarkTracker* const bookmark_tracker_;
+
+  // Counts number of initiated reuploads.
+  size_t valid_updates_without_full_title_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkRemoteUpdatesHandler);
 };

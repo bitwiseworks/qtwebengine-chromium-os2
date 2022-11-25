@@ -11,35 +11,29 @@
 #include "base/scoped_observer.h"
 #include "build/build_config.h"
 #include "content/browser/browser_interface_broker_impl.h"
-#include "content/public/browser/dedicated_worker_service.h"
 #include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_process_host_observer.h"
-#include "media/mojo/mojom/video_decode_perf_history.mojom.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/network/public/cpp/cross_origin_embedder_policy.h"
-#include "third_party/blink/public/mojom/filesystem/file_system.mojom-forward.h"
+#include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/mojom/idle/idle_manager.mojom-forward.h"
-#include "third_party/blink/public/mojom/payments/payment_app.mojom-forward.h"
+#include "third_party/blink/public/mojom/loader/content_security_notifier.mojom.h"
 #include "third_party/blink/public/mojom/sms/sms_receiver.mojom-forward.h"
 #include "third_party/blink/public/mojom/usb/web_usb_service.mojom-forward.h"
 #include "third_party/blink/public/mojom/wake_lock/wake_lock.mojom-forward.h"
 #include "third_party/blink/public/mojom/websockets/websocket_connector.mojom-forward.h"
 #include "third_party/blink/public/mojom/webtransport/quic_transport_connector.mojom-forward.h"
-#include "third_party/blink/public/mojom/worker/dedicated_worker_host.mojom.h"
 #include "third_party/blink/public/mojom/worker/dedicated_worker_host_factory.mojom.h"
 #include "third_party/blink/public/mojom/worker/subresource_loader_updater.mojom.h"
+#include "url/origin.h"
 
 #if !defined(OS_ANDROID)
 #include "third_party/blink/public/mojom/serial/serial.mojom-forward.h"
 #endif
-
-namespace url {
-class Origin;
-}
 
 namespace content {
 
@@ -49,43 +43,32 @@ class ServiceWorkerMainResourceHandle;
 class ServiceWorkerObjectHost;
 class StoragePartitionImpl;
 
-// Creates a host factory for a dedicated worker. This must be called on the UI
-// thread.
-CONTENT_EXPORT void CreateDedicatedWorkerHostFactory(
-    int worker_process_id,
-    base::Optional<GlobalFrameRoutingId> creator_render_frame_host_id,
-    GlobalFrameRoutingId ancestor_render_frame_host_id,
-    const url::Origin& creator_origin,
-    const network::CrossOriginEmbedderPolicy& cross_origin_embedder_policy,
-    mojo::PendingRemote<network::mojom::CrossOriginEmbedderPolicyReporter>
-        coep_reporter,
-    mojo::PendingReceiver<blink::mojom::DedicatedWorkerHostFactory> receiver);
-
 // A host for a single dedicated worker. It deletes itself upon Mojo
 // disconnection from the worker in the renderer or when the RenderProcessHost
 // of the worker is destroyed. This lives on the UI thread.
-class DedicatedWorkerHost final : public blink::mojom::DedicatedWorkerHost,
-                                  public RenderProcessHostObserver {
+class DedicatedWorkerHost final : public RenderProcessHostObserver {
  public:
   DedicatedWorkerHost(
       DedicatedWorkerServiceImpl* service,
-      DedicatedWorkerId id,
+      const blink::DedicatedWorkerToken& token,
       RenderProcessHost* worker_process_host,
       base::Optional<GlobalFrameRoutingId> creator_render_frame_host_id,
       GlobalFrameRoutingId ancestor_render_frame_host_id,
       const url::Origin& creator_origin,
       const network::CrossOriginEmbedderPolicy& cross_origin_embedder_policy,
       mojo::PendingRemote<network::mojom::CrossOriginEmbedderPolicyReporter>
-          coep_reporter,
-      mojo::PendingReceiver<blink::mojom::DedicatedWorkerHost> host);
+          coep_reporter);
   ~DedicatedWorkerHost() final;
 
   void BindBrowserInterfaceBrokerReceiver(
       mojo::PendingReceiver<blink::mojom::BrowserInterfaceBroker> receiver);
 
-  RenderProcessHost* GetProcessHost() { return worker_process_host_; }
-  const url::Origin& GetWorkerOrigin() { return worker_origin_; }
+  const blink::DedicatedWorkerToken& GetToken() const { return token_; }
+  RenderProcessHost* GetProcessHost() const { return worker_process_host_; }
+  const url::Origin& GetWorkerOrigin() const { return worker_origin_; }
 
+  void CreateContentSecurityNotifier(
+      mojo::PendingReceiver<blink::mojom::ContentSecurityNotifier> receiver);
   void CreateIdleManager(
       mojo::PendingReceiver<blink::mojom::IdleManager> receiver);
   void CreateNestedDedicatedWorker(
@@ -107,14 +90,6 @@ class DedicatedWorkerHost final : public blink::mojom::DedicatedWorkerHost,
   void BindSerialService(
       mojo::PendingReceiver<blink::mojom::SerialService> receiver);
 #endif
-
-  // blink::mojom::DedicatedWorkerHost:
-  void LifecycleStateChanged(blink::mojom::FrameLifecycleState state) override;
-
-  // TODO(dtapuska): This state needs to be hooked up to the
-  // ServiceWorkerProviderHost so the correct state is queried when looking
-  // for frozen dedicated workers. crbug.com/968417
-  bool is_frozen() const { return is_frozen_; }
 
   // PlzDedicatedWorker:
   void StartScriptLoad(
@@ -182,8 +157,8 @@ class DedicatedWorkerHost final : public blink::mojom::DedicatedWorkerHost,
 
   DedicatedWorkerServiceImpl* const service_;
 
-  // An internal ID that is unique within a storage partition.
-  const DedicatedWorkerId id_;
+  // The renderer generated ID of this worker, unique across all processes.
+  const blink::DedicatedWorkerToken token_;
 
   // The RenderProcessHost that hosts this worker.
   RenderProcessHost* const worker_process_host_;
@@ -206,10 +181,6 @@ class DedicatedWorkerHost final : public blink::mojom::DedicatedWorkerHost,
   // https://html.spec.whatwg.org/C/#concept-settings-object-origin
   const url::Origin worker_origin_;
 
-  // The network isolation key to be used for both the worker script and the
-  // worker's subresources.
-  net::NetworkIsolationKey network_isolation_key_;
-
   // The DedicatedWorker's Cross-Origin-Embedder-Policy(COEP). It is equals to
   // the nearest ancestor frame host's COEP:
   // https://mikewest.github.io/corpp/#initialize-embedder-policy-for-global
@@ -227,13 +198,9 @@ class DedicatedWorkerHost final : public blink::mojom::DedicatedWorkerHost,
       this};
   mojo::Receiver<blink::mojom::BrowserInterfaceBroker> broker_receiver_{
       &broker_};
-  mojo::Receiver<blink::mojom::DedicatedWorkerHost> host_receiver_;
 
   // Indicates if subresource loaders of this worker support file URLs.
   bool file_url_support_ = false;
-
-  // The liveness state of the dedicated worker in the renderer.
-  bool is_frozen_ = false;
 
   // For observing Network Service connection errors only.
   mojo::Remote<network::mojom::URLLoaderFactory>

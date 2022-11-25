@@ -36,7 +36,7 @@
 #include "avcodec.h"
 #include "blockdsp.h"
 #include "copy_block.h"
-#include "hwaccel.h"
+#include "hwconfig.h"
 #include "idctdsp.h"
 #include "internal.h"
 #include "jpegtables.h"
@@ -497,6 +497,11 @@ int ff_mjpeg_decode_sof(MJpegDecodeContext *s)
                 if (i & 1) s->upscale_h[j/2] = 1;
                 else       s->upscale_v[j/2] = 1;
             }
+        }
+
+        if (s->bayer) {
+            if (pix_fmt_id != 0x11110000 && pix_fmt_id != 0x11000000)
+                goto unk_pixfmt;
         }
 
         switch (pix_fmt_id) {

@@ -11,6 +11,7 @@
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
 #include "base/run_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -141,6 +142,7 @@ class FakeUserPolicySigninService : public policy::UserPolicySigninService {
     account_id_ = account_id;
     email_ = email;
   }
+  void set_is_hanging(bool is_hanging) { is_hanging_ = is_hanging; }
 
   // policy::UserPolicySigninService:
   void RegisterForPolicyWithAccountId(
@@ -149,7 +151,8 @@ class FakeUserPolicySigninService : public policy::UserPolicySigninService {
       PolicyRegistrationCallback callback) override {
     EXPECT_EQ(email_, username);
     EXPECT_EQ(account_id_, account_id);
-    std::move(callback).Run(dm_token_, client_id_);
+    if (!is_hanging_)
+      std::move(callback).Run(dm_token_, client_id_);
   }
 
   // policy::UserPolicySigninServiceBase:
@@ -159,7 +162,8 @@ class FakeUserPolicySigninService : public policy::UserPolicySigninService {
       const std::string& client_id,
       scoped_refptr<network::SharedURLLoaderFactory> test_shared_loader_factory,
       PolicyFetchCallback callback) override {
-    std::move(callback).Run(true);
+    if (!is_hanging_)
+      std::move(callback).Run(true);
   }
 
  private:
@@ -167,6 +171,7 @@ class FakeUserPolicySigninService : public policy::UserPolicySigninService {
   std::string client_id_;
   CoreAccountId account_id_;
   std::string email_;
+  bool is_hanging_ = false;
 };
 
 std::unique_ptr<KeyedService> BuildMockSyncService(
@@ -220,7 +225,7 @@ class DiceTurnSyncOnHelperTest : public testing::Test {
   }
 
   ~DiceTurnSyncOnHelperTest() override {
-    DCHECK(delegate_destroyed_);
+    DCHECK_GT(delegate_destroyed_, 0);
     // Destroy extra profiles.
     TestingBrowserProcess::GetGlobal()->SetProfileManager(nullptr);
     base::RunLoop().RunUntilIdle();
@@ -239,7 +244,7 @@ class DiceTurnSyncOnHelperTest : public testing::Test {
     return user_policy_signin_service_;
   }
   const std::string initial_device_id() { return initial_device_id_; }
-  bool delegate_destroyed() const { return delegate_destroyed_; }
+  int delegate_destroyed() const { return delegate_destroyed_; }
   std::string enterprise_confirmation_email() const {
     return enterprise_confirmation_email_;
   }
@@ -379,7 +384,7 @@ class DiceTurnSyncOnHelperTest : public testing::Test {
     switched_to_new_profile_ = true;
   }
 
-  void OnDelegateDestroyed() { delegate_destroyed_ = true; }
+  void OnDelegateDestroyed() { ++delegate_destroyed_; }
 
  protected:
   // Delegate behavior.
@@ -414,7 +419,7 @@ class DiceTurnSyncOnHelperTest : public testing::Test {
   testing::NiceMock<syncer::SyncUserSettingsMock> mock_sync_settings_;
 
   // State of the delegate calls.
-  bool delegate_destroyed_ = false;
+  int delegate_destroyed_ = 0;
   std::string login_error_email_;
   std::string login_error_message_;
   std::string enterprise_confirmation_email_;
@@ -705,9 +710,7 @@ TEST_F(DiceTurnSyncOnHelperTest, ShowSyncDialogForEndConsumerAccount) {
   std::unique_ptr<unified_consent::UrlKeyedDataCollectionConsentHelper>
       url_keyed_collection_helper =
           unified_consent::UrlKeyedDataCollectionConsentHelper::
-              NewAnonymizedDataCollectionConsentHelper(
-                  pref_service,
-                  ProfileSyncServiceFactory::GetForProfile(profile()));
+              NewAnonymizedDataCollectionConsentHelper(pref_service);
   EXPECT_FALSE(url_keyed_collection_helper->IsEnabled());
 
   // Signin flow.
@@ -816,5 +819,33 @@ TEST_F(DiceTurnSyncOnHelperTest, ProfileDeletion) {
   ClearProfile();
 
   // DiceTurnSyncOnHelper was destroyed.
-  EXPECT_TRUE(delegate_destroyed());
+  EXPECT_EQ(1, delegate_destroyed());
+}
+
+// Checks that an existing instance is deleted when a new one is created.
+TEST_F(DiceTurnSyncOnHelperTest, AbortExisting) {
+  // Create a first instance, stuck on policy requests.
+  user_policy_signin_service()->set_is_hanging(true);
+  CreateDiceTurnOnSyncHelper(
+      DiceTurnSyncOnHelper::SigninAbortedMode::REMOVE_ACCOUNT);
+  // Check that it did not complete.
+  EXPECT_FALSE(identity_manager()->HasPrimaryAccount());
+  EXPECT_TRUE(identity_manager()->HasAccountWithRefreshToken(account_id()));
+  CheckDelegateCalls();
+
+  // Create a new helper and let it complete.
+  user_policy_signin_service()->set_is_hanging(false);
+  expected_sync_confirmation_shown_ = true;
+  sync_confirmation_result_ = LoginUIService::SyncConfirmationUIClosedResult::
+      SYNC_WITH_DEFAULT_SETTINGS;
+  SetExpectationsForSyncStartupCompleted();
+  CreateDiceTurnOnSyncHelper(
+      DiceTurnSyncOnHelper::SigninAbortedMode::KEEP_ACCOUNT);
+  // Check that it completed.
+  CheckDelegateCalls();
+  EXPECT_TRUE(identity_manager()->HasPrimaryAccount());
+  // The token is still there, even though the first helper had REMOVE_ACCOUNT.
+  EXPECT_TRUE(identity_manager()->HasAccountWithRefreshToken(account_id()));
+  // Both delegates were destroyed.
+  EXPECT_EQ(2, delegate_destroyed());
 }

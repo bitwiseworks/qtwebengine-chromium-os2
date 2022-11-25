@@ -34,15 +34,21 @@ JSRegExp::Type JSRegExp::TypeTag() const {
   return static_cast<JSRegExp::Type>(smi.value());
 }
 
-int JSRegExp::CaptureCount() {
+int JSRegExp::CaptureCount() const {
   switch (TypeTag()) {
     case ATOM:
       return 0;
+    case EXPERIMENTAL:
     case IRREGEXP:
       return Smi::ToInt(DataAt(kIrregexpCaptureCountIndex));
     default:
       UNREACHABLE();
   }
+}
+
+int JSRegExp::MaxRegisterCount() const {
+  CHECK_EQ(TypeTag(), IRREGEXP);
+  return Smi::ToInt(DataAt(kIrregexpMaxRegisterCountIndex));
 }
 
 JSRegExp::Flags JSRegExp::GetFlags() {
@@ -61,7 +67,7 @@ String JSRegExp::Pattern() {
 
 Object JSRegExp::CaptureNameMap() {
   DCHECK(this->data().IsFixedArray());
-  DCHECK_EQ(TypeTag(), IRREGEXP);
+  DCHECK(TypeSupportsCaptures(TypeTag()));
   Object value = DataAt(kIrregexpCaptureNameMapIndex);
   DCHECK_NE(value, Smi::FromInt(JSRegExp::kUninitializedValue));
   return value;
@@ -77,6 +83,14 @@ void JSRegExp::SetDataAt(int index, Object value) {
   DCHECK_GE(index,
             kDataIndex);  // Only implementation data can be set this way.
   FixedArray::cast(data()).set(index, value);
+}
+
+void JSRegExp::SetCaptureNameMap(Handle<FixedArray> capture_name_map) {
+  if (capture_name_map.is_null()) {
+    SetDataAt(JSRegExp::kIrregexpCaptureNameMapIndex, Smi::zero());
+  } else {
+    SetDataAt(JSRegExp::kIrregexpCaptureNameMapIndex, *capture_name_map);
+  }
 }
 
 bool JSRegExp::HasCompiledCode() const {

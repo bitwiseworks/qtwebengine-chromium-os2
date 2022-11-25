@@ -22,14 +22,11 @@ TypeConverter<blink::Manifest, blink::mojom::blink::ManifestPtr>::Convert(
   if (input.is_null())
     return output;
 
-  if (!input->name.IsEmpty()) {
-    output.name = base::NullableString16(blink::WebString(input->name).Utf16());
-  }
+  if (!input->name.IsEmpty())
+    output.name = blink::WebString(input->name).Utf16();
 
-  if (!input->short_name.IsEmpty()) {
-    output.short_name =
-        base::NullableString16(blink::WebString(input->short_name).Utf16());
-  }
+  if (!input->short_name.IsEmpty())
+    output.short_name = blink::WebString(input->short_name).Utf16();
 
   if (!input->start_url.IsEmpty())
     output.start_url = input->start_url;
@@ -52,6 +49,11 @@ TypeConverter<blink::Manifest, blink::mojom::blink::ManifestPtr>::Convert(
     output.file_handlers.push_back(entry.To<blink::Manifest::FileHandler>());
   }
 
+  for (auto& uri_protocol : input->protocol_handlers) {
+    output.protocol_handlers.push_back(
+        uri_protocol.To<blink::Manifest::ProtocolHandler>());
+  }
+
   for (auto& related_application : input->related_applications) {
     output.related_applications.push_back(
         related_application.To<blink::Manifest::RelatedApplication>());
@@ -66,8 +68,7 @@ TypeConverter<blink::Manifest, blink::mojom::blink::ManifestPtr>::Convert(
     output.background_color = input->background_color;
 
   if (!input->gcm_sender_id.IsEmpty()) {
-    output.gcm_sender_id =
-        base::NullableString16(blink::WebString(input->gcm_sender_id).Utf16());
+    output.gcm_sender_id = blink::WebString(input->gcm_sender_id).Utf16();
   }
 
   if (!input->scope.IsEmpty())
@@ -114,13 +115,11 @@ TypeConverter<blink::Manifest::ShortcutItem,
   output.name = blink::WebString(input->name).Utf16();
 
   if (!input->short_name.IsEmpty()) {
-    output.short_name =
-        base::NullableString16(blink::WebString(input->short_name).Utf16());
+    output.short_name = blink::WebString(input->short_name).Utf16();
   }
 
   if (!input->description.IsEmpty()) {
-    output.description =
-        base::NullableString16(blink::WebString(input->description).Utf16());
+    output.description = blink::WebString(input->description).Utf16();
   }
 
   output.url = input->url;
@@ -172,15 +171,14 @@ TypeConverter<blink::Manifest::ShareTargetParams,
     return output;
 
   if (!input->title.IsEmpty()) {
-    output.title =
-        base::NullableString16(blink::WebString(input->title).Utf16());
+    output.title = blink::WebString(input->title).Utf16();
   }
 
   if (!input->text.IsEmpty())
-    output.text = base::NullableString16(blink::WebString(input->text).Utf16());
+    output.text = blink::WebString(input->text).Utf16();
 
   if (!input->url.IsEmpty())
-    output.url = base::NullableString16(blink::WebString(input->url).Utf16());
+    output.url = blink::WebString(input->url).Utf16();
 
   if (input->files.has_value()) {
     for (auto& file : *input->files)
@@ -225,6 +223,18 @@ TypeConverter<blink::Manifest::FileHandler,
   return output;
 }
 
+blink::Manifest::ProtocolHandler
+TypeConverter<blink::Manifest::ProtocolHandler,
+              blink::mojom::blink::ManifestProtocolHandlerPtr>::
+    Convert(const blink::mojom::blink::ManifestProtocolHandlerPtr& input) {
+  blink::Manifest::ProtocolHandler output;
+  if (input.is_null())
+    return output;
+  output.protocol = blink::WebString(input->protocol).Utf16();
+  output.url = input->url;
+  return output;
+}
+
 blink::Manifest::RelatedApplication
 TypeConverter<blink::Manifest::RelatedApplication,
               blink::mojom::blink::ManifestRelatedApplicationPtr>::
@@ -234,15 +244,14 @@ TypeConverter<blink::Manifest::RelatedApplication,
     return output;
 
   if (!input->platform.IsEmpty()) {
-    output.platform =
-        base::NullableString16(blink::WebString(input->platform).Utf16());
+    output.platform = blink::WebString(input->platform).Utf16();
   }
 
   if (input->url.has_value())
     output.url = *input->url;
 
   if (!input->id.IsEmpty())
-    output.id = base::NullableString16(blink::WebString(input->id).Utf16());
+    output.id = blink::WebString(input->id).Utf16();
 
   return output;
 }

@@ -38,11 +38,16 @@
 #include "services/network/public/mojom/referrer_policy.mojom-blink.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/common/feature_policy/document_policy_features.h"
 #include "third_party/blink/public/mojom/feature_policy/feature_policy_feature.mojom-blink.h"
+#include "third_party/blink/public/web/web_print_page_description.h"
 #include "third_party/blink/renderer/bindings/core/v8/isolated_world_csp.h"
+#include "third_party/blink/renderer/bindings/core/v8/script_promise_tester.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_dom_exception.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_throw_dom_exception.h"
 #include "third_party/blink/renderer/core/css/media_query_list_listener.h"
 #include "third_party/blink/renderer/core/css/media_query_matcher.h"
 #include "third_party/blink/renderer/core/dom/document_fragment.h"
@@ -51,8 +56,8 @@
 #include "third_party/blink/renderer/core/dom/range.h"
 #include "third_party/blink/renderer/core/dom/synchronous_mutation_observer.h"
 #include "third_party/blink/renderer/core/dom/text.h"
-#include "third_party/blink/renderer/core/execution_context/agent.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/frame/viewport_data.h"
@@ -61,6 +66,7 @@
 #include "third_party/blink/renderer/core/html/html_link_element.h"
 #include "third_party/blink/renderer/core/loader/appcache/application_cache_host_for_frame.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
+#include "third_party/blink/renderer/core/loader/empty_clients.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/page/validation_message_client.h"
 #include "third_party/blink/renderer/core/testing/color_scheme_helper.h"
@@ -68,7 +74,6 @@
 #include "third_party/blink/renderer/core/testing/scoped_mock_overlay_scrollbars.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
-#include "third_party/blink/renderer/platform/scheduler/public/event_loop.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"
@@ -82,6 +87,12 @@ using network::mojom::ContentSecurityPolicySource;
 using network::mojom::ContentSecurityPolicyType;
 
 class DocumentTest : public PageTestBase {
+ public:
+  static void SimulateHasTrustTokensAnswererConnectionError(
+      Document* document) {
+    document->HasTrustTokensAnswererConnectionError();
+  }
+
  protected:
   void TearDown() override {
     ThreadState::Current()->CollectAllGarbageForTesting();
@@ -101,8 +112,6 @@ namespace {
 class TestSynchronousMutationObserver
     : public GarbageCollected<TestSynchronousMutationObserver>,
       public SynchronousMutationObserver {
-  USING_GARBAGE_COLLECTED_MIXIN(TestSynchronousMutationObserver);
-
  public:
   struct MergeTextNodesRecord : GarbageCollected<MergeTextNodesRecord> {
     Member<const Text> node_;
@@ -116,7 +125,7 @@ class TestSynchronousMutationObserver
           node_to_be_removed_(node_with_index.GetNode()),
           offset_(offset) {}
 
-    void Trace(Visitor* visitor) {
+    void Trace(Visitor* visitor) const {
       visitor->Trace(node_);
       visitor->Trace(node_to_be_removed_);
     }
@@ -138,10 +147,14 @@ class TestSynchronousMutationObserver
           old_length_(old_length),
           new_length_(new_length) {}
 
-    void Trace(Visitor* visitor) { visitor->Trace(node_); }
+    void Trace(Visitor* visitor) const { visitor->Trace(node_); }
   };
 
   explicit TestSynchronousMutationObserver(Document&);
+  TestSynchronousMutationObserver(const TestSynchronousMutationObserver&) =
+      delete;
+  TestSynchronousMutationObserver& operator=(
+      const TestSynchronousMutationObserver&) = delete;
   virtual ~TestSynchronousMutationObserver() = default;
 
   int CountContextDestroyedCalled() const {
@@ -178,7 +191,7 @@ class TestSynchronousMutationObserver
     return updated_character_data_records_;
   }
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   // Implement |SynchronousMutationObserver| member functions.
@@ -202,8 +215,6 @@ class TestSynchronousMutationObserver
   HeapVector<Member<Node>> removed_nodes_;
   HeapVector<Member<const Text>> split_text_nodes_;
   HeapVector<Member<UpdateCharacterDataRecord>> updated_character_data_records_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestSynchronousMutationObserver);
 };
 
 TestSynchronousMutationObserver::TestSynchronousMutationObserver(
@@ -257,7 +268,7 @@ void TestSynchronousMutationObserver::NodeWillBeRemoved(Node& node) {
   removed_nodes_.push_back(&node);
 }
 
-void TestSynchronousMutationObserver::Trace(Visitor* visitor) {
+void TestSynchronousMutationObserver::Trace(Visitor* visitor) const {
   visitor->Trace(children_changed_nodes_);
   visitor->Trace(merge_text_nodes_records_);
   visitor->Trace(move_tree_to_new_document_nodes_);
@@ -271,8 +282,6 @@ void TestSynchronousMutationObserver::Trace(Visitor* visitor) {
 class MockDocumentValidationMessageClient
     : public GarbageCollected<MockDocumentValidationMessageClient>,
       public ValidationMessageClient {
-  USING_GARBAGE_COLLECTED_MIXIN(MockDocumentValidationMessageClient);
-
  public:
   MockDocumentValidationMessageClient() { Reset(); }
   void Reset() {
@@ -300,7 +309,7 @@ class MockDocumentValidationMessageClient
   void DidChangeFocusTo(const Element*) override {}
   void WillBeDestroyed() override {}
 
-  // virtual void Trace(Visitor* visitor) {
+  // virtual void Trace(Visitor* visitor) const {
   // ValidationMessageClient::trace(visitor); }
 };
 
@@ -329,6 +338,19 @@ class PrefersColorSchemeTestListener final : public MediaQueryListListener {
   bool notified_ = false;
 };
 
+bool IsDOMException(ScriptState* script_state,
+                    ScriptValue value,
+                    DOMExceptionCode code) {
+  auto* dom_exception = V8DOMException::ToImplWithTypeCheck(
+      script_state->GetIsolate(), value.V8Value());
+  if (!dom_exception)
+    return false;
+
+  // Unfortunately, it's not enough to check |dom_exception->code() == code|,
+  // as DOMException::code is only populated for the DOMExceptionCodes with
+  // "legacy code" numeric values.
+  return dom_exception->name() == DOMException(code).name();
+}
 }  // anonymous namespace
 
 TEST_F(DocumentTest, CreateRangeAdjustedToTreeScopeWithPositionInShadowTree) {
@@ -483,77 +505,6 @@ TEST_F(DocumentTest, LinkManifest) {
   EXPECT_EQ(link, GetDocument().LinkManifest());
 }
 
-TEST_F(DocumentTest, referrerPolicyParsing) {
-  EXPECT_EQ(network::mojom::ReferrerPolicy::kDefault,
-            GetDocument().GetReferrerPolicy());
-
-  struct TestCase {
-    const char* policy;
-    network::mojom::ReferrerPolicy expected;
-    bool is_legacy;
-  } tests[] = {
-      {"", network::mojom::ReferrerPolicy::kDefault, false},
-      // Test that invalid policy values are ignored.
-      {"not-a-real-policy", network::mojom::ReferrerPolicy::kDefault, false},
-      {"not-a-real-policy,also-not-a-real-policy",
-       network::mojom::ReferrerPolicy::kDefault, false},
-      {"not-a-real-policy,unsafe-url", network::mojom::ReferrerPolicy::kAlways,
-       false},
-      {"unsafe-url,not-a-real-policy", network::mojom::ReferrerPolicy::kAlways,
-       false},
-      // Test parsing each of the policy values.
-      {"always", network::mojom::ReferrerPolicy::kAlways, true},
-      {"default", network::mojom::ReferrerPolicy::kNoReferrerWhenDowngrade,
-       true},
-      {"never", network::mojom::ReferrerPolicy::kNever, true},
-      {"no-referrer", network::mojom::ReferrerPolicy::kNever, false},
-      {"default", network::mojom::ReferrerPolicy::kNoReferrerWhenDowngrade,
-       true},
-      {"no-referrer-when-downgrade",
-       network::mojom::ReferrerPolicy::kNoReferrerWhenDowngrade, false},
-      {"origin", network::mojom::ReferrerPolicy::kOrigin, false},
-      {"origin-when-crossorigin",
-       network::mojom::ReferrerPolicy::kOriginWhenCrossOrigin, true},
-      {"origin-when-cross-origin",
-       network::mojom::ReferrerPolicy::kOriginWhenCrossOrigin, false},
-      {"same-origin", network::mojom::ReferrerPolicy::kSameOrigin, false},
-      {"strict-origin", network::mojom::ReferrerPolicy::kStrictOrigin, false},
-      {"strict-origin-when-cross-origin",
-       network::mojom::ReferrerPolicy::kStrictOriginWhenCrossOrigin, false},
-      {"unsafe-url", network::mojom::ReferrerPolicy::kAlways},
-  };
-
-  for (auto test : tests) {
-    GetDocument().SetReferrerPolicy(network::mojom::ReferrerPolicy::kDefault);
-    if (test.is_legacy) {
-      // Legacy keyword support must be explicitly enabled for the policy to
-      // parse successfully.
-      GetDocument().GetExecutionContext()->ParseAndSetReferrerPolicy(
-          test.policy);
-      EXPECT_EQ(network::mojom::ReferrerPolicy::kDefault,
-                GetDocument().GetReferrerPolicy());
-      GetDocument().GetExecutionContext()->ParseAndSetReferrerPolicy(
-          test.policy, true);
-    } else {
-      GetDocument().GetExecutionContext()->ParseAndSetReferrerPolicy(
-          test.policy);
-    }
-    EXPECT_EQ(test.expected, GetDocument().GetReferrerPolicy()) << test.policy;
-  }
-}
-
-TEST_F(DocumentTest, OutgoingReferrer) {
-  NavigateTo(KURL("https://www.example.com/hoge#fuga?piyo"));
-  EXPECT_EQ("https://www.example.com/hoge", GetDocument().OutgoingReferrer());
-}
-
-TEST_F(DocumentTest, OutgoingReferrerWithUniqueOrigin) {
-  NavigateTo(KURL("https://www.example.com/hoge#fuga?piyo"),
-             {{http_names::kContentSecurityPolicy, "sandbox allow-scripts"}});
-  EXPECT_TRUE(GetDocument().GetSecurityOrigin()->IsOpaque());
-  EXPECT_EQ(String(), GetDocument().OutgoingReferrer());
-}
-
 TEST_F(DocumentTest, StyleVersion) {
   SetHtmlInnerHTML(R"HTML(
     <style>
@@ -581,40 +532,6 @@ TEST_F(DocumentTest, StyleVersion) {
   previous_style_version = GetDocument().StyleVersion();
   element->setAttribute(blink::html_names::kClassAttr, "a b");
   EXPECT_NE(previous_style_version, GetDocument().StyleVersion());
-}
-
-TEST_F(DocumentTest, EnforceSandboxFlags) {
-  NavigateTo(KURL("http://example.test/"), {{http_names::kContentSecurityPolicy,
-                                             "sandbox allow-same-origin"}});
-  EXPECT_FALSE(GetDocument().GetSecurityOrigin()->IsOpaque());
-  EXPECT_FALSE(GetDocument().GetSecurityOrigin()->IsPotentiallyTrustworthy());
-
-  NavigateTo(KURL("http://example.test/"),
-             {{http_names::kContentSecurityPolicy, "sandbox"}});
-  EXPECT_TRUE(GetDocument().GetSecurityOrigin()->IsOpaque());
-  EXPECT_FALSE(GetDocument().GetSecurityOrigin()->IsPotentiallyTrustworthy());
-
-  // A unique origin does not bypass secure context checks unless it
-  // is also potentially trustworthy.
-  url::ScopedSchemeRegistryForTests scoped_registry;
-  url::AddStandardScheme("very-special-scheme", url::SCHEME_WITH_HOST);
-  SchemeRegistry::RegisterURLSchemeBypassingSecureContextCheck(
-      "very-special-scheme");
-  NavigateTo(KURL("very-special-scheme://example.test"),
-             {{http_names::kContentSecurityPolicy, "sandbox"}});
-  EXPECT_TRUE(GetDocument().GetSecurityOrigin()->IsOpaque());
-  EXPECT_FALSE(GetDocument().GetSecurityOrigin()->IsPotentiallyTrustworthy());
-
-  SchemeRegistry::RegisterURLSchemeAsSecure("very-special-scheme");
-  NavigateTo(KURL("very-special-scheme://example.test"),
-             {{http_names::kContentSecurityPolicy, "sandbox"}});
-  EXPECT_TRUE(GetDocument().GetSecurityOrigin()->IsOpaque());
-  EXPECT_TRUE(GetDocument().GetSecurityOrigin()->IsPotentiallyTrustworthy());
-
-  NavigateTo(KURL("https://example.test"),
-             {{http_names::kContentSecurityPolicy, "sandbox"}});
-  EXPECT_TRUE(GetDocument().GetSecurityOrigin()->IsOpaque());
-  EXPECT_TRUE(GetDocument().GetSecurityOrigin()->IsPotentiallyTrustworthy());
 }
 
 TEST_F(DocumentTest, SynchronousMutationNotifier) {
@@ -699,7 +616,7 @@ TEST_F(DocumentTest, SynchronousMutationNotifierMoveTreeToNewDocument) {
   move_sample->appendChild(GetDocument().createTextNode("b456"));
   GetDocument().body()->AppendChild(move_sample);
 
-  Document& another_document = *MakeGarbageCollected<Document>();
+  Document& another_document = *Document::CreateForTest();
   another_document.AppendChild(move_sample);
 
   EXPECT_EQ(1u, observer.MoveTreeToNewDocumentNodes().size());
@@ -790,18 +707,6 @@ TEST_F(DocumentTest, SynchronousMutationNotifierUpdateCharacterData) {
   EXPECT_EQ(6u, observer.UpdatedCharacterDataRecords()[3]->offset_);
   EXPECT_EQ(4u, observer.UpdatedCharacterDataRecords()[3]->old_length_);
   EXPECT_EQ(3u, observer.UpdatedCharacterDataRecords()[3]->new_length_);
-}
-
-TEST_F(DocumentTest, AttachExecutionContext) {
-  EXPECT_TRUE(
-      GetDocument().GetAgent()->event_loop()->IsSchedulerAttachedForTest(
-          GetDocument().GetScheduler()));
-  Document* doc = GetDocument().implementation().createHTMLDocument("foo");
-  EXPECT_EQ(GetDocument().GetAgent(), doc->GetAgent());
-  GetDocument().Shutdown();
-  EXPECT_FALSE(doc->GetAgent()->event_loop()->IsSchedulerAttachedForTest(
-      doc->GetScheduler()));
-  doc->Shutdown();
 }
 
 // This tests that meta-theme-color can be found correctly
@@ -941,100 +846,6 @@ TEST_F(DocumentTest, ViewportPropagationNoRecalc) {
   EXPECT_EQ(1, new_element_count - old_element_count);
 }
 
-// Test fixture parameterized on whether the "IsolatedWorldCSP" feature is
-// enabled.
-class IsolatedWorldCSPTest : public DocumentTest,
-                             public testing::WithParamInterface<bool>,
-                             private ScopedIsolatedWorldCSPForTest {
- public:
-  IsolatedWorldCSPTest() : ScopedIsolatedWorldCSPForTest(GetParam()) {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(IsolatedWorldCSPTest);
-};
-
-// Tests ExecutionContext::GetContentSecurityPolicyForWorld().
-TEST_P(IsolatedWorldCSPTest, CSPForWorld) {
-  using ::testing::ElementsAre;
-
-  // Set a CSP for the main world.
-  const char* kMainWorldCSP = "connect-src https://google.com;";
-  GetDocument().GetContentSecurityPolicy()->DidReceiveHeader(
-      kMainWorldCSP, ContentSecurityPolicyType::kEnforce,
-      ContentSecurityPolicySource::kHTTP);
-
-  LocalFrame* frame = GetDocument().GetFrame();
-  ScriptState* main_world_script_state = ToScriptStateForMainWorld(frame);
-  v8::Isolate* isolate = main_world_script_state->GetIsolate();
-
-  constexpr int kIsolatedWorldWithoutCSPId = 1;
-  scoped_refptr<DOMWrapperWorld> world_without_csp =
-      DOMWrapperWorld::EnsureIsolatedWorld(isolate, kIsolatedWorldWithoutCSPId);
-  ASSERT_TRUE(world_without_csp->IsIsolatedWorld());
-  ScriptState* isolated_world_without_csp_script_state =
-      ToScriptState(frame, *world_without_csp);
-
-  const char* kIsolatedWorldCSP = "script-src 'none';";
-  constexpr int kIsolatedWorldWithCSPId = 2;
-  scoped_refptr<DOMWrapperWorld> world_with_csp =
-      DOMWrapperWorld::EnsureIsolatedWorld(isolate, kIsolatedWorldWithCSPId);
-  ASSERT_TRUE(world_with_csp->IsIsolatedWorld());
-  ScriptState* isolated_world_with_csp_script_state =
-      ToScriptState(frame, *world_with_csp);
-  IsolatedWorldCSP::Get().SetContentSecurityPolicy(
-      kIsolatedWorldWithCSPId, kIsolatedWorldCSP,
-      SecurityOrigin::Create(KURL("chrome-extension://123")));
-
-  // Returns the csp headers being used for the current world.
-  auto get_csp_headers = [this]() {
-    return GetDocument().GetContentSecurityPolicyForWorld()->Headers();
-  };
-
-  {
-    SCOPED_TRACE("In main world.");
-    ScriptState::Scope scope(main_world_script_state);
-    EXPECT_THAT(get_csp_headers(),
-                ElementsAre(CSPHeaderAndType(
-                    {kMainWorldCSP, ContentSecurityPolicyType::kEnforce})));
-  }
-
-  {
-    SCOPED_TRACE("In isolated world without csp.");
-    ScriptState::Scope scope(isolated_world_without_csp_script_state);
-
-    // If we are in an isolated world with no CSP defined, we use the main world
-    // CSP.
-    EXPECT_THAT(get_csp_headers(),
-                ElementsAre(CSPHeaderAndType(
-                    {kMainWorldCSP, ContentSecurityPolicyType::kEnforce})));
-  }
-
-  {
-    bool is_isolated_world_csp_enabled = GetParam();
-    SCOPED_TRACE(base::StringPrintf(
-        "In isolated world with csp and 'IsolatedWorldCSP' %s",
-        is_isolated_world_csp_enabled ? "enabled" : "disabled"));
-    ScriptState::Scope scope(isolated_world_with_csp_script_state);
-
-    if (!is_isolated_world_csp_enabled) {
-      // With 'IsolatedWorldCSP' feature disabled, we should just bypass the
-      // main world CSP by using an empty CSP.
-      EXPECT_TRUE(get_csp_headers().IsEmpty());
-    } else {
-      // With 'IsolatedWorldCSP' feature enabled, we use the isolated world's
-      // CSP if it specified one.
-      EXPECT_THAT(
-          get_csp_headers(),
-          ElementsAre(CSPHeaderAndType(
-              {kIsolatedWorldCSP, ContentSecurityPolicyType::kEnforce})));
-    }
-  }
-}
-
-INSTANTIATE_TEST_SUITE_P(All,
-                         IsolatedWorldCSPTest,
-                         testing::Values(true, false));
-
 TEST_F(DocumentTest, CanExecuteScriptsWithSandboxAndIsolatedWorld) {
   NavigateTo(KURL("https://www.example.com/"),
              {{http_names::kContentSecurityPolicy, "sandbox"}});
@@ -1069,19 +880,19 @@ TEST_F(DocumentTest, CanExecuteScriptsWithSandboxAndIsolatedWorld) {
     // Since the page is sandboxed, main world script execution shouldn't be
     // allowed.
     ScriptState::Scope scope(main_world_script_state);
-    EXPECT_FALSE(GetDocument().CanExecuteScripts(kAboutToExecuteScript));
+    EXPECT_FALSE(frame->DomWindow()->CanExecuteScripts(kAboutToExecuteScript));
   }
   {
     // Isolated worlds without a dedicated CSP should also not be allowed to
     // run scripts.
     ScriptState::Scope scope(isolated_world_without_csp_script_state);
-    EXPECT_FALSE(GetDocument().CanExecuteScripts(kAboutToExecuteScript));
+    EXPECT_FALSE(frame->DomWindow()->CanExecuteScripts(kAboutToExecuteScript));
   }
   {
     // An isolated world with a CSP should bypass the main world CSP, and be
     // able to run scripts.
     ScriptState::Scope scope(isolated_world_with_csp_script_state);
-    EXPECT_TRUE(GetDocument().CanExecuteScripts(kAboutToExecuteScript));
+    EXPECT_TRUE(frame->DomWindow()->CanExecuteScripts(kAboutToExecuteScript));
   }
 }
 
@@ -1180,9 +991,9 @@ TEST_F(DocumentTest, FindInPageUkm) {
   EXPECT_FALSE(ukm::TestUkmRecorder::EntryHasMetric(
       entries[0], "DidHaveRenderSubtreeMatch"));
 
-  GetDocument().MarkHasFindInPageSubtreeVisibilityActiveMatch();
+  GetDocument().MarkHasFindInPageContentVisibilityActiveMatch();
   EXPECT_EQ(recorder->entries_count(), 2u);
-  GetDocument().MarkHasFindInPageSubtreeVisibilityActiveMatch();
+  GetDocument().MarkHasFindInPageContentVisibilityActiveMatch();
   EXPECT_EQ(recorder->entries_count(), 2u);
   entries = recorder->GetEntriesByName("Blink.FindInPage");
   EXPECT_EQ(entries.size(), 2u);
@@ -1209,14 +1020,185 @@ TEST_F(DocumentTest, AtPageMarginWithDeviceScaleFactor) {
   GetDocument().GetFrame()->StartPrinting(initial_page_size, initial_page_size);
   GetDocument().View()->UpdateLifecyclePhasesForPrinting();
 
-  DoubleSize page_size;
-  int margin[4];
-  GetDocument().PageSizeAndMarginsInPixels(0, page_size, margin[0], margin[1],
-                                           margin[2], margin[3]);
+  WebPrintPageDescription description;
+  GetDocument().GetPageDescription(0, &description);
 
-  for (int side_margin : margin)
-    EXPECT_EQ(50, side_margin);
-  EXPECT_EQ(DoubleSize(400, 960), page_size);
+  EXPECT_EQ(50, description.margin_top);
+  EXPECT_EQ(50, description.margin_right);
+  EXPECT_EQ(50, description.margin_bottom);
+  EXPECT_EQ(50, description.margin_left);
+  EXPECT_EQ(WebDoubleSize(400, 960), description.size);
+}
+
+TEST(Document, HandlesDisconnectDuringHasTrustToken) {
+  // Check that a Mojo handle disconnecting during hasTrustToken operation
+  // execution results in the promise getting rejected with the proper
+  // exception.
+  V8TestingScope scope(KURL("https://trusttoken.example"));
+
+  Document& document = scope.GetDocument();
+
+  auto promise =
+      document.hasTrustToken(scope.GetScriptState(), "https://issuer.example",
+                             scope.GetExceptionState());
+  DocumentTest::SimulateHasTrustTokensAnswererConnectionError(&document);
+
+  ASSERT_TRUE(promise.IsAssociatedWith(scope.GetScriptState()));
+
+  ScriptPromiseTester promise_tester(scope.GetScriptState(), promise);
+  promise_tester.WaitUntilSettled();
+  EXPECT_TRUE(promise_tester.IsRejected());
+  EXPECT_TRUE(IsDOMException(scope.GetScriptState(), promise_tester.Value(),
+                             DOMExceptionCode::kOperationError));
+}
+
+TEST(Document, RejectsHasTrustTokenCallFromNonHttpNonHttpsDocument) {
+  // Check that hasTrustToken getting called from a secure, but
+  // non-http/non-https, document results in an exception being thrown.
+  V8TestingScope scope(KURL("file:///trusttoken.txt"));
+
+  Document& document = scope.GetDocument();
+  ScriptState* script_state = scope.GetScriptState();
+  ExceptionState exception_state(script_state->GetIsolate(),
+                                 ExceptionState::kExecutionContext, "Document",
+                                 "hasTrustToken");
+
+  auto promise = document.hasTrustToken(script_state, "https://issuer.example",
+                                        exception_state);
+
+  ScriptPromiseTester promise_tester(script_state, promise);
+  promise_tester.WaitUntilSettled();
+  EXPECT_TRUE(promise_tester.IsRejected());
+  EXPECT_TRUE(IsDOMException(script_state, promise_tester.Value(),
+                             DOMExceptionCode::kNotAllowedError));
+}
+
+namespace {
+class MockHasTrustTokensAnswerer
+    : public network::mojom::blink::HasTrustTokensAnswerer {
+ public:
+  enum Outcome { kError, kTrue, kFalse };
+  explicit MockHasTrustTokensAnswerer(Outcome outcome) : outcome_(outcome) {}
+
+  void HasTrustTokens(
+      const ::scoped_refptr<const ::blink::SecurityOrigin>& issuer,
+      HasTrustTokensCallback callback) override {
+    auto result = network::mojom::blink::HasTrustTokensResult::New();
+    result->status = network::mojom::blink::TrustTokenOperationStatus::kOk;
+    switch (outcome_) {
+      case kTrue: {
+        result->has_trust_tokens = true;
+        std::move(callback).Run(std::move(result));
+        return;
+      }
+      case kFalse: {
+        result->has_trust_tokens = false;
+        std::move(callback).Run(std::move(result));
+        return;
+      }
+      case kError: {
+        result->status =
+            network::mojom::blink::TrustTokenOperationStatus::kUnknownError;
+        std::move(callback).Run(std::move(result));
+      }
+    }
+  }
+
+  void Bind(mojo::ScopedMessagePipeHandle handle) {
+    receiver_.Bind(
+        mojo::PendingReceiver<network::mojom::blink::HasTrustTokensAnswerer>(
+            std::move(handle)));
+  }
+
+ private:
+  Outcome outcome_;
+  mojo::Receiver<network::mojom::blink::HasTrustTokensAnswerer> receiver_{this};
+};
+}  // namespace
+
+TEST(Document, HasTrustTokenSuccess) {
+  V8TestingScope scope(KURL("https://secure.example"));
+
+  MockHasTrustTokensAnswerer answerer(MockHasTrustTokensAnswerer::kTrue);
+
+  Document& document = scope.GetDocument();
+  document.GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
+      network::mojom::blink::HasTrustTokensAnswerer::Name_,
+      WTF::BindRepeating(&MockHasTrustTokensAnswerer::Bind,
+                         WTF::Unretained(&answerer)));
+
+  ScriptState* script_state = scope.GetScriptState();
+  ExceptionState exception_state(script_state->GetIsolate(),
+                                 ExceptionState::kExecutionContext, "Document",
+                                 "hasTrustToken");
+
+  auto promise = document.hasTrustToken(script_state, "https://issuer.example",
+                                        exception_state);
+
+  ScriptPromiseTester promise_tester(script_state, promise);
+  promise_tester.WaitUntilSettled();
+  EXPECT_TRUE(promise_tester.IsFulfilled());
+  EXPECT_TRUE(promise_tester.Value().V8Value()->IsTrue());
+
+  document.GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
+      network::mojom::blink::HasTrustTokensAnswerer::Name_, {});
+}
+
+TEST(Document, HasTrustTokenSuccessWithFalseValue) {
+  V8TestingScope scope(KURL("https://secure.example"));
+
+  MockHasTrustTokensAnswerer answerer(MockHasTrustTokensAnswerer::kFalse);
+
+  Document& document = scope.GetDocument();
+  document.GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
+      network::mojom::blink::HasTrustTokensAnswerer::Name_,
+      WTF::BindRepeating(&MockHasTrustTokensAnswerer::Bind,
+                         WTF::Unretained(&answerer)));
+
+  ScriptState* script_state = scope.GetScriptState();
+  ExceptionState exception_state(script_state->GetIsolate(),
+                                 ExceptionState::kExecutionContext, "Document",
+                                 "hasTrustToken");
+
+  auto promise = document.hasTrustToken(script_state, "https://issuer.example",
+                                        exception_state);
+
+  ScriptPromiseTester promise_tester(script_state, promise);
+  promise_tester.WaitUntilSettled();
+  EXPECT_TRUE(promise_tester.IsFulfilled());
+  EXPECT_TRUE(promise_tester.Value().V8Value()->IsFalse());
+
+  document.GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
+      network::mojom::blink::HasTrustTokensAnswerer::Name_, {});
+}
+
+TEST(Document, HasTrustTokenOperationError) {
+  V8TestingScope scope(KURL("https://secure.example"));
+
+  MockHasTrustTokensAnswerer answerer(MockHasTrustTokensAnswerer::kError);
+
+  Document& document = scope.GetDocument();
+  document.GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
+      network::mojom::blink::HasTrustTokensAnswerer::Name_,
+      WTF::BindRepeating(&MockHasTrustTokensAnswerer::Bind,
+                         WTF::Unretained(&answerer)));
+
+  ScriptState* script_state = scope.GetScriptState();
+  ExceptionState exception_state(script_state->GetIsolate(),
+                                 ExceptionState::kExecutionContext, "Document",
+                                 "hasTrustToken");
+
+  auto promise = document.hasTrustToken(script_state, "https://issuer.example",
+                                        exception_state);
+
+  ScriptPromiseTester promise_tester(script_state, promise);
+  promise_tester.WaitUntilSettled();
+  EXPECT_TRUE(promise_tester.IsRejected());
+  EXPECT_TRUE(IsDOMException(script_state, promise_tester.Value(),
+                             DOMExceptionCode::kOperationError));
+
+  document.GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
+      network::mojom::blink::HasTrustTokensAnswerer::Name_, {});
 }
 
 /**
@@ -1236,22 +1218,6 @@ class ViewportFitDocumentTest : public DocumentTest,
     return GetDocument().GetViewportData().GetCurrentViewportFitForTests();
   }
 };
-
-// Test both meta and @viewport present but no viewport-fit.
-TEST_F(ViewportFitDocumentTest, MetaCSSViewportButNoFit) {
-  SetHtmlInnerHTML(
-      "<style>@viewport { min-width: 100px; }</style>"
-      "<meta name='viewport' content='initial-scale=1'>");
-
-  EXPECT_EQ(mojom::ViewportFit::kAuto, GetViewportFit());
-}
-
-// Test @viewport present but no viewport-fit.
-TEST_F(ViewportFitDocumentTest, CSSViewportButNoFit) {
-  SetHtmlInnerHTML("<style>@viewport { min-width: 100px; }</style>");
-
-  EXPECT_EQ(mojom::ViewportFit::kAuto, GetViewportFit());
-}
 
 // Test meta viewport present but no viewport-fit.
 TEST_F(ViewportFitDocumentTest, MetaViewportButNoFit) {
@@ -1280,8 +1246,7 @@ TEST_F(ViewportFitDocumentTest, ForceExpandIntoCutout) {
 
 // This is a test case for testing a combination of viewport-fit meta value,
 // viewport CSS value and the expected outcome.
-using ViewportTestCase =
-    std::tuple<const char*, const char*, mojom::ViewportFit>;
+using ViewportTestCase = std::tuple<const char*, mojom::ViewportFit>;
 
 class ParameterizedViewportFitDocumentTest
     : public ViewportFitDocumentTest,
@@ -1289,14 +1254,7 @@ class ParameterizedViewportFitDocumentTest
  protected:
   void LoadTestHTML() {
     const char* kMetaValue = std::get<0>(GetParam());
-    const char* kCSSValue = std::get<1>(GetParam());
     StringBuilder html;
-
-    if (kCSSValue) {
-      html.Append("<style>@viewport { viewport-fit: ");
-      html.Append(kCSSValue);
-      html.Append("; }</style>");
-    }
 
     if (kMetaValue) {
       html.Append("<meta name='viewport' content='viewport-fit=");
@@ -1311,7 +1269,7 @@ class ParameterizedViewportFitDocumentTest
 
 TEST_P(ParameterizedViewportFitDocumentTest, EffectiveViewportFit) {
   LoadTestHTML();
-  EXPECT_EQ(std::get<2>(GetParam()), GetViewportFit());
+  EXPECT_EQ(std::get<1>(GetParam()), GetViewportFit());
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -1319,19 +1277,83 @@ INSTANTIATE_TEST_SUITE_P(
     ParameterizedViewportFitDocumentTest,
     testing::Values(
         // Test the default case.
-        ViewportTestCase(nullptr, nullptr, mojom::ViewportFit::kAuto),
-        // Test the different values set through CSS.
-        ViewportTestCase(nullptr, "auto", mojom::ViewportFit::kAuto),
-        ViewportTestCase(nullptr, "contain", mojom::ViewportFit::kContain),
-        ViewportTestCase(nullptr, "cover", mojom::ViewportFit::kCover),
-        ViewportTestCase(nullptr, "invalid", mojom::ViewportFit::kAuto),
+        ViewportTestCase(nullptr, mojom::ViewportFit::kAuto),
         // Test the different values set through the meta tag.
-        ViewportTestCase("auto", nullptr, mojom::ViewportFit::kAuto),
-        ViewportTestCase("contain", nullptr, mojom::ViewportFit::kContain),
-        ViewportTestCase("cover", nullptr, mojom::ViewportFit::kCover),
-        ViewportTestCase("invalid", nullptr, mojom::ViewportFit::kAuto),
-        // Test that the CSS should override the meta tag.
-        ViewportTestCase("cover", "auto", mojom::ViewportFit::kAuto),
-        ViewportTestCase("cover", "contain", mojom::ViewportFit::kContain)));
+        ViewportTestCase("auto", mojom::ViewportFit::kAuto),
+        ViewportTestCase("contain", mojom::ViewportFit::kContain),
+        ViewportTestCase("cover", mojom::ViewportFit::kCover),
+        ViewportTestCase("invalid", mojom::ViewportFit::kAuto)));
+
+class BatterySavingsChromeClient : public EmptyChromeClient {
+ public:
+  MOCK_METHOD2(BatterySavingsChanged,
+               void(LocalFrame&, WebBatterySavingsFlags));
+};
+
+class DocumentBatterySavingsTest : public PageTestBase,
+                                   private ScopedBatterySavingsMetaForTest {
+ protected:
+  DocumentBatterySavingsTest() : ScopedBatterySavingsMetaForTest(true) {}
+
+  void SetUp() override {
+    chrome_client_ = MakeGarbageCollected<BatterySavingsChromeClient>();
+    Page::PageClients page_clients;
+    FillWithEmptyClients(page_clients);
+    page_clients.chrome_client = chrome_client_;
+    SetupPageWithClients(&page_clients);
+  }
+
+  Persistent<BatterySavingsChromeClient> chrome_client_;
+};
+
+TEST_F(DocumentBatterySavingsTest, ChromeClientCalls) {
+  testing::InSequence s;
+  // The client is called twice, once for each meta element, but is called with
+  // the same parameter both times because the first meta in DOM order takes
+  // precedence.
+  EXPECT_CALL(*chrome_client_,
+              BatterySavingsChanged(testing::_, kAllowReducedFrameRate))
+      .Times(2);
+
+  EXPECT_FALSE(
+      GetDocument().Loader()->GetUseCounterHelper().HasRecordedMeasurement(
+          WebFeature::kBatterySavingsMeta));
+
+  SetHtmlInnerHTML(R"HTML(
+    <meta id="first" name="battery-savings" content="allow-reduced-framerate">
+    <meta id="second" name="battery-savings" content="allow-reduced-script-speed">
+  )HTML");
+
+  EXPECT_TRUE(
+      GetDocument().Loader()->GetUseCounterHelper().HasRecordedMeasurement(
+          WebFeature::kBatterySavingsMeta));
+
+  // Remove the first meta causing the second to apply.
+  EXPECT_CALL(*chrome_client_,
+              BatterySavingsChanged(testing::_, kAllowReducedScriptSpeed))
+      .Times(1);
+
+  GetDocument().getElementById("first")->remove();
+
+  // Change the content attribute to an unsupported value.
+  EXPECT_CALL(*chrome_client_, BatterySavingsChanged(testing::_, 0)).Times(1);
+
+  Element* second = GetDocument().getElementById("second");
+  second->setAttribute(html_names::kContentAttr, "allow-blah");
+
+  // Change the content attribute to both supported values.
+  EXPECT_CALL(*chrome_client_,
+              BatterySavingsChanged(testing::_, kAllowReducedFrameRate |
+                                                    kAllowReducedScriptSpeed))
+      .Times(1);
+
+  second->setAttribute(html_names::kContentAttr,
+                       "allow-reduced-framerate allow-reduced-script-speed");
+
+  // Change the meta name to "viewport".
+  EXPECT_CALL(*chrome_client_, BatterySavingsChanged(testing::_, 0)).Times(1);
+
+  second->setAttribute(html_names::kNameAttr, "viewport");
+}
 
 }  // namespace blink

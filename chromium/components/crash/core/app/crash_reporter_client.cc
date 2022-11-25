@@ -4,13 +4,14 @@
 
 #include "components/crash/core/app/crash_reporter_client.h"
 
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 
 // On Windows don't use FilePath and logging.h.
 // http://crbug.com/604923
 #if !defined(OS_WIN)
+#include "base/check.h"
 #include "base/files/file_path.h"
-#include "base/logging.h"
 #else
 #include <assert.h>
 #define DCHECK assert
@@ -21,6 +22,10 @@ namespace crash_reporter {
 namespace {
 
 CrashReporterClient* g_client = nullptr;
+
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING) && defined(OFFICIAL_BUILD)
+const char kDefaultUploadURL[] = "https://clients2.google.com/cr/report";
+#endif
 
 }  // namespace
 
@@ -36,7 +41,7 @@ CrashReporterClient* GetCrashReporterClient() {
 CrashReporterClient::CrashReporterClient() {}
 CrashReporterClient::~CrashReporterClient() {}
 
-#if !defined(OS_MACOSX) && !defined(OS_WIN) && !defined(OS_ANDROID)
+#if !defined(OS_APPLE) && !defined(OS_WIN) && !defined(OS_ANDROID)
 void CrashReporterClient::SetCrashReporterClientIdFromGUID(
     const std::string& client_guid) {}
 #endif
@@ -70,11 +75,6 @@ bool CrashReporterClient::AboutToRestart() {
   return false;
 }
 
-bool CrashReporterClient::GetDeferredUploadsSupported(
-    bool is_per_usr_install) {
-  return false;
-}
-
 bool CrashReporterClient::GetIsPerUserInstall() {
   return true;
 }
@@ -88,7 +88,7 @@ int CrashReporterClient::GetResultCodeRespawnFailed() {
 }
 #endif
 
-#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_POSIX) && !defined(OS_MAC)
 void CrashReporterClient::GetProductNameAndVersion(const char** product_name,
                                                    const char** version) {
 }
@@ -121,14 +121,6 @@ bool CrashReporterClient::GetCrashMetricsLocation(base::string16* crash_dir) {
 bool CrashReporterClient::GetCrashMetricsLocation(base::FilePath* crash_dir) {
 #endif
   return false;
-}
-
-bool CrashReporterClient::UseCrashKeysWhiteList() {
-  return false;
-}
-
-const char* const* CrashReporterClient::GetCrashKeyWhiteList() {
-  return nullptr;
 }
 
 bool CrashReporterClient::IsRunningUnattended() {
@@ -185,16 +177,26 @@ bool CrashReporterClient::ShouldWriteMinidumpToLog() {
 
 #endif
 
-#if defined(OS_ANDROID) || defined(OS_LINUX)
+#if defined(OS_ANDROID) || defined(OS_LINUX) || defined(OS_CHROMEOS)
 void CrashReporterClient::GetSanitizationInformation(
-    const char* const** annotations_whitelist,
+    const char* const** allowed_annotations,
     void** target_module,
     bool* sanitize_stacks) {
-  *annotations_whitelist = nullptr;
+  *allowed_annotations = nullptr;
   *target_module = nullptr;
   *sanitize_stacks = false;
 }
 #endif
+
+std::string CrashReporterClient::GetUploadUrl() {
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING) && defined(OFFICIAL_BUILD)
+  // Only allow the possibility of report upload in official builds. This
+  // crash server won't have symbols for any other build types.
+  return kDefaultUploadURL;
+#else
+  return std::string();
+#endif
+}
 
 bool CrashReporterClient::ShouldMonitorCrashHandlerExpensively() {
   return false;

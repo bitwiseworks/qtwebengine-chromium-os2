@@ -6,6 +6,8 @@
 #define QUICHE_QUIC_CORE_CONGESTION_CONTROL_UBER_LOSS_ALGORITHM_H_
 
 #include "net/third_party/quiche/src/quic/core/congestion_control/general_loss_algorithm.h"
+#include "net/third_party/quiche/src/quic/core/quic_types.h"
+#include "net/third_party/quiche/src/quic/platform/api/quic_flags.h"
 #include "net/third_party/quiche/src/common/platform/api/quiche_optional.h"
 
 namespace quic {
@@ -46,13 +48,16 @@ class QUIC_EXPORT_PRIVATE UberLossAlgorithm : public LossDetectionInterface {
   UberLossAlgorithm& operator=(const UberLossAlgorithm&) = delete;
   ~UberLossAlgorithm() override {}
 
+  void SetFromConfig(const QuicConfig& config,
+                     Perspective perspective) override;
+
   // Detects lost packets.
-  void DetectLosses(const QuicUnackedPacketMap& unacked_packets,
-                    QuicTime time,
-                    const RttStats& rtt_stats,
-                    QuicPacketNumber largest_newly_acked,
-                    const AckedPacketVector& packets_acked,
-                    LostPacketVector* packets_lost) override;
+  DetectionStats DetectLosses(const QuicUnackedPacketMap& unacked_packets,
+                              QuicTime time,
+                              const RttStats& rtt_stats,
+                              QuicPacketNumber largest_newly_acked,
+                              const AckedPacketVector& packets_acked,
+                              LostPacketVector* packets_lost) override;
 
   // Returns the earliest time the early retransmit timer should be active.
   QuicTime GetLossTimeout() const override;
@@ -68,7 +73,9 @@ class QUIC_EXPORT_PRIVATE UberLossAlgorithm : public LossDetectionInterface {
       std::unique_ptr<LossDetectionTunerInterface> tuner);
   void OnConfigNegotiated() override;
   void OnMinRttAvailable() override;
+  void OnUserAgentIdKnown() override;
   void OnConnectionClosed() override;
+  void OnReorderingDetected() override;
 
   // Sets reordering_shift for all packet number spaces.
   void SetReorderingShift(int reordering_shift);
@@ -85,11 +92,28 @@ class QUIC_EXPORT_PRIVATE UberLossAlgorithm : public LossDetectionInterface {
   // Enable adaptive time threshold of all packet number spaces.
   void EnableAdaptiveTimeThreshold();
 
+  // Get the packet reordering threshold from the APPLICATION_DATA PN space.
+  // Always 3 when adaptive reordering is not enabled.
+  QuicPacketCount GetPacketReorderingThreshold() const;
+
+  // Get the packet reordering shift from the APPLICATION_DATA PN space.
+  int GetPacketReorderingShift() const;
+
   // Disable packet threshold loss detection for *runt* packets.
   void DisablePacketThresholdForRuntPackets();
 
   // Called to reset loss detection of |space|.
   void ResetLossDetection(PacketNumberSpace space);
+
+  bool use_adaptive_reordering_threshold() const {
+    return general_loss_algorithms_[APPLICATION_DATA]
+        .use_adaptive_reordering_threshold();
+  }
+
+  bool use_adaptive_time_threshold() const {
+    return general_loss_algorithms_[APPLICATION_DATA]
+        .use_adaptive_time_threshold();
+  }
 
  private:
   friend class test::QuicSentPacketManagerPeer;
@@ -103,6 +127,12 @@ class QUIC_EXPORT_PRIVATE UberLossAlgorithm : public LossDetectionInterface {
   std::unique_ptr<LossDetectionTunerInterface> tuner_;
   LossDetectionParameters tuned_parameters_;
   bool tuner_started_ = false;
+  bool min_rtt_available_ = false;
+  // Whether user agent is known to the session.
+  bool user_agent_known_ = false;
+  // Whether tuning is configured in QuicConfig.
+  bool tuning_configured_ = false;
+  bool reorder_happened_ = false;  // Whether any reordered packet is observed.
 };
 
 }  // namespace quic

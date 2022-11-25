@@ -68,14 +68,13 @@ class ObbMounterHost;
 class ObbMounterInstance;
 class OemCryptoHost;
 class OemCryptoInstance;
+class PaymentAppInstance;
 class PipHost;
 class PipInstance;
 class PolicyHost;
 class PolicyInstance;
 class PowerHost;
 class PowerInstance;
-class PrintHost;
-class PrintInstance;
 class PrintSpoolerHost;
 class PrintSpoolerInstance;
 class ProcessInstance;
@@ -83,6 +82,8 @@ class PropertyInstance;
 class RotationLockInstance;
 class ScreenCaptureHost;
 class ScreenCaptureInstance;
+class SensorHost;
+class SensorInstance;
 class SmartCardManagerHost;
 class SmartCardManagerInstance;
 class StorageManagerInstance;
@@ -231,15 +232,15 @@ class ArcBridgeService {
   oemcrypto() {
     return &oemcrypto_;
   }
+  ConnectionHolder<mojom::PaymentAppInstance>* payment_app() {
+    return &payment_app_;
+  }
   ConnectionHolder<mojom::PipInstance, mojom::PipHost>* pip() { return &pip_; }
   ConnectionHolder<mojom::PolicyInstance, mojom::PolicyHost>* policy() {
     return &policy_;
   }
   ConnectionHolder<mojom::PowerInstance, mojom::PowerHost>* power() {
     return &power_;
-  }
-  ConnectionHolder<mojom::PrintInstance, mojom::PrintHost>* print() {
-    return &print_;
   }
   ConnectionHolder<mojom::PrintSpoolerInstance, mojom::PrintSpoolerHost>*
   print_spooler() {
@@ -253,6 +254,9 @@ class ArcBridgeService {
   ConnectionHolder<mojom::ScreenCaptureInstance, mojom::ScreenCaptureHost>*
   screen_capture() {
     return &screen_capture_;
+  }
+  ConnectionHolder<mojom::SensorInstance, mojom::SensorHost>* sensor() {
+    return &sensor_;
   }
   ConnectionHolder<mojom::SmartCardManagerInstance,
                    mojom::SmartCardManagerHost>*
@@ -329,10 +333,10 @@ class ArcBridgeService {
   ConnectionHolder<mojom::ObbMounterInstance, mojom::ObbMounterHost>
       obb_mounter_;
   ConnectionHolder<mojom::OemCryptoInstance, mojom::OemCryptoHost> oemcrypto_;
+  ConnectionHolder<mojom::PaymentAppInstance> payment_app_;
   ConnectionHolder<mojom::PipInstance, mojom::PipHost> pip_;
   ConnectionHolder<mojom::PolicyInstance, mojom::PolicyHost> policy_;
   ConnectionHolder<mojom::PowerInstance, mojom::PowerHost> power_;
-  ConnectionHolder<mojom::PrintInstance, mojom::PrintHost> print_;
   ConnectionHolder<mojom::PrintSpoolerInstance, mojom::PrintSpoolerHost>
       print_spooler_;
   ConnectionHolder<mojom::ProcessInstance> process_;
@@ -340,6 +344,7 @@ class ArcBridgeService {
   ConnectionHolder<mojom::RotationLockInstance> rotation_lock_;
   ConnectionHolder<mojom::ScreenCaptureInstance, mojom::ScreenCaptureHost>
       screen_capture_;
+  ConnectionHolder<mojom::SensorInstance, mojom::SensorHost> sensor_;
   ConnectionHolder<mojom::SmartCardManagerInstance, mojom::SmartCardManagerHost>
       smart_card_manager_;
   ConnectionHolder<mojom::StorageManagerInstance> storage_manager_;

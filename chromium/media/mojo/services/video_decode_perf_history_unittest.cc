@@ -52,6 +52,7 @@ class FakeVideoDecodeStatsDB : public VideoDecodeStatsDB {
 
   // Call CompleteInitialize(...) to run |init_cb| callback.
   void Initialize(base::OnceCallback<void(bool)> init_cb) override {
+    EXPECT_FALSE(!!pendnding_init_cb_);
     pendnding_init_cb_ = std::move(init_cb);
   }
 
@@ -59,7 +60,7 @@ class FakeVideoDecodeStatsDB : public VideoDecodeStatsDB {
   // for success.
   void CompleteInitialize(bool success) {
     DVLOG(2) << __func__ << " running with success = " << success;
-    EXPECT_FALSE(!pendnding_init_cb_);
+    EXPECT_TRUE(!!pendnding_init_cb_);
     std::move(pendnding_init_cb_).Run(success);
   }
 
@@ -169,6 +170,10 @@ class VideoDecodePerfHistoryTest : public testing::Test {
 
   double GetMaxSmoothDroppedFramesPercent(bool is_eme = false) {
     return VideoDecodePerfHistory::GetMaxSmoothDroppedFramesPercent(is_eme);
+  }
+
+  static base::FieldTrialParams GetFieldTrialParams() {
+    return VideoDecodePerfHistory::GetFieldTrialParams();
   }
 
   // Tests may set this as the callback for VideoDecodePerfHistory::GetPerfInfo
@@ -821,10 +826,7 @@ TEST_P(VideoDecodePerfHistoryParamTest,
   scoped_feature_list.InitAndEnableFeatureWithParameters(
       media::kMediaCapabilitiesWithParameters, trial_params);
 
-  base::FieldTrialParams actual_trial_params;
-  EXPECT_TRUE(base::GetFieldTrialParamsByFeature(
-      media::kMediaCapabilitiesWithParameters, &actual_trial_params));
-  EXPECT_EQ(trial_params, actual_trial_params);
+  EXPECT_EQ(GetFieldTrialParams(), trial_params);
 
   // Non EME threshold is overridden.
   EXPECT_EQ(new_smooth_dropped_frames_threshold,
@@ -939,10 +941,7 @@ TEST_P(VideoDecodePerfHistoryParamTest,
   scoped_feature_list.InitAndEnableFeatureWithParameters(
       media::kMediaCapabilitiesWithParameters, trial_params);
 
-  base::FieldTrialParams actual_trial_params;
-  EXPECT_TRUE(base::GetFieldTrialParamsByFeature(
-      media::kMediaCapabilitiesWithParameters, &actual_trial_params));
-  EXPECT_EQ(trial_params, actual_trial_params);
+  EXPECT_EQ(GetFieldTrialParams(), trial_params);
 
   // Both thresholds should be overridden.
   EXPECT_EQ(new_CLEAR_smooth_dropped_frames_threshold,
@@ -1036,5 +1035,51 @@ const PerfHistoryTestParams kPerfHistoryTestParams[] = {
 INSTANTIATE_TEST_SUITE_P(VaryDBInitTiming,
                          VideoDecodePerfHistoryParamTest,
                          ::testing::ValuesIn(kPerfHistoryTestParams));
+
+//
+// The following test are not parameterized. They instead always hard code
+// deferred initialization.
+//
+
+TEST_F(VideoDecodePerfHistoryTest, ClearHistoryTriggersSuccessfulInitialize) {
+  // Clear the DB. Completion callback shouldn't fire until initialize
+  // completes.
+  EXPECT_CALL(*this, MockOnClearedHistory()).Times(0);
+  perf_history_->ClearHistory(
+      base::BindOnce(&VideoDecodePerfHistoryParamTest::MockOnClearedHistory,
+                     base::Unretained(this)));
+
+  // Give completion callback a chance to fire. Confirm it did not fire.
+  task_environment_.RunUntilIdle();
+  testing::Mock::VerifyAndClearExpectations(this);
+
+  // Expect completion callback after we successfully initialize.
+  EXPECT_CALL(*this, MockOnClearedHistory());
+  GetFakeDB()->CompleteInitialize(true);
+
+  // Give deferred callback a chance to fire.
+  task_environment_.RunUntilIdle();
+}
+
+TEST_F(VideoDecodePerfHistoryTest, ClearHistoryTriggersFailedInitialize) {
+  // Clear the DB. Completion callback shouldn't fire until initialize
+  // completes.
+  EXPECT_CALL(*this, MockOnClearedHistory()).Times(0);
+  perf_history_->ClearHistory(
+      base::BindOnce(&VideoDecodePerfHistoryParamTest::MockOnClearedHistory,
+                     base::Unretained(this)));
+
+  // Give completion callback a chance to fire. Confirm it did not fire.
+  task_environment_.RunUntilIdle();
+  testing::Mock::VerifyAndClearExpectations(this);
+
+  // Expect completion callback after completing initialize. "Failure" is still
+  // a form of completion.
+  EXPECT_CALL(*this, MockOnClearedHistory());
+  GetFakeDB()->CompleteInitialize(false);
+
+  // Give deferred callback a chance to fire.
+  task_environment_.RunUntilIdle();
+}
 
 }  // namespace media

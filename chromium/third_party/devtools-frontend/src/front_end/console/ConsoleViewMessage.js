@@ -28,6 +28,9 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Components from '../components/components.js';
 import * as DataGrid from '../data_grid/data_grid.js';
@@ -35,6 +38,7 @@ import * as ObjectUI from '../object_ui/object_ui.js';
 import * as Platform from '../platform/platform.js';
 import * as SDK from '../sdk/sdk.js';
 import * as TextUtils from '../text_utils/text_utils.js';
+import * as ThemeSupport from '../theme_support/theme_support.js';
 import * as UI from '../ui/ui.js';
 
 import {ConsoleViewportElement} from './ConsoleViewport.js';  // eslint-disable-line no-unused-vars
@@ -138,23 +142,25 @@ export class ConsoleViewMessage {
    * @return {!Element}
    */
   _buildTableMessage() {
-    const formattedMessage = createElementWithClass('span', 'source-code');
+    const formattedMessage = document.createElement('span');
+    formattedMessage.classList.add('source-code');
     this._anchorElement = this._buildMessageAnchor();
     if (this._anchorElement) {
       formattedMessage.appendChild(this._anchorElement);
     }
 
-    let table = this._message.parameters && this._message.parameters.length ? this._message.parameters[0] : null;
-    if (table) {
-      table = this._parameterToRemoteObject(table);
+    const table = this._message.parameters && this._message.parameters.length ? this._message.parameters[0] : null;
+    if (!table) {
+      return this._buildMessage();
     }
-    if (!table || !table.preview) {
+    const actualTable = this._parameterToRemoteObject(table);
+    if (!actualTable || !actualTable.preview) {
       return this._buildMessage();
     }
 
     const rawValueColumnSymbol = Symbol('rawValueColumn');
     const columnNames = [];
-    const preview = table.preview;
+    const preview = actualTable.preview;
     const rows = [];
     for (let i = 0; i < preview.properties.length; ++i) {
       const rowProperty = preview.properties[i];
@@ -181,7 +187,7 @@ export class ConsoleViewMessage {
         }
 
         if (columnRendered) {
-          const cellElement = this._renderPropertyPreviewOrAccessor(table, [rowProperty, cellProperty]);
+          const cellElement = this._renderPropertyPreviewOrAccessor(actualTable, [rowProperty, cellProperty]);
           cellElement.classList.add('console-message-nowrap-below');
           rowValue[cellProperty.name] = cellElement;
         }
@@ -207,10 +213,11 @@ export class ConsoleViewMessage {
       this._dataGrid.setStriped(true);
       this._dataGrid.setFocusable(false);
 
-      const formattedResult = createElementWithClass('span', 'console-message-text');
+      const formattedResult = document.createElement('span');
+      formattedResult.classList.add('console-message-text');
       const tableElement = formattedResult.createChild('div', 'console-message-formatted-table');
       const dataGridContainer = tableElement.createChild('span');
-      tableElement.appendChild(this._formatParameter(table, true, false));
+      tableElement.appendChild(this._formatParameter(actualTable, true, false));
       dataGridContainer.appendChild(this._dataGrid.element);
       formattedMessage.appendChild(formattedResult);
       this._dataGrid.renderInline();
@@ -230,15 +237,16 @@ export class ConsoleViewMessage {
           messageElement = this._format(this._message.parameters || ['console.trace']);
           break;
         case SDK.ConsoleModel.MessageType.Clear:
-          messageElement = createElementWithClass('span', 'console-info');
+          messageElement = document.createElement('span');
+          messageElement.classList.add('console-info');
           if (Common.Settings.Settings.instance().moduleSetting('preserveConsoleLog').get()) {
             messageElement.textContent =
                 Common.UIString.UIString('console.clear() was prevented due to \'Preserve log\'');
           } else {
             messageElement.textContent = Common.UIString.UIString('Console was cleared');
           }
-          messageElement.title =
-              ls`Clear all messages with ${self.UI.shortcutRegistry.shortcutTitleForAction('console.clear')}`;
+          messageElement.title = ls`Clear all messages with ${
+              UI.ShortcutRegistry.ShortcutRegistry.instance().shortcutTitleForAction('console.clear')}`;
           break;
         case SDK.ConsoleModel.MessageType.Dir: {
           const obj = this._message.parameters ? this._message.parameters[0] : undefined;
@@ -284,7 +292,8 @@ export class ConsoleViewMessage {
     }
     messageElement.classList.add('console-message-text');
 
-    const formattedMessage = createElementWithClass('span', 'source-code');
+    const formattedMessage = document.createElement('span');
+    formattedMessage.classList.add('source-code');
     this._anchorElement = this._buildMessageAnchor();
     if (this._anchorElement) {
       formattedMessage.appendChild(this._anchorElement);
@@ -310,7 +319,7 @@ export class ConsoleViewMessage {
       this._selectableChildren.push({element: linkElement, forceSelect: () => linkElement.focus()});
       messageElement.appendChild(linkElement);
       if (request.failed) {
-        messageElement.createTextChildren(' ', request.localizedFailDescription);
+        messageElement.createTextChildren(' ', request.localizedFailDescription || '');
       }
       if (request.statusCode !== 0) {
         messageElement.createTextChildren(' ', String(request.statusCode));
@@ -358,7 +367,8 @@ export class ConsoleViewMessage {
         element: anchorElement,
         forceSelect: () => anchorElement.focus(),
       });
-      const anchorWrapperElement = createElementWithClass('span', 'console-message-anchor');
+      const anchorWrapperElement = document.createElement('span');
+      anchorWrapperElement.classList.add('console-message-anchor');
       anchorWrapperElement.appendChild(anchorElement);
       anchorWrapperElement.createTextChild(' ');
       return anchorWrapperElement;
@@ -370,7 +380,8 @@ export class ConsoleViewMessage {
    * @return {!Element}
    */
   _buildMessageWithStackTrace() {
-    const toggleElement = createElementWithClass('div', 'console-message-stack-trace-toggle');
+    const toggleElement = document.createElement('div');
+    toggleElement.classList.add('console-message-stack-trace-toggle');
     const contentElement = toggleElement.createChild('div', 'console-message-stack-trace-wrapper');
 
     const messageElement = this._buildMessage();
@@ -619,7 +630,8 @@ export class ConsoleViewMessage {
    * @return {!Element}
    */
   _formatParameterAsObject(obj, includePreview) {
-    const titleElement = createElementWithClass('span', 'console-object');
+    const titleElement = document.createElement('span');
+    titleElement.classList.add('console-object');
     if (includePreview && obj.preview) {
       titleElement.classList.add('console-object-preview');
       this._previewFormatter.appendObjectPreview(titleElement, obj.preview, false /* isEntry */);
@@ -878,13 +890,13 @@ export class ConsoleViewMessage {
       buffer.setAttribute('style', obj.description);
       for (let i = 0; i < buffer.style.length; i++) {
         const property = buffer.style[i];
-        if (isWhitelistedProperty(property)) {
+        if (isAllowedProperty(property)) {
           currentStyle[property] = buffer.style[property];
         }
       }
     }
 
-    function isWhitelistedProperty(property) {
+    function isAllowedProperty(property) {
       // Make sure that allowed properties do not interfere with link visibility.
       const prefixes = [
         'background', 'border', 'color', 'font', 'line', 'margin', 'padding', 'text', '-webkit-background',
@@ -975,8 +987,8 @@ export class ConsoleViewMessage {
     element.style.setProperty('-webkit-text-stroke', '0', 'important');
     element.style.setProperty('text-decoration', 'underline', 'important');
 
-    const themedColor =
-        self.UI.themeSupport.patchColorText('rgb(33%, 33%, 33%)', UI.UIUtils.ThemeSupport.ColorUsage.Foreground);
+    const themedColor = ThemeSupport.ThemeSupport.instance().patchColorText(
+        'rgb(33%, 33%, 33%)', ThemeSupport.ThemeSupport.ColorUsage.Foreground);
     element.style.setProperty('color', themedColor, 'important');
 
     let backgroundColor = 'hsl(0, 0%, 100%)';
@@ -985,8 +997,8 @@ export class ConsoleViewMessage {
     } else if (this._message.level === SDK.ConsoleModel.MessageLevel.Warning || this._shouldRenderAsWarning()) {
       backgroundColor = 'hsl(50, 100%, 95%)';
     }
-    const themedBackgroundColor =
-        self.UI.themeSupport.patchColorText(backgroundColor, UI.UIUtils.ThemeSupport.ColorUsage.Background);
+    const themedBackgroundColor = ThemeSupport.ThemeSupport.instance().patchColorText(
+        backgroundColor, ThemeSupport.ThemeSupport.ColorUsage.Background);
     element.style.setProperty('background-color', themedBackgroundColor, 'important');
   }
 
@@ -1017,7 +1029,8 @@ export class ConsoleViewMessage {
 
     if (Common.Settings.Settings.instance().moduleSetting('consoleTimestampsEnabled').get()) {
       if (!this._timestampElement) {
-        this._timestampElement = createElementWithClass('span', 'console-timestamp');
+        this._timestampElement = document.createElement('span');
+        this._timestampElement.classList.add('console-timestamp');
       }
       this._timestampElement.textContent = UI.UIUtils.formatTimestamp(this._message.timestamp, false) + ' ';
       this._timestampElement.title = UI.UIUtils.formatTimestamp(this._message.timestamp, true);
@@ -1046,7 +1059,8 @@ export class ConsoleViewMessage {
       this._similarGroupMarker.remove();
       this._similarGroupMarker = null;
     } else if (this._element && !this._similarGroupMarker && inSimilarGroup) {
-      this._similarGroupMarker = createElementWithClass('div', 'nesting-level-marker');
+      this._similarGroupMarker = document.createElement('div');
+      this._similarGroupMarker.classList.add('nesting-level-marker');
       this._element.insertBefore(this._similarGroupMarker, this._element.firstChild);
       this._similarGroupMarker.classList.toggle('group-closed', this._lastInSimilarGroup);
     }
@@ -1202,7 +1216,8 @@ export class ConsoleViewMessage {
       return this._contentElement;
     }
 
-    const contentElement = createElementWithClass('div', 'console-message');
+    const contentElement = document.createElement('div');
+    contentElement.classList.add('console-message');
     if (this._messageLevelIcon) {
       contentElement.appendChild(this._messageLevelIcon);
     }
@@ -1364,13 +1379,17 @@ export class ConsoleViewMessage {
     this._showRepeatCountElement();
   }
 
+  /**
+   * @suppress {checkTypes}
+   */
   _showRepeatCountElement() {
     if (!this._element) {
       return;
     }
 
     if (!this._repeatCountElement) {
-      this._repeatCountElement = createElementWithClass('span', 'console-message-repeat-count', 'dt-small-bubble');
+      this._repeatCountElement = document.createElement('span', {is: 'dt-small-bubble'});
+      this._repeatCountElement.classList.add('console-message-repeat-count');
       switch (this._message.level) {
         case SDK.ConsoleModel.MessageLevel.Warning:
           this._repeatCountElement.type = 'warning';

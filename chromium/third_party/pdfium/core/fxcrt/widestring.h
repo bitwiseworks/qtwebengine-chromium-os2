@@ -117,7 +117,7 @@ class WideString {
   WideString& operator=(const WideString& that);
 
   // Move-assign a WideString. After assignment, |that| is empty.
-  WideString& operator=(WideString&& that);
+  WideString& operator=(WideString&& that) noexcept;
 
   WideString& operator+=(const wchar_t* str);
   WideString& operator+=(wchar_t ch);
@@ -215,6 +215,9 @@ class WideString {
   // wide string terminator. These values are in the string, not just the data,
   // so GetLength() will include them.
   ByteString ToUTF16LE() const;
+
+  // Replace the characters &<>'" with HTML entities.
+  WideString EncodeEntities() const;
 
  protected:
   using StringData = StringDataTemplate<wchar_t>;

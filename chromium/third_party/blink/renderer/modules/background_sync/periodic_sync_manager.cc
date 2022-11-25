@@ -4,7 +4,7 @@
 
 #include "third_party/blink/renderer/modules/background_sync/periodic_sync_manager.h"
 
-#include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
+#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
@@ -19,7 +19,9 @@ namespace blink {
 PeriodicSyncManager::PeriodicSyncManager(
     ServiceWorkerRegistration* registration,
     scoped_refptr<base::SequencedTaskRunner> task_runner)
-    : registration_(registration), task_runner_(std::move(task_runner)) {
+    : registration_(registration),
+      task_runner_(std::move(task_runner)),
+      background_sync_service_(registration_->GetExecutionContext()) {
   DCHECK(registration_);
 }
 
@@ -89,13 +91,15 @@ ScriptPromise PeriodicSyncManager::unregister(ScriptState* script_state,
   return promise;
 }
 
-const mojo::Remote<mojom::blink::PeriodicBackgroundSyncService>&
+mojom::blink::PeriodicBackgroundSyncService*
 PeriodicSyncManager::GetBackgroundSyncServiceRemote() {
   if (!background_sync_service_.is_bound()) {
-    Platform::Current()->GetBrowserInterfaceBroker()->GetInterface(
-        background_sync_service_.BindNewPipeAndPassReceiver());
+    registration_->GetExecutionContext()
+        ->GetBrowserInterfaceBroker()
+        .GetInterface(
+            background_sync_service_.BindNewPipeAndPassReceiver(task_runner_));
   }
-  return background_sync_service_;
+  return background_sync_service_.get();
 }
 
 void PeriodicSyncManager::RegisterCallback(
@@ -184,8 +188,9 @@ void PeriodicSyncManager::UnregisterCallback(
   }
 }
 
-void PeriodicSyncManager::Trace(Visitor* visitor) {
+void PeriodicSyncManager::Trace(Visitor* visitor) const {
   visitor->Trace(registration_);
+  visitor->Trace(background_sync_service_);
   ScriptWrappable::Trace(visitor);
 }
 

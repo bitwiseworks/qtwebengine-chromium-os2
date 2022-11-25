@@ -25,23 +25,21 @@ class CustomLayoutConstraints : public ScriptWrappable {
   CustomLayoutConstraints(const LogicalSize& border_box_size,
                           SerializedScriptValue* data,
                           v8::Isolate*);
+  CustomLayoutConstraints(const CustomLayoutConstraints&) = delete;
+  CustomLayoutConstraints& operator=(const CustomLayoutConstraints&) = delete;
   ~CustomLayoutConstraints() override;
 
   // LayoutConstraints.idl
   double fixedInlineSize() const { return fixed_inline_size_; }
   base::Optional<double> fixedBlockSize() const;
-  // TODO(crbug.com/1060971): Remove |is_null| version.
-  double fixedBlockSize(bool& is_null) const;  // DEPRECATED
   ScriptValue data(ScriptState*) const;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   double fixed_inline_size_;
   double fixed_block_size_;
   TraceWrapperV8Reference<v8::Value> layout_worklet_world_v8_data_;
-
-  DISALLOW_COPY_AND_ASSIGN(CustomLayoutConstraints);
 };
 
 }  // namespace blink

@@ -7,10 +7,12 @@
 #include <dawn/webgpu.h>
 
 #include "third_party/blink/renderer/bindings/modules/v8/double_sequence_or_gpu_color_dict.h"
-#include "third_party/blink/renderer/bindings/modules/v8/unsigned_long_sequence_or_gpu_extent_3d_dict.h"
-#include "third_party/blink/renderer/bindings/modules/v8/unsigned_long_sequence_or_gpu_origin_3d_dict.h"
+#include "third_party/blink/renderer/bindings/modules/v8/unsigned_long_enforce_range_sequence_or_gpu_extent_3d_dict.h"
+#include "third_party/blink/renderer/bindings/modules/v8/unsigned_long_enforce_range_sequence_or_gpu_origin_3d_dict.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_gpu_programmable_stage_descriptor.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_gpu_texture_copy_view.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_gpu_texture_data_layout.h"
+#include "third_party/blink/renderer/modules/webgpu/gpu_device.h"
 #include "third_party/blink/renderer/modules/webgpu/gpu_shader_module.h"
 #include "third_party/blink/renderer/modules/webgpu/gpu_texture.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -31,11 +33,20 @@ WGPUBindingType AsDawnEnum<WGPUBindingType>(const WTF::String& webgpu_enum) {
   if (webgpu_enum == "sampler") {
     return WGPUBindingType_Sampler;
   }
+  if (webgpu_enum == "comparison-sampler") {
+    return WGPUBindingType_ComparisonSampler;
+  }
   if (webgpu_enum == "sampled-texture") {
     return WGPUBindingType_SampledTexture;
   }
-  if (webgpu_enum == "storage-texture") {
-    return WGPUBindingType_StorageTexture;
+  if (webgpu_enum == "multisampled-texture") {
+    return WGPUBindingType_MultisampledTexture;
+  }
+  if (webgpu_enum == "readonly-storage-texture") {
+    return WGPUBindingType_ReadonlyStorageTexture;
+  }
+  if (webgpu_enum == "writeonly-storage-texture") {
+    return WGPUBindingType_WriteonlyStorageTexture;
   }
   NOTREACHED();
   return WGPUBindingType_Force32;
@@ -86,6 +97,43 @@ WGPUCompareFunction AsDawnEnum<WGPUCompareFunction>(
   }
   NOTREACHED();
   return WGPUCompareFunction_Force32;
+}
+
+template <>
+WGPUQueryType AsDawnEnum<WGPUQueryType>(const WTF::String& webgpu_enum) {
+  if (webgpu_enum == "occlusion") {
+    return WGPUQueryType_Occlusion;
+  }
+  if (webgpu_enum == "pipeline-statistics") {
+    return WGPUQueryType_PipelineStatistics;
+  }
+  if (webgpu_enum == "timestamp") {
+    return WGPUQueryType_Timestamp;
+  }
+  NOTREACHED();
+  return WGPUQueryType_Force32;
+}
+
+template <>
+WGPUPipelineStatisticName AsDawnEnum<WGPUPipelineStatisticName>(
+    const WTF::String& webgpu_enum) {
+  if (webgpu_enum == "vertex-shader-invocations") {
+    return WGPUPipelineStatisticName_VertexShaderInvocations;
+  }
+  if (webgpu_enum == "clipper-invocations") {
+    return WGPUPipelineStatisticName_ClipperInvocations;
+  }
+  if (webgpu_enum == "clipper-primitives-out") {
+    return WGPUPipelineStatisticName_ClipperPrimitivesOut;
+  }
+  if (webgpu_enum == "fragment-shader-invocations") {
+    return WGPUPipelineStatisticName_FragmentShaderInvocations;
+  }
+  if (webgpu_enum == "compute-shader-invocations") {
+    return WGPUPipelineStatisticName_ComputeShaderInvocations;
+  }
+  NOTREACHED();
+  return WGPUPipelineStatisticName_Force32;
 }
 
 template <>
@@ -273,10 +321,15 @@ WGPUTextureFormat AsDawnEnum<WGPUTextureFormat>(
 template <>
 WGPUTextureDimension AsDawnEnum<WGPUTextureDimension>(
     const WTF::String& webgpu_enum) {
+  if (webgpu_enum == "1d") {
+    return WGPUTextureDimension_1D;
+  }
   if (webgpu_enum == "2d") {
     return WGPUTextureDimension_2D;
   }
-  // TODO(crbug.com/dawn/129): Implement "1d" and "3d".
+  if (webgpu_enum == "3d") {
+    return WGPUTextureDimension_3D;
+  }
   NOTREACHED();
   return WGPUTextureDimension_Force32;
 }
@@ -286,6 +339,9 @@ WGPUTextureViewDimension AsDawnEnum<WGPUTextureViewDimension>(
     const WTF::String& webgpu_enum) {
   if (webgpu_enum.IsNull()) {
     return WGPUTextureViewDimension_Undefined;
+  }
+  if (webgpu_enum == "1d") {
+    return WGPUTextureViewDimension_1D;
   }
   if (webgpu_enum == "2d") {
     return WGPUTextureViewDimension_2D;
@@ -299,7 +355,9 @@ WGPUTextureViewDimension AsDawnEnum<WGPUTextureViewDimension>(
   if (webgpu_enum == "cube-array") {
     return WGPUTextureViewDimension_CubeArray;
   }
-  // TODO(crbug.com/dawn/129): Implement "1d" and "3d".
+  if (webgpu_enum == "3d") {
+    return WGPUTextureViewDimension_3D;
+  }
   NOTREACHED();
   return WGPUTextureViewDimension_Force32;
 }
@@ -358,6 +416,9 @@ WGPULoadOp AsDawnEnum<WGPULoadOp>(const WTF::String& webgpu_enum) {
 
 template <>
 WGPUIndexFormat AsDawnEnum<WGPUIndexFormat>(const WTF::String& webgpu_enum) {
+  if (webgpu_enum.IsNull()) {
+    return WGPUIndexFormat_Undefined;
+  }
   if (webgpu_enum == "uint16") {
     return WGPUIndexFormat_Uint16;
   }
@@ -689,14 +750,14 @@ WGPUColor AsDawnType(const DoubleSequenceOrGPUColorDict* webgpu_color) {
 }
 
 WGPUExtent3D AsDawnType(
-    const UnsignedLongSequenceOrGPUExtent3DDict* webgpu_extent) {
+    const UnsignedLongEnforceRangeSequenceOrGPUExtent3DDict* webgpu_extent) {
   DCHECK(webgpu_extent);
 
   WGPUExtent3D dawn_extent = {};
 
-  if (webgpu_extent->IsUnsignedLongSequence()) {
+  if (webgpu_extent->IsUnsignedLongEnforceRangeSequence()) {
     const Vector<uint32_t>& webgpu_extent_sequence =
-        webgpu_extent->GetAsUnsignedLongSequence();
+        webgpu_extent->GetAsUnsignedLongEnforceRangeSequence();
     DCHECK_EQ(webgpu_extent_sequence.size(), 3UL);
     dawn_extent.width = webgpu_extent_sequence[0];
     dawn_extent.height = webgpu_extent_sequence[1];
@@ -717,14 +778,14 @@ WGPUExtent3D AsDawnType(
 }
 
 WGPUOrigin3D AsDawnType(
-    const UnsignedLongSequenceOrGPUOrigin3DDict* webgpu_origin) {
+    const UnsignedLongEnforceRangeSequenceOrGPUOrigin3DDict* webgpu_origin) {
   DCHECK(webgpu_origin);
 
   WGPUOrigin3D dawn_origin = {};
 
-  if (webgpu_origin->IsUnsignedLongSequence()) {
+  if (webgpu_origin->IsUnsignedLongEnforceRangeSequence()) {
     const Vector<uint32_t>& webgpu_origin_sequence =
-        webgpu_origin->GetAsUnsignedLongSequence();
+        webgpu_origin->GetAsUnsignedLongEnforceRangeSequence();
     DCHECK_EQ(webgpu_origin_sequence.size(), 3UL);
     dawn_origin.x = webgpu_origin_sequence[0];
     dawn_origin.y = webgpu_origin_sequence[1];
@@ -744,18 +805,28 @@ WGPUOrigin3D AsDawnType(
   return dawn_origin;
 }
 
-WGPUTextureCopyView AsDawnType(const GPUTextureCopyView* webgpu_view) {
+WGPUTextureCopyView AsDawnType(const GPUTextureCopyView* webgpu_view,
+                               GPUDevice* device) {
   DCHECK(webgpu_view);
   DCHECK(webgpu_view->texture());
 
-  WGPUTextureCopyView dawn_view;
-  dawn_view.nextInChain = nullptr;
+  WGPUTextureCopyView dawn_view = {};
   dawn_view.texture = webgpu_view->texture()->GetHandle();
   dawn_view.mipLevel = webgpu_view->mipLevel();
-  dawn_view.arrayLayer = webgpu_view->arrayLayer();
   dawn_view.origin = AsDawnType(&webgpu_view->origin());
 
   return dawn_view;
+}
+
+WGPUTextureDataLayout AsDawnType(const GPUTextureDataLayout* webgpu_layout) {
+  DCHECK(webgpu_layout);
+
+  WGPUTextureDataLayout dawn_layout = {};
+  dawn_layout.offset = webgpu_layout->offset();
+  dawn_layout.bytesPerRow = webgpu_layout->bytesPerRow();
+  dawn_layout.rowsPerImage = webgpu_layout->rowsPerImage();
+
+  return dawn_layout;
 }
 
 OwnedProgrammableStageDescriptor AsDawnType(

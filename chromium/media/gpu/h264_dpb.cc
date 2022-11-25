@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include "base/logging.h"
+#include "base/notreached.h"
 #include "base/stl_util.h"
 #include "media/gpu/h264_dpb.h"
 
@@ -51,6 +52,10 @@ V4L2H264Picture* H264Picture::AsV4L2H264Picture() {
 }
 
 VaapiH264Picture* H264Picture::AsVaapiH264Picture() {
+  return nullptr;
+}
+
+D3D11H264Picture* H264Picture::AsD3D11H264Picture() {
   return nullptr;
 }
 

@@ -46,6 +46,7 @@
 #include "third_party/blink/renderer/core/dom/scoped_window_focus_allowed_indicator.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/deprecation.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/performance_monitor.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
@@ -97,19 +98,19 @@ Notification* Notification::Create(ExecutionContext* context,
     return nullptr;
   }
 
-  auto* document = Document::DynamicFrom(context);
+  auto* window = DynamicTo<LocalDOMWindow>(context);
   if (context->IsSecureContext()) {
     UseCounter::Count(context, WebFeature::kNotificationSecureOrigin);
-    if (document) {
-      document->CountUseOnlyInCrossOriginIframe(
+    if (window) {
+      window->CountUseOnlyInCrossOriginIframe(
           WebFeature::kNotificationAPISecureOriginIframe);
     }
   } else {
     Deprecation::CountDeprecation(context,
                                   WebFeature::kNotificationInsecureOrigin);
-    if (document) {
+    if (window) {
       Deprecation::CountDeprecationCrossOriginIframe(
-          *document, WebFeature::kNotificationAPIInsecureOriginIframe);
+          window, WebFeature::kNotificationAPIInsecureOriginIframe);
     }
   }
 
@@ -137,9 +138,9 @@ Notification* Notification::Create(ExecutionContext* context,
 
   notification->SchedulePrepareShow();
 
-  if (document) {
+  if (window) {
     if (auto* document_resource_coordinator =
-            document->GetResourceCoordinator()) {
+            window->document()->GetResourceCoordinator()) {
       document_resource_coordinator->OnNonPersistentNotificationCreated();
     }
   }
@@ -167,7 +168,8 @@ Notification::Notification(ExecutionContext* context,
       data_(std::move(data)),
       prepare_show_timer_(context->GetTaskRunner(TaskType::kMiscPlatformAPI),
                           this,
-                          &Notification::PrepareShow) {
+                          &Notification::PrepareShow),
+      listener_receiver_(this, context) {
   if (data_->show_trigger_timestamp.has_value()) {
     show_trigger_ = TimestampTrigger::Create(static_cast<DOMTimeStamp>(
         data_->show_trigger_timestamp.value().ToJsTime()));
@@ -246,9 +248,12 @@ void Notification::OnShow() {
 
 void Notification::OnClick(OnClickCallback completed_closure) {
   ExecutionContext* context = GetExecutionContext();
-  Document* document = Document::DynamicFrom(context);
-  if (document && document->GetFrame())
-    LocalFrame::NotifyUserActivation(document->GetFrame());
+  auto* window = DynamicTo<LocalDOMWindow>(context);
+  if (window && window->GetFrame()) {
+    LocalFrame::NotifyUserActivation(
+        window->GetFrame(),
+        mojom::blink::UserActivationNotificationType::kInteraction);
+  }
   ScopedWindowFocusAllowedIndicator window_focus_allowed(GetExecutionContext());
   DispatchEvent(*Event::Create(event_type_names::kClick));
 
@@ -419,8 +424,8 @@ String Notification::permission(ExecutionContext* context) {
   // TODO(crbug.com/758603): Move this check to the browser process when the
   // NotificationService connection becomes frame-bound.
   if (status == mojom::blink::PermissionStatus::ASK) {
-    auto* document = Document::DynamicFrom(context);
-    LocalFrame* frame = document ? document->GetFrame() : nullptr;
+    auto* window = DynamicTo<LocalDOMWindow>(context);
+    LocalFrame* frame = window ? window->GetFrame() : nullptr;
     if (!frame || frame->IsCrossOriginToMainFrame())
       status = mojom::blink::PermissionStatus::DENIED;
   }
@@ -431,32 +436,32 @@ String Notification::permission(ExecutionContext* context) {
 ScriptPromise Notification::requestPermission(
     ScriptState* script_state,
     V8NotificationPermissionCallback* deprecated_callback) {
+  if (!script_state->ContextIsValid())
+    return ScriptPromise();
+
   ExecutionContext* context = ExecutionContext::From(script_state);
-  Document* doc = Document::DynamicFrom(context);
 
   probe::BreakableLocation(context, "Notification.requestPermission");
-  if (!LocalFrame::HasTransientUserActivation(doc ? doc->GetFrame()
-                                                  : nullptr)) {
-    PerformanceMonitor::ReportGenericViolation(
-        context, PerformanceMonitor::kDiscouragedAPIUse,
-        "Only request notification permission in response to a user gesture.",
-        base::TimeDelta(), nullptr);
+  if (auto* window = DynamicTo<LocalDOMWindow>(context)) {
+    if (!LocalFrame::HasTransientUserActivation(window->GetFrame())) {
+      PerformanceMonitor::ReportGenericViolation(
+          context, PerformanceMonitor::kDiscouragedAPIUse,
+          "Only request notification permission in response to a user gesture.",
+          base::TimeDelta(), nullptr);
+    }
+
+    // Sites cannot request notification permission from cross-origin iframes,
+    // but they can use notifications if permission had already been granted.
+    if (window->GetFrame()->IsCrossOriginToMainFrame()) {
+      Deprecation::CountDeprecation(
+          context, WebFeature::kNotificationPermissionRequestedIframe);
+    }
   }
 
   // Sites cannot request notification permission from insecure contexts.
   if (!context->IsSecureContext()) {
     Deprecation::CountDeprecation(
         context, WebFeature::kNotificationPermissionRequestedInsecureOrigin);
-  }
-
-  // Sites cannot request notification permission from cross-origin iframes,
-  // but they can use notifications if permission had already been granted.
-  if (auto* document = Document::DynamicFrom(context)) {
-    LocalFrame* frame = document->GetFrame();
-    if (!frame || frame->IsCrossOriginToMainFrame()) {
-      Deprecation::CountDeprecation(
-          context, WebFeature::kNotificationPermissionRequestedIframe);
-    }
   }
 
   return NotificationManager::From(context)->RequestPermission(
@@ -477,8 +482,6 @@ const AtomicString& Notification::InterfaceName() const {
 }
 
 void Notification::ContextDestroyed() {
-  listener_receiver_.reset();
-
   state_ = State::kClosed;
 
   if (prepare_show_timer_.IsActive())
@@ -497,9 +500,10 @@ bool Notification::HasPendingActivity() const {
   return false;
 }
 
-void Notification::Trace(Visitor* visitor) {
+void Notification::Trace(Visitor* visitor) const {
   visitor->Trace(show_trigger_);
   visitor->Trace(loader_);
+  visitor->Trace(listener_receiver_);
   EventTargetWithInlineData::Trace(visitor);
   ExecutionContextLifecycleObserver::Trace(visitor);
 }

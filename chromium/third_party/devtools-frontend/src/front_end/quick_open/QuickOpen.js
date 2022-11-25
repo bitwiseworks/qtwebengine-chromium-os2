@@ -2,6 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
+import * as Root from '../root/root.js';
 import * as UI from '../ui/ui.js';  // eslint-disable-line no-unused-vars
 
 import {FilteredListWidget, Provider} from './FilteredListWidget.js';
@@ -20,7 +24,7 @@ export class QuickOpenImpl {
     /** @type {!Array<string>} */
     this._prefixes = [];
     this._filteredListWidget = null;
-    self.runtime.extensions(Provider).forEach(this._addProvider.bind(this));
+    Root.Runtime.Runtime.instance().extensions(Provider).forEach(this._addProvider.bind(this));
     this._prefixes.sort((a, b) => b.length - a.length);
   }
 

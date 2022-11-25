@@ -27,8 +27,6 @@ namespace dawn_native { namespace opengl {
                     return GL_NEAREST;
                 case wgpu::FilterMode::Linear:
                     return GL_LINEAR;
-                default:
-                    UNREACHABLE();
             }
         }
 
@@ -40,8 +38,6 @@ namespace dawn_native { namespace opengl {
                             return GL_NEAREST_MIPMAP_NEAREST;
                         case wgpu::FilterMode::Linear:
                             return GL_NEAREST_MIPMAP_LINEAR;
-                        default:
-                            UNREACHABLE();
                     }
                 case wgpu::FilterMode::Linear:
                     switch (mipMapFilter) {
@@ -49,11 +45,7 @@ namespace dawn_native { namespace opengl {
                             return GL_LINEAR_MIPMAP_NEAREST;
                         case wgpu::FilterMode::Linear:
                             return GL_LINEAR_MIPMAP_LINEAR;
-                        default:
-                            UNREACHABLE();
                     }
-                default:
-                    UNREACHABLE();
             }
         }
 
@@ -65,8 +57,6 @@ namespace dawn_native { namespace opengl {
                     return GL_MIRRORED_REPEAT;
                 case wgpu::AddressMode::ClampToEdge:
                     return GL_CLAMP_TO_EDGE;
-                default:
-                    UNREACHABLE();
             }
         }
 
@@ -110,7 +100,7 @@ namespace dawn_native { namespace opengl {
         gl.SamplerParameterf(sampler, GL_TEXTURE_MIN_LOD, descriptor->lodMinClamp);
         gl.SamplerParameterf(sampler, GL_TEXTURE_MAX_LOD, descriptor->lodMaxClamp);
 
-        if (ToOpenGLCompareFunction(descriptor->compare) != GL_NEVER) {
+        if (descriptor->compare != wgpu::CompareFunction::Undefined) {
             gl.SamplerParameteri(sampler, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
             gl.SamplerParameteri(sampler, GL_TEXTURE_COMPARE_FUNC,
                                  ToOpenGLCompareFunction(descriptor->compare));

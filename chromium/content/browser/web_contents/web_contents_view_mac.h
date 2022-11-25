@@ -14,15 +14,15 @@
 
 #include "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
-#include "content/browser/frame_host/popup_menu_helper_mac.h"
+#include "content/browser/renderer_host/popup_menu_helper_mac.h"
 #include "content/browser/renderer_host/render_view_host_delegate_view.h"
 #include "content/browser/web_contents/web_contents_view.h"
 #include "content/common/content_export.h"
-#include "content/common/drag_event_source_info.h"
 #include "content/common/web_contents_ns_view_bridge.mojom.h"
 #include "content/public/browser/visibility.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
+#include "third_party/blink/public/mojom/choosers/popup_menu.mojom.h"
 #import "ui/base/cocoa/views_hostable.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -65,8 +65,7 @@ class WebContentsViewMac : public WebContentsView,
   gfx::NativeView GetNativeView() const override;
   gfx::NativeView GetContentNativeView() const override;
   gfx::NativeWindow GetTopLevelNativeWindow() const override;
-  void GetContainerBounds(gfx::Rect* out) const override;
-  void SizeContents(const gfx::Size& size) override;
+  gfx::Rect GetContainerBounds() const override;
   void Focus() override;
   void SetInitialFocus() override;
   void StoreFocus() override;
@@ -88,26 +87,27 @@ class WebContentsViewMac : public WebContentsView,
 
   // RenderViewHostDelegateView:
   void StartDragging(const DropData& drop_data,
-                     blink::WebDragOperationsMask allowed_operations,
+                     blink::DragOperationsMask allowed_operations,
                      const gfx::ImageSkia& image,
                      const gfx::Vector2d& image_offset,
-                     const DragEventSourceInfo& event_info,
+                     const blink::mojom::DragEventSourceInfo& event_info,
                      RenderWidgetHostImpl* source_rwh) override;
-  void UpdateDragCursor(blink::WebDragOperation operation) override;
+  void UpdateDragCursor(blink::DragOperation operation) override;
   void GotFocus(RenderWidgetHostImpl* render_widget_host) override;
   void LostFocus(RenderWidgetHostImpl* render_widget_host) override;
   void TakeFocus(bool reverse) override;
   void ShowContextMenu(RenderFrameHost* render_frame_host,
                        const ContextMenuParams& params) override;
-  void ShowPopupMenu(RenderFrameHost* render_frame_host,
-                     const gfx::Rect& bounds,
-                     int item_height,
-                     double item_font_size,
-                     int selected_item,
-                     const std::vector<MenuItem>& items,
-                     bool right_aligned,
-                     bool allow_multiple_selection) override;
-  void HidePopupMenu() override;
+  void ShowPopupMenu(
+      RenderFrameHost* render_frame_host,
+      mojo::PendingRemote<blink::mojom::PopupMenuClient> popup_client,
+      const gfx::Rect& bounds,
+      int item_height,
+      double item_font_size,
+      int selected_item,
+      std::vector<blink::mojom::MenuItemPtr> menu_items,
+      bool right_aligned,
+      bool allow_multiple_selection) override;
 
   // PopupMenuHelper::Delegate:
   void OnMenuClosed() override;

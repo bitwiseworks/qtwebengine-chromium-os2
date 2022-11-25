@@ -25,10 +25,22 @@
  */
 
 import * as Common from '../common/common.js';
+import * as DOMExtension from '../dom_extension/dom_extension.js';
 import {Constraints, Size} from './Geometry.js';
 import {appendStyle} from './utils/append-style.js';
 import {createShadowRootWithCoreStyles} from './utils/create-shadow-root-with-core-styles.js';
 import {XWidget} from './XWidget.js';
+
+export class WidgetElement extends HTMLDivElement {  // eslint-disable-line no-unused-vars
+  constructor() {
+    super();
+    /** @type {?Widget} */
+    this.__widget;
+
+    /** @type {?number} */
+    this.__widgetCounter;
+  }
+}
 
 /**
  * @unrestricted
@@ -40,74 +52,79 @@ export class Widget extends Common.ObjectWrapper.ObjectWrapper {
    */
   constructor(isWebComponent, delegatesFocus) {
     super();
-    this.contentElement = createElementWithClass('div', 'widget');
+    /** @type {!WidgetElement} */
+    this.element;
+    this.contentElement = document.createElement('div');
+    this.contentElement.classList.add('widget');
     if (isWebComponent) {
-      this.element = createElementWithClass('div', 'vbox flex-auto');
+      this.element = /** @type {!WidgetElement} */ (document.createElement('div'));
+      this.element.classList.add('vbox');
+      this.element.classList.add('flex-auto');
       this._shadowRoot = createShadowRootWithCoreStyles(this.element, undefined, delegatesFocus);
       this._shadowRoot.appendChild(this.contentElement);
     } else {
-      this.element = this.contentElement;
+      this.element = /** @type {!WidgetElement} */ (this.contentElement);
     }
     this._isWebComponent = isWebComponent;
     this.element.__widget = this;
     this._visible = false;
     this._isRoot = false;
     this._isShowing = false;
+    /** @type {!Array<!Widget>} */
     this._children = [];
     this._hideOnDetach = false;
     this._notificationDepth = 0;
     this._invalidationsSuspended = 0;
     this._defaultFocusedChild = null;
+    /** @type {?Widget} */
+    this._parentWidget = null;
   }
 
+  /**
+   * @param {!WidgetElement} parentElement
+   * @param {!WidgetElement} childElement
+   */
   static _incrementWidgetCounter(parentElement, childElement) {
     const count = (childElement.__widgetCounter || 0) + (childElement.__widget ? 1 : 0);
     if (!count) {
       return;
     }
 
-    while (parentElement) {
-      parentElement.__widgetCounter = (parentElement.__widgetCounter || 0) + count;
-      parentElement = parentElement.parentElementOrShadowHost();
+    /** @type {?WidgetElement} */
+    let currentElement = parentElement;
+    while (currentElement) {
+      currentElement.__widgetCounter = (currentElement.__widgetCounter || 0) + count;
+      currentElement = parentWidgetElementOrShadowHost(currentElement);
     }
   }
 
+  /**
+   * @param {!WidgetElement} parentElement
+   * @param {!WidgetElement} childElement
+   */
   static _decrementWidgetCounter(parentElement, childElement) {
     const count = (childElement.__widgetCounter || 0) + (childElement.__widget ? 1 : 0);
     if (!count) {
       return;
     }
 
-    while (parentElement) {
-      parentElement.__widgetCounter -= count;
-      parentElement = parentElement.parentElementOrShadowHost();
-    }
-  }
-
-  static __assert(condition, message) {
-    if (!condition) {
-      throw new Error(message);
+    /** @type {?WidgetElement} */
+    let currentElement = parentElement;
+    while (currentElement) {
+      if (currentElement.__widgetCounter) {
+        currentElement.__widgetCounter -= count;
+      }
+      currentElement = parentWidgetElementOrShadowHost(currentElement);
     }
   }
 
   /**
-   * @param {?Node} node
+   * @param {*} condition
+   * @param {string} message
    */
-  static focusWidgetForNode(node) {
-    while (node) {
-      if (node.__widget) {
-        break;
-      }
-      node = node.parentNodeOrShadowHost();
-    }
-    if (!node) {
-      return;
-    }
-
-    let widget = node.__widget;
-    while (widget._parentWidget) {
-      widget._parentWidget._defaultFocusedChild = widget;
-      widget = widget._parentWidget;
+  static __assert(condition, message) {
+    if (!condition) {
+      throw new Error(message);
     }
   }
 
@@ -170,7 +187,7 @@ export class Widget extends Common.ObjectWrapper.ObjectWrapper {
    * @return {boolean}
    */
   _inNotification() {
-    return !!this._notificationDepth || (this._parentWidget && this._parentWidget._inNotification());
+    return !!this._notificationDepth || !!(this._parentWidget && this._parentWidget._inNotification());
   }
 
   _parentIsShowing() {
@@ -181,7 +198,7 @@ export class Widget extends Common.ObjectWrapper.ObjectWrapper {
   }
 
   /**
-   * @param {function(this:Widget)} method
+   * @param {function(this:Widget):void} method
    */
   _callOnVisibleChildren(method) {
     const copy = this._children.slice();
@@ -233,7 +250,7 @@ export class Widget extends Common.ObjectWrapper.ObjectWrapper {
   }
 
   /**
-   * @param {function(this:Widget)} notification
+   * @param {function(this:Widget):void} notification
    */
   _notify(notification) {
     ++this._notificationDepth;
@@ -268,15 +285,18 @@ export class Widget extends Common.ObjectWrapper.ObjectWrapper {
 
     if (!this._isRoot) {
       // Update widget hierarchy.
-      let currentParent = parentElement;
+      /** @type {?WidgetElement} */
+      let currentParent = /** @type {?WidgetElement} */ (parentElement);
       while (currentParent && !currentParent.__widget) {
-        currentParent = currentParent.parentElementOrShadowHost();
+        currentParent = parentWidgetElementOrShadowHost(currentParent);
       }
-      Widget.__assert(currentParent, 'Attempt to attach widget to orphan node');
+      if (!currentParent || !currentParent.__widget) {
+        throw new Error('Attempt to attach widget to orphan node');
+      }
       this._attach(currentParent.__widget);
     }
 
-    this._showWidget(parentElement, insertBefore);
+    this._showWidget(/** @type {!WidgetElement} */ (parentElement), insertBefore);
   }
 
   /**
@@ -289,6 +309,7 @@ export class Widget extends Common.ObjectWrapper.ObjectWrapper {
     if (this._parentWidget) {
       this.detach();
     }
+    /** @type {?Widget} */
     this._parentWidget = parentWidget;
     this._parentWidget._children.push(this);
     this._isRoot = false;
@@ -298,18 +319,21 @@ export class Widget extends Common.ObjectWrapper.ObjectWrapper {
     if (this._visible) {
       return;
     }
-    Widget.__assert(this.element.parentElement, 'Attempt to show widget that is not hidden using hideWidget().');
-    this._showWidget(/** @type {!Element} */ (this.element.parentElement), this.element.nextSibling);
+    if (!this.element.parentElement) {
+      throw new Error('Attempt to show widget that is not hidden using hideWidget().');
+    }
+    this._showWidget(/** @type {!WidgetElement} */ (this.element.parentElement), this.element.nextSibling);
   }
 
   /**
-   * @param {!Element} parentElement
+   * @param {!WidgetElement} parentElement
    * @param {?Node=} insertBefore
    */
   _showWidget(parentElement, insertBefore) {
+    /** @type {?WidgetElement} */
     let currentParent = parentElement;
     while (currentParent && !currentParent.__widget) {
-      currentParent = currentParent.parentElementOrShadowHost();
+      currentParent = parentWidgetElementOrShadowHost(currentParent);
     }
 
     if (this._isRoot) {
@@ -339,9 +363,9 @@ export class Widget extends Common.ObjectWrapper.ObjectWrapper {
         Widget._incrementWidgetCounter(parentElement, this.element);
       }
       if (insertBefore) {
-        Widget._originalInsertBefore.call(parentElement, this.element, insertBefore);
+        DOMExtension.DOMExtension.originalInsertBefore.call(parentElement, this.element, insertBefore);
       } else {
-        Widget._originalAppendChild.call(parentElement, this.element);
+        DOMExtension.DOMExtension.originalAppendChild.call(parentElement, this.element);
       }
     }
 
@@ -368,7 +392,7 @@ export class Widget extends Common.ObjectWrapper.ObjectWrapper {
    */
   _hideWidget(removeFromDOM) {
     this._visible = false;
-    const parentElement = this.element.parentElement;
+    const parentElement = /** @type {!WidgetElement} */ (this.element.parentElement);
 
     if (this._parentIsShowing()) {
       this._processWillHide();
@@ -377,7 +401,7 @@ export class Widget extends Common.ObjectWrapper.ObjectWrapper {
     if (removeFromDOM) {
       // Force legal removal
       Widget._decrementWidgetCounter(parentElement, this.element);
-      Widget._originalRemoveChild.call(parentElement, this.element);
+      DOMExtension.DOMExtension.originalRemoveChild.call(parentElement, this.element);
     } else {
       this.element.classList.add('hidden');
     }
@@ -391,7 +415,7 @@ export class Widget extends Common.ObjectWrapper.ObjectWrapper {
   }
 
   /**
-   * @param {boolean=} overrideHideOnDetach
+   * @param {boolean=} overrideHideOnDetach remove element from DOM instead of hiding
    */
   detach(overrideHideOnDetach) {
     if (!this._parentWidget && !this._isRoot) {
@@ -407,10 +431,10 @@ export class Widget extends Common.ObjectWrapper.ObjectWrapper {
     if (this._visible) {
       this._hideWidget(removeFromDOM);
     } else if (removeFromDOM && this.element.parentElement) {
-      const parentElement = this.element.parentElement;
+      const parentElement = /** @type {!WidgetElement} */ (this.element.parentElement);
       // Force kick out from DOM.
       Widget._decrementWidgetCounter(parentElement, this.element);
-      Widget._originalRemoveChild.call(parentElement, this.element);
+      DOMExtension.DOMExtension.originalRemoveChild.call(parentElement, this.element);
     }
 
     // Update widget hierarchy.
@@ -444,22 +468,18 @@ export class Widget extends Common.ObjectWrapper.ObjectWrapper {
 
   storeScrollPositions() {
     const elements = this.elementsToRestoreScrollPositionsFor();
-    for (let i = 0; i < elements.length; ++i) {
-      const container = elements[i];
-      container._scrollTop = container.scrollTop;
-      container._scrollLeft = container.scrollLeft;
+    for (const container of elements) {
+      storedScrollPositions.set(container, {scrollLeft: container.scrollLeft, scrollTop: container.scrollTop});
     }
   }
 
   restoreScrollPositions() {
     const elements = this.elementsToRestoreScrollPositionsFor();
-    for (let i = 0; i < elements.length; ++i) {
-      const container = elements[i];
-      if (container._scrollTop) {
-        container.scrollTop = container._scrollTop;
-      }
-      if (container._scrollLeft) {
-        container.scrollLeft = container._scrollLeft;
+    for (const container of elements) {
+      const storedPositions = storedScrollPositions.get(container);
+      if (storedPositions) {
+        container.scrollLeft = storedPositions.scrollLeft;
+        container.scrollTop = storedPositions.scrollTop;
       }
     }
   }
@@ -486,15 +506,24 @@ export class Widget extends Common.ObjectWrapper.ObjectWrapper {
    * @param {string} cssFile
    */
   registerRequiredCSS(cssFile) {
-    appendStyle(this._isWebComponent ? this._shadowRoot : this.element, cssFile);
+    if (this._isWebComponent) {
+      appendStyle(/** @type {!DocumentFragment} */ (this._shadowRoot), cssFile);
+    } else {
+      appendStyle(this.element, cssFile);
+    }
   }
 
   printWidgetHierarchy() {
+    /** @type {!Array<string>} */
     const lines = [];
     this._collectWidgetHierarchy('', lines);
     console.log(lines.join('\n'));  // eslint-disable-line no-console
   }
 
+  /**
+   * @param {string} prefix
+   * @param {!Array<string>} lines
+   */
   _collectWidgetHierarchy(prefix, lines) {
     lines.push(prefix + '[' + this.element.className + ']' + (this._children.length ? ' {' : ''));
 
@@ -527,7 +556,7 @@ export class Widget extends Common.ObjectWrapper.ObjectWrapper {
       return;
     }
 
-    const element = this._defaultFocusedElement;
+    const element = /** @type {?HTMLElement} */ (this._defaultFocusedElement);
     if (element) {
       if (!element.hasFocus()) {
         element.focus();
@@ -632,7 +661,7 @@ export class Widget extends Common.ObjectWrapper.ObjectWrapper {
     const cached = this._cachedConstraints;
     delete this._cachedConstraints;
     const actual = this.constraints();
-    if (!actual.isEqual(cached) && this._parentWidget) {
+    if (!actual.isEqual(cached || null) && this._parentWidget) {
       this._parentWidget.invalidateConstraints();
     } else {
       this.doLayout();
@@ -653,11 +682,10 @@ export class Widget extends Common.ObjectWrapper.ObjectWrapper {
   }
 }
 
-export const _originalAppendChild = Element.prototype.appendChild;
-export const _originalInsertBefore = Element.prototype.insertBefore;
-export const _originalRemoveChild = Element.prototype.removeChild;
-export const _originalRemoveChildren = Element.prototype.removeChildren;
-
+/**
+ * @type {!WeakMap<!Element, !{ scrollLeft: number, scrollTop: number }>}
+ */
+const storedScrollPositions = new WeakMap();
 
 /**
  * @unrestricted
@@ -733,7 +761,7 @@ export class HBox extends Widget {
  */
 export class VBoxWithResizeCallback extends VBox {
   /**
-   * @param {function()} resizeCallback
+   * @param {function():void} resizeCallback
    */
   constructor(resizeCallback) {
     super();
@@ -756,8 +784,10 @@ export class WidgetFocusRestorer {
    * @param {!Widget} widget
    */
   constructor(widget) {
+    /** @type {?Widget} */
     this._widget = widget;
-    this._previous = widget.element.ownerDocument.deepActiveElement();
+    /** @type {?HTMLElement} */
+    this._previous = /** @type {?HTMLElement} */ (widget.element.ownerDocument.deepActiveElement());
     widget.focus();
   }
 
@@ -774,47 +804,9 @@ export class WidgetFocusRestorer {
 }
 
 /**
- * @override
- * @param {?Node} child
- * @return {!Node}
- * @suppress {duplicate}
+ * @param {!WidgetElement} element
+ * @return {?WidgetElement}
  */
-Element.prototype.appendChild = function(child) {
-  Widget.__assert(!child.__widget || child.parentElement === this, 'Attempt to add widget via regular DOM operation.');
-  return Widget._originalAppendChild.call(this, child);
-};
-
-/**
- * @override
- * @param {?Node} child
- * @param {?Node} anchor
- * @return {!Node}
- * @suppress {duplicate}
- */
-Element.prototype.insertBefore = function(child, anchor) {
-  Widget.__assert(!child.__widget || child.parentElement === this, 'Attempt to add widget via regular DOM operation.');
-  return Widget._originalInsertBefore.call(this, child, anchor);
-};
-
-/**
- * @override
- * @param {?Node} child
- * @return {!Node}
- * @suppress {duplicate}
- */
-Element.prototype.removeChild = function(child) {
-  Widget.__assert(
-      !child.__widgetCounter && !child.__widget,
-      'Attempt to remove element containing widget via regular DOM operation');
-  return Widget._originalRemoveChild.call(this, child);
-};
-
-Element.prototype.removeChildren = function() {
-  Widget.__assert(!this.__widgetCounter, 'Attempt to remove element containing widget via regular DOM operation');
-  Widget._originalRemoveChildren.call(this);
-};
-
-Widget._originalAppendChild = _originalAppendChild;
-Widget._originalInsertBefore = _originalInsertBefore;
-Widget._originalRemoveChild = _originalRemoveChild;
-Widget._originalRemoveChildren = _originalRemoveChildren;
+function parentWidgetElementOrShadowHost(element) {
+  return /** @type {?WidgetElement} */ (element.parentElementOrShadowHost());
+}

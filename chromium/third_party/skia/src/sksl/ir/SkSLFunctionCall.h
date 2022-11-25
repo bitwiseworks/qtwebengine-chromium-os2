@@ -17,11 +17,19 @@ namespace SkSL {
  * A function invocation.
  */
 struct FunctionCall : public Expression {
-    FunctionCall(int offset, const Type& type, const FunctionDeclaration& function,
+    static constexpr Kind kExpressionKind = Kind::kFunctionCall;
+
+    FunctionCall(int offset, const Type* type, const FunctionDeclaration& function,
                  std::vector<std::unique_ptr<Expression>> arguments)
-    : INHERITED(offset, kFunctionCall_Kind, type)
+    : INHERITED(offset, kExpressionKind, type)
     , fFunction(std::move(function))
-    , fArguments(std::move(arguments)) {}
+    , fArguments(std::move(arguments)) {
+        ++fFunction.fCallCount;
+    }
+
+    ~FunctionCall() override {
+        --fFunction.fCallCount;
+    }
 
     bool hasProperty(Property property) const override {
         if (property == Property::kSideEffects && (fFunction.fModifiers.fFlags &
@@ -41,11 +49,10 @@ struct FunctionCall : public Expression {
         for (const auto& arg : fArguments) {
             cloned.push_back(arg->clone());
         }
-        return std::unique_ptr<Expression>(new FunctionCall(fOffset, fType, fFunction,
+        return std::unique_ptr<Expression>(new FunctionCall(fOffset, &this->type(), fFunction,
                                                             std::move(cloned)));
     }
 
-#ifdef SK_DEBUG
     String description() const override {
         String result = String(fFunction.fName) + "(";
         String separator;
@@ -57,14 +64,13 @@ struct FunctionCall : public Expression {
         result += ")";
         return result;
     }
-#endif
 
     const FunctionDeclaration& fFunction;
     std::vector<std::unique_ptr<Expression>> fArguments;
 
-    typedef Expression INHERITED;
+    using INHERITED = Expression;
 };
 
-} // namespace
+}  // namespace SkSL
 
 #endif

@@ -28,7 +28,6 @@
 #endif
 
 namespace download {
-
 namespace {
 
 // All possible error codes from the network module. Note that the error codes
@@ -134,6 +133,18 @@ std::string CreateHistogramNameWithSuffix(const std::string& name,
   return name + "." + suffix;
 }
 
+void RecordConnectionType(
+    const std::string& name,
+    net::NetworkChangeNotifier::ConnectionType connection_type,
+    DownloadSource download_source) {
+  using ConnectionType = net::NetworkChangeNotifier::ConnectionType;
+  base::UmaHistogramExactLinear(name, connection_type,
+                                ConnectionType::CONNECTION_LAST + 1);
+  base::UmaHistogramExactLinear(
+      CreateHistogramNameWithSuffix(name, download_source), connection_type,
+      ConnectionType::CONNECTION_LAST + 1);
+}
+
 }  // namespace
 
 void RecordDownloadCount(DownloadCountTypes type) {
@@ -150,11 +161,19 @@ void RecordDownloadCountWithSource(DownloadCountTypes type,
   base::UmaHistogramEnumeration(name, type, DOWNLOAD_COUNT_TYPES_LAST_ENTRY);
 }
 
-void RecordDownloadCompleted(int64_t download_len,
-                             bool is_parallelizable,
-                             DownloadSource download_source,
-                             bool has_resumed,
-                             bool has_strong_validators) {
+void RecordNewDownloadStarted(
+    net::NetworkChangeNotifier::ConnectionType connection_type,
+    DownloadSource download_source) {
+  RecordDownloadCountWithSource(NEW_DOWNLOAD_COUNT, download_source);
+  RecordConnectionType("Download.NetworkConnectionType.StartNew",
+                       connection_type, download_source);
+}
+
+void RecordDownloadCompleted(
+    int64_t download_len,
+    bool is_parallelizable,
+    net::NetworkChangeNotifier::ConnectionType connection_type,
+    DownloadSource download_source) {
   RecordDownloadCountWithSource(COMPLETED_COUNT, download_source);
   int64_t max = 1024 * 1024 * 1024;  // One Terabyte.
   download_len /= 1024;              // In Kilobytes
@@ -165,10 +184,8 @@ void RecordDownloadCompleted(int64_t download_len,
                                 download_len, 1, max, 256);
   }
 
-  if (has_resumed) {
-    base::UmaHistogramBoolean("Download.ResumptionComplete.HasStrongValidators",
-                              has_strong_validators);
-  }
+  RecordConnectionType("Download.NetworkConnectionType.Complete",
+                       connection_type, download_source);
 }
 
 void RecordDownloadInterrupted(DownloadInterruptReason reason,
@@ -633,7 +650,6 @@ void RecordParallelizableDownloadStats(
   if (!uses_parallel_requests)
     return;
 
-  base::TimeDelta time_saved;
   if (bytes_downloaded_with_parallel_streams > 0) {
     int64_t bandwidth_with_parallel_streams = CalculateBandwidthBytesPerSecond(
         bytes_downloaded_with_parallel_streams, time_with_parallel_streams);
@@ -641,20 +657,6 @@ void RecordParallelizableDownloadStats(
         "Download.ParallelizableDownloadBandwidth."
         "WithParallelRequestsMultipleStreams",
         bandwidth_with_parallel_streams);
-    if (bandwidth_without_parallel_streams > 0) {
-      time_saved = base::TimeDelta::FromMilliseconds(
-                       1000.0 * bytes_downloaded_with_parallel_streams /
-                       bandwidth_without_parallel_streams) -
-                   time_with_parallel_streams;
-    }
-  }
-
-  int kMillisecondsPerHour =
-      base::checked_cast<int>(base::Time::kMillisecondsPerSecond * 60 * 60);
-  if (time_saved >= base::TimeDelta()) {
-    UMA_HISTOGRAM_CUSTOM_COUNTS(
-        "Download.EstimatedTimeSavedWithParallelDownload",
-        time_saved.InMilliseconds(), 0, kMillisecondsPerHour, 50);
   }
 }
 
@@ -734,43 +736,6 @@ void RecordDownloadValidationMetrics(DownloadMetricsCallsite callsite,
       DownloadContent::MAX);
 }
 
-void RecordDownloadContentTypeSecurity(
-    const GURL& download_url,
-    const std::vector<GURL>& url_chain,
-    const std::string& mime_type,
-    const base::RepeatingCallback<bool(const GURL&)>&
-        is_origin_secure_callback) {
-  bool is_final_download_secure = is_origin_secure_callback.Run(download_url);
-  bool is_redirect_chain_secure = true;
-  for (const auto& url : url_chain) {
-    if (!is_origin_secure_callback.Run(url)) {
-      is_redirect_chain_secure = false;
-      break;
-    }
-  }
-
-  DownloadContent download_content =
-      download::DownloadContentFromMimeType(mime_type, false);
-  if (is_final_download_secure && is_redirect_chain_secure) {
-    UMA_HISTOGRAM_ENUMERATION("Download.Start.ContentType.SecureChain",
-                              download_content, DownloadContent::MAX);
-  } else {
-    UMA_HISTOGRAM_ENUMERATION("Download.Start.ContentType.InsecureChain",
-                              download_content, DownloadContent::MAX);
-  }
-}
-
-void RecordDownloadSourcePageTransitionType(
-    const base::Optional<ui::PageTransition>& page_transition) {
-  if (!page_transition)
-    return;
-
-  UMA_HISTOGRAM_ENUMERATION(
-      "Download.PageTransition",
-      ui::PageTransitionStripQualifier(page_transition.value()),
-      ui::PAGE_TRANSITION_LAST_CORE + 1);
-}
-
 void RecordDownloadHttpResponseCode(int response_code,
                                     bool is_background_mode) {
   int status_code = net::HttpUtil::MapStatusCodeForHistogram(response_code);
@@ -797,22 +762,6 @@ void RecordResumptionRestartReason(DownloadInterruptReason reason) {
   base::UmaHistogramSparse("Download.ResumptionRestart.Reason", reason);
 }
 
-void RecordResumptionRestartCount(ResumptionRestartCountTypes type) {
-  base::UmaHistogramEnumeration("Download.ResumptionRestart.Counts", type);
-}
-
-void RecordDownloadResumed(bool has_strong_validators) {
-  base::UmaHistogramBoolean("Download.ResumptionStart.HasStrongValidators",
-                            has_strong_validators);
-}
-
-void RecordDownloadConnectionInfo(
-    net::HttpResponseInfo::ConnectionInfo connection_info) {
-  base::UmaHistogramEnumeration(
-      "Download.ConnectionInfo", connection_info,
-      net::HttpResponseInfo::ConnectionInfo::NUM_OF_CONNECTION_INFOS);
-}
-
 void RecordDownloadManagerCreationTimeSinceStartup(
     base::TimeDelta elapsed_time) {
   base::UmaHistogramLongTimes("Download.DownloadManager.CreationDelay",
@@ -822,6 +771,10 @@ void RecordDownloadManagerCreationTimeSinceStartup(
 void RecordDownloadManagerMemoryUsage(size_t bytes_used) {
   base::UmaHistogramMemoryKB("Download.DownloadManager.MemoryUsage",
                              bytes_used / 1000);
+}
+
+void RecordDownloadLaterEvent(DownloadLaterEvent event) {
+  base::UmaHistogramEnumeration("Download.Later.Events", event);
 }
 
 #if defined(OS_ANDROID)

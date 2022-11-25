@@ -28,6 +28,12 @@
  */
 
 #include "third_party/blink/renderer/core/dom/document.h"
+// document.h is a widely included header and its size impacts build time
+// significantly. If you run into this limit, try using forward declarations
+// instead of including more headers. If that is infeasible, adjust the limit.
+// For more info, see
+// https://chromium.googlesource.com/chromium/src/+/HEAD/docs/wmax_tokens.md
+#pragma clang max_tokens_here 900000
 
 #include <memory>
 #include <utility>
@@ -42,25 +48,29 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/mojom/base/text_direction.mojom-blink.h"
-#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+#include "services/metrics/public/cpp/metrics_utils.h"
 #include "services/metrics/public/cpp/mojo_ukm_recorder.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
-#include "services/metrics/public/mojom/ukm_interface.mojom-blink.h"
 #include "services/network/public/mojom/ip_address_space.mojom-blink.h"
-#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+#include "services/network/public/mojom/trust_tokens.mojom-blink.h"
+#include "services/network/public/mojom/web_sandbox_flags.mojom-blink.h"
 #include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/common/css/preferred_color_scheme.h"
 #include "third_party/blink/public/common/feature_policy/document_policy_features.h"
 #include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/common/privacy_budget/identifiability_sample_collector.h"
+#include "third_party/blink/public/common/privacy_budget/identifiability_study_settings.h"
 #include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
-#include "third_party/blink/public/mojom/feature_policy/policy_disposition.mojom-blink.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink.h"
 #include "third_party/blink/public/mojom/insecure_input/insecure_input_service.mojom-blink.h"
-#include "third_party/blink/public/mojom/ukm/ukm.mojom-blink.h"
+#include "third_party/blink/public/mojom/page_state/page_state.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
+#include "third_party/blink/public/platform/web_battery_savings.h"
 #include "third_party/blink/public/platform/web_content_settings_client.h"
 #include "third_party/blink/public/platform/web_theme_engine.h"
+#include "third_party/blink/public/web/web_print_page_description.h"
 #include "third_party/blink/renderer/bindings/core/v8/html_script_element_or_svg_script_element.h"
 #include "third_party/blink/renderer/bindings/core/v8/isolated_world_csp.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_controller.h"
@@ -71,6 +81,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/v0_custom_element_constructor_builder.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_element_creation_options.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_element_registration_options.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_throw_dom_exception.h"
 #include "third_party/blink/renderer/bindings/core/v8/window_proxy.h"
 #include "third_party/blink/renderer/core/accessibility/ax_context.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
@@ -99,12 +110,14 @@
 #include "third_party/blink/renderer/core/css/style_sheet_contents.h"
 #include "third_party/blink/renderer/core/css/style_sheet_list.h"
 #include "third_party/blink/renderer/core/display_lock/display_lock_context.h"
+#include "third_party/blink/renderer/core/display_lock/display_lock_document_state.h"
 #include "third_party/blink/renderer/core/display_lock/display_lock_utilities.h"
 #include "third_party/blink/renderer/core/dom/attr.h"
 #include "third_party/blink/renderer/core/dom/beforeunload_event_listener.h"
 #include "third_party/blink/renderer/core/dom/cdata_section.h"
 #include "third_party/blink/renderer/core/dom/comment.h"
 #include "third_party/blink/renderer/core/dom/context_features.h"
+#include "third_party/blink/renderer/core/dom/document_data.h"
 #include "third_party/blink/renderer/core/dom/document_fragment.h"
 #include "third_party/blink/renderer/core/dom/document_init.h"
 #include "third_party/blink/renderer/core/dom/document_parser_timing.h"
@@ -119,6 +132,7 @@
 #include "third_party/blink/renderer/core/dom/events/native_event_listener.h"
 #include "third_party/blink/renderer/core/dom/events/scoped_event_queue.h"
 #include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
+#include "third_party/blink/renderer/core/dom/focus_params.h"
 #include "third_party/blink/renderer/core/dom/layout_tree_builder_traversal.h"
 #include "third_party/blink/renderer/core/dom/live_node_list.h"
 #include "third_party/blink/renderer/core/dom/mutation_observer.h"
@@ -152,19 +166,13 @@
 #include "third_party/blink/renderer/core/events/page_transition_event.h"
 #include "third_party/blink/renderer/core/events/visual_viewport_resize_event.h"
 #include "third_party/blink/renderer/core/events/visual_viewport_scroll_event.h"
-#include "third_party/blink/renderer/core/execution_context/agent_metrics_collector.h"
-#include "third_party/blink/renderer/core/execution_context/security_context_init.h"
 #include "third_party/blink/renderer/core/execution_context/window_agent.h"
-#include "third_party/blink/renderer/core/execution_context/window_agent_factory.h"
-#include "third_party/blink/renderer/core/feature_policy/dom_document_policy.h"
+#include "third_party/blink/renderer/core/feature_policy/dom_feature_policy.h"
 #include "third_party/blink/renderer/core/feature_policy/feature_policy_parser.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
-#include "third_party/blink/renderer/core/frame/csp/navigation_initiator_impl.h"
-#include "third_party/blink/renderer/core/frame/document_policy_violation_report_body.h"
 #include "third_party/blink/renderer/core/frame/dom_timer.h"
 #include "third_party/blink/renderer/core/frame/dom_visual_viewport.h"
 #include "third_party/blink/renderer/core/frame/event_handler_registry.h"
-#include "third_party/blink/renderer/core/frame/feature_policy_violation_report_body.h"
 #include "third_party/blink/renderer/core/frame/frame_console.h"
 #include "third_party/blink/renderer/core/frame/history.h"
 #include "third_party/blink/renderer/core/frame/intervention.h"
@@ -172,9 +180,8 @@
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
+#include "third_party/blink/renderer/core/frame/page_dismissal_scope.h"
 #include "third_party/blink/renderer/core/frame/performance_monitor.h"
-#include "third_party/blink/renderer/core/frame/report.h"
-#include "third_party/blink/renderer/core/frame/reporting_context.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/frame/viewport_data.h"
 #include "third_party/blink/renderer/core/frame/visual_viewport.h"
@@ -190,6 +197,7 @@
 #include "third_party/blink/renderer/core/html/custom/v0_custom_element_registration_context.h"
 #include "third_party/blink/renderer/core/html/document_all_name_collection.h"
 #include "third_party/blink/renderer/core/html/document_name_collection.h"
+#include "third_party/blink/renderer/core/html/forms/email_input_type.h"
 #include "third_party/blink/renderer/core/html/forms/form_controller.h"
 #include "third_party/blink/renderer/core/html/forms/html_form_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
@@ -217,6 +225,7 @@
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
 #include "third_party/blink/renderer/core/html/parser/nesting_level_incrementer.h"
 #include "third_party/blink/renderer/core/html/parser/text_resource_decoder.h"
+#include "third_party/blink/renderer/core/html/parser/text_resource_decoder_builder.h"
 #include "third_party/blink/renderer/core/html/plugin_document.h"
 #include "third_party/blink/renderer/core/html/portal/document_portals.h"
 #include "third_party/blink/renderer/core/html/portal/portal_contents.h"
@@ -227,8 +236,6 @@
 #include "third_party/blink/renderer/core/input/event_handler.h"
 #include "third_party/blink/renderer/core/input/touch_list.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
-#include "third_party/blink/renderer/core/inspector/inspector_issue.h"
-#include "third_party/blink/renderer/core/inspector/inspector_issue_storage.h"
 #include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
 #include "third_party/blink/renderer/core/intersection_observer/element_intersection_observer_data.h"
 #include "third_party/blink/renderer/core/intersection_observer/intersection_observer_controller.h"
@@ -249,7 +256,6 @@
 #include "third_party/blink/renderer/core/loader/interactive_detector.h"
 #include "third_party/blink/renderer/core/loader/prerenderer_client.h"
 #include "third_party/blink/renderer/core/loader/progress_tracker.h"
-#include "third_party/blink/renderer/core/loader/text_resource_decoder_builder.h"
 #include "third_party/blink/renderer/core/mathml/mathml_element.h"
 #include "third_party/blink/renderer/core/mathml/mathml_row_element.h"
 #include "third_party/blink/renderer/core/mathml_element_factory.h"
@@ -259,6 +265,7 @@
 #include "third_party/blink/renderer/core/page/event_with_hit_test_results.h"
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/page/frame_tree.h"
+#include "third_party/blink/renderer/core/page/named_pages_mapper.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/page/plugin_script_forbidden_scope.h"
 #include "third_party/blink/renderer/core/page/pointer_lock_controller.h"
@@ -268,6 +275,7 @@
 #include "third_party/blink/renderer/core/page/scrolling/scrolling_coordinator.h"
 #include "third_party/blink/renderer/core/page/scrolling/snap_coordinator.h"
 #include "third_party/blink/renderer/core/page/scrolling/text_fragment_anchor.h"
+#include "third_party/blink/renderer/core/page/scrolling/text_fragment_selector_generator.h"
 #include "third_party/blink/renderer/core/page/scrolling/top_document_root_scroller_controller.h"
 #include "third_party/blink/renderer/core/page/spatial_navigation_controller.h"
 #include "third_party/blink/renderer/core/page/validation_message_client.h"
@@ -277,6 +285,7 @@
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/core/resize_observer/resize_observer_controller.h"
+#include "third_party/blink/renderer/core/script/detect_javascript_frameworks.h"
 #include "third_party/blink/renderer/core/script/script_runner.h"
 #include "third_party/blink/renderer/core/scroll/scrollbar_theme.h"
 #include "third_party/blink/renderer/core/svg/svg_document_extensions.h"
@@ -289,7 +298,6 @@
 #include "third_party/blink/renderer/core/trustedtypes/trusted_html.h"
 #include "third_party/blink/renderer/core/xml/parser/xml_document_parser.h"
 #include "third_party/blink/renderer/core/xml_names.h"
-#include "third_party/blink/renderer/core/xmlhttprequest/main_thread_disallow_synchronous_xhr_scope.h"
 #include "third_party/blink/renderer/core/xmlns_names.h"
 #include "third_party/blink/renderer/platform/bindings/dom_data_store.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
@@ -316,12 +324,12 @@
 #include "third_party/blink/renderer/platform/scheduler/public/event_loop.h"
 #include "third_party/blink/renderer/platform/scheduler/public/frame_or_worker_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
-#include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
 #include "third_party/blink/renderer/platform/text/platform_locale.h"
 #include "third_party/blink/renderer/platform/web_test_support.h"
 #include "third_party/blink/renderer/platform/weborigin/origin_access_entry.h"
 #include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
+#include "third_party/blink/renderer/platform/widget/frame_widget.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/hash_functions.h"
@@ -339,6 +347,25 @@ namespace blink {
 
 namespace {
 
+// This enum must match the numbering for RequestStorageResult in
+// histograms/enums.xml. Do not reorder or remove items, only add new items
+// at the end.
+enum class RequestStorageResult {
+  APPROVED_EXISTING_ACCESS = 0,
+  APPROVED_NEW_GRANT = 1,
+  REJECTED_NO_USER_GESTURE = 2,
+  REJECTED_NO_ORIGIN = 3,
+  REJECTED_OPAQUE_ORIGIN = 4,
+  REJECTED_EXISTING_DENIAL = 5,
+  REJECTED_SANDBOXED = 6,
+  REJECTED_GRANT_DENIED = 7,
+  kMaxValue = REJECTED_GRANT_DENIED,
+};
+void FireRequestStorageAccessHistogram(RequestStorageResult result) {
+  base::UmaHistogramEnumeration("API.StorageAccess.RequestStorageAccess",
+                                result);
+}
+
 // Returns true if any of <object> ancestors don't start loading or are loading
 // plugins/frames/images. If there are no <object> ancestors, this function
 // returns false.
@@ -352,6 +379,16 @@ bool IsInIndeterminateObjectAncestor(const Element* element) {
     }
   }
   return false;
+}
+
+// Helper function to notify both `first` and `second` that the priority scroll
+// anchor status changed. This is used when, for example, a focused element
+// changes from `first` to `second`.
+void NotifyPriorityScrollAnchorStatusChanged(Node* first, Node* second) {
+  if (first)
+    first->NotifyPriorityScrollAnchorStatusChanged();
+  if (second)
+    second->NotifyPriorityScrollAnchorStatusChanged();
 }
 
 }  // namespace
@@ -583,8 +620,6 @@ class Document::NetworkStateObserver final
     : public GarbageCollected<Document::NetworkStateObserver>,
       public NetworkStateNotifier::NetworkStateObserver,
       public ExecutionContextLifecycleObserver {
-  USING_GARBAGE_COLLECTED_MIXIN(Document::NetworkStateObserver);
-
  public:
   explicit NetworkStateObserver(ExecutionContext* context)
       : ExecutionContextLifecycleObserver(context) {
@@ -609,7 +644,7 @@ class Document::NetworkStateObserver final
     online_observer_handle_ = nullptr;
   }
 
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     ExecutionContextLifecycleObserver::Trace(visitor);
   }
 
@@ -632,42 +667,33 @@ ExplicitlySetAttrElementsMap* Document::GetExplicitlySetAttrElementsMap(
 }
 
 Document* Document::Create(Document& document) {
-  Document* new_document =
-      MakeGarbageCollected<Document>(DocumentInit::Create()
-                                         .WithContextDocument(&document)
-                                         .WithURL(BlankURL())
-                                         .WithOwnerDocument(&document));
+  Document* new_document = MakeGarbageCollected<Document>(
+      DocumentInit::Create()
+          .WithExecutionContext(document.GetExecutionContext())
+          .WithURL(BlankURL()));
   new_document->SetContextFeatures(document.GetContextFeatures());
   return new_document;
 }
 
-Document::Document() : Document(DocumentInit::Create()) {}
+Document* Document::CreateForTest() {
+  return MakeGarbageCollected<Document>(DocumentInit::Create().ForTest());
+}
 
 Document::Document(const DocumentInit& initializer,
-                   DocumentClassFlags document_classes)
-    : Document(initializer,
-               SecurityContextInit(initializer),
-               document_classes) {}
-
-Document::Document(const DocumentInit& initializer,
-                   const SecurityContextInit& security_initializer,
                    DocumentClassFlags document_classes)
     : ContainerNode(nullptr, kCreateDocument),
       TreeScope(*this),
+      is_initial_empty_document_(initializer.IsInitialEmptyDocument()),
       evaluate_media_queries_on_style_recalc_(false),
       pending_sheet_layout_(kNoLayoutWithPendingSheets),
-      window_agent_factory_(initializer.GetWindowAgentFactory()),
-      frame_(initializer.GetFrame()),
-      // TODO(dcheng): Why does this need both a LocalFrame and LocalDOMWindow
-      // pointer?
-      dom_window_(frame_ ? frame_->DomWindow() : nullptr),
+      dom_window_(initializer.GetWindow()),
       imports_controller_(initializer.ImportsController()),
-      security_context_(security_initializer, SecurityContext::kLocal),
-      use_counter_during_construction_(initializer.GetUseCounter()),
-      context_document_(initializer.ContextDocument()),
+      execution_context_(initializer.GetExecutionContext()),
       context_features_(ContextFeatures::DefaultSwitch()),
       http_refresh_scheduler_(MakeGarbageCollected<HttpRefreshScheduler>(this)),
       well_formed_(false),
+      cookie_url_(dom_window_ ? initializer.GetCookieUrl()
+                              : KURL(g_empty_string)),
       printing_(kNotPrinting),
       is_painting_preview_(false),
       compatibility_mode_(kNoQuirksMode),
@@ -690,11 +716,11 @@ Document::Document(const DocumentInit& initializer,
       // associated parser here (we create the parser in ImplicitOpen). But
       // waiting to set the ready state to 'loading' in ImplicitOpen fires a
       // readystatechange event, which can be observed in the case where we
-      // reuse a window. If there's a window being reused, then there must be
-      // a frame, and if there's a frame, there must be an associated parser, so
-      // setting based on frame_ here is sufficient to ensure that the quirk of
-      // when we set the ready state is not web-observable.
-      ready_state_(frame_ ? kLoading : kComplete),
+      // reuse a window. If there's a window being reused, there must be an
+      // associated parser, so setting based on dom_window_ here is sufficient
+      // to ensure that the quirk of when we set the ready state is not
+      // web-observable.
+      ready_state_(dom_window_ ? kLoading : kComplete),
       parsing_state_(kFinishedParsing),
       contains_plugins_(false),
       ignore_destructive_write_count_(0),
@@ -719,7 +745,6 @@ Document::Document(const DocumentInit& initializer,
       is_srcdoc_document_(initializer.IsSrcdocDocument()),
       is_mobile_document_(false),
       layout_view_(nullptr),
-      has_fullscreen_supplement_(false),
       load_event_delay_count_(0),
       // We already intentionally fire load event asynchronously and here we use
       // kDOMManipulation to ensure that we run onload() in order with other
@@ -736,7 +761,6 @@ Document::Document(const DocumentInit& initializer,
       write_recursion_depth_(0),
       scripted_animation_controller_(
           MakeGarbageCollected<ScriptedAnimationController>(domWindow())),
-      current_frame_is_throttled_(false),
       registration_context_(initializer.RegistrationContext(this)),
       element_data_cache_clear_timer_(
           GetTaskRunner(TaskType::kInternalUserInteraction),
@@ -753,35 +777,35 @@ Document::Document(const DocumentInit& initializer,
           this,
           &Document::DidAssociateFormControlsTimerFired),
       has_viewport_units_(false),
-      parser_sync_policy_(kAllowAsynchronousParsing),
+      parser_sync_policy_(
+          RuntimeEnabledFeatures::ForceSynchronousHTMLParsingEnabled()
+              ? kAllowDeferredParsing
+              : kAllowAsynchronousParsing),
       node_count_(0),
       logged_field_edit_(false),
-      ukm_source_id_(ukm::UkmRecorder::GetNewSourceID()),
+      // Use the source id from the document initializer if it is available.
+      // Otherwise, generate a new source id to cover any cases that don't
+      // receive a valid source id, this for example includes but is not limited
+      // to SVGImage which does not have an associated RenderFrameHost. No URLs
+      // will be associated to this source id. No DocumentCreated events will be
+      // created either.
+      ukm_source_id_(initializer.UkmSourceId() == ukm::kInvalidSourceId
+                         ? ukm::UkmRecorder::GetNewSourceID()
+                         : initializer.UkmSourceId()),
       needs_to_record_ukm_outlive_time_(false),
       viewport_data_(MakeGarbageCollected<ViewportData>(*this)),
       is_for_external_handler_(initializer.IsForExternalHandler()),
-      isolated_world_csp_map_(
-          MakeGarbageCollected<
-              HeapHashMap<int, Member<ContentSecurityPolicy>>>()),
-      permission_service_(GetExecutionContext()),
-      font_preload_manager_(*this) {
-  security_initializer.ApplyPendingDataToDocument(*this);
-  GetOriginTrialContext()->BindExecutionContext(GetExecutionContext());
-
-  if (frame_) {
-    pending_fp_headers_ = security_initializer.FeaturePolicyHeader();
-    pending_dp_headers_ = initializer.GetDocumentPolicy().feature_state;
-  }
-
-  if (frame_) {
-    DCHECK(frame_->GetPage());
-    ProvideContextFeaturesToDocumentFrom(*this, *frame_->GetPage());
+      fragment_directive_(MakeGarbageCollected<FragmentDirective>()),
+      display_lock_document_state_(
+          MakeGarbageCollected<DisplayLockDocumentState>(this)),
+      font_preload_manager_(MakeGarbageCollected<FontPreloadManager>(*this)),
+      data_(MakeGarbageCollected<DocumentData>(GetExecutionContext())) {
+  if (GetFrame()) {
+    DCHECK(GetFrame()->GetPage());
+    ProvideContextFeaturesToDocumentFrom(*this, *GetFrame()->GetPage());
     fetcher_ = FrameFetchContext::CreateFetcherForCommittedDocument(
-        *frame_->Loader().GetDocumentLoader(), *this);
-    // TODO(dcheng): Why does this need to check that DOMWindow is non-null?
-    CustomElementRegistry* registry =
-        frame_->DomWindow() ? frame_->DomWindow()->MaybeCustomElements()
-                            : nullptr;
+        *GetFrame()->Loader().GetDocumentLoader(), *this);
+    CustomElementRegistry* registry = dom_window_->MaybeCustomElements();
     if (registry && registration_context_)
       registry->Entangle(registration_context_);
     cookie_jar_ = MakeGarbageCollected<CookieJar>(this);
@@ -795,7 +819,8 @@ Document::Document(const DocumentInit& initializer,
             *MakeGarbageCollected<NullResourceFetcherProperties>());
     fetcher_ = MakeGarbageCollected<ResourceFetcher>(ResourceFetcherInit(
         properties, &FetchContext::NullInstance(),
-        GetTaskRunner(TaskType::kNetworking), nullptr /* loader_factory */));
+        GetTaskRunner(TaskType::kNetworking), nullptr /* loader_factory */,
+        GetExecutionContext()));
 
     if (imports_controller_) {
       // We don't expect the fetcher to be used, so count such unexpected use.
@@ -825,8 +850,12 @@ Document::Document(const DocumentInit& initializer,
     SetBaseURLOverride(initializer.GetWebBundleClaimedUrl());
   }
 
-  InitSecurityContext(initializer);
-  PoliciesInitialized(initializer);
+  is_vertical_scroll_enforced_ =
+      GetFrame() && !GetFrame()->IsMainFrame() &&
+      RuntimeEnabledFeatures::ExperimentalProductivityFeaturesEnabled() &&
+      !dom_window_->IsFeatureEnabled(
+          mojom::blink::FeaturePolicyFeature::kVerticalScroll);
+
   InitDNSPrefetch();
 
   InstanceCounters::IncrementCounter(InstanceCounters::kDocumentCounter);
@@ -844,17 +873,12 @@ Document::Document(const DocumentInit& initializer,
   // objects, else this new Document would have a new ExecutionContext which
   // suspended state would not match the one from the parent, and could start
   // loading resources ignoring the defersLoading flag.
-  DCHECK(!ParentDocument() || !ParentDocument()->IsContextPaused());
+  DCHECK(!ParentDocument() ||
+         !ParentDocument()->domWindow()->IsContextPaused());
 
 #ifndef NDEBUG
   liveDocumentSet().insert(this);
 #endif
-
-  if (frame_ && frame_->GetPage()->GetAgentMetricsCollector())
-    frame_->GetPage()->GetAgentMetricsCollector()->DidAttachDocument(*this);
-
-  // We will use Loader() as UseCounter after initialization.
-  use_counter_during_construction_ = nullptr;
 }
 
 Document::~Document() {
@@ -948,189 +972,26 @@ Location* Document::location() const {
   return domWindow()->location();
 }
 
-ContentSecurityPolicy* Document::GetContentSecurityPolicyForWorld() {
-  v8::Isolate* isolate = GetIsolate();
-  if (!isolate)
-    return GetContentSecurityPolicy();
-  v8::HandleScope handle_scope(isolate);
-  v8::Local<v8::Context> v8_context = isolate->GetCurrentContext();
-
-  // This can be called before we enter v8, hence the context might be empty,
-  // which implies we are not in an isolated world.
-  if (v8_context.IsEmpty())
-    return GetContentSecurityPolicy();
-
-  DOMWrapperWorld& world = DOMWrapperWorld::Current(isolate);
-  if (!world.IsIsolatedWorld())
-    return GetContentSecurityPolicy();
-
-  int32_t world_id = world.GetWorldId();
-  auto it = isolated_world_csp_map_->find(world_id);
-  if (it != isolated_world_csp_map_->end())
-    return it->value;
-
-  ContentSecurityPolicy* policy =
-      IsolatedWorldCSP::Get().CreateIsolatedWorldCSP(*this, world_id);
-  if (!policy)
-    return GetContentSecurityPolicy();
-
-  isolated_world_csp_map_->insert(world_id, policy);
-  return policy;
-}
-
-// static
-Document& Document::From(ExecutionContext& context) {
-  SECURITY_DCHECK(context.IsDocument());
-  return *static_cast<LocalDOMWindow&>(context).document();
-}
-
-// static
-const Document& Document::From(const ExecutionContext& context) {
-  SECURITY_DCHECK(context.IsDocument());
-  return *static_cast<const LocalDOMWindow&>(context).document();
-}
-
-ExecutionContext* Document::ToExecutionContext() {
-  return GetExecutionContext();
-}
-
-const ExecutionContext* Document::ToExecutionContext() const {
-  return GetExecutionContext();
-}
-
-bool Document::FeatureEnabled(OriginTrialFeature feature) const {
-  return GetOriginTrialContext()->IsFeatureEnabled(feature);
-}
-
-void Document::CountFeaturePolicyUsage(mojom::WebFeature feature) {
-  UseCounter::Count(*this, feature);
-}
-
-bool Document::FeaturePolicyFeatureObserved(
-    mojom::blink::FeaturePolicyFeature feature) {
+bool Document::DocumentPolicyFeatureObserved(
+    mojom::blink::DocumentPolicyFeature feature) {
   wtf_size_t feature_index = static_cast<wtf_size_t>(feature);
-  if (parsed_feature_policies_.size() == 0) {
-    parsed_feature_policies_.resize(
-        static_cast<wtf_size_t>(mojom::blink::FeaturePolicyFeature::kMaxValue) +
+  if (parsed_document_policies_.size() == 0) {
+    parsed_document_policies_.resize(
+        static_cast<wtf_size_t>(
+            mojom::blink::DocumentPolicyFeature::kMaxValue) +
         1);
-  } else if (parsed_feature_policies_[feature_index]) {
+  } else if (parsed_document_policies_[feature_index]) {
     return true;
   }
-  parsed_feature_policies_[feature_index] = true;
+  parsed_document_policies_[feature_index] = true;
   return false;
 }
 
-const SecurityOrigin* Document::GetSecurityOrigin() const {
-  return GetSecurityContext().GetSecurityOrigin();
-}
-
-SecurityOrigin* Document::GetMutableSecurityOrigin() {
-  return GetSecurityContext().GetMutableSecurityOrigin();
-}
-
-ContentSecurityPolicy* Document::GetContentSecurityPolicy() const {
-  return GetSecurityContext().GetContentSecurityPolicy();
-}
-
-mojom::blink::WebSandboxFlags Document::GetSandboxFlags() const {
-  return GetSecurityContext().GetSandboxFlags();
-}
-
-bool Document::IsSandboxed(mojom::blink::WebSandboxFlags mask) const {
-  return GetSecurityContext().IsSandboxed(mask);
-}
-
-PublicURLManager& Document::GetPublicURLManager() {
-  DCHECK(GetExecutionContext());
-  return GetExecutionContext()->GetPublicURLManager();
-}
-
-bool Document::IsContextPaused() const {
-  return GetExecutionContext() ? GetExecutionContext()->IsContextPaused()
-                               : false;
-}
-
-bool Document::IsContextDestroyed() const {
-  return GetExecutionContext() ? GetExecutionContext()->IsContextDestroyed()
-                               : true;
-}
-
-ContentSecurityPolicyDelegate& Document::GetContentSecurityPolicyDelegate() {
-  return GetExecutionContext()->GetContentSecurityPolicyDelegate();
-}
-
-SecureContextMode Document::GetSecureContextMode() const {
-  return GetSecurityContext().GetSecureContextMode();
-}
-
-bool Document::IsSecureContext() const {
-  return GetExecutionContext()->IsSecureContext();
-}
-
-bool Document::IsSecureContext(String& error_message) const {
-  return GetExecutionContext()->IsSecureContext(error_message);
-}
-
-void Document::SetReferrerPolicy(network::mojom::ReferrerPolicy policy) {
-  GetExecutionContext()->SetReferrerPolicy(policy);
-}
-
-v8::Isolate* Document::GetIsolate() const {
-  return GetExecutionContext() ? GetExecutionContext()->GetIsolate() : nullptr;
-}
-
-Agent* Document::GetAgent() const {
-  return GetSecurityContext().GetAgent();
-}
-
-OriginTrialContext* Document::GetOriginTrialContext() const {
-  return MasterDocument().GetSecurityContext().GetOriginTrialContext();
-}
-
-void Document::SetSecureContextModeForTesting(SecureContextMode mode) {
-  GetSecurityContext().SetSecureContextModeForTesting(mode);
-}
-
-bool Document::IsFeatureEnabled(mojom::blink::FeaturePolicyFeature feature,
-                                ReportOptions report_on_failure,
-                                const String& message,
-                                const String& source_file) const {
-  return GetExecutionContext() &&
-         GetExecutionContext()->IsFeatureEnabled(feature, report_on_failure,
-                                                 message, source_file);
-}
-
-bool Document::IsFeatureEnabled(mojom::blink::FeaturePolicyFeature feature,
-                                PolicyValue threshold_value,
-                                ReportOptions report_on_failure,
-                                const String& message,
-                                const String& source_file) const {
-  return GetExecutionContext() &&
-         GetExecutionContext()->IsFeatureEnabled(
-             feature, threshold_value, report_on_failure, message, source_file);
-}
-
-bool Document::IsFeatureEnabled(mojom::blink::DocumentPolicyFeature feature,
-                                ReportOptions report_option,
-                                const String& message,
-                                const String& source_file) const {
-  return GetExecutionContext() &&
-         GetExecutionContext()->IsFeatureEnabled(feature, report_option,
-                                                 message, source_file);
-}
-
-bool Document::IsFeatureEnabled(mojom::blink::DocumentPolicyFeature feature,
-                                PolicyValue threshold_value,
-                                ReportOptions report_option,
-                                const String& message,
-                                const String& source_file) const {
-  return GetExecutionContext() &&
-         GetExecutionContext()->IsFeatureEnabled(
-             feature, threshold_value, report_option, message, source_file);
-}
-
-String Document::addressSpaceForBindings() const {
-  return GetExecutionContext()->addressSpaceForBindings();
+String Document::addressSpaceForBindings(ScriptState* script_state) const {
+  // "public" is the lowest-privilege value.
+  if (!script_state->ContextIsValid())
+    return "public";
+  return ExecutionContext::From(script_state)->addressSpaceForBindings();
 }
 
 void Document::ChildrenChanged(const ChildrenChange& change) {
@@ -1144,14 +1005,6 @@ void Document::ChildrenChanged(const ChildrenChange& change) {
   // frames when there's only a <head>, but such documents are pretty rare.
   if (document_element_ && !IsA<HTMLDocument>(this))
     BeginLifecycleUpdatesIfRenderingReady();
-}
-
-void Document::setRootScroller(Element* new_scroller, ExceptionState&) {
-  root_scroller_controller_->Set(new_scroller);
-}
-
-Element* Document::rootScroller() const {
-  return root_scroller_controller_->Get();
 }
 
 bool Document::IsInMainFrame() const {
@@ -1291,7 +1144,8 @@ Element* Document::CreateElementForBinding(
   bool is_v1 =
       string_or_options.IsElementCreationOptions() || !RegistrationContext();
   // V0 is only allowed with the flag.
-  DCHECK(is_v1 || RuntimeEnabledFeatures::CustomElementsV0Enabled(this));
+  DCHECK(is_v1 || RuntimeEnabledFeatures::CustomElementsV0Enabled(
+                      GetExecutionContext()));
   bool create_v1_builtin = string_or_options.IsElementCreationOptions();
   bool should_create_builtin =
       create_v1_builtin || string_or_options.IsString();
@@ -1369,7 +1223,8 @@ Element* Document::createElementNS(
   bool is_v1 =
       string_or_options.IsElementCreationOptions() || !RegistrationContext();
   // V0 is only allowed with the flag.
-  DCHECK(is_v1 || RuntimeEnabledFeatures::CustomElementsV0Enabled(this));
+  DCHECK(is_v1 || RuntimeEnabledFeatures::CustomElementsV0Enabled(
+                      GetExecutionContext()));
   bool create_v1_builtin = string_or_options.IsElementCreationOptions();
   bool should_create_builtin =
       create_v1_builtin || string_or_options.IsString();
@@ -1447,7 +1302,7 @@ ScriptValue Document::registerElement(ScriptState* script_state,
 }
 
 V0CustomElementRegistrationContext* Document::RegistrationContext() const {
-  if (RuntimeEnabledFeatures::CustomElementsV0Enabled(this))
+  if (RuntimeEnabledFeatures::CustomElementsV0Enabled(GetExecutionContext()))
     return registration_context_.Get();
   return nullptr;
 }
@@ -1467,7 +1322,7 @@ void Document::ClearImportsController() {
 
 HTMLImportsController* Document::EnsureImportsController() {
   if (!imports_controller_) {
-    DCHECK(frame_);
+    DCHECK(dom_window_);
     imports_controller_ = MakeGarbageCollected<HTMLImportsController>(*this);
   }
 
@@ -1481,16 +1336,16 @@ HTMLImportLoader* Document::ImportLoader() const {
 }
 
 bool Document::IsHTMLImport() const {
-  return imports_controller_ && imports_controller_->Master() != this;
+  return imports_controller_ && imports_controller_->TreeRoot() != this;
 }
 
-Document& Document::MasterDocument() const {
+Document& Document::TreeRootDocument() const {
   if (!imports_controller_)
     return *const_cast<Document*>(this);
 
-  Document* master = imports_controller_->Master();
-  DCHECK(master);
-  return *master;
+  Document* tree_root = imports_controller_->TreeRoot();
+  DCHECK(tree_root);
+  return *tree_root;
 }
 
 bool Document::HaveImportsLoaded() const {
@@ -1503,15 +1358,8 @@ LocalDOMWindow* Document::ExecutingWindow() const {
   if (LocalDOMWindow* owning_window = domWindow())
     return owning_window;
   if (HTMLImportsController* import = ImportsController())
-    return import->Master()->domWindow();
+    return import->TreeRoot()->domWindow();
   return nullptr;
-}
-
-LocalFrame* Document::ExecutingFrame() {
-  LocalDOMWindow* window = ExecutingWindow();
-  if (!window)
-    return nullptr;
-  return window->GetFrame();
 }
 
 DocumentFragment* Document::createDocumentFragment() {
@@ -1855,7 +1703,7 @@ Element* Document::ScrollingElementNoLayout() {
              lifecycle_.GetState() >= DocumentLifecycle::kStyleClean);
       HTMLBodyElement* body = FirstBodyElement();
       if (body && body->GetLayoutObject() &&
-          body->GetLayoutObject()->HasOverflowClip())
+          body->GetLayoutObject()->IsScrollContainer())
         return nullptr;
 
       return body;
@@ -1918,7 +1766,7 @@ void Document::UpdateTitle(const String& title) {
   else
     title_ = CanonicalizedTitle<UChar>(this, raw_title_);
 
-  if (!frame_ || old_title == title_)
+  if (!dom_window_ || old_title == title_)
     return;
   DispatchDidReceiveTitle();
 
@@ -1927,12 +1775,13 @@ void Document::UpdateTitle(const String& title) {
 }
 
 void Document::DispatchDidReceiveTitle() {
-  if (GetFrame() && !GetFrame()->Tree().Parent()) {
+  if (IsInMainFrame()) {
     String shortened_title = title_.Substring(0, mojom::blink::kMaxTitleChars);
     GetFrame()->GetLocalFrameHostRemote().UpdateTitle(
-        shortened_title, mojo_base::mojom::blink::TextDirection::LEFT_TO_RIGHT);
+        shortened_title, base::i18n::TextDirection::LEFT_TO_RIGHT);
+    GetFrame()->GetPage()->GetPageScheduler()->OnTitleOrFaviconUpdated();
   }
-  frame_->Client()->DispatchDidReceiveTitle(title_);
+  GetFrame()->Client()->DispatchDidReceiveTitle(title_);
 }
 
 void Document::setTitle(const String& title) {
@@ -2022,26 +1871,26 @@ bool Document::IsPageVisible() const {
   // page. If there is no page associated with the document, we will assume
   // that the page is hidden, as specified by the spec:
   // https://w3c.github.io/page-visibility/#hidden-attribute
-  if (!frame_ || !frame_->GetPage())
+  if (!GetFrame() || !GetFrame()->GetPage())
     return false;
   // While visibilitychange is being dispatched during unloading it is
   // expected that the visibility is hidden regardless of the page's
   // visibility.
   if (load_event_progress_ >= kUnloadVisibilityChangeInProgress)
     return false;
-  return frame_->GetPage()->IsPageVisible();
+  return GetFrame()->GetPage()->IsPageVisible();
 }
 
 bool Document::IsPrefetchOnly() const {
-  if (!frame_ || !frame_->GetPage())
+  if (!GetFrame() || !GetFrame()->GetPage())
     return false;
 
   PrerendererClient* prerenderer_client =
-      PrerendererClient::From(frame_->GetPage());
+      PrerendererClient::From(GetFrame()->GetPage());
   return prerenderer_client && prerenderer_client->IsPrefetchOnly();
 }
 
-String Document::visibilityState() const {
+AtomicString Document::visibilityState() const {
   return PageHiddenStateString(hidden());
 }
 
@@ -2064,7 +1913,7 @@ void Document::DidChangeVisibilityState() {
       *Event::CreateBubble(event_type_names::kWebkitvisibilitychange));
 
   if (IsPageVisible())
-    Timeline().SetAllCompositorPending();
+    GetDocumentAnimations().MarkAnimationsCompositorPending();
 
   if (hidden() && canvas_font_cache_)
     canvas_font_cache_->PruneAll();
@@ -2106,23 +1955,27 @@ void Document::SetStateForNewControls(const Vector<String>& state_vector) {
 }
 
 LocalFrameView* Document::View() const {
-  return frame_ ? frame_->View() : nullptr;
+  return GetFrame() ? GetFrame()->View() : nullptr;
+}
+
+LocalFrame* Document::GetFrame() const {
+  return dom_window_ ? dom_window_->GetFrame() : nullptr;
 }
 
 Page* Document::GetPage() const {
-  return frame_ ? frame_->GetPage() : nullptr;
+  return GetFrame() ? GetFrame()->GetPage() : nullptr;
 }
 
-LocalFrame* Document::GetFrameOfMasterDocument() const {
-  if (frame_)
-    return frame_;
+LocalFrame* Document::GetFrameOfTreeRootDocument() const {
+  if (GetFrame())
+    return GetFrame();
   if (imports_controller_)
-    return imports_controller_->Master()->GetFrame();
+    return imports_controller_->TreeRoot()->GetFrame();
   return nullptr;
 }
 
 Settings* Document::GetSettings() const {
-  return frame_ ? frame_->GetSettings() : nullptr;
+  return GetFrame() ? GetFrame()->GetSettings() : nullptr;
 }
 
 Range* Document::createRange() {
@@ -2351,7 +2204,7 @@ void Document::PropagateStyleToViewport() {
         viewport_style.BackgroundLayers() != background_layers ||
         viewport_style.ImageRendering() != image_rendering) {
       changed = true;
-      new_viewport_style->SetBackgroundColor(background_color);
+      new_viewport_style->SetBackgroundColor(StyleColor(background_color));
       new_viewport_style->AccessBackgroundLayers() = background_layers;
       new_viewport_style->SetImageRendering(image_rendering);
     }
@@ -2371,7 +2224,7 @@ void Document::PropagateStyleToViewport() {
         // viewport.  This is a bit of a weird edge case in the CSS spec that we
         // might want to try to eliminate some day (eg. for ScrollTopLeftInterop
         // - see http://crbug.com/157855).
-        if (body_style && !body_style->IsOverflowVisible()) {
+        if (body_style && body_style->IsScrollContainer()) {
           UseCounter::Count(*this,
                             WebFeature::kBodyScrollsInAdditionToViewport);
         }
@@ -2422,17 +2275,20 @@ void Document::PropagateStyleToViewport() {
       overflow_y = overflow_style->OverflowY();
       overflow_anchor = overflow_style->OverflowAnchor();
       // Visible overflow on the viewport is meaningless, and the spec says to
-      // treat it as 'auto':
+      // treat it as 'auto'. The spec also says to treat 'clip' as 'hidden'.
       if (overflow_x == EOverflow::kVisible)
         overflow_x = EOverflow::kAuto;
+      else if (overflow_x == EOverflow::kClip)
+        overflow_x = EOverflow::kHidden;
       if (overflow_y == EOverflow::kVisible)
         overflow_y = EOverflow::kAuto;
+      else if (overflow_y == EOverflow::kClip)
+        overflow_y = EOverflow::kHidden;
       if (overflow_anchor == EOverflowAnchor::kVisible)
         overflow_anchor = EOverflowAnchor::kAuto;
 
       if (IsInMainFrame()) {
-        using OverscrollBehaviorType =
-            cc::OverscrollBehavior::OverscrollBehaviorType;
+        using OverscrollBehaviorType = cc::OverscrollBehavior::Type;
         GetPage()->GetChromeClient().SetOverscrollBehavior(
             *GetFrame(),
             cc::OverscrollBehavior(static_cast<OverscrollBehaviorType>(
@@ -2510,9 +2366,8 @@ static void AssertLayoutTreeUpdated(Node& root) {
   Node* node = &root;
   while (node) {
     if (auto* element = DynamicTo<Element>(node)) {
-      if (RuntimeEnabledFeatures::CSSSubtreeVisibilityEnabled() &&
-          element->StyleRecalcBlockedByDisplayLock(
-              DisplayLockLifecycleTarget::kChildren)) {
+      if (RuntimeEnabledFeatures::CSSContentVisibilityEnabled() &&
+          element->ChildStyleRecalcBlockedByDisplayLock()) {
         node = FlatTreeTraversal::NextSkippingChildren(*node);
         continue;
       }
@@ -2606,7 +2461,7 @@ void Document::UpdateStyleAndLayoutTree() {
 
   UpdateDistributionForLegacyDistributedNodes();
 
-  UpdateActiveStyle();
+  GetStyleEngine().UpdateActiveStyle();
   InvalidateStyleAndLayoutForFontUpdates();
   UpdateStyleInvalidationIfNeeded();
   UpdateStyle();
@@ -2622,19 +2477,15 @@ void Document::UpdateStyleAndLayoutTree() {
   unsigned element_count =
       GetStyleEngine().StyleForElementCount() - start_element_count;
 
+  // Make sure that document.fonts.ready fires, if appropriate.
+  FontFaceSetDocument::DidLayout(*this);
+
   TRACE_EVENT_END1("blink,devtools.timeline", "UpdateLayoutTree",
                    "elementCount", element_count);
 
 #if DCHECK_IS_ON()
   AssertLayoutTreeUpdated(*this);
 #endif
-}
-
-void Document::UpdateActiveStyle() {
-  DCHECK(IsActive());
-  DCHECK(IsMainThread());
-  TRACE_EVENT0("blink", "Document::updateActiveStyle");
-  GetStyleEngine().UpdateActiveStyle();
 }
 
 void Document::InvalidateStyleAndLayoutForFontUpdates() {
@@ -2656,7 +2507,6 @@ void Document::UpdateStyle() {
   // SetNeedsStyleRecalc should only happen on Element and Text nodes.
   DCHECK(!NeedsStyleRecalc());
 
-  StyleResolver& resolver = EnsureStyleResolver();
   bool should_record_stats;
   TRACE_EVENT_CATEGORY_GROUP_ENABLED("blink,blink_style", &should_record_stats);
   GetStyleEngine().SetStatsEnabled(should_record_stats);
@@ -2675,7 +2525,6 @@ void Document::UpdateStyle() {
   DCHECK(!NeedsReattachLayoutTree());
   DCHECK(!ChildNeedsReattachLayoutTree());
   DCHECK(InStyleRecalc());
-  DCHECK_EQ(GetStyleResolver(), &resolver);
   lifecycle_.AdvanceTo(DocumentLifecycle::kStyleClean);
   if (should_record_stats) {
     TRACE_EVENT_END2(
@@ -2705,7 +2554,7 @@ bool Document::NeedsLayoutTreeUpdateForNode(const Node& node,
                                             bool ignore_adjacent_style) const {
   // TODO(rakina): Switch some callers that may need to call
   // NeedsLayoutTreeUpdateForNodeIncludingDisplayLocked instead of this.
-  if (DisplayLockUtilities::NearestLockedExclusiveAncestor(node)) {
+  if (DisplayLockUtilities::LockedAncestorPreventingStyle(node)) {
     // |node| is in a locked-subtree, so we don't need to update it.
     return false;
   }
@@ -2718,7 +2567,8 @@ bool Document::NeedsLayoutTreeUpdateForNodeIncludingDisplayLocked(
     bool ignore_adjacent_style) const {
   if (!node.CanParticipateInFlatTree())
     return false;
-  if (locked_display_lock_count_ == 0 && !NeedsLayoutTreeUpdate())
+  if (GetDisplayLockDocumentState().LockedDisplayLockCount() == 0 &&
+      !NeedsLayoutTreeUpdate())
     return false;
   if (!node.isConnected())
     return false;
@@ -2766,7 +2616,7 @@ void Document::UpdateStyleAndLayoutTreeForNode(const Node* node) {
   if (!NeedsLayoutTreeUpdateForNodeIncludingDisplayLocked(*node))
     return;
 
-  DisplayLockUtilities::ScopedChainForcedUpdate scoped_update_forced(node);
+  DisplayLockUtilities::ScopedForcedUpdate scoped_update_forced(node);
   UpdateStyleAndLayoutTree();
 }
 
@@ -2781,7 +2631,7 @@ void Document::UpdateStyleAndLayoutTreeForSubtree(const Node* node) {
 
   if (NeedsLayoutTreeUpdateForNodeIncludingDisplayLocked(*node) ||
       node->ChildNeedsStyleRecalc() || node->ChildNeedsStyleInvalidation()) {
-    DisplayLockUtilities::ScopedChainForcedUpdate scoped_update_forced(node);
+    DisplayLockUtilities::ScopedForcedUpdate scoped_update_forced(node);
     UpdateStyleAndLayoutTree();
   }
 }
@@ -2792,7 +2642,7 @@ void Document::UpdateStyleAndLayoutForNode(const Node* node,
   if (!node->InActiveDocument())
     return;
 
-  DisplayLockUtilities::ScopedChainForcedUpdate scoped_update_forced(node);
+  DisplayLockUtilities::ScopedForcedUpdate scoped_update_forced(node);
   UpdateStyleAndLayout(reason);
 }
 
@@ -2800,9 +2650,9 @@ void Document::ApplyScrollRestorationLogic() {
   // This function in not re-entrant. However, the places that invoke this are
   // re-entrant. Specifically, UpdateStyleAndLayout() calls this, which in turn
   // can do a find-in-page for the scroll-to-text feature, which can cause
-  // UpdateStyleAndLayout to happen with subtree-visibility, which gets back here
-  // and recurses indefinitely. As a result, we ensure to early out from this
-  // function if are currently in process of restoring scroll.
+  // UpdateStyleAndLayout to happen with content-visibility, which gets back
+  // here and recurses indefinitely. As a result, we ensure to early out from
+  // this function if are currently in process of restoring scroll.
   if (applying_scroll_restoration_logic_)
     return;
   base::AutoReset<bool> applying_scroll_restoration_logic_scope(
@@ -2816,7 +2666,7 @@ void Document::ApplyScrollRestorationLogic() {
   auto* document_loader = frame_loader.GetDocumentLoader();
   if (!document_loader)
     return;
-  if (frame_->IsLoading() &&
+  if (GetFrame()->IsLoading() &&
       !FrameLoader::NeedsHistoryItemRestore(document_loader->LoadType()))
     return;
 
@@ -2828,8 +2678,8 @@ void Document::ApplyScrollRestorationLogic() {
   if (!View()->GetScrollableArea()->HasPendingHistoryRestoreScrollOffset())
     return;
 
-  bool should_restore_scroll =
-      history_item->ScrollRestorationType() != kScrollRestorationManual;
+  bool should_restore_scroll = history_item->ScrollRestorationType() !=
+                               mojom::blink::ScrollRestorationType::kManual;
   auto& scroll_offset = history_item->GetViewState()->scroll_offset_;
 
   // This tries to balance:
@@ -2848,7 +2698,7 @@ void Document::ApplyScrollRestorationLogic() {
 
   bool can_restore_without_annoying_user =
       !document_loader->GetInitialScrollState().was_scrolled_by_user &&
-      (can_restore_without_clamping || !frame_->IsLoading() ||
+      (can_restore_without_clamping || !GetFrame()->IsLoading() ||
        !should_restore_scroll);
   if (!can_restore_without_annoying_user)
     return;
@@ -2885,8 +2735,8 @@ void Document::MarkHasFindInPageRequest() {
   had_find_in_page_request_ = true;
 }
 
-void Document::MarkHasFindInPageSubtreeVisibilityActiveMatch() {
-  // Note that although find-in-page in subtree-visibility requests happen in
+void Document::MarkHasFindInPageContentVisibilityActiveMatch() {
+  // Note that although find-in-page in content-visibility requests happen in
   // non-main frames, we only record the main frame results (per UKM policy).
   // Additionally, we only record the event once.
   if (had_find_in_page_render_subtree_active_match_ || !IsInMainFrame())
@@ -2900,6 +2750,23 @@ void Document::MarkHasFindInPageSubtreeVisibilityActiveMatch() {
       .SetDidHaveRenderSubtreeMatch(true)
       .Record(recorder);
   had_find_in_page_render_subtree_active_match_ = true;
+}
+
+void Document::MarkHasFindInPageBeforematchExpandedHiddenMatchable() {
+  // Note that although find-in-page in content-visibility requests happen in
+  // non-main frames, we only record the main frame results (per UKM policy).
+  // Additionally, we only record the event once.
+  if (had_find_in_page_beforematch_expanded_hidden_matchable_ ||
+      !IsInMainFrame())
+    return;
+
+  auto* recorder = UkmRecorder();
+  DCHECK(recorder);
+  DCHECK(UkmSourceID() != ukm::kInvalidSourceId);
+  ukm::builders::Blink_FindInPage(UkmSourceID())
+      .SetBeforematchExpandedHiddenMatchable(true)
+      .Record(recorder);
+  had_find_in_page_beforematch_expanded_hidden_matchable_ = true;
 }
 
 void Document::UpdateStyleAndLayout(DocumentUpdateReason reason) {
@@ -2951,15 +2818,21 @@ void Document::LayoutUpdated() {
 
   // Plugins can run script inside layout which can detach the page.
   // TODO(dcheng): Does it make sense to do any of this work if detached?
-  if (GetFrame()) {
-    if (GetFrame()->IsMainFrame())
-      GetFrame()->GetPage()->GetChromeClient().MainFrameLayoutUpdated();
+  if (auto* frame = GetFrame()) {
+    if (frame->IsMainFrame())
+      frame->GetPage()->GetChromeClient().MainFrameLayoutUpdated();
 
     // We do attach here, during lifecycle update, because until then we
     // don't have a good place that has access to its local root's FrameWidget.
     // TODO(dcheng): If we create FrameWidget before Frame then we could move
     // this to Document::Initialize().
     AttachCompositorTimeline(Timeline().CompositorTimeline());
+
+    frame->Client()->DidObserveLayoutNg(
+        layout_blocks_counter_, layout_blocks_counter_ng_,
+        layout_calls_counter_, layout_calls_counter_ng_);
+    layout_blocks_counter_ = layout_blocks_counter_ng_ = layout_calls_counter_ =
+        layout_calls_counter_ng_ = 0;
   }
 
   Markers().InvalidateRectsForAllTextMatchMarkers();
@@ -2985,12 +2858,8 @@ void Document::DetachCompositorTimeline(
       !GetSettings()->GetAcceleratedCompositingEnabled())
     return;
 
-  // This requires detaching all animations from timeline first before detaching
-  // timeline.
-  if (timeline->GetAnimationTimeline()->IsScrollTimeline() &&
-      timeline->GetAnimationTimeline()->HasAnimation())
-    return;
-
+  // During Document::Shutdown() the timeline needs to be unconditionally
+  // detached.
   GetPage()->GetChromeClient().DetachCompositorAnimationTimeline(timeline,
                                                                  GetFrame());
 }
@@ -3007,9 +2876,18 @@ void Document::ClearFocusedElementTimerFired(TimerBase*) {
     focused_element_->blur();
 }
 
-scoped_refptr<const ComputedStyle> Document::StyleForPage(int page_index) {
+scoped_refptr<const ComputedStyle> Document::StyleForPage(uint32_t page_index) {
   UpdateDistributionForUnknownReasons();
-  return EnsureStyleResolver().StyleForPage(page_index);
+
+  AtomicString page_name;
+  if (const LayoutView* layout_view = GetLayoutView()) {
+    if (const NamedPagesMapper* mapper = layout_view->GetNamedPagesMapper())
+      page_name = mapper->NamedPageAtIndex(page_index);
+  }
+
+  GetStyleEngine().UpdateActiveStyle();
+  return GetStyleEngine().GetStyleResolver().StyleForPage(page_index,
+                                                          page_name);
 }
 
 void Document::EnsurePaintLocationDataValidForNode(
@@ -3019,7 +2897,7 @@ void Document::EnsurePaintLocationDataValidForNode(
   if (!node->InActiveDocument())
     return;
 
-  DisplayLockUtilities::ScopedChainForcedUpdate scoped_update_forced(node);
+  DisplayLockUtilities::ScopedForcedUpdate scoped_update_forced(node);
 
   // For all nodes we must have up-to-date style and have performed layout to do
   // any location-based calculation.
@@ -3044,21 +2922,17 @@ void Document::EnsurePaintLocationDataValidForNode(
   }
 }
 
-bool Document::IsPageBoxVisible(int page_index) {
+bool Document::IsPageBoxVisible(uint32_t page_index) {
   return StyleForPage(page_index)->Visibility() !=
          EVisibility::kHidden;  // display property doesn't apply to @page.
 }
 
-void Document::PageSizeAndMarginsInPixels(int page_index,
-                                          DoubleSize& page_size,
-                                          int& margin_top,
-                                          int& margin_right,
-                                          int& margin_bottom,
-                                          int& margin_left) {
+void Document::GetPageDescription(uint32_t page_index,
+                                  WebPrintPageDescription* description) {
   scoped_refptr<const ComputedStyle> style = StyleForPage(page_index);
 
-  double width = page_size.Width();
-  double height = page_size.Height();
+  double width = description->size.Width();
+  double height = description->size.Height();
   switch (style->GetPageSizeType()) {
     case PageSizeType::kAuto:
       break;
@@ -3079,29 +2953,23 @@ void Document::PageSizeAndMarginsInPixels(int page_index,
     default:
       NOTREACHED();
   }
-  page_size = DoubleSize(width, height);
+  description->size = WebDoubleSize(width, height);
 
   // The percentage is calculated with respect to the width even for margin top
   // and bottom.
   // http://www.w3.org/TR/CSS2/box.html#margin-properties
-  margin_top = style->MarginTop().IsAuto()
-                   ? margin_top
-                   : IntValueForLength(style->MarginTop(), width);
-  margin_right = style->MarginRight().IsAuto()
-                     ? margin_right
-                     : IntValueForLength(style->MarginRight(), width);
-  margin_bottom = style->MarginBottom().IsAuto()
-                      ? margin_bottom
-                      : IntValueForLength(style->MarginBottom(), width);
-  margin_left = style->MarginLeft().IsAuto()
-                    ? margin_left
-                    : IntValueForLength(style->MarginLeft(), width);
-}
+  if (!style->MarginTop().IsAuto())
+    description->margin_top = IntValueForLength(style->MarginTop(), width);
+  if (!style->MarginRight().IsAuto())
+    description->margin_right = IntValueForLength(style->MarginRight(), width);
+  if (!style->MarginBottom().IsAuto()) {
+    description->margin_bottom =
+        IntValueForLength(style->MarginBottom(), width);
+  }
+  if (!style->MarginLeft().IsAuto())
+    description->margin_left = IntValueForLength(style->MarginLeft(), width);
 
-void Document::SetIsViewSource(bool is_view_source) {
-  is_view_source_ = is_view_source;
-  if (!is_view_source_)
-    return;
+  description->orientation = style->GetPageOrientation();
 }
 
 void Document::SetIsXrOverlay(bool val, Element* overlay_element) {
@@ -3165,12 +3033,8 @@ void Document::UpdateUseShadowTreesIfNeeded() {
   }
 }
 
-StyleResolver* Document::GetStyleResolver() const {
-  return style_engine_->Resolver();
-}
-
-StyleResolver& Document::EnsureStyleResolver() const {
-  return style_engine_->EnsureResolver();
+StyleResolver& Document::GetStyleResolver() const {
+  return style_engine_->GetStyleResolver();
 }
 
 void Document::Initialize() {
@@ -3180,7 +3044,7 @@ void Document::Initialize() {
   layout_view_ = new LayoutView(this);
   SetLayoutObject(layout_view_);
 
-  layout_view_->SetStyle(StyleResolver::StyleForViewport(*this));
+  layout_view_->SetStyle(GetStyleResolver().StyleForViewport());
 
   AttachContext context;
   AttachLayoutTree(context);
@@ -3190,7 +3054,7 @@ void Document::Initialize() {
   if (TextAutosizer* autosizer = GetTextAutosizer())
     autosizer->UpdatePageInfo();
 
-  frame_->DidAttachDocument();
+  GetFrame()->DidAttachDocument();
   lifecycle_.AdvanceTo(DocumentLifecycle::kStyleClean);
 
   if (View())
@@ -3201,27 +3065,23 @@ void Document::Initialize() {
   // ExecutionContextLifecycleObserver::contextDestroyed wouldn't be fired.
   network_state_observer_ =
       MakeGarbageCollected<NetworkStateObserver>(GetExecutionContext());
-
-  // Check for frame_ so we only attach documents with its own scheduler.
-  if (frame_)
-    GetAgent()->AttachDocument(this);
 }
 
 void Document::Shutdown() {
   TRACE_EVENT0("blink", "Document::shutdown");
-  CHECK(!frame_ || frame_->Tree().ChildCount() == 0);
+  CHECK(!GetFrame() || GetFrame()->Tree().ChildCount() == 0);
   if (!IsActive())
     return;
 
-  // An active Document must have an associated frame.
-  CHECK(frame_);
+  // An active Document must have an associated window.
+  CHECK(dom_window_);
 
   // Frame navigation can cause a new Document to be attached. Don't allow that,
   // since that will cause a situation where LocalFrame still has a Document
   // attached after this finishes!  Normally, it shouldn't actually be possible
   // to trigger navigation here.  However, plugins (see below) can cause lots of
   // crazy things to happen, since plugin detach involves nested run loops.
-  FrameNavigationDisabler navigation_disabler(*frame_);
+  FrameNavigationDisabler navigation_disabler(*GetFrame());
   // Defer plugin dispose to avoid plugins trying to run script inside
   // ScriptForbiddenScope, which will crash the renderer after
   // https://crrev.com/200984
@@ -3235,37 +3095,39 @@ void Document::Shutdown() {
   lifecycle_.AdvanceTo(DocumentLifecycle::kStopping);
 
   // Do not add code before this without a documented reason. A postcondition of
-  // Shutdown() is that |frame_| must not have an attached Document. Allowing
-  // script execution when the Document is shutting down can make it easy to
-  // accidentally violate this condition, and the ordering of the scopers above
-  // is subtle due to legacy interactions with plugins.
+  // Shutdown() is that |dom_window_| must not have an attached Document.
+  // Allowing script execution when the Document is shutting down can make it
+  // easy to accidentally violate this condition, and the ordering of the
+  // scopers above is subtle due to legacy interactions with plugins.
 
   if (num_canvases_ > 0)
     UMA_HISTOGRAM_COUNTS_100("Blink.Canvas.NumCanvasesPerPage", num_canvases_);
 
-  GetFontMatchingMetrics()->PublishUkmMetrics();
+  GetFontMatchingMetrics()->PublishAllMetrics();
 
   GetViewportData().Shutdown();
 
   View()->Dispose();
-  // TODO(crbug.com/729196): Trace why LocalFrameView::DetachFromLayout crashes.
-  CHECK(!View()->IsAttached());
+  DCHECK(!View()->IsAttached());
 
   // If the EmbeddedContentView of the document's frame owner doesn't match
   // view() then LocalFrameView::Dispose() didn't clear the owner's
   // EmbeddedContentView. If we don't clear it here, it may be clobbered later
   // in LocalFrame::CreateView(). See also https://crbug.com/673170 and the
   // comment in LocalFrameView::Dispose().
-  HTMLFrameOwnerElement* owner_element = frame_->DeprecatedLocalOwner();
+  HTMLFrameOwnerElement* owner_element = GetFrame()->DeprecatedLocalOwner();
 
   // In the case of a provisional frame, skip clearing the EmbeddedContentView.
   // A provisional frame is not fully attached to the DOM yet and clearing the
   // EmbeddedContentView here could clear a not-yet-swapped-out frame
   // (https://crbug.com/807772).
-  if (owner_element && !frame_->IsProvisional())
+  if (owner_element && !GetFrame()->IsProvisional())
     owner_element->SetEmbeddedContentView(nullptr);
 
   markers_->PrepareForDestruction();
+
+  if (GetFrame()->GetTextFragmentSelectorGenerator())
+    GetFrame()->GetTextFragmentSelectorGenerator()->ClearSelection();
 
   GetPage()->DocumentDetached(this);
 
@@ -3278,12 +3140,11 @@ void Document::Shutdown() {
 
   CancelPendingJavaScriptUrls();
   http_refresh_scheduler_->Cancel();
-  GetFrame()->CancelFormSubmission();
 
   DetachCompositorTimeline(Timeline().CompositorTimeline());
 
-  if (frame_->IsLocalRoot())
-    GetPage()->GetChromeClient().AttachRootLayer(nullptr, frame_.Get());
+  if (GetFrame()->IsLocalRoot())
+    GetPage()->GetChromeClient().AttachRootLayer(nullptr, GetFrame());
   if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled())
     layout_view_->CleanUpCompositor();
 
@@ -3299,7 +3160,8 @@ void Document::Shutdown() {
   if (focused_element_.Get()) {
     Element* old_focused_element = focused_element_;
     focused_element_ = nullptr;
-    NotifyFocusedElementChanged(old_focused_element, nullptr);
+    NotifyFocusedElementChanged(old_focused_element, nullptr,
+                                mojom::blink::FocusType::kNone);
   }
   sequential_focus_navigation_starting_point_ = nullptr;
 
@@ -3311,8 +3173,7 @@ void Document::Shutdown() {
 
   layout_view_ = nullptr;
   DetachLayoutTree();
-  // TODO(crbug.com/729196): Trace why LocalFrameView::DetachFromLayout crashes.
-  CHECK(!View()->IsAttached());
+  DCHECK(!View()->IsAttached());
 
   if (this != &AXObjectCacheOwner()) {
     if (AXObjectCache* cache = ExistingAXObjectCache()) {
@@ -3328,19 +3189,19 @@ void Document::Shutdown() {
 
   GetStyleEngine().DidDetach();
 
-  frame_->GetEventHandlerRegistry().DocumentDetached(*this);
+  GetFrame()->GetEventHandlerRegistry().DocumentDetached(*this);
 
   // Signal destruction to mutation observers.
-  synchronous_mutation_observer_list_.ForEachObserver(
+  synchronous_mutation_observer_set_.ForEachObserver(
       [](SynchronousMutationObserver* observer) {
         observer->ContextDestroyed();
-        observer->ObserverListWillBeCleared();
+        observer->ObserverSetWillBeCleared();
       });
-  synchronous_mutation_observer_list_.Clear();
+  synchronous_mutation_observer_set_.Clear();
 
   cookie_jar_ = nullptr;  // Not accessible after navigated away.
   fetcher_->ClearContext();
-  // If this document is the master for an HTMLImportsController, sever that
+  // If this document is the tree_root for an HTMLImportsController, sever that
   // relationship. This ensures that we don't leave import loads in flight,
   // thinking they should have access to a valid frame when they don't.
   if (imports_controller_) {
@@ -3352,22 +3213,18 @@ void Document::Shutdown() {
     media_query_matcher_->DocumentDetached();
 
   lifecycle_.AdvanceTo(DocumentLifecycle::kStopped);
-  // TODO(crbug.com/729196): Trace why LocalFrameView::DetachFromLayout crashes.
-  CHECK(!View()->IsAttached());
-
-  // Check for frame_ so we only detach documents with its own scheduler.
-  // TODO(bokan): Can this happen? |frame_| is dereferenced above and CHECKed
-  // at top.
-  if (frame_)
-    GetAgent()->DetachDocument(this);
-
-  // TODO(crbug.com/729196): Trace why LocalFrameView::DetachFromLayout crashes.
-  CHECK(!View()->IsAttached());
+  DCHECK(!View()->IsAttached());
 
   needs_to_record_ukm_outlive_time_ = IsInMainFrame();
   if (needs_to_record_ukm_outlive_time_) {
     // Ensure |ukm_recorder_| and |ukm_source_id_|.
     UkmRecorder();
+  }
+
+  // Don't create a |ukm_recorder_| and |ukm_source_id_| unless necessary.
+  if (IdentifiabilityStudySettings::Get()->IsActive()) {
+    IdentifiabilitySampleCollector::Get()->FlushSource(UkmRecorder(),
+                                                       UkmSourceID());
   }
 
   mime_handler_view_before_unload_event_listener_ = nullptr;
@@ -3379,7 +3236,8 @@ void Document::Shutdown() {
   // it's never possible to re-attach. Eventually Document::detachLayoutTree()
   // should be renamed, or this setting of the frame to 0 could be made
   // explicit in each of the callers of Document::detachLayoutTree().
-  frame_ = nullptr;
+  dom_window_ = nullptr;
+  execution_context_ = nullptr;
 
   document_outlive_time_reporter_ =
       std::make_unique<DocumentOutliveTimeReporter>(this);
@@ -3460,7 +3318,6 @@ AXObjectCache* Document::ExistingAXObjectCache() const {
   auto& cache_owner = AXObjectCacheOwner();
 
   // If the LayoutView is gone then we are in the process of destruction.
-  // This method will be called before frame_ = nullptr.
   if (!cache_owner.GetLayoutView())
     return nullptr;
 
@@ -3510,14 +3367,24 @@ void Document::SetPrinting(PrintingState state) {
   printing_ = state;
   bool is_printing = Printing();
 
-  if ((was_printing != is_printing) && documentElement() && GetFrame() &&
-      !GetFrame()->IsMainFrame() && GetFrame()->Owner() &&
-      GetFrame()->Owner()->IsDisplayNone()) {
-    // In non-printing mode we do not generate style or layout objects for
-    // display:none iframes, yet we do when printing (see
-    // LayoutView::CanHaveChildren). Trigger a style recalc on the root element
-    // to create a layout tree for printing.
-    DisplayNoneChangedForFrame();
+  if (was_printing != is_printing) {
+    // We force the color-scheme to light for printing.
+    ColorSchemeChanged();
+    // StyleResolver::InitialStyleForElement uses different zoom for printing.
+    GetStyleEngine().MarkViewportStyleDirty();
+    // Separate UA sheet for printing.
+    GetStyleEngine().MarkAllElementsForStyleRecalc(
+        StyleChangeReasonForTracing::Create(
+            style_change_reason::kStyleSheetChange));
+
+    if (documentElement() && GetFrame() && !GetFrame()->IsMainFrame() &&
+        GetFrame()->Owner() && GetFrame()->Owner()->IsDisplayNone()) {
+      // In non-printing mode we do not generate style or layout objects for
+      // display:none iframes, yet we do when printing (see
+      // LayoutView::CanHaveChildren). Trigger a style recalc on the root
+      // element to create a layout tree for printing.
+      DisplayNoneChangedForFrame();
+    }
   }
 }
 
@@ -3526,7 +3393,7 @@ void Document::SetIsPaintingPreview(bool is_painting_preview) {
 }
 
 // https://html.spec.whatwg.org/C/dynamic-markup-insertion.html#document-open-steps
-void Document::open(Document* entered_document,
+void Document::open(LocalDOMWindow* entered_window,
                     ExceptionState& exception_state) {
   if (ImportLoader()) {
     exception_state.ThrowDOMException(
@@ -3555,11 +3422,15 @@ void Document::open(Document* entered_document,
   if (!AllowedToUseDynamicMarkUpInsertion("open", exception_state))
     return;
 
+  if (entered_window && !entered_window->GetFrame())
+    return;
+
   // If |document|'s origin is not same origin to the origin of the responsible
   // document specified by the entry settings object, then throw a
   // "SecurityError" DOMException.
-  if (entered_document && !GetSecurityOrigin()->IsSameOriginWith(
-                              entered_document->GetSecurityOrigin())) {
+  if (entered_window && GetExecutionContext() &&
+      !GetExecutionContext()->GetSecurityOrigin()->IsSameOriginWith(
+          entered_window->GetSecurityOrigin())) {
     exception_state.ThrowSecurityError(
         "Can only call open() on same-origin documents.");
     return;
@@ -3581,27 +3452,29 @@ void Document::open(Document* entered_document,
   if (ignore_opens_and_writes_for_abort_)
     return;
 
-  // Change |document|'s URL to the URL of the responsible document specified
-  // by the entry settings object.
-  if (entered_document && this != entered_document) {
+  // If this document is fully active, change |document|'s URL to the URL of the
+  // responsible document specified by the entry settings object.
+  if (dom_window_ && entered_window && dom_window_ != entered_window) {
     auto* csp = MakeGarbageCollected<ContentSecurityPolicy>();
-    csp->CopyStateFrom(entered_document->GetContentSecurityPolicy());
+    csp->CopyStateFrom(entered_window->GetContentSecurityPolicy());
     // We inherit the sandbox flags of the entered document, so mask on
     // the ones contained in the CSP.
-    GetSecurityContext().ApplySandboxFlags(csp->GetSandboxMask());
-    InitContentSecurityPolicy(csp);
+    dom_window_->GetSecurityContext().ApplySandboxFlags(csp->GetSandboxMask());
+    dom_window_->GetSecurityContext().SetContentSecurityPolicy(csp);
+    dom_window_->GetContentSecurityPolicy()->BindToDelegate(
+        dom_window_->GetContentSecurityPolicyDelegate());
     // Clear the hash fragment from the inherited URL to prevent a
     // scroll-into-view for any document.open()'d frame.
-    KURL new_url = entered_document->Url();
+    KURL new_url = entered_window->Url();
     new_url.SetFragmentIdentifier(String());
     SetURL(new_url);
     if (Loader())
       Loader()->UpdateUrlForDocumentOpen(new_url);
 
-    GetSecurityContext().SetSecurityOrigin(
-        entered_document->GetMutableSecurityOrigin());
-    SetReferrerPolicy(entered_document->GetReferrerPolicy());
-    SetCookieURL(entered_document->CookieURL());
+    dom_window_->GetSecurityContext().SetSecurityOrigin(
+        entered_window->GetMutableSecurityOrigin());
+    dom_window_->SetReferrerPolicy(entered_window->GetReferrerPolicy());
+    cookie_url_ = entered_window->document()->CookieURL();
   }
 
   open();
@@ -3628,12 +3501,9 @@ void Document::open() {
   // This also prevents window.open(url) -- eg window.open("about:blank") --
   // from blowing away results from a subsequent window.document.open /
   // window.document.write call.
-  if (frame_ && (frame_->Loader().HasProvisionalNavigation() ||
-                 IsHttpRefreshScheduledWithin(base::TimeDelta()))) {
-    frame_->Loader().StopAllLoaders();
-    // Navigations handled by the client should also be cancelled.
-    if (frame_ && frame_->Client())
-      frame_->Client()->AbortClientNavigation();
+  if (GetFrame() && (GetFrame()->Loader().HasProvisionalNavigation() ||
+                     IsHttpRefreshScheduledWithin(base::TimeDelta()))) {
+    GetFrame()->Loader().StopAllLoaders(/*abort_client=*/true);
   }
   CancelPendingJavaScriptUrls();
 
@@ -3654,8 +3524,8 @@ void Document::open() {
   RemoveAllEventListenersRecursively();
 
   ResetTreeScope();
-  if (frame_)
-    frame_->Selection().Clear();
+  if (GetFrame())
+    GetFrame()->Selection().Clear();
 
   // Create a new HTML parser and associate it with |document|.
   //
@@ -3666,8 +3536,10 @@ void Document::open() {
   if (ScriptableDocumentParser* parser = GetScriptableDocumentParser())
     parser->SetWasCreatedByScript(true);
 
-  if (frame_)
-    frame_->Loader().DidExplicitOpen();
+  // Calling document.open counts as committing the first real document load.
+  is_initial_empty_document_ = false;
+  if (GetFrame())
+    GetFrame()->Loader().DidExplicitOpen();
 }
 
 void Document::DetachParser() {
@@ -3715,7 +3587,7 @@ DocumentParser* Document::ImplicitOpen(
 
   if (!ThreadedParsingEnabledForTesting()) {
     parser_sync_policy = kForceSynchronousParsing;
-  } else if (parser_sync_policy == kAllowAsynchronousParsing &&
+  } else if (parser_sync_policy != kForceSynchronousParsing &&
              IsPrefetchOnly()) {
     // Prefetch must be synchronous.
     parser_sync_policy = kForceSynchronousParsing;
@@ -3833,7 +3705,7 @@ Element* Document::ViewportDefiningElement() const {
   const ComputedStyle* root_style = root_element->GetComputedStyle();
   if (!root_style || root_style->IsEnsuredInDisplayNone())
     return nullptr;
-  if (body_element && root_style->IsOverflowVisible() &&
+  if (body_element && root_style->IsOverflowVisibleAlongBothAxes() &&
       IsA<HTMLHtmlElement>(root_element))
     return body_element;
   return root_element;
@@ -3846,7 +3718,7 @@ Document* Document::open(v8::Isolate* isolate,
   if (replace == "replace") {
     CountUse(WebFeature::kDocumentOpenTwoArgsWithReplace);
   }
-  open(EnteredDOMWindow(isolate)->document(), exception_state);
+  open(EnteredDOMWindow(isolate), exception_state);
   return this;
 }
 
@@ -3959,6 +3831,8 @@ void Document::ImplicitClose() {
     return;
   }
 
+  fetcher_->ScheduleWarnUnusedPreloads();
+
   // We used to force a synchronous display and flush here.  This really isn't
   // necessary and can in fact be actively harmful if pages are loading at a
   // rate of > 60fps
@@ -3982,6 +3856,7 @@ void Document::ImplicitClose() {
       else
         cache->HandleLayoutComplete(this);
     }
+    FontFaceSetDocument::DidLayout(*this);
   }
 
   if (SvgExtensions())
@@ -4020,7 +3895,7 @@ void Document::Abort() {
 
 void Document::CheckCompleted() {
   if (CheckCompletedInternal()) {
-    frame_->Loader().DidFinishNavigation(
+    GetFrame()->Loader().DidFinishNavigation(
         FrameLoader::NavigationFinishState::kSuccess);
   }
 }
@@ -4029,11 +3904,11 @@ bool Document::CheckCompletedInternal() {
   if (!ShouldComplete())
     return false;
 
-  if (frame_ && !UnloadStarted()) {
-    frame_->Client()->RunScriptsAtDocumentIdle();
+  if (GetFrame() && !UnloadStarted()) {
+    GetFrame()->Client()->RunScriptsAtDocumentIdle();
 
     // Injected scripts may have disconnected this frame.
-    if (!frame_)
+    if (!GetFrame())
       return false;
 
     // Check again, because runScriptsAtDocumentIdle() may have delayed the load
@@ -4048,7 +3923,7 @@ bool Document::CheckCompletedInternal() {
     ImplicitClose();
 
   // The readystatechanged or load event may have disconnected this frame.
-  if (!frame_ || !frame_->IsAttached())
+  if (!GetFrame() || !GetFrame()->IsAttached())
     return false;
   http_refresh_scheduler_->MaybeStartTimer();
   View()->HandleLoadCompleted();
@@ -4059,28 +3934,23 @@ bool Document::CheckCompletedInternal() {
 
   // No need to repeat if we've already notified this load as finished.
   if (!Loader()->SentDidFinishLoad()) {
-    if (frame_->IsMainFrame())
-      GetViewportData().GetViewportDescription().ReportMobilePageStats(frame_);
+    if (GetFrame()->IsMainFrame()) {
+      GetViewportData().GetViewportDescription().ReportMobilePageStats(
+          GetFrame());
+    }
     Loader()->SetSentDidFinishLoad();
-    frame_->Client()->DispatchDidFinishLoad();
-    frame_->GetLocalFrameHostRemote().DidFinishLoad(Loader()->Url());
-    if (!frame_)
+    GetFrame()->Client()->DispatchDidFinishLoad();
+    GetFrame()->GetLocalFrameHostRemote().DidFinishLoad(Loader()->Url());
+    if (!GetFrame())
       return false;
 
-    // Send the source ID of the document to the browser.
-    if (frame_->Client()->GetRemoteNavigationAssociatedInterfaces()) {
-      mojo::AssociatedRemote<mojom::blink::UkmSourceIdFrameHost> ukm_binding;
-      frame_->Client()->GetRemoteNavigationAssociatedInterfaces()->GetInterface(
-          &ukm_binding);
-      DCHECK(ukm_binding.is_bound());
-      ukm_binding->SetDocumentSourceId(ukm_source_id_);
-    }
-
-    frame_->GetFrameScheduler()->RegisterStickyFeature(
+    GetFrame()->GetFrameScheduler()->RegisterStickyFeature(
         SchedulingPolicy::Feature::kDocumentLoaded,
         {SchedulingPolicy::RecordMetricsForBackForwardCache()});
+    GetFrame()->GetFrameScheduler()->OnLoad();
 
     AnchorElementMetrics::NotifyOnLoad(*this);
+    DetectJavascriptFrameworksOnLoad(*this);
 
     // If this is a document associated with a resource loading hints based
     // preview, then record the resource loading hints UKM now that the load is
@@ -4117,14 +3987,24 @@ bool Document::DispatchBeforeUnloadEvent(ChromeClient* chrome_client,
   if (ProcessingBeforeUnload())
     return false;
 
-  MainThreadDisallowSynchronousXHRScope disallow_synchronous_xhr;
+  PageDismissalScope in_page_dismissal;
   auto& before_unload_event = *MakeGarbageCollected<BeforeUnloadEvent>();
   before_unload_event.initEvent(event_type_names::kBeforeunload, false, true);
-  load_event_progress_ = kBeforeUnloadEventInProgress;
   const base::TimeTicks beforeunload_event_start = base::TimeTicks::Now();
-  dom_window_->DispatchEvent(before_unload_event, this);
+
+  {
+    // We want to avoid progressing to kBeforeUnloadEventHandled if the page
+    // cancels the unload. Because a subframe may cancel unload on our behalf,
+    // only the caller, which makes this call over the frame subtree, can know
+    // whether or not  we'll unload so the caller is responsible for advancing
+    // to kBeforeUnloadEventHandled. Here, we'll reset back to our prior value
+    // once the handler has run.
+    base::AutoReset<LoadEventProgress> set_in_progress(
+        &load_event_progress_, kBeforeUnloadEventInProgress);
+    dom_window_->DispatchEvent(before_unload_event, this);
+  }
+
   const base::TimeTicks beforeunload_event_end = base::TimeTicks::Now();
-  load_event_progress_ = kBeforeUnloadEventCompleted;
   DEFINE_STATIC_LOCAL(
       CustomCountHistogram, beforeunload_histogram,
       ("DocumentEventTiming.BeforeUnloadDuration", 0, 10000000, 50));
@@ -4155,7 +4035,7 @@ bool Document::DispatchBeforeUnloadEvent(ChromeClient* chrome_client,
         "Blocked attempt to show a 'beforeunload' confirmation panel for a "
         "frame that never had a user gesture since its load. "
         "https://www.chromestatus.com/feature/5082396709879808";
-    Intervention::GenerateReport(frame_, "BeforeUnloadNoGesture", message);
+    Intervention::GenerateReport(GetFrame(), "BeforeUnloadNoGesture", message);
     return true;
   }
 
@@ -4165,7 +4045,7 @@ bool Document::DispatchBeforeUnloadEvent(ChromeClient* chrome_client,
     String message =
         "Blocked attempt to show multiple 'beforeunload' confirmation panels "
         "for a single navigation.";
-    Intervention::GenerateReport(frame_, "BeforeUnloadMultiple", message);
+    Intervention::GenerateReport(GetFrame(), "BeforeUnloadMultiple", message);
     return true;
   }
 
@@ -4183,7 +4063,7 @@ bool Document::DispatchBeforeUnloadEvent(ChromeClient* chrome_client,
   const base::TimeTicks beforeunload_confirmpanel_start =
       base::TimeTicks::Now();
   did_allow_navigation =
-      chrome_client->OpenBeforeUnloadConfirmPanel(text, frame_, is_reload);
+      chrome_client->OpenBeforeUnloadConfirmPanel(text, GetFrame(), is_reload);
   const base::TimeTicks beforeunload_confirmpanel_end = base::TimeTicks::Now();
   if (did_allow_navigation) {
     // Only record when a navigation occurs, since we want to understand
@@ -4201,86 +4081,99 @@ void Document::DispatchUnloadEvents(
     SecurityOrigin* committing_origin,
     base::Optional<Document::UnloadEventTiming>* unload_timing) {
   PluginScriptForbiddenScope forbid_plugin_destructor_scripting;
-  MainThreadDisallowSynchronousXHRScope disallow_synchronous_xhr;
+  PageDismissalScope in_page_dismissal;
   if (parser_)
     parser_->StopParsing();
 
-  if (load_event_progress_ == kLoadEventNotRun)
+  if (load_event_progress_ == kLoadEventNotRun ||
+      load_event_progress_ > kUnloadEventInProgress) {
+    return;
+  }
+
+  Element* current_focused_element = FocusedElement();
+  if (auto* input = DynamicTo<HTMLInputElement>(current_focused_element))
+    input->EndEditing();
+
+  // If we've dispatched the pagehide event with 'persisted' set to true, it
+  // means we've dispatched the visibilitychange event before too. Also, we
+  // shouldn't dispatch the unload event because that event should only be
+  // fired when the pagehide event's 'persisted' bit is set to false.
+  bool dispatched_pagehide_persisted =
+      GetPage() && GetPage()->DispatchedPagehidePersistedAndStillHidden();
+
+  if (load_event_progress_ >= kPageHideInProgress ||
+      dispatched_pagehide_persisted) {
+    load_event_progress_ = kUnloadEventHandled;
+    return;
+  }
+
+  load_event_progress_ = kPageHideInProgress;
+  LocalDOMWindow* window = domWindow();
+  // We check for DispatchedPagehideAndStillHidden() here because it's possible
+  // to dispath pagehide with 'persisted' set to false before this and pass the
+  // |dispatched_pagehide_persisted| above, if we enable same-site
+  // ProactivelySwapBrowsingInstance but not BackForwardCache.
+  if (window && !GetPage()->DispatchedPagehideAndStillHidden()) {
+    const base::TimeTicks pagehide_event_start = base::TimeTicks::Now();
+    window->DispatchEvent(
+        *PageTransitionEvent::Create(event_type_names::kPagehide, false), this);
+    const base::TimeTicks pagehide_event_end = base::TimeTicks::Now();
+    DEFINE_STATIC_LOCAL(
+        CustomCountHistogram, pagehide_histogram,
+        ("DocumentEventTiming.PageHideDuration", 0, 10000000, 50));
+    pagehide_histogram.CountMicroseconds(pagehide_event_end -
+                                         pagehide_event_start);
+  }
+  if (!dom_window_)
     return;
 
-  if (load_event_progress_ <= kUnloadEventInProgress) {
-    Element* current_focused_element = FocusedElement();
-    if (auto* input = DynamicTo<HTMLInputElement>(current_focused_element))
-      input->EndEditing();
-    if (load_event_progress_ < kPageHideInProgress) {
-      load_event_progress_ = kPageHideInProgress;
-      if (LocalDOMWindow* window = domWindow()) {
-        const base::TimeTicks pagehide_event_start = base::TimeTicks::Now();
-        window->DispatchEvent(
-            *PageTransitionEvent::Create(event_type_names::kPagehide, false),
-            this);
-        const base::TimeTicks pagehide_event_end = base::TimeTicks::Now();
-        DEFINE_STATIC_LOCAL(
-            CustomCountHistogram, pagehide_histogram,
-            ("DocumentEventTiming.PageHideDuration", 0, 10000000, 50));
-        pagehide_histogram.CountMicroseconds(pagehide_event_end -
-                                             pagehide_event_start);
-      }
-      if (!frame_)
-        return;
-
-      // This must be queried before |load_event_progress_| is changed to
-      // kUnloadVisibilityChangeInProgress because that would change the result.
-      bool page_visible = IsPageVisible();
-      load_event_progress_ = kUnloadVisibilityChangeInProgress;
-      if (page_visible) {
-        // Dispatch visibilitychange event, but don't bother doing
-        // other notifications as we're about to be unloaded.
-        const base::TimeTicks pagevisibility_hidden_event_start =
-            base::TimeTicks::Now();
-        DispatchEvent(
-            *Event::CreateBubble(event_type_names::kVisibilitychange));
-        const base::TimeTicks pagevisibility_hidden_event_end =
-            base::TimeTicks::Now();
-        DEFINE_STATIC_LOCAL(CustomCountHistogram, pagevisibility_histogram,
-                            ("DocumentEventTiming.PageVibilityHiddenDuration",
-                             0, 10000000, 50));
-        pagevisibility_histogram.CountMicroseconds(
-            pagevisibility_hidden_event_end -
-            pagevisibility_hidden_event_start);
-        DispatchEvent(
-            *Event::CreateBubble(event_type_names::kWebkitvisibilitychange));
-      }
-      if (!frame_)
-        return;
-
-      frame_->Loader().SaveScrollAnchor();
-
-      load_event_progress_ = kUnloadEventInProgress;
-      Event& unload_event = *Event::Create(event_type_names::kUnload);
-      const base::TimeTicks unload_event_start = base::TimeTicks::Now();
-      frame_->DomWindow()->DispatchEvent(unload_event, this);
-      const base::TimeTicks unload_event_end = base::TimeTicks::Now();
-
-      if (unload_timing) {
-        // Record unload event timing when navigating cross-document.
-        DEFINE_STATIC_LOCAL(
-            CustomCountHistogram, unload_histogram,
-            ("DocumentEventTiming.UnloadDuration", 0, 10000000, 50));
-        unload_histogram.CountMicroseconds(unload_event_end -
-                                           unload_event_start);
-
-        // Fill in the unload timing if the new document origin has access to
-        // them.
-        if (committing_origin->CanRequest(Url())) {
-          auto& timing = unload_timing->emplace();
-          timing.unload_event_start = unload_event_start;
-          timing.unload_event_end = unload_event_end;
-        }
-      }
-    }
-    load_event_progress_ = kUnloadEventHandled;
+  // This must be queried before |load_event_progress_| is changed to
+  // kUnloadVisibilityChangeInProgress because that would change the result.
+  bool page_visible = IsPageVisible();
+  load_event_progress_ = kUnloadVisibilityChangeInProgress;
+  if (page_visible) {
+    // Dispatch visibilitychange event, but don't bother doing
+    // other notifications as we're about to be unloaded.
+    const base::TimeTicks pagevisibility_hidden_event_start =
+        base::TimeTicks::Now();
+    DispatchEvent(*Event::CreateBubble(event_type_names::kVisibilitychange));
+    const base::TimeTicks pagevisibility_hidden_event_end =
+        base::TimeTicks::Now();
+    DEFINE_STATIC_LOCAL(
+        CustomCountHistogram, pagevisibility_histogram,
+        ("DocumentEventTiming.PageVibilityHiddenDuration", 0, 10000000, 50));
+    pagevisibility_histogram.CountMicroseconds(
+        pagevisibility_hidden_event_end - pagevisibility_hidden_event_start);
+    DispatchEvent(
+        *Event::CreateBubble(event_type_names::kWebkitvisibilitychange));
   }
+  if (!dom_window_)
+    return;
+
+  GetFrame()->Loader().SaveScrollAnchor();
+
+  load_event_progress_ = kUnloadEventInProgress;
+  Event& unload_event = *Event::Create(event_type_names::kUnload);
+  const base::TimeTicks unload_event_start = base::TimeTicks::Now();
+  dom_window_->DispatchEvent(unload_event, this);
+  const base::TimeTicks unload_event_end = base::TimeTicks::Now();
+
+  if (unload_timing) {
+    // Record unload event timing when navigating cross-document.
+    DEFINE_STATIC_LOCAL(
+        CustomCountHistogram, unload_histogram,
+        ("DocumentEventTiming.UnloadDuration", 0, 10000000, 50));
+    unload_histogram.CountMicroseconds(unload_event_end - unload_event_start);
+
+    // Fill in the unload timing if the new document origin has access to
+    // them.
+    if (committing_origin->CanRequest(Url())) {
+      auto& timing = unload_timing->emplace();
+      timing.unload_event_start = unload_event_start;
+      timing.unload_event_end = unload_event_end;
+    }
+  }
+  load_event_progress_ = kUnloadEventHandled;
 }
 
 void Document::DispatchFreezeEvent() {
@@ -4310,7 +4203,7 @@ Document::PageDismissalType Document::PageDismissalEventBeingDispatched()
     case kLoadEventNotRun:
     case kLoadEventInProgress:
     case kLoadEventCompleted:
-    case kBeforeUnloadEventCompleted:
+    case kBeforeUnloadEventHandled:
     case kUnloadEventHandled:
       return kNoDismissal;
   }
@@ -4350,7 +4243,7 @@ bool Document::ShouldScheduleLayout() const {
 }
 
 void Document::write(const String& text,
-                     Document* entered_document,
+                     LocalDOMWindow* entered_window,
                      ExceptionState& exception_state) {
   if (ImportLoader()) {
     exception_state.ThrowDOMException(
@@ -4372,8 +4265,12 @@ void Document::write(const String& text,
     return;
   }
 
-  if (entered_document && !GetSecurityOrigin()->IsSameOriginWith(
-                              entered_document->GetSecurityOrigin())) {
+  if (entered_window && !entered_window->GetFrame())
+    return;
+
+  if (entered_window && GetExecutionContext() &&
+      !GetExecutionContext()->GetSecurityOrigin()->IsSameOriginWith(
+          entered_window->GetSecurityOrigin())) {
     exception_state.ThrowSecurityError(
         "Can only call write() on same-origin documents.");
     return;
@@ -4410,7 +4307,7 @@ void Document::write(const String& text,
     if (ignore_opens_during_unload_count_)
       return;
 
-    open(entered_document, ASSERT_NO_EXCEPTION);
+    open(entered_window, ASSERT_NO_EXCEPTION);
   }
 
   DCHECK(parser_);
@@ -4425,12 +4322,12 @@ void Document::write(const String& text,
 }
 
 void Document::writeln(const String& text,
-                       Document* entered_document,
+                       LocalDOMWindow* entered_window,
                        ExceptionState& exception_state) {
-  write(text, entered_document, exception_state);
+  write(text, entered_window, exception_state);
   if (exception_state.HadException())
     return;
-  write("\n", entered_document);
+  write("\n", entered_window);
 }
 
 void Document::write(v8::Isolate* isolate,
@@ -4442,12 +4339,12 @@ void Document::write(v8::Isolate* isolate,
   StringBuilder builder;
   for (const String& string : text)
     builder.Append(string);
-  String string =
-      TrustedTypesCheckForHTML(builder.ToString(), this, exception_state);
+  String string = TrustedTypesCheckForHTML(
+      builder.ToString(), GetExecutionContext(), exception_state);
   if (exception_state.HadException())
     return;
 
-  write(string, EnteredDOMWindow(isolate)->document(), exception_state);
+  write(string, EnteredDOMWindow(isolate), exception_state);
 }
 
 void Document::writeln(v8::Isolate* isolate,
@@ -4459,32 +4356,26 @@ void Document::writeln(v8::Isolate* isolate,
   StringBuilder builder;
   for (const String& string : text)
     builder.Append(string);
-  String string =
-      TrustedTypesCheckForHTML(builder.ToString(), this, exception_state);
+  String string = TrustedTypesCheckForHTML(
+      builder.ToString(), GetExecutionContext(), exception_state);
   if (exception_state.HadException())
     return;
 
-  writeln(string, EnteredDOMWindow(isolate)->document(), exception_state);
-}
-
-bool Document::IsTrustedTypesEnabledForDoc() const {
-  return GetExecutionContext()->RequireTrustedTypes();
+  writeln(string, EnteredDOMWindow(isolate), exception_state);
 }
 
 void Document::write(v8::Isolate* isolate,
                      TrustedHTML* text,
                      ExceptionState& exception_state) {
-  DCHECK(RuntimeEnabledFeatures::TrustedDOMTypesEnabled(this));
-  write(text->toString(), EnteredDOMWindow(isolate)->document(),
-        exception_state);
+  DCHECK(RuntimeEnabledFeatures::TrustedDOMTypesEnabled(GetExecutionContext()));
+  write(text->toString(), EnteredDOMWindow(isolate), exception_state);
 }
 
 void Document::writeln(v8::Isolate* isolate,
                        TrustedHTML* text,
                        ExceptionState& exception_state) {
-  DCHECK(RuntimeEnabledFeatures::TrustedDOMTypesEnabled(this));
-  writeln(text->toString(), EnteredDOMWindow(isolate)->document(),
-          exception_state);
+  DCHECK(RuntimeEnabledFeatures::TrustedDOMTypesEnabled(GetExecutionContext()));
+  writeln(text->toString(), EnteredDOMWindow(isolate), exception_state);
 }
 
 KURL Document::urlForBinding() const {
@@ -4502,6 +4393,9 @@ void Document::SetURL(const KURL& url) {
   if (new_url == url_)
     return;
 
+  TRACE_EVENT1("navigation", "Document::SetURL", "url",
+               new_url.GetString().Utf8());
+
   // Count non-targetText occurrences of :~: in the url fragment to make sure
   // the delimiter is web-compatible. This can be removed once the feature
   // ships.
@@ -4517,21 +4411,18 @@ void Document::SetURL(const KURL& url) {
     }
   }
 
-  // If text fragment identifiers are enabled, we strip the fragment directive
-  // from the URL fragment.
-  // E.g. "#id:~:text=a" --> "#id"
-  if (RuntimeEnabledFeatures::TextFragmentIdentifiersEnabled(this)) {
-    String fragment = new_url.FragmentIdentifier();
-    wtf_size_t start_pos = fragment.Find(kFragmentDirectivePrefix);
-    if (start_pos != kNotFound) {
-      fragment_directive_ =
-          fragment.Substring(start_pos + kFragmentDirectivePrefixStringLength);
+  // Strip the fragment directive from the URL fragment. E.g. "#id:~:text=a"
+  // --> "#id". See https://github.com/WICG/scroll-to-text-fragment.
+  String fragment = new_url.FragmentIdentifier();
+  wtf_size_t start_pos = fragment.Find(kFragmentDirectivePrefix);
+  if (start_pos != kNotFound) {
+    fragment_directive_string_ =
+        fragment.Substring(start_pos + kFragmentDirectivePrefixStringLength);
 
-      if (start_pos == 0)
-        new_url.RemoveFragmentIdentifier();
-      else
-        new_url.SetFragmentIdentifier(fragment.Substring(0, start_pos));
-    }
+    if (start_pos == 0)
+      new_url.RemoveFragmentIdentifier();
+    else
+      new_url.SetFragmentIdentifier(fragment.Substring(0, start_pos));
   }
 
   url_ = new_url;
@@ -4539,13 +4430,8 @@ void Document::SetURL(const KURL& url) {
   UpdateBaseURL();
   GetContextFeatures().UrlDidChange(this);
 
-  // TODO(crbug/795354): Move handling of URL recording out of the renderer.
-  // URL must only be recorded from the main frame.
-  if (ukm_recorder_ && IsInMainFrame())
-    ukm_recorder_->UpdateSourceURL(ukm_source_id_, url_);
-
-  if (frame_) {
-    if (FrameScheduler* frame_scheduler = frame_->GetFrameScheduler())
+  if (GetFrame()) {
+    if (FrameScheduler* frame_scheduler = GetFrame()->GetFrameScheduler())
       frame_scheduler->TraceUrlChange(url_.GetString());
   }
 }
@@ -4599,8 +4485,8 @@ KURL Document::FallbackBaseURL() const {
     if (Document* parent = ParentDocument())
       return parent->BaseURL();
   } else if (urlForBinding().IsAboutBlankURL()) {
-    if (context_document_)
-      return context_document_->BaseURL();
+    if (!dom_window_ && execution_context_)
+      return execution_context_->BaseURL();
     // TODO(tkent): Referring to ParentDocument() is not correct.  See
     // crbug.com/751329.
     if (Document* parent = ParentDocument())
@@ -4641,7 +4527,8 @@ void Document::ProcessBaseElement() {
       if (!value.IsNull())
         target = &value;
     }
-    if (GetContentSecurityPolicy()->IsActive()) {
+    if (GetExecutionContext() &&
+        GetExecutionContext()->GetContentSecurityPolicy()->IsActive()) {
       UseCounter::Count(*this,
                         WebFeature::kContentSecurityPolicyWithBaseElement);
     }
@@ -4666,14 +4553,18 @@ void Document::ProcessBaseElement() {
           "'" + base_element_url.Protocol() +
               "' URLs may not be used as base URLs for a document."));
     }
-    if (!GetSecurityOrigin()->CanRequest(base_element_url))
+    if (GetExecutionContext() &&
+        !GetExecutionContext()->GetSecurityOrigin()->CanRequest(
+            base_element_url)) {
       UseCounter::Count(*this, WebFeature::kBaseWithCrossOriginHref);
+    }
   }
 
   if (base_element_url != base_element_url_ &&
       !base_element_url.ProtocolIsData() &&
-      !base_element_url.ProtocolIsJavaScript() &&
-      GetContentSecurityPolicy()->AllowBaseURI(base_element_url)) {
+      !base_element_url.ProtocolIsJavaScript() && GetExecutionContext() &&
+      GetExecutionContext()->GetContentSecurityPolicy()->AllowBaseURI(
+          base_element_url)) {
     base_element_url_ = base_element_url;
     UpdateBaseURL();
   }
@@ -4689,10 +4580,6 @@ void Document::ProcessBaseElement() {
   }
 }
 
-String Document::UserAgent() const {
-  return GetFrame() ? GetFrame()->Loader().UserAgent() : String();
-}
-
 void Document::DidLoadAllImports() {
   if (!HaveScriptBlockingStylesheetsLoaded())
     return;
@@ -4705,7 +4592,7 @@ void Document::DidAddPendingParserBlockingStylesheet() {
 }
 
 void Document::DidRemoveAllPendingStylesheets() {
-  // Only imports on master documents can trigger rendering.
+  // Only imports on tree_root documents can trigger rendering.
   if (HTMLImportLoader* import = ImportLoader())
     import->DidRemoveAllPendingStylesheets();
   if (!HaveImportsLoaded())
@@ -4751,7 +4638,7 @@ CSSStyleSheet& Document::ElementSheet() {
 
 void Document::MaybeHandleHttpRefresh(const String& content,
                                       HttpRefreshType http_refresh_type) {
-  if (is_view_source_ || !frame_)
+  if (is_view_source_ || !dom_window_)
     return;
 
   base::TimeDelta delay;
@@ -4775,7 +4662,8 @@ void Document::MaybeHandleHttpRefresh(const String& content,
   }
 
   if (http_refresh_type == kHttpRefreshFromMetaTag &&
-      IsSandboxed(mojom::blink::WebSandboxFlags::kAutomaticFeatures)) {
+      dom_window_->IsSandboxed(
+          network::mojom::blink::WebSandboxFlags::kAutomaticFeatures)) {
     String message =
         "Refused to execute the redirect specified via '<meta "
         "http-equiv='refresh' content='...'>'. The document is sandboxed, and "
@@ -4793,35 +4681,6 @@ void Document::MaybeHandleHttpRefresh(const String& content,
 
 bool Document::IsHttpRefreshScheduledWithin(base::TimeDelta interval) {
   return http_refresh_scheduler_->IsScheduledWithin(interval);
-}
-
-// https://w3c.github.io/webappsec-referrer-policy/#determine-requests-referrer
-String Document::OutgoingReferrer() const {
-  // Step 3.1: "If environment's global object is a Window object, then"
-
-  // Step 3.1.1: "Let document be the associated Document of environment's
-  // global object."
-  const Document* referrer_document = this;
-
-  // Step 3.1.2: "If document's origin is an opaque origin, return no referrer."
-  if (GetSecurityOrigin()->IsOpaque())
-    return String();
-
-  // Step 3.1.3: "While document is an iframe srcdoc document, let document be
-  // document's browsing context's browsing context container's node document."
-  if (LocalFrame* frame = frame_) {
-    while (frame->GetDocument()->IsSrcdocDocument()) {
-      // Srcdoc documents must be local within the containing frame.
-      frame = To<LocalFrame>(frame->Tree().Parent());
-      // Srcdoc documents cannot be top-level documents, by definition,
-      // because they need to be contained in iframes with the srcdoc.
-      DCHECK(frame);
-    }
-    referrer_document = frame->GetDocument();
-  }
-
-  // Step: 3.1.4: "Let referrerSource be document's URL."
-  return referrer_document->url_.StrippedForUseAsReferrer();
 }
 
 network::mojom::ReferrerPolicy Document::GetReferrerPolicy() const {
@@ -5043,17 +4902,19 @@ bool Document::CanAcceptChild(const Node& new_child,
 Node* Document::Clone(Document& factory, CloneChildrenFlag flag) const {
   DCHECK_EQ(this, &factory)
       << "Document::Clone() doesn't support importNode mode.";
+
+  if (!execution_context_)
+    return nullptr;
   Document* clone = CloneDocumentWithoutChildren();
   clone->CloneDataFromDocument(*this);
-  if (flag == CloneChildrenFlag::kClone)
-    clone->CloneChildNodesFrom(*this);
+  if (flag != CloneChildrenFlag::kSkip)
+    clone->CloneChildNodesFrom(*this, flag);
   return clone;
 }
 
 Document* Document::CloneDocumentWithoutChildren() const {
   DocumentInit init = DocumentInit::Create()
-                          .WithContextDocument(ContextDocument())
-                          .WithOwnerDocument(const_cast<Document*>(this))
+                          .WithExecutionContext(execution_context_.Get())
                           .WithURL(Url());
   if (IsA<XMLDocument>(this)) {
     if (IsXHTMLDocument())
@@ -5094,12 +4955,12 @@ void Document::SetResizedForViewportUnits() {
     media_query_matcher_->ViewportChanged();
   if (!HasViewportUnits())
     return;
-  EnsureStyleResolver().SetResizedForViewportUnits();
+  GetStyleResolver().SetResizedForViewportUnits();
   SetNeedsStyleRecalcForViewportUnits();
 }
 
 void Document::ClearResizedForViewportUnits() {
-  EnsureStyleResolver().ClearResizedForViewportUnits();
+  GetStyleResolver().ClearResizedForViewportUnits();
 }
 
 void Document::SetHoverElement(Element* new_hover_element) {
@@ -5339,8 +5200,10 @@ bool Document::SetFocusedElement(Element* new_focused_element,
     }
   }
 
-  if (!focus_change_blocked)
-    NotifyFocusedElementChanged(old_focused_element, focused_element_.Get());
+  if (!focus_change_blocked) {
+    NotifyFocusedElementChanged(old_focused_element, focused_element_.Get(),
+                                params.type);
+  }
 
   UpdateStyleAndLayoutTree();
   if (LocalFrame* frame = GetFrame())
@@ -5354,8 +5217,44 @@ void Document::ClearFocusedElement() {
                                 mojom::blink::FocusType::kNone, nullptr));
 }
 
+void Document::SendFocusNotification(Element* new_focused_element,
+                                     mojom::blink::FocusType focus_type) {
+  if (!GetPage())
+    return;
+
+  bool is_editable = false;
+  gfx::Rect element_bounds_in_dips;
+  if (new_focused_element) {
+    is_editable = IsEditableElement(*new_focused_element);
+    IntRect bounds_in_viewport;
+
+    if (new_focused_element->IsSVGElement()) {
+      // Convert to window coordinate system (this will be in DIPs).
+      bounds_in_viewport = new_focused_element->BoundsInViewport();
+    } else {
+      Vector<IntRect> outline_rects =
+          new_focused_element->OutlineRectsInVisualViewport(
+              DocumentUpdateReason::kFocus);
+      for (auto& outline_rect : outline_rects)
+        bounds_in_viewport.Unite(outline_rect);
+    }
+
+    if (GetFrame()->GetWidgetForLocalRoot()) {
+      element_bounds_in_dips =
+          GetFrame()->GetWidgetForLocalRoot()->BlinkSpaceToEnclosedDIPs(
+              bounds_in_viewport);
+    } else {
+      element_bounds_in_dips = bounds_in_viewport;
+    }
+  }
+
+  GetFrame()->GetLocalFrameHostRemote().FocusedElementChanged(
+      is_editable, element_bounds_in_dips, focus_type);
+}
+
 void Document::NotifyFocusedElementChanged(Element* old_focused_element,
-                                           Element* new_focused_element) {
+                                           Element* new_focused_element,
+                                           mojom::blink::FocusType focus_type) {
   // |old_focused_element| may not belong to this document by invoking
   // adoptNode in event handlers during moving the focus to the new element.
   DCHECK(!new_focused_element || new_focused_element->GetDocument() == this);
@@ -5369,23 +5268,17 @@ void Document::NotifyFocusedElementChanged(Element* old_focused_element,
     GetPage()->GetValidationMessageClient().DidChangeFocusTo(
         new_focused_element);
 
-    bool is_editable = false;
-    gfx::Rect element_bounds;
-    if (new_focused_element) {
-      IntRect rect = new_focused_element->BoundsInViewport();
-      View()->FrameToScreen(rect);
-      is_editable = IsEditableElement(*new_focused_element);
-      element_bounds = gfx::Rect(rect);
-    }
-
-    GetFrame()->GetLocalFrameHostRemote().FocusedElementChanged(is_editable,
-                                                                element_bounds);
+    SendFocusNotification(new_focused_element, focus_type);
 
     Document* old_document =
         old_focused_element ? &old_focused_element->GetDocument() : nullptr;
     if (old_document && old_document != this && old_document->GetFrame())
       old_document->GetFrame()->Client()->FocusedElementChanged(nullptr);
 
+    // Ensures that further text input state can be sent even when previously
+    // focused input and the newly focused input share the exact same state.
+    if (GetFrame()->GetWidgetForLocalRoot())
+      GetFrame()->GetWidgetForLocalRoot()->ClearTextInputState();
     GetFrame()->Client()->FocusedElementChanged(new_focused_element);
 
     GetPage()->GetChromeClient().SetKeyboardFocusURL(new_focused_element);
@@ -5393,10 +5286,13 @@ void Document::NotifyFocusedElementChanged(Element* old_focused_element,
     if (GetSettings()->GetSpatialNavigationEnabled())
       GetPage()->GetSpatialNavigationController().FocusedNodeChanged(this);
   }
+
+  blink::NotifyPriorityScrollAnchorStatusChanged(old_focused_element,
+                                                 new_focused_element);
 }
 
 void Document::SetSequentialFocusNavigationStartingPoint(Node* node) {
-  if (!frame_)
+  if (!dom_window_)
     return;
   if (!node) {
     sequential_focus_navigation_starting_point_ = nullptr;
@@ -5519,7 +5415,7 @@ void Document::DidMoveTreeToNewDocument(const Node& root) {
     for (Range* range : ranges)
       range->UpdateOwnerDocumentIfNeeded();
   }
-  synchronous_mutation_observer_list_.ForEachObserver(
+  synchronous_mutation_observer_set_.ForEachObserver(
       [&](SynchronousMutationObserver* observer) {
         observer->DidMoveTreeToNewDocument(root);
       });
@@ -5538,7 +5434,7 @@ void Document::NodeChildrenWillBeRemoved(ContainerNode& container) {
       ni->NodeWillBeRemoved(n);
   }
 
-  synchronous_mutation_observer_list_.ForEachObserver(
+  synchronous_mutation_observer_set_.ForEachObserver(
       [&](SynchronousMutationObserver* observer) {
         observer->NodeChildrenWillBeRemoved(container);
       });
@@ -5559,7 +5455,7 @@ void Document::NodeWillBeRemoved(Node& n) {
       range->FixupRemovedNodeAcrossShadowBoundary(n);
   }
 
-  synchronous_mutation_observer_list_.ForEachObserver(
+  synchronous_mutation_observer_set_.ForEachObserver(
       [&](SynchronousMutationObserver* observer) {
         observer->NodeWillBeRemoved(n);
       });
@@ -5575,7 +5471,7 @@ void Document::NotifyUpdateCharacterData(CharacterData* character_data,
                                          unsigned offset,
                                          unsigned old_length,
                                          unsigned new_length) {
-  synchronous_mutation_observer_list_.ForEachObserver(
+  synchronous_mutation_observer_set_.ForEachObserver(
       [&](SynchronousMutationObserver* observer) {
         observer->DidUpdateCharacterData(character_data, offset, old_length,
                                          new_length);
@@ -5583,7 +5479,7 @@ void Document::NotifyUpdateCharacterData(CharacterData* character_data,
 }
 
 void Document::NotifyChangeChildren(const ContainerNode& container) {
-  synchronous_mutation_observer_list_.ForEachObserver(
+  synchronous_mutation_observer_set_.ForEachObserver(
       [&](SynchronousMutationObserver* observer) {
         observer->DidChangeChildren(container);
       });
@@ -5613,7 +5509,7 @@ void Document::DidMergeTextNodes(const Text& merged_node,
       range->DidMergeTextNodes(node_to_be_removed_with_index, old_length);
   }
 
-  synchronous_mutation_observer_list_.ForEachObserver(
+  synchronous_mutation_observer_set_.ForEachObserver(
       [&](SynchronousMutationObserver* observer) {
         observer->DidMergeTextNodes(merged_node, node_to_be_removed_with_index,
                                     old_length);
@@ -5626,7 +5522,7 @@ void Document::DidSplitTextNode(const Text& old_node) {
   for (Range* range : ranges_)
     range->DidSplitTextNode(old_node);
 
-  synchronous_mutation_observer_list_.ForEachObserver(
+  synchronous_mutation_observer_set_.ForEachObserver(
       [&](SynchronousMutationObserver* observer) {
         observer->DidSplitTextNode(old_node);
       });
@@ -5860,13 +5756,13 @@ void Document::WillChangeFrameOwnerProperties(
     int margin_width,
     int margin_height,
     mojom::blink::ScrollbarMode scrollbar_mode,
-    bool is_display_none) {
+    bool is_display_none,
+    ColorScheme color_scheme) {
   DCHECK(GetFrame() && GetFrame()->Owner());
   FrameOwner* owner = GetFrame()->Owner();
 
   if (is_display_none != owner->IsDisplayNone())
     DisplayNoneChangedForFrame();
-
   // body() may become null as a result of modification event listeners, so we
   // check before each call.
   if (margin_width != owner->MarginWidth()) {
@@ -5886,68 +5782,65 @@ void Document::WillChangeFrameOwnerProperties(
                                  mojom::blink::ScrollbarMode::kAlwaysOff);
     View()->SetNeedsLayout();
   }
+  GetStyleEngine().SetOwnerColorScheme(color_scheme);
 }
 
 String Document::cookie(ExceptionState& exception_state) const {
-  if (GetSettings() && !GetSettings()->GetCookieEnabled())
+  if (!dom_window_ || !GetSettings()->GetCookieEnabled())
     return String();
 
   CountUse(WebFeature::kCookieGet);
 
-  if (!GetSecurityOrigin()->CanAccessCookies()) {
-    if (IsSandboxed(mojom::blink::WebSandboxFlags::kOrigin))
+  if (!dom_window_->GetSecurityOrigin()->CanAccessCookies()) {
+    if (dom_window_->IsSandboxed(
+            network::mojom::blink::WebSandboxFlags::kOrigin)) {
       exception_state.ThrowSecurityError(
           "The document is sandboxed and lacks the 'allow-same-origin' flag.");
-    else if (Url().ProtocolIsData())
+    } else if (Url().ProtocolIsData()) {
       exception_state.ThrowSecurityError(
           "Cookies are disabled inside 'data:' URLs.");
-    else
+    } else {
       exception_state.ThrowSecurityError("Access is denied for this document.");
+    }
     return String();
-  } else if (GetSecurityOrigin()->IsLocal()) {
+  } else if (dom_window_->GetSecurityOrigin()->IsLocal()) {
     CountUse(WebFeature::kFileAccessedCookies);
   }
-
-  if (!cookie_jar_)
-    return String();
 
   return cookie_jar_->Cookies();
 }
 
 void Document::setCookie(const String& value, ExceptionState& exception_state) {
-  if (GetSettings() && !GetSettings()->GetCookieEnabled())
+  if (!dom_window_ || !GetSettings()->GetCookieEnabled())
     return;
 
   UseCounter::Count(*this, WebFeature::kCookieSet);
 
-  if (!GetSecurityOrigin()->CanAccessCookies()) {
-    if (IsSandboxed(mojom::blink::WebSandboxFlags::kOrigin))
+  if (!dom_window_->GetSecurityOrigin()->CanAccessCookies()) {
+    if (dom_window_->IsSandboxed(
+            network::mojom::blink::WebSandboxFlags::kOrigin)) {
       exception_state.ThrowSecurityError(
           "The document is sandboxed and lacks the 'allow-same-origin' flag.");
-    else if (Url().ProtocolIsData())
+    } else if (Url().ProtocolIsData()) {
       exception_state.ThrowSecurityError(
           "Cookies are disabled inside 'data:' URLs.");
-    else
+    } else {
       exception_state.ThrowSecurityError("Access is denied for this document.");
+    }
     return;
-  } else if (GetSecurityOrigin()->IsLocal()) {
+  } else if (dom_window_->GetSecurityOrigin()->IsLocal()) {
     UseCounter::Count(*this, WebFeature::kFileAccessedCookies);
   }
-
-  if (!cookie_jar_)
-    return;
 
   cookie_jar_->SetCookie(value);
 }
 
 bool Document::CookiesEnabled() const {
-  // Compatible behavior in contexts that don't have cookie access.
-  if (!GetSecurityOrigin()->CanAccessCookies())
-    return true;
-
-  if (!cookie_jar_)
+  if (!dom_window_)
     return false;
-
+  // Compatible behavior in contexts that don't have cookie access.
+  if (!dom_window_->GetSecurityOrigin()->CanAccessCookies())
+    return true;
   return cookie_jar_->CookiesEnabled();
 }
 
@@ -5958,39 +5851,42 @@ const AtomicString& Document::referrer() const {
 }
 
 String Document::domain() const {
-  return GetSecurityOrigin()->Domain();
+  return GetExecutionContext()
+             ? GetExecutionContext()->GetSecurityOrigin()->Domain()
+             : String();
 }
 
 void Document::setDomain(const String& raw_domain,
                          ExceptionState& exception_state) {
   UseCounter::Count(*this, WebFeature::kDocumentSetDomain);
 
-  const String feature_policy_error =
-      "Setting `document.domain` is disabled by Feature Policy.";
-  if (!IsFeatureEnabled(mojom::blink::FeaturePolicyFeature::kDocumentDomain,
-                        ReportOptions::kReportOnFailure,
-                        feature_policy_error)) {
-    exception_state.ThrowSecurityError(feature_policy_error);
-    return;
-  }
-
-  if (!frame_) {
+  if (!dom_window_) {
     exception_state.ThrowSecurityError(
         "A browsing context is required to set a domain.");
     return;
   }
 
-  if (IsSandboxed(mojom::blink::WebSandboxFlags::kDocumentDomain)) {
+  const String feature_policy_error =
+      "Setting `document.domain` is disabled by Feature Policy.";
+  if (!dom_window_->IsFeatureEnabled(
+          mojom::blink::FeaturePolicyFeature::kDocumentDomain,
+          ReportOptions::kReportOnFailure, feature_policy_error)) {
+    exception_state.ThrowSecurityError(feature_policy_error);
+    return;
+  }
+
+  if (dom_window_->IsSandboxed(
+          network::mojom::blink::WebSandboxFlags::kDocumentDomain)) {
     exception_state.ThrowSecurityError(
         "Assignment is forbidden for sandboxed iframes.");
     return;
   }
 
   if (SchemeRegistry::IsDomainRelaxationForbiddenForURLScheme(
-          GetSecurityOrigin()->Protocol())) {
-    exception_state.ThrowSecurityError("Assignment is forbidden for the '" +
-                                       GetSecurityOrigin()->Protocol() +
-                                       "' scheme.");
+          dom_window_->GetSecurityOrigin()->Protocol())) {
+    exception_state.ThrowSecurityError(
+        "Assignment is forbidden for the '" +
+        dom_window_->GetSecurityOrigin()->Protocol() + "' scheme.");
     return;
   }
 
@@ -6009,12 +5905,12 @@ void Document::setDomain(const String& raw_domain,
   }
 
   scoped_refptr<SecurityOrigin> new_origin =
-      GetSecurityOrigin()->IsolatedCopy();
+      dom_window_->GetSecurityOrigin()->IsolatedCopy();
   new_origin->SetDomainFromDOM(new_domain);
   OriginAccessEntry access_entry(
       *new_origin, network::mojom::CorsDomainMatchMode::kAllowSubdomains);
   network::cors::OriginAccessEntry::MatchResult result =
-      access_entry.MatchesOrigin(*GetSecurityOrigin());
+      access_entry.MatchesOrigin(*dom_window_->GetSecurityOrigin());
   if (result == network::cors::OriginAccessEntry::kDoesNotMatchOrigin) {
     exception_state.ThrowSecurityError(
         "'" + new_domain + "' is not a suffix of '" + domain() + "'.");
@@ -6028,29 +5924,50 @@ void Document::setDomain(const String& raw_domain,
     return;
   }
 
-  if (frame_) {
+  if (RuntimeEnabledFeatures::OriginIsolationHeaderEnabled(dom_window_) &&
+      dom_window_->GetAgent()->IsOriginIsolated()) {
+    AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+        mojom::blink::ConsoleMessageSource::kSecurity,
+        mojom::blink::ConsoleMessageLevel::kWarning,
+        "document.domain mutation is ignored because the surrounding agent "
+        "cluster is origin-isolated."));
+    return;
+  }
+
+  if (RuntimeEnabledFeatures::CrossOriginIsolationEnabled() &&
+      Agent::IsCrossOriginIsolated()) {
+    AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+        mojom::blink::ConsoleMessageSource::kSecurity,
+        mojom::blink::ConsoleMessageLevel::kWarning,
+        "document.domain mutation is ignored because the surrounding agent "
+        "cluster is cross-origin isolated."));
+    return;
+  }
+
+  if (GetFrame()) {
     UseCounter::Count(*this,
-                      GetSecurityOrigin()->Port() == 0
+                      dom_window_->GetSecurityOrigin()->Port() == 0
                           ? WebFeature::kDocumentDomainSetWithDefaultPort
                           : WebFeature::kDocumentDomainSetWithNonDefaultPort);
-    bool was_cross_origin_to_main_frame = frame_->IsCrossOriginToMainFrame();
+    bool was_cross_origin_to_main_frame =
+        GetFrame()->IsCrossOriginToMainFrame();
     bool was_cross_origin_to_parent_frame =
-        frame_->IsCrossOriginToParentFrame();
-    GetMutableSecurityOrigin()->SetDomainFromDOM(new_domain);
-    bool is_cross_origin_to_main_frame = frame_->IsCrossOriginToMainFrame();
-    if (FrameScheduler* frame_scheduler = frame_->GetFrameScheduler())
+        GetFrame()->IsCrossOriginToParentFrame();
+    dom_window_->GetMutableSecurityOrigin()->SetDomainFromDOM(new_domain);
+    bool is_cross_origin_to_main_frame = GetFrame()->IsCrossOriginToMainFrame();
+    if (FrameScheduler* frame_scheduler = GetFrame()->GetFrameScheduler())
       frame_scheduler->SetCrossOriginToMainFrame(is_cross_origin_to_main_frame);
     if (View() &&
         (was_cross_origin_to_main_frame != is_cross_origin_to_main_frame)) {
       View()->CrossOriginToMainFrameChanged();
     }
-    if (frame_->IsMainFrame()) {
+    if (GetFrame()->IsMainFrame()) {
       // Notify descendants if their cross-origin-to-main-frame status changed.
       // TODO(pdr): This will notify even if |Frame::IsCrossOriginToMainFrame|
       // is the same. Track whether each child was cross-origin to main before
       // and after changing the domain, and only notify the changed ones.
-      for (Frame* child = frame_->Tree().FirstChild(); child;
-           child = child->Tree().TraverseNext(frame_)) {
+      for (Frame* child = GetFrame()->Tree().FirstChild(); child;
+           child = child->Tree().TraverseNext(GetFrame())) {
         auto* child_local_frame = DynamicTo<LocalFrame>(child);
         if (child_local_frame && child_local_frame->View())
           child_local_frame->View()->CrossOriginToMainFrameChanged();
@@ -6058,21 +5975,22 @@ void Document::setDomain(const String& raw_domain,
     }
 
     if (View() && was_cross_origin_to_parent_frame !=
-                      frame_->IsCrossOriginToParentFrame()) {
+                      GetFrame()->IsCrossOriginToParentFrame()) {
       View()->CrossOriginToParentFrameChanged();
     }
     // Notify all child frames if their cross-origin-to-parent status changed.
     // TODO(pdr): This will notify even if |Frame::IsCrossOriginToParentFrame|
     // is the same. Track whether each child was cross-origin-to-parent before
     // and after changing the domain, and only notify the changed ones.
-    for (Frame* child = frame_->Tree().FirstChild(); child;
+    for (Frame* child = GetFrame()->Tree().FirstChild(); child;
          child = child->Tree().NextSibling()) {
       auto* child_local_frame = DynamicTo<LocalFrame>(child);
       if (child_local_frame && child_local_frame->View())
         child_local_frame->View()->CrossOriginToParentFrameChanged();
     }
 
-    frame_->GetScriptController().UpdateSecurityOrigin(GetSecurityOrigin());
+    dom_window_->GetScriptController().UpdateSecurityOrigin(
+        dom_window_->GetSecurityOrigin());
   }
 }
 
@@ -6081,7 +5999,7 @@ String Document::lastModified() const {
   base::Time::Exploded exploded;
   bool found_date = false;
   AtomicString http_last_modified = override_last_modified_;
-  if (http_last_modified.IsEmpty() && frame_) {
+  if (http_last_modified.IsEmpty()) {
     if (DocumentLoader* document_loader = Loader()) {
       http_last_modified = document_loader->GetResponse().HttpHeaderField(
           http_names::kLastModified);
@@ -6105,12 +6023,6 @@ String Document::lastModified() const {
                         exploded.minute, exploded.second);
 }
 
-void Document::SetFindInPageRoot(Element* find_in_page_root) {
-  DCHECK(RuntimeEnabledFeatures::InvisibleDOMEnabled());
-  DCHECK(!find_in_page_root || !find_in_page_root_);
-  find_in_page_root_ = find_in_page_root;
-}
-
 scoped_refptr<const SecurityOrigin> Document::TopFrameOrigin() const {
   if (!GetFrame())
     return scoped_refptr<const SecurityOrigin>();
@@ -6121,9 +6033,9 @@ scoped_refptr<const SecurityOrigin> Document::TopFrameOrigin() const {
 net::SiteForCookies Document::SiteForCookies() const {
   // TODO(mkwst): This doesn't properly handle HTML Import documents.
 
-  // If this is an imported document, grab its master document's first-party:
+  // If this is an imported document, grab its tree_root document's first-party:
   if (IsHTMLImport())
-    return ImportsController()->Master()->SiteForCookies();
+    return ImportsController()->TreeRoot()->SiteForCookies();
 
   if (!GetFrame())
     return net::SiteForCookies();
@@ -6143,13 +6055,22 @@ net::SiteForCookies Document::SiteForCookies() const {
   }
 
   const Frame* current_frame = GetFrame();
+  if (SchemeRegistry::
+          ShouldTreatURLSchemeAsFirstPartyWhenTopLevelEmbeddingSecure(
+              origin->Protocol(), current_frame->GetSecurityContext()
+                                      ->GetSecurityOrigin()
+                                      ->Protocol())) {
+    return candidate;
+  }
+
   while (current_frame) {
-    const SecurityOrigin* cur_security_origin =
-        current_frame->GetSecurityContext()->GetSecurityOrigin();
-    if (!candidate.IsEquivalent(net::SiteForCookies::FromOrigin(
-            cur_security_origin->ToUrlOrigin()))) {
+    const url::Origin cur_security_origin =
+        current_frame->GetSecurityContext()->GetSecurityOrigin()->ToUrlOrigin();
+    if (!candidate.IsEquivalent(
+            net::SiteForCookies::FromOrigin(cur_security_origin))) {
       return net::SiteForCookies();
     }
+    candidate.MarkIfCrossScheme(cur_security_origin);
     current_frame = current_frame->Tree().Parent();
   }
 
@@ -6158,68 +6079,289 @@ net::SiteForCookies Document::SiteForCookies() const {
 
 mojom::blink::PermissionService* Document::GetPermissionService(
     ExecutionContext* execution_context) {
-  if (!permission_service_.is_bound()) {
+  if (!data_->permission_service_.is_bound()) {
     execution_context->GetBrowserInterfaceBroker().GetInterface(
-        permission_service_.BindNewPipeAndPassReceiver(
+        data_->permission_service_.BindNewPipeAndPassReceiver(
             execution_context->GetTaskRunner(TaskType::kPermission)));
-    permission_service_.set_disconnect_handler(WTF::Bind(
+    data_->permission_service_.set_disconnect_handler(WTF::Bind(
         &Document::PermissionServiceConnectionError, WrapWeakPersistent(this)));
   }
-  return permission_service_.get();
+  return data_->permission_service_.get();
 }
 
 void Document::PermissionServiceConnectionError() {
-  permission_service_.reset();
+  data_->permission_service_.reset();
 }
 
-ScriptPromise Document::hasStorageAccess(ScriptState* script_state) const {
+ScriptPromise Document::hasStorageAccess(ScriptState* script_state) {
   const bool has_access =
-      TopFrameOrigin() &&
-      GetSecurityOrigin()->IsSameOriginWith(TopFrameOrigin().get());
+      TopFrameOrigin() && GetExecutionContext() &&
+      !GetExecutionContext()->GetSecurityOrigin()->IsOpaque() &&
+      CookiesEnabled();
   ScriptPromiseResolver* resolver =
       MakeGarbageCollected<ScriptPromiseResolver>(script_state);
 
-  // TODO (http://crbug.com/989663)
-  // Hookup actual logic to Resolve/Reject this request properly.
   ScriptPromise promise = resolver->Promise();
   resolver->Resolve(has_access);
   return promise;
 }
 
 ScriptPromise Document::requestStorageAccess(ScriptState* script_state) {
-  DCHECK(frame_);
+  DCHECK(GetFrame());
   ScriptPromiseResolver* resolver =
       MakeGarbageCollected<ScriptPromiseResolver>(script_state);
-
-  // TODO (http://crbug.com/989663)
-  // Hookup actual logic to Resolve/Reject this request properly.
 
   // Access the promise first to ensure it is created so that the proper state
   // can be changed when it is resolved or rejected.
   ScriptPromise promise = resolver->Promise();
 
-  const bool has_user_gesture = LocalFrame::HasTransientUserActivation(frame_);
-  if (has_user_gesture) {
-    auto descriptor = mojom::blink::PermissionDescriptor::New();
-    descriptor->name = mojom::blink::PermissionName::STORAGE_ACCESS;
-    GetPermissionService(ExecutionContext::From(script_state))
-        ->RequestPermission(
-            std::move(descriptor), has_user_gesture,
-            WTF::Bind(
-                [](ScriptPromiseResolver* resolver,
-                   mojom::blink::PermissionStatus status) {
-                  DCHECK(resolver);
-                  (status == mojom::blink::PermissionStatus::GRANTED)
-                      ? resolver->Resolve()
-                      : resolver->Reject();
-                },
-                WrapPersistent(resolver)));
-  } else {
-    // Without a user gesture any request for storage access is immediately
-    // denied.
+  const bool has_user_gesture =
+      LocalFrame::HasTransientUserActivation(GetFrame());
+  if (!has_user_gesture) {
+    AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+        mojom::blink::ConsoleMessageSource::kSecurity,
+        mojom::blink::ConsoleMessageLevel::kError,
+        "requestStorageAccess: Must be handling a user gesture to use."));
+    FireRequestStorageAccessHistogram(
+        RequestStorageResult::REJECTED_NO_USER_GESTURE);
+
     resolver->Reject();
+    return promise;
   }
+
+  if (!TopFrameOrigin()) {
+    AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+        mojom::blink::ConsoleMessageSource::kSecurity,
+        mojom::blink::ConsoleMessageLevel::kError,
+        "requestStorageAccess: Cannot execute in documents lacking top-frame "
+        "origins."));
+    FireRequestStorageAccessHistogram(RequestStorageResult::REJECTED_NO_ORIGIN);
+
+    resolver->Reject();
+    return promise;
+  }
+
+  if (dom_window_->GetSecurityOrigin()->IsOpaque()) {
+    AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+        mojom::blink::ConsoleMessageSource::kSecurity,
+        mojom::blink::ConsoleMessageLevel::kError,
+        "requestStorageAccess: Cannot be used by opaque origins."));
+    FireRequestStorageAccessHistogram(
+        RequestStorageResult::REJECTED_OPAQUE_ORIGIN);
+
+    resolver->Reject();
+    return promise;
+  }
+
+  if (dom_window_->IsSandboxed(network::mojom::blink::WebSandboxFlags::
+                                   kStorageAccessByUserActivation)) {
+    AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+        mojom::blink::ConsoleMessageSource::kSecurity,
+        mojom::blink::ConsoleMessageLevel::kError,
+        "requestStorageAccess: Refused to execute request. The document is "
+        "sandboxed, and the 'allow-storage-access-by-user-activation' keyword "
+        "is not set."));
+    FireRequestStorageAccessHistogram(RequestStorageResult::REJECTED_SANDBOXED);
+
+    resolver->Reject();
+    return promise;
+  }
+
+  if (CookiesEnabled()) {
+    FireRequestStorageAccessHistogram(
+        RequestStorageResult::APPROVED_EXISTING_ACCESS);
+
+    // If there is current access to storage we no longer need to make a request
+    // and can resolve the promise.
+    resolver->Resolve();
+    return promise;
+  }
+
+  if (expressly_denied_storage_access_) {
+    FireRequestStorageAccessHistogram(
+        RequestStorageResult::REJECTED_EXISTING_DENIAL);
+
+    // If a previous rejection has been received the promise can be immediately
+    // rejected without further action.
+    resolver->Reject();
+    return promise;
+  }
+
+  auto descriptor = mojom::blink::PermissionDescriptor::New();
+  descriptor->name = mojom::blink::PermissionName::STORAGE_ACCESS;
+  GetPermissionService(ExecutionContext::From(script_state))
+      ->RequestPermission(
+          std::move(descriptor), has_user_gesture,
+          WTF::Bind(
+              [](ScriptPromiseResolver* resolver, Document* document,
+                 mojom::blink::PermissionStatus status) {
+                DCHECK(resolver);
+                DCHECK(document);
+
+                switch (status) {
+                  case mojom::blink::PermissionStatus::GRANTED:
+                    document->expressly_denied_storage_access_ = false;
+                    FireRequestStorageAccessHistogram(
+                        RequestStorageResult::APPROVED_NEW_GRANT);
+                    resolver->Resolve();
+                    break;
+                  case mojom::blink::PermissionStatus::DENIED:
+                    document->expressly_denied_storage_access_ = true;
+                    FALLTHROUGH;
+                  case mojom::blink::PermissionStatus::ASK:
+                  default:
+                    FireRequestStorageAccessHistogram(
+                        RequestStorageResult::REJECTED_GRANT_DENIED);
+                    resolver->Reject();
+                }
+              },
+              WrapPersistent(resolver), WrapPersistent(this)));
+
   return promise;
+}
+
+FragmentDirective& Document::fragmentDirective() const {
+  return *fragment_directive_;
+}
+
+ScriptPromise Document::hasTrustToken(ScriptState* script_state,
+                                      const String& issuer,
+                                      ExceptionState& exception_state) {
+  ScriptPromiseResolver* resolver =
+      MakeGarbageCollected<ScriptPromiseResolver>(script_state);
+
+  ScriptPromise promise = resolver->Promise();
+
+  // Trust Tokens state is keyed by issuer and top-frame origins that
+  // are both (1) HTTP or HTTPS and (2) potentially trustworthy. Consequently,
+  // we can return early if either the issuer or the top-frame origin fails to
+  // satisfy either of these requirements.
+  KURL issuer_url = KURL(issuer);
+  auto issuer_origin = SecurityOrigin::Create(issuer_url);
+  if (!issuer_url.ProtocolIsInHTTPFamily() ||
+      !issuer_origin->IsPotentiallyTrustworthy()) {
+    exception_state.ThrowTypeError(
+        "hasTrustToken: Trust token issuer origins must be both HTTP(S) and "
+        "secure (\"potentially trustworthy\").");
+    resolver->Reject(exception_state);
+    return promise;
+  }
+
+  scoped_refptr<const SecurityOrigin> top_frame_origin = TopFrameOrigin();
+  if (!top_frame_origin) {
+    // Note: One case where there might be no top frame origin is if this
+    // document is destroyed. In this case, this function will return
+    // `undefined`. Still bother adding the exception and rejecting, just in
+    // case there are other situations in which the top frame origin might be
+    // absent.
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      "hasTrustToken: Cannot execute in "
+                                      "documents lacking top-frame origins.");
+    resolver->Reject(exception_state);
+    return promise;
+  }
+
+  if (!top_frame_origin->IsPotentiallyTrustworthy() ||
+      (top_frame_origin->Protocol() != url::kHttpsScheme &&
+       top_frame_origin->Protocol() != url::kHttpScheme)) {
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kNotAllowedError,
+        "hasTrustToken: Cannot execute in "
+        "documents without secure, HTTP(S), top-frame origins.");
+    resolver->Reject(exception_state);
+    return promise;
+  }
+
+  if (!data_->has_trust_tokens_answerer_.is_bound()) {
+    GetFrame()->GetBrowserInterfaceBroker().GetInterface(
+        data_->has_trust_tokens_answerer_.BindNewPipeAndPassReceiver(
+            GetExecutionContext()->GetTaskRunner(TaskType::kInternalDefault)));
+    data_->has_trust_tokens_answerer_.set_disconnect_handler(
+        WTF::Bind(&Document::HasTrustTokensAnswererConnectionError,
+                  WrapWeakPersistent(this)));
+  }
+
+  data_->pending_has_trust_tokens_resolvers_.insert(resolver);
+
+  data_->has_trust_tokens_answerer_->HasTrustTokens(
+      issuer_origin,
+      WTF::Bind(
+          [](WeakPersistent<ScriptPromiseResolver> resolver,
+             WeakPersistent<Document> document,
+             network::mojom::blink::HasTrustTokensResultPtr result) {
+            // If there was a Mojo connection error, the promise was already
+            // resolved and deleted.
+            if (!base::Contains(
+                    document->data_->pending_has_trust_tokens_resolvers_,
+                    resolver)) {
+              return;
+            }
+
+            if (result->status ==
+                network::mojom::blink::TrustTokenOperationStatus::kOk) {
+              resolver->Resolve(result->has_trust_tokens);
+            } else {
+              ScriptState* state = resolver->GetScriptState();
+              ScriptState::Scope scope(state);
+              resolver->Reject(V8ThrowDOMException::CreateOrEmpty(
+                  state->GetIsolate(), DOMExceptionCode::kOperationError,
+                  "Failed to retrieve hasTrustToken response. (Would "
+                  "associating the given issuer with this top-level origin "
+                  "have exceeded its number-of-issuers limit?)"));
+            }
+
+            document->data_->pending_has_trust_tokens_resolvers_.erase(
+                resolver);
+          },
+          WrapWeakPersistent(resolver), WrapWeakPersistent(this)));
+
+  return promise;
+}
+
+mojom::blink::FlocService* Document::GetFlocService(
+    ExecutionContext* execution_context) {
+  if (!data_->floc_service_.is_bound()) {
+    execution_context->GetBrowserInterfaceBroker().GetInterface(
+        data_->floc_service_.BindNewPipeAndPassReceiver(
+            execution_context->GetTaskRunner(TaskType::kMiscPlatformAPI)));
+  }
+  return data_->floc_service_.get();
+}
+
+ScriptPromise Document::interestCohort(ScriptState* script_state) {
+  ScriptPromiseResolver* resolver =
+      MakeGarbageCollected<ScriptPromiseResolver>(script_state);
+
+  ScriptPromise promise = resolver->Promise();
+
+  GetFlocService(ExecutionContext::From(script_state))
+      ->GetInterestCohort(WTF::Bind(
+          [](ScriptPromiseResolver* resolver, Document* document,
+             const String& interest_cohort) {
+            DCHECK(resolver);
+            DCHECK(document);
+
+            if (interest_cohort.IsEmpty()) {
+              resolver->Reject();
+            } else {
+              resolver->Resolve(interest_cohort);
+            }
+          },
+          WrapPersistent(resolver), WrapPersistent(this)));
+
+  return promise;
+}
+
+void Document::HasTrustTokensAnswererConnectionError() {
+  data_->has_trust_tokens_answerer_.reset();
+  for (const auto& resolver : data_->pending_has_trust_tokens_resolvers_) {
+    ScriptState* state = resolver->GetScriptState();
+    ScriptState::Scope scope(state);
+    resolver->Reject(V8ThrowDOMException::CreateOrEmpty(
+        state->GetIsolate(), DOMExceptionCode::kOperationError,
+        "Internal error retrieving hasTrustToken response."));
+  }
+  data_->pending_has_trust_tokens_resolvers_.clear();
 }
 
 static bool IsValidNameNonASCII(const LChar* characters, unsigned length) {
@@ -6263,7 +6405,7 @@ static inline bool IsValidNameASCII(const CharType* characters,
   return true;
 }
 
-bool Document::IsValidName(const String& name) {
+bool Document::IsValidName(const StringView& name) {
   unsigned length = name.length();
   if (!length)
     return false;
@@ -6499,7 +6641,7 @@ KURL Document::OpenSearchDescriptionURL() {
     WebFeature osd_disposition;
     scoped_refptr<const SecurityOrigin> target =
         SecurityOrigin::Create(link_element->Href());
-    if (IsSecureContext()) {
+    if (execution_context_->IsSecureContext()) {
       osd_disposition = target->IsPotentiallyTrustworthy()
                             ? WebFeature::kOpenSearchSecureOriginSecureTarget
                             : WebFeature::kOpenSearchSecureOriginInsecureTarget;
@@ -6560,9 +6702,9 @@ void Document::setDesignMode(const String& value) {
 }
 
 Document* Document::ParentDocument() const {
-  if (!frame_)
+  if (!GetFrame())
     return nullptr;
-  auto* parent_local_frame = DynamicTo<LocalFrame>(frame_->Tree().Parent());
+  auto* parent_local_frame = DynamicTo<LocalFrame>(GetFrame()->Tree().Parent());
   if (!parent_local_frame)
     return nullptr;
   return parent_local_frame->GetDocument();
@@ -6580,9 +6722,8 @@ Document& Document::TopDocument() const {
   return *doc;
 }
 
-Document* Document::ContextDocument() const {
-  return context_document_ ? context_document_.Get()
-                           : const_cast<Document*>(this);
+ExecutionContext* Document::GetExecutionContext() const {
+  return execution_context_.Get();
 }
 
 Attr* Document::createAttribute(const AtomicString& name,
@@ -6680,10 +6821,7 @@ HTMLCollection* Document::DocumentAllNamedItems(const AtomicString& name) {
 }
 
 DOMWindow* Document::defaultView() const {
-  // The HTML spec requires to return null if the document is detached from the
-  // DOM.  However, |dom_window_| is not cleared on the detachment.  So, we need
-  // to check |frame_| to tell whether the document is attached or not.
-  return frame_ ? dom_window_ : nullptr;
+  return dom_window_;
 }
 
 namespace {
@@ -6708,11 +6846,100 @@ void SetOriginTrialFreezePolicy(
 
 }  // namespace
 
+void Document::RecordAsyncScriptCount() {
+  UMA_HISTOGRAM_COUNTS_100("Blink.Script.AsyncScriptCount",
+                           async_script_count_);
+
+  // Only record async script count for mainframe documents, as per UKM policy.
+  if (!IsInMainFrame())
+    return;
+
+  auto* recorder = UkmRecorder();
+  DCHECK(recorder);
+  DCHECK(UkmSourceID() != ukm::kInvalidSourceId);
+  ukm::builders::Blink_Script_AsyncScripts(UkmSourceID())
+      .SetAsyncScriptCount(
+          ukm::GetExponentialBucketMin(async_script_count_, 1.3))
+      .Record(recorder);
+}
+
+void Document::MaybeExecuteDelayedAsyncScripts() {
+  if (base::FeatureList::IsEnabled(features::kDelayAsyncScriptExecution) &&
+      features::kDelayAsyncScriptExecutionDelayParam.Get() ==
+          features::DelayAsyncScriptDelayType::kUseOptimizationGuide) {
+    // If the optimization hints aren't available in the first place, then
+    // ScriptRunner won't delay async scripts at all, so we don't need to worry
+    // about notifying it.
+    if (!GetFrame() || !GetFrame()->GetOptimizationGuideHints())
+      return;
+
+    mojom::blink::DelayAsyncScriptExecutionHintsPtr delay_hint =
+        std::move(GetFrame()
+                      ->GetOptimizationGuideHints()
+                      ->delay_async_script_execution_hints);
+
+    if (!delay_hint)
+      return;
+
+    mojom::blink::DelayAsyncScriptExecutionDelayType delay_type =
+        delay_hint->delay_type;
+    switch (delay_type) {
+      case mojom::blink::DelayAsyncScriptExecutionDelayType::kFinishedParsing:
+        if (!Parsing())
+          script_runner_->NotifyDelayedAsyncScriptsMilestoneReached();
+        return;
+      case mojom::blink::DelayAsyncScriptExecutionDelayType::
+          kFirstPaintOrFinishedParsing:
+        if (first_paint_recorded_ || !Parsing())
+          script_runner_->NotifyDelayedAsyncScriptsMilestoneReached();
+        return;
+      case mojom::blink::DelayAsyncScriptExecutionDelayType::kUnknown:
+        // If the delay type is kUnknown, or the optimization guide hints are
+        // unavailable, then ScriptRunner::CanDelayAsyncScripts will always
+        // return false, causing no delay. Therefore in this case, we don't
+        // need to anything here.
+        return;
+    }
+  }
+
+  // Notify the ScriptRunner if the first paint has been recorded and
+  // we're delaying async scripts until first paint or finished parsing
+  // (whichever comes first).
+  if ((first_paint_recorded_ || !Parsing()) &&
+      ((base::FeatureList::IsEnabled(features::kDelayAsyncScriptExecution) &&
+        features::kDelayAsyncScriptExecutionDelayParam.Get() ==
+            features::DelayAsyncScriptDelayType::
+                kFirstPaintOrFinishedParsing) ||
+       RuntimeEnabledFeatures::
+           DelayAsyncScriptExecutionUntilFirstPaintOrFinishedParsingEnabled())) {
+    script_runner_->NotifyDelayedAsyncScriptsMilestoneReached();
+  }
+
+  // Notify the ScriptRunner if we're finished parsing and we're delaying async
+  // scripts until finished parsing occurs.
+  if (!Parsing() &&
+      (base::FeatureList::IsEnabled(features::kDelayAsyncScriptExecution) ||
+       RuntimeEnabledFeatures::
+           DelayAsyncScriptExecutionUntilFinishedParsingEnabled() ||
+       RuntimeEnabledFeatures::
+           DelayAsyncScriptExecutionUntilFirstPaintOrFinishedParsingEnabled())) {
+    script_runner_->NotifyDelayedAsyncScriptsMilestoneReached();
+  }
+}
+
+void Document::MarkFirstPaint() {
+  first_paint_recorded_ = true;
+  MaybeExecuteDelayedAsyncScripts();
+}
+
 void Document::FinishedParsing() {
   DCHECK(!GetScriptableDocumentParser() || !parser_->IsParsing());
   DCHECK(!GetScriptableDocumentParser() || ready_state_ != kLoading);
+  RecordAsyncScriptCount();
   SetParsingState(kInDOMContentLoaded);
   DocumentParserTiming::From(*this).MarkParserStop();
+
+  MaybeExecuteDelayedAsyncScripts();
 
   // FIXME: DOMContentLoaded is dispatched synchronously, but this should be
   // dispatched in a queued task, see https://crbug.com/425790
@@ -6741,9 +6968,6 @@ void Document::FinishedParsing() {
     // yet to avoid adding extra latency. Note that the first layout tree update
     // can be expensive since it triggers the parsing of the default stylesheets
     // which are compiled-in.
-    const bool main_resource_was_already_requested =
-        frame->Loader().StateMachine()->CommittedFirstRealDocumentLoad();
-
     // FrameLoader::finishedParsing() might end up calling
     // Document::implicitClose() if all resource loads are
     // complete. HTMLObjectElements can start loading their resources from post
@@ -6753,7 +6977,7 @@ void Document::FinishedParsing() {
     // the window load event too early.  To avoid this we force the styles to be
     // up to date before calling FrameLoader::finishedParsing().  See
     // https://bugs.webkit.org/show_bug.cgi?id=36864 starting around comment 35.
-    if (main_resource_was_already_requested)
+    if (!is_initial_empty_document_)
       UpdateStyleAndLayoutTree();
 
     BeginLifecycleUpdatesIfRenderingReady();
@@ -6794,7 +7018,7 @@ void Document::BeginLifecycleUpdatesIfRenderingReady() {
     return;
   if (!HaveRenderBlockingResourcesLoaded())
     return;
-  font_preload_manager_.WillBeginRendering();
+  font_preload_manager_->WillBeginRendering();
   View()->BeginLifecycleUpdates();
 }
 
@@ -6890,9 +7114,9 @@ void Document::ColorSchemeMetaChanged() {
     return;
 
   const CSSValue* color_scheme = nullptr;
-  if (auto* head_element = head()) {
+  if (auto* root_element = documentElement()) {
     for (HTMLMetaElement& meta_element :
-         Traversal<HTMLMetaElement>::DescendantsOf(*head_element)) {
+         Traversal<HTMLMetaElement>::DescendantsOf(*root_element)) {
       if (EqualIgnoringASCIICase(meta_element.GetName(), "color-scheme")) {
         if ((color_scheme = CSSParser::ParseSingleValue(
                  CSSPropertyID::kColorScheme,
@@ -6904,6 +7128,34 @@ void Document::ColorSchemeMetaChanged() {
     }
   }
   GetStyleEngine().SetColorSchemeFromMeta(color_scheme);
+}
+
+void Document::BatterySavingsMetaChanged() {
+  if (!RuntimeEnabledFeatures::BatterySavingsMetaEnabled(GetExecutionContext()))
+    return;
+
+  if (!IsInMainFrame())
+    return;
+
+  UseCounter::Count(GetExecutionContext(), WebFeature::kBatterySavingsMeta);
+  auto* root_element = documentElement();
+  if (!root_element)
+    return;
+
+  WebBatterySavingsFlags savings = 0;
+  for (HTMLMetaElement& meta_element :
+       Traversal<HTMLMetaElement>::DescendantsOf(*root_element)) {
+    if (EqualIgnoringASCIICase(meta_element.GetName(), "battery-savings")) {
+      SpaceSplitString split_content(
+          AtomicString(meta_element.Content().GetString().LowerASCII()));
+      if (split_content.Contains("allow-reduced-framerate"))
+        savings |= kAllowReducedFrameRate;
+      if (split_content.Contains("allow-reduced-script-speed"))
+        savings |= kAllowReducedScriptSpeed;
+      break;
+    }
+  }
+  GetPage()->GetChromeClient().BatterySavingsChanged(*GetFrame(), savings);
 }
 
 static HTMLLinkElement* GetLinkElement(const Document* doc,
@@ -6933,57 +7185,15 @@ HTMLLinkElement* Document::LinkCanonical() const {
   });
 }
 
-void Document::PoliciesInitialized(const DocumentInit& document_initializer) {
-  // Processing of the feature policy header is done before the SecurityContext
-  // is initialized. This method just records the usage.
-  if (!document_initializer.FeaturePolicyHeader().IsEmpty())
-    UseCounter::Count(*this, WebFeature::kFeaturePolicyHeader);
-
-  // At this point, the document will not have been installed in the frame's
-  // LocalDOMWindow, so we cannot call frame_->IsFeatureEnabled. This calls
-  // SecurityContext::IsFeatureEnabled instead, which cannot report, but we
-  // don't need reporting here in any case.
-  is_vertical_scroll_enforced_ =
-      frame_ && !frame_->IsMainFrame() &&
-      RuntimeEnabledFeatures::ExperimentalProductivityFeaturesEnabled() &&
-      !GetSecurityContext().GetFeaturePolicy()->IsFeatureEnabled(
-          mojom::blink::FeaturePolicyFeature::kVerticalScroll);
-}
-
-const ParsedFeaturePolicy Document::GetOwnerContainerPolicy() const {
-  // If this frame is not the main frame, then get the container policy from its
-  // owner.
-  if (frame_ && frame_->Owner())
-    return frame_->Owner()->GetFramePolicy().container_policy;
-  return ParsedFeaturePolicy();
-}
-
-const FeaturePolicy* Document::GetParentFeaturePolicy() const {
-  // If this frame is not the main frame, then get the feature policy from its
-  // parent.
-  if (frame_ && !frame_->IsMainFrame())
-    return frame_->Tree().Parent()->GetSecurityContext()->GetFeaturePolicy();
-  return nullptr;
-}
-
-void Document::ApplyPendingFramePolicyHeaders() {
-  if (frame_) {
-    frame_->Client()->DidSetFramePolicyHeaders(
-        GetSandboxFlags(), pending_fp_headers_, pending_dp_headers_);
-  }
-  pending_fp_headers_.clear();
-  pending_dp_headers_.clear();
-}
-
 bool Document::AllowedToUseDynamicMarkUpInsertion(
     const char* api_name,
     ExceptionState& exception_state) {
   if (!RuntimeEnabledFeatures::ExperimentalProductivityFeaturesEnabled()) {
     return true;
   }
-  if (!frame_ ||
-      IsFeatureEnabled(mojom::blink::FeaturePolicyFeature::kDocumentWrite,
-                       ReportOptions::kReportOnFailure)) {
+  if (!GetFrame() || GetExecutionContext()->IsFeatureEnabled(
+                         mojom::blink::DocumentPolicyFeature::kDocumentWrite,
+                         ReportOptions::kReportOnFailure)) {
     return true;
   }
 
@@ -7010,10 +7220,6 @@ ukm::UkmRecorder* Document::UkmRecorder() {
       recorder.InitWithNewPipeAndPassReceiver());
   ukm_recorder_ = std::make_unique<ukm::MojoUkmRecorder>(std::move(recorder));
 
-  // TODO(crbug/795354): Move handling of URL recording out of the renderer.
-  // URL must only be recorded from the main frame.
-  if (IsInMainFrame())
-    ukm_recorder_->UpdateSourceURL(ukm_source_id_, url_);
   return ukm_recorder_.get();
 }
 
@@ -7025,92 +7231,9 @@ FontMatchingMetrics* Document::GetFontMatchingMetrics() {
   if (font_matching_metrics_)
     return font_matching_metrics_.get();
   font_matching_metrics_ = std::make_unique<FontMatchingMetrics>(
-      IsInMainFrame(), UkmRecorder(), UkmSourceID());
+      IsInMainFrame(), UkmRecorder(), UkmSourceID(),
+      GetTaskRunner(TaskType::kInternalDefault));
   return font_matching_metrics_.get();
-}
-
-void Document::InitContentSecurityPolicy(ContentSecurityPolicy* csp) {
-  GetSecurityContext().SetContentSecurityPolicy(csp);
-  GetContentSecurityPolicy()->BindToDelegate(
-      GetContentSecurityPolicyDelegate());
-}
-
-void Document::InitSecurityContext(const DocumentInit& initializer) {
-  DCHECK(GetSecurityOrigin());
-  // If the CSP was provided by the DocumentLoader or is from ImportsController
-  // it doesn't need to be bound right now. ImportsController takes a reference
-  // to a master document's CSP which is already bound. Document construction
-  // occurs in the DocumentLoader occurs before the frame reference is bound so
-  // callbacks from binding the CSP delegate immediately would not get called
-  // if it was bound immediately. eg. Callbacks back to browser or console
-  // logging.
-  if (!initializer.HasSecurityContext()) {
-    // No source for a security context.
-    // This can occur via document.implementation.createDocument().
-    cookie_url_ = KURL(g_empty_string);
-    return;
-  }
-  GetSecurityContext().SetInsecureRequestPolicy(
-      initializer.GetInsecureRequestPolicy());
-  if (initializer.InsecureNavigationsToUpgrade()) {
-    for (auto to_upgrade : *initializer.InsecureNavigationsToUpgrade())
-      GetSecurityContext().AddInsecureNavigationUpgrade(to_upgrade);
-  }
-
-  bool inherit_cookie_url_from_owner = initializer.IsSrcdocDocument() ||
-                                       url_.IsAboutBlankURL() ||
-                                       !initializer.OriginToCommit();
-
-  cookie_url_ = inherit_cookie_url_from_owner && initializer.OwnerDocument()
-                    ? initializer.OwnerDocument()->CookieURL()
-                    : url_;
-
-  GetSecurityContext().SetAddressSpace(initializer.GetIPAddressSpace());
-}
-
-void Document::BindContentSecurityPolicy() {
-  DCHECK(!GetContentSecurityPolicy()->IsBound());
-  GetContentSecurityPolicy()->BindToDelegate(
-      GetContentSecurityPolicyDelegate());
-}
-
-bool Document::CanExecuteScripts(ReasonForCallingCanExecuteScripts reason) {
-  DCHECK(GetFrame())
-      << "you are querying canExecuteScripts on a non contextDocument.";
-
-  // Normally, scripts are not allowed in sandboxed contexts that disallow them.
-  // However, there is an exception for cases when the script should bypass the
-  // main world's CSP (such as for privileged isolated worlds). See
-  // https://crbug.com/811528.
-  if (IsSandboxed(mojom::blink::WebSandboxFlags::kScripts) &&
-      !ContentSecurityPolicy::ShouldBypassMainWorld(domWindow())) {
-    // FIXME: This message should be moved off the console once a solution to
-    // https://bugs.webkit.org/show_bug.cgi?id=103274 exists.
-    if (reason == kAboutToExecuteScript) {
-      AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
-          mojom::ConsoleMessageSource::kSecurity,
-          mojom::ConsoleMessageLevel::kError,
-          "Blocked script execution in '" + Url().ElidedString() +
-              "' because the document's frame is sandboxed and the "
-              "'allow-scripts' permission is not set."));
-    }
-    return false;
-  }
-
-  // No scripting on a detached frame.
-  if (!GetFrame()->Client())
-    return false;
-
-  WebContentSettingsClient* settings_client =
-      GetFrame()->GetContentSettingsClient();
-
-  Settings* settings = GetFrame()->GetSettings();
-  bool script_enabled = settings && settings->GetScriptEnabled();
-  if (settings_client)
-    script_enabled = settings_client->AllowScript(script_enabled);
-  if (!script_enabled && reason == kAboutToExecuteScript && settings_client)
-    settings_client->DidNotAllowScript();
-  return script_enabled;
 }
 
 bool Document::AllowInlineEventHandler(Node* node,
@@ -7118,27 +7241,27 @@ bool Document::AllowInlineEventHandler(Node* node,
                                        const String& context_url,
                                        const WTF::OrdinalNumber& context_line) {
   auto* element = DynamicTo<Element>(node);
-
-  // https://html.spec.whatwg.org/multipage/webappapis.html#event-handler-content-attributes
-  // Step 5.1. If the Should element's inline behavior be blocked by Content
-  // Security Policy? algorithm returns "Blocked" when executed upon element,
-  // "script attribute", and value, then return. [CSP] [spec text]
-  if (!GetContentSecurityPolicyForWorld()->AllowInline(
-          ContentSecurityPolicy::InlineType::kScriptAttribute, element,
-          listener->ScriptBody(), String() /* nonce */, context_url,
-          context_line))
-    return false;
-
   // HTML says that inline script needs browsing context to create its execution
   // environment.
   // http://www.whatwg.org/specs/web-apps/current-work/multipage/webappapis.html#event-handler-attributes
   // Also, if the listening node came from other document, which happens on
   // context-less event dispatching, we also need to ask the owner document of
   // the node.
-  LocalFrame* frame = ExecutingFrame();
-  if (!frame)
+  LocalDOMWindow* window = ExecutingWindow();
+  if (!window)
     return false;
-  if (!ContextDocument()->CanExecuteScripts(kNotAboutToExecuteScript))
+
+  // https://html.spec.whatwg.org/multipage/webappapis.html#event-handler-content-attributes
+  // Step 5.1. If the Should element's inline behavior be blocked by Content
+  // Security Policy? algorithm returns "Blocked" when executed upon element,
+  // "script attribute", and value, then return. [CSP] [spec text]
+  if (!window->GetContentSecurityPolicyForCurrentWorld()->AllowInline(
+          ContentSecurityPolicy::InlineType::kScriptAttribute, element,
+          listener->ScriptBody(), String() /* nonce */, context_url,
+          context_line))
+    return false;
+
+  if (!window->CanExecuteScripts(kNotAboutToExecuteScript))
     return false;
   if (node && node->GetDocument() != this &&
       !node->GetDocument().AllowInlineEventHandler(node, listener, context_url,
@@ -7184,8 +7307,10 @@ void Document::InitDNSPrefetch() {
   Settings* settings = GetSettings();
 
   have_explicitly_disabled_dns_prefetch_ = false;
-  is_dns_prefetch_enabled_ = settings && settings->GetDNSPrefetchingEnabled() &&
-                             GetSecurityOrigin()->Protocol() == "http";
+  is_dns_prefetch_enabled_ =
+      settings && settings->GetDNSPrefetchingEnabled() &&
+      dom_window_->GetSecurityContext().GetSecurityOrigin()->Protocol() ==
+          "http";
 
   // Inherit DNS prefetch opt-out from parent frame
   if (Document* parent = ParentDocument()) {
@@ -7234,30 +7359,17 @@ Document::EnsureDocumentExplicitRootIntersectionObserverData() {
   return *document_explicit_root_intersection_observer_data_;
 }
 
-ResizeObserverController& Document::EnsureResizeObserverController() {
-  if (!resize_observer_controller_) {
-    resize_observer_controller_ =
-        MakeGarbageCollected<ResizeObserverController>();
-  }
-  return *resize_observer_controller_;
+const ScriptRegexp& Document::EnsureEmailRegexp() const {
+  if (!data_->email_regexp_)
+    data_->email_regexp_ = EmailInputType::CreateEmailRegexp();
+  return *data_->email_regexp_;
 }
 
 void Document::AddConsoleMessage(ConsoleMessage* message,
-                                 bool discard_duplicates) {
+                                 bool discard_duplicates) const {
   // Don't let non-attached Documents spam the console.
   if (domWindow())
     domWindow()->AddConsoleMessage(message, discard_duplicates);
-}
-
-void Document::AddInspectorIssue(InspectorIssue* issue) {
-  Page* page = GetPage();
-
-  if (!page) {
-    return;
-  }
-
-  page->GetInspectorIssueStorage().AddInspectorIssue(GetExecutionContext(),
-                                                     issue);
 }
 
 void Document::AddToTopLayer(Element* element, const Element* before) {
@@ -7387,23 +7499,6 @@ void Document::ServiceScriptedAnimations(
   }
 }
 
-int Document::RequestPostAnimationFrame(
-    FrameRequestCallbackCollection::FrameCallback* cb) {
-  return scripted_animation_controller_->RegisterPostFrameCallback(cb);
-}
-
-void Document::CancelPostAnimationFrame(int id) {
-  scripted_animation_controller_->CancelPostFrameCallback(id);
-}
-
-void Document::RunPostAnimationFrameCallbacks() {
-  bool was_throttled = current_frame_is_throttled_;
-  current_frame_is_throttled_ = false;
-  if (was_throttled)
-    return;
-  scripted_animation_controller_->RunPostFrameCallbacks();
-}
-
 ScriptedIdleTaskController& Document::EnsureScriptedIdleTaskController() {
   if (!scripted_idle_task_controller_) {
     scripted_idle_task_controller_ =
@@ -7431,15 +7526,7 @@ void Document::CancelIdleCallback(int id) {
 }
 
 DocumentLoader* Document::Loader() const {
-  if (!frame_)
-    return nullptr;
-
-  // TODO(dcheng): remove this check. frame_ is guaranteed to be non-null only
-  // if frame_->GetDocument() == this.
-  if (frame_->GetDocument() != this)
-    return nullptr;
-
-  return frame_->Loader().GetDocumentLoader();
+  return GetFrame() ? GetFrame()->Loader().GetDocumentLoader() : nullptr;
 }
 
 Node* EventTargetNodeForDocument(Document* doc) {
@@ -7508,8 +7595,8 @@ void Document::SetContextFeatures(ContextFeatures& features) {
 void Document::UpdateHoverActiveState(bool is_active,
                                       bool update_active_chain,
                                       Element* inner_element) {
-  if (is_active && frame_)
-    frame_->GetEventHandler().NotifyElementActivated();
+  if (is_active && GetFrame())
+    GetFrame()->GetEventHandler().NotifyElementActivated();
 
   Element* inner_element_in_document = inner_element;
 
@@ -7640,7 +7727,7 @@ bool Document::HaveScriptBlockingStylesheetsLoaded() const {
 bool Document::HaveRenderBlockingResourcesLoaded() const {
   return HaveImportsLoaded() &&
          style_engine_->HaveRenderBlockingStylesheetsLoaded() &&
-         !font_preload_manager_.HasPendingRenderBlockingFonts();
+         !font_preload_manager_->HasPendingRenderBlockingFonts();
 }
 
 Locale& Document::GetCachedLocale(const AtomicString& locale) {
@@ -7675,13 +7762,13 @@ Document& Document::EnsureTemplateDocument() {
   if (IsA<HTMLDocument>(this)) {
     template_document_ = MakeGarbageCollected<HTMLDocument>(
         DocumentInit::Create()
-            .WithContextDocument(ContextDocument())
+            .WithExecutionContext(execution_context_.Get())
             .WithURL(BlankURL())
             .WithNewRegistrationContext());
   } else {
     template_document_ = MakeGarbageCollected<Document>(
         DocumentInit::Create()
-            .WithContextDocument(ContextDocument())
+            .WithExecutionContext(execution_context_.Get())
             .WithURL(BlankURL()));
   }
 
@@ -7711,7 +7798,7 @@ void Document::DidAssociateFormControlsTimerFired(TimerBase* timer) {
 }
 
 float Document::DevicePixelRatio() const {
-  return frame_ ? frame_->DevicePixelRatio() : 1.0;
+  return GetFrame() ? GetFrame()->DevicePixelRatio() : 1.0;
 }
 
 TextAutosizer* Document::GetTextAutosizer() {
@@ -8008,21 +8095,6 @@ void Document::PlatformColorsChanged() {
   GetStyleEngine().PlatformColorsChanged();
 }
 
-void Document::DidEnforceInsecureRequestPolicy() {
-  if (!GetFrame())
-    return;
-  GetFrame()->GetLocalFrameHostRemote().EnforceInsecureRequestPolicy(
-      GetSecurityContext().GetInsecureRequestPolicy());
-}
-
-void Document::DidEnforceInsecureNavigationsSet() {
-  if (!GetFrame())
-    return;
-  GetFrame()->GetLocalFrameHostRemote().EnforceInsecureNavigationsSet(
-      SecurityContext::SerializeInsecureNavigationSet(
-          GetSecurityContext().InsecureNavigationsToUpgrade()));
-}
-
 void Document::SetShadowCascadeOrder(ShadowCascadeOrder order) {
   DCHECK_NE(order, ShadowCascadeOrder::kShadowCascadeNone);
   if (order == shadow_cascade_order_)
@@ -8049,20 +8121,15 @@ void Document::SetShadowCascadeOrder(ShadowCascadeOrder order) {
     shadow_cascade_order_ = order;
 }
 
-PropertyRegistry* Document::GetPropertyRegistry() {
-  // TODO(timloh): When the flag is removed, return a reference instead.
-  if (!property_registry_ && RuntimeEnabledFeatures::CSSVariables2Enabled())
+PropertyRegistry& Document::EnsurePropertyRegistry() {
+  if (!property_registry_)
     property_registry_ = MakeGarbageCollected<PropertyRegistry>();
-  return property_registry_;
-}
-
-const PropertyRegistry* Document::GetPropertyRegistry() const {
-  return const_cast<Document*>(this)->GetPropertyRegistry();
+  return *property_registry_;
 }
 
 void Document::MaybeQueueSendDidEditFieldInInsecureContext() {
   if (logged_field_edit_ || sensitive_input_edited_task_.IsActive() ||
-      IsSecureContext()) {
+      execution_context_->IsSecureContext()) {
     // Send a message on the first edit; the browser process doesn't care
     // about the presence of additional edits.
     //
@@ -8079,56 +8146,34 @@ void Document::MaybeQueueSendDidEditFieldInInsecureContext() {
                 WrapWeakPersistent(this)));
 }
 
-CoreProbeSink* Document::GetProbeSink() {
-  LocalFrame* frame = GetFrame();
-  if (!frame && TemplateDocumentHost())
-    frame = TemplateDocumentHost()->GetFrame();
-  return probe::ToCoreProbeSink(frame);
-}
-
-BrowserInterfaceBrokerProxy& Document::GetBrowserInterfaceBroker() {
-  if (!GetFrame())
-    return GetEmptyBrowserInterfaceBroker();
-
-  return GetFrame()->GetBrowserInterfaceBroker();
-}
-
 DocumentResourceCoordinator* Document::GetResourceCoordinator() {
   if (!resource_coordinator_ && GetFrame()) {
-    resource_coordinator_ =
-        DocumentResourceCoordinator::MaybeCreate(GetBrowserInterfaceBroker());
+    resource_coordinator_ = DocumentResourceCoordinator::MaybeCreate(
+        GetFrame()->GetBrowserInterfaceBroker());
   }
   return resource_coordinator_.get();
-}
-
-FrameOrWorkerScheduler* Document::GetScheduler() {
-  DCHECK(IsMainThread());
-  return GetExecutionContext()->GetScheduler();
 }
 
 scoped_refptr<base::SingleThreadTaskRunner> Document::GetTaskRunner(
     TaskType type) {
   DCHECK(IsMainThread());
-
-  if (ContextDocument() && ContextDocument()->GetFrame())
-    return ContextDocument()->GetFrame()->GetTaskRunner(type);
-  // In most cases, ContextDocument() will get us to a relevant Frame. In some
-  // cases, though, there isn't a good candidate (most commonly when either the
-  // passed-in document or ContextDocument() used to be attached to a Frame but
-  // has since been detached).
+  if (GetExecutionContext())
+    return GetExecutionContext()->GetTaskRunner(type);
+  // GetExecutionContext() can be nullptr in unit tests and after Shutdown().
+  // Fallback to the default task runner for this thread if all else fails.
   return Thread::Current()->GetTaskRunner();
 }
 
 DOMFeaturePolicy* Document::featurePolicy() {
-  if (!policy_)
-    policy_ = MakeGarbageCollected<DOMDocumentPolicy>(this);
+  if (!policy_ && GetExecutionContext())
+    policy_ = MakeGarbageCollected<DOMFeaturePolicy>(GetExecutionContext());
   return policy_.Get();
 }
 
 const AtomicString& Document::RequiredCSP() {
   if (!Loader())
     return g_null_atom;
-  return frame_->Loader().RequiredCSP();
+  return GetFrame()->Loader().RequiredCSP();
 }
 
 StylePropertyMapReadOnly* Document::ComputedStyleMap(Element* element) {
@@ -8152,10 +8197,8 @@ StylePropertyMapReadOnly* Document::RemoveComputedStyleMapItem(
   return element_computed_style_map_.Take(element);
 }
 
-void Document::Trace(Visitor* visitor) {
-  visitor->Trace(security_context_);
+void Document::Trace(Visitor* visitor) const {
   visitor->Trace(imports_controller_);
-  visitor->Trace(use_counter_during_construction_);
   visitor->Trace(doc_type_);
   visitor->Trace(implementation_);
   visitor->Trace(autofocus_candidates_);
@@ -8182,8 +8225,6 @@ void Document::Trace(Visitor* visitor) {
   visitor->Trace(form_controller_);
   visitor->Trace(visited_link_state_);
   visitor->Trace(element_computed_style_map_);
-  visitor->Trace(window_agent_factory_);
-  visitor->Trace(frame_);
   visitor->Trace(dom_window_);
   visitor->Trace(fetcher_);
   visitor->Trace(parser_);
@@ -8207,29 +8248,26 @@ void Document::Trace(Visitor* visitor) {
   visitor->Trace(timeline_);
   visitor->Trace(pending_animations_);
   visitor->Trace(worklet_animation_controller_);
-  visitor->Trace(context_document_);
+  visitor->Trace(execution_context_);
   visitor->Trace(canvas_font_cache_);
   visitor->Trace(intersection_observer_controller_);
   visitor->Trace(snap_coordinator_);
-  visitor->Trace(resize_observer_controller_);
   visitor->Trace(property_registry_);
   visitor->Trace(network_state_observer_);
   visitor->Trace(policy_);
   visitor->Trace(slot_assignment_engine_);
   visitor->Trace(viewport_data_);
-  visitor->Trace(display_lock_contexts_);
-  visitor->Trace(navigation_initiator_);
   visitor->Trace(lazy_load_image_observer_);
-  visitor->Trace(isolated_world_csp_map_);
-  visitor->Trace(find_in_page_root_);
   visitor->Trace(computed_node_mapping_);
   visitor->Trace(mime_handler_view_before_unload_event_listener_);
   visitor->Trace(cookie_jar_);
-  visitor->Trace(synchronous_mutation_observer_list_);
+  visitor->Trace(synchronous_mutation_observer_set_);
+  visitor->Trace(fragment_directive_);
   visitor->Trace(element_explicitly_set_attr_elements_map_);
-  visitor->Trace(display_lock_activation_observer_);
-  visitor->Trace(permission_service_);
+  visitor->Trace(display_lock_document_state_);
   visitor->Trace(font_preload_manager_);
+  visitor->Trace(find_in_page_active_match_node_);
+  visitor->Trace(data_);
   Supplementable<Document>::Trace(visitor);
   TreeScope::Trace(visitor);
   ContainerNode::Trace(visitor);
@@ -8255,22 +8293,6 @@ bool Document::NextFrameHasPendingRAF() const {
   return scripted_animation_controller_->NextFrameHasPendingRAF();
 }
 
-void Document::NavigateLocalAdsFrames() {
-  // This navigates all the frames detected as an advertisement to about:blank.
-  DCHECK(frame_);
-  for (Frame* child = frame_->Tree().FirstChild(); child;
-       child = child->Tree().TraverseNext(frame_)) {
-    if (auto* child_local_frame = DynamicTo<LocalFrame>(child)) {
-      if (child_local_frame->IsAdSubframe()) {
-        FrameLoadRequest request(this, ResourceRequest(BlankURL()));
-        child_local_frame->Navigate(request, WebFrameLoadType::kStandard);
-      }
-    }
-    // TODO(yuzus): Once AdsTracker for remote frames is implemented and OOPIF
-    // is enabled on low-end devices, navigate remote ads as well.
-  }
-}
-
 SlotAssignmentEngine& Document::GetSlotAssignmentEngine() {
   if (!slot_assignment_engine_)
     slot_assignment_engine_ = MakeGarbageCollected<SlotAssignmentEngine>();
@@ -8287,26 +8309,21 @@ bool Document::IsSlotAssignmentOrLegacyDistributionDirty() const {
   return false;
 }
 
-bool Document::IsLazyLoadPolicyEnforced() const {
-  return RuntimeEnabledFeatures::ExperimentalProductivityFeaturesEnabled() &&
-         !GetSecurityContext().GetFeaturePolicy()->IsFeatureEnabled(
-             mojom::blink::FeaturePolicyFeature::kLazyLoad);
-}
-
 bool Document::IsFocusAllowed() const {
-  if (frame_ && frame_->GetPage()->InsidePortal())
+  if (GetFrame() && GetFrame()->GetPage()->InsidePortal())
     return false;
 
-  if (!frame_ || frame_->IsMainFrame() ||
-      LocalFrame::HasTransientUserActivation(frame_)) {
+  if (!GetFrame() || GetFrame()->IsMainFrame() ||
+      LocalFrame::HasTransientUserActivation(GetFrame())) {
     // 'autofocus' runs Element::focus asynchronously at which point the
     // document might not have a frame (see https://crbug.com/960224).
     return true;
   }
 
   WebFeature uma_type;
-  bool sandboxed = IsSandboxed(mojom::blink::WebSandboxFlags::kNavigation);
-  bool ad = frame_->IsAdSubframe();
+  bool sandboxed = dom_window_->IsSandboxed(
+      network::mojom::blink::WebSandboxFlags::kNavigation);
+  bool ad = GetFrame()->IsAdSubframe();
   if (sandboxed) {
     uma_type = ad ? WebFeature::kFocusWithoutUserActivationSandboxedAdFrame
                   : WebFeature::kFocusWithoutUserActivationSandboxedNotAdFrame;
@@ -8318,16 +8335,8 @@ bool Document::IsFocusAllowed() const {
   CountUse(uma_type);
   if (!RuntimeEnabledFeatures::BlockingFocusWithoutUserActivationEnabled())
     return true;
-  return IsFeatureEnabled(
+  return GetExecutionContext()->IsFeatureEnabled(
       mojom::blink::FeaturePolicyFeature::kFocusWithoutUserActivation);
-}
-
-NavigationInitiatorImpl& Document::NavigationInitiator() {
-  if (!navigation_initiator_) {
-    navigation_initiator_ =
-        MakeGarbageCollected<NavigationInitiatorImpl>(*this);
-  }
-  return *navigation_initiator_;
 }
 
 LazyLoadImageObserver& Document::EnsureLazyLoadImageObserver() {
@@ -8338,256 +8347,20 @@ LazyLoadImageObserver& Document::EnsureLazyLoadImageObserver() {
   return *lazy_load_image_observer_;
 }
 
-WindowAgent& Document::GetWindowAgent() {
-  return *static_cast<WindowAgent*>(GetAgent());
-}
-
-void Document::CountPotentialFeaturePolicyViolation(
-    mojom::blink::FeaturePolicyFeature feature) const {
-  wtf_size_t index = static_cast<wtf_size_t>(feature);
-  if (potentially_violated_features_.size() == 0) {
-    potentially_violated_features_.resize(
-        static_cast<wtf_size_t>(mojom::blink::FeaturePolicyFeature::kMaxValue) +
-        1);
-  } else if (potentially_violated_features_[index]) {
-    return;
-  }
-  potentially_violated_features_[index] = true;
-  UMA_HISTOGRAM_ENUMERATION("Blink.UseCounter.FeaturePolicy.PotentialViolation",
-                            feature);
-}
-void Document::ReportFeaturePolicyViolation(
-    mojom::blink::FeaturePolicyFeature feature,
-    mojom::blink::PolicyDisposition disposition,
-    const String& message,
-    const String& source_file) const {
-  if (!RuntimeEnabledFeatures::FeaturePolicyReportingEnabled(this))
-    return;
-  LocalFrame* frame = GetFrame();
-  if (!frame)
-    return;
-
-  // Construct the feature policy violation report.
-  const String& feature_name = GetNameForFeature(feature);
-  const String& disp_str =
-      (disposition == mojom::blink::PolicyDisposition::kReport ? "report"
-                                                               : "enforce");
-
-  FeaturePolicyViolationReportBody* body =
-      source_file.IsEmpty()
-          ? MakeGarbageCollected<FeaturePolicyViolationReportBody>(
-                feature_name, "Feature policy violation", disp_str)
-          : MakeGarbageCollected<FeaturePolicyViolationReportBody>(
-                feature_name, "Feature policy violation", disp_str,
-                source_file);
-
-  Report* report = MakeGarbageCollected<Report>(
-      ReportType::kFeaturePolicyViolation, Url().GetString(), body);
-
-  // Send the feature policy violation report to any ReportingObservers.
-  auto* reporting_context = ReportingContext::From(domWindow());
-  reporting_context->QueueReport(report);
-
-  // TODO(iclelland): Report something different in report-only mode
-  if (disposition == mojom::blink::PolicyDisposition::kEnforce) {
-    frame->Console().AddMessage(MakeGarbageCollected<ConsoleMessage>(
-        mojom::ConsoleMessageSource::kViolation,
-        mojom::ConsoleMessageLevel::kError,
-        (message.IsEmpty() ? ("Feature policy violation: " + feature_name +
-                              " is not allowed in this document.")
-                           : message)));
-  }
-}
-
-void Document::ReportDocumentPolicyViolation(
-    mojom::blink::DocumentPolicyFeature feature,
-    mojom::blink::PolicyDisposition disposition,
-    const String& message,
-    const String& source_file) const {
-  LocalFrame* frame = GetFrame();
-  if (!frame)
-    return;
-
-  // Construct the document policy violation report.
-  const String& feature_name =
-      GetDocumentPolicyFeatureInfoMap().at(feature).feature_name.c_str();
-  bool is_report_only = disposition == mojom::blink::PolicyDisposition::kReport;
-  const String& disp_str = is_report_only ? "report" : "enforce";
-  const DocumentPolicy* relevant_document_policy =
-      is_report_only ? GetSecurityContext().GetReportOnlyDocumentPolicy()
-                     : GetSecurityContext().GetDocumentPolicy();
-
-  DocumentPolicyViolationReportBody* body =
-      source_file.IsEmpty()
-          ? MakeGarbageCollected<DocumentPolicyViolationReportBody>(
-                feature_name, "Document policy violation", disp_str)
-          : MakeGarbageCollected<DocumentPolicyViolationReportBody>(
-                feature_name, "Document policy violation", disp_str,
-                source_file);
-
-  Report* report = MakeGarbageCollected<Report>(
-      ReportType::kDocumentPolicyViolation, Url().GetString(), body);
-
-  // Send the document policy violation report to any ReportingObservers.
-  auto* reporting_context = ReportingContext::From(domWindow());
-  const base::Optional<std::string> endpoint =
-      relevant_document_policy->GetFeatureEndpoint(feature);
-
-  reporting_context->QueueReport(
-      report, endpoint ? Vector<String>{endpoint->c_str()} : Vector<String>{});
-
-  // TODO(iclelland): Report something different in report-only mode
-  if (!is_report_only) {
-    frame->Console().AddMessage(MakeGarbageCollected<ConsoleMessage>(
-        mojom::blink::ConsoleMessageSource::kViolation,
-        mojom::blink::ConsoleMessageLevel::kError,
-        (message.IsEmpty() ? ("Document policy violation: " + feature_name +
-                              " is not allowed in this document.")
-                           : message)));
-  }
-}
-
 void Document::IncrementNumberOfCanvases() {
   num_canvases_++;
 }
 
-void Document::IncrementDisplayLockBlockingAllActivation() {
-  ++display_lock_blocking_all_activation_count_;
-}
-
-void Document::DecrementDisplayLockBlockingAllActivation() {
-  DCHECK_GT(display_lock_blocking_all_activation_count_, 0);
-  --display_lock_blocking_all_activation_count_;
-}
-
-int Document::DisplayLockBlockingAllActivationCount() const {
-  return display_lock_blocking_all_activation_count_;
-}
-
-void Document::AddLockedDisplayLock() {
-  ++locked_display_lock_count_;
-  TRACE_COUNTER_ID1(TRACE_DISABLED_BY_DEFAULT("blink.debug.display_lock"),
-                    "LockedDisplayLockCount", TRACE_ID_LOCAL(this),
-                    locked_display_lock_count_);
-}
-
-void Document::RemoveLockedDisplayLock() {
-  DCHECK_GT(locked_display_lock_count_, 0);
-  --locked_display_lock_count_;
-  TRACE_COUNTER_ID1(TRACE_DISABLED_BY_DEFAULT("blink.debug.display_lock"),
-                    "LockedDisplayLockCount", TRACE_ID_LOCAL(this),
-                    locked_display_lock_count_);
-}
-
-int Document::LockedDisplayLockCount() const {
-  return locked_display_lock_count_;
-}
-
-void Document::AddDisplayLockContext(DisplayLockContext* context) {
-  display_lock_contexts_.insert(context);
-}
-
-void Document::RemoveDisplayLockContext(DisplayLockContext* context) {
-  display_lock_contexts_.erase(context);
-}
-
-int Document::DisplayLockCount() const {
-  return display_lock_contexts_.size();
-}
-
-void Document::NotifySelectionRemovedFromDisplayLocks() {
-  for (auto context : display_lock_contexts_)
-    context->NotifySubtreeLostSelection();
-}
-
-Document::ScopedForceActivatableDisplayLocks
-Document::GetScopedForceActivatableLocks() {
-  return ScopedForceActivatableDisplayLocks(this);
-}
-
-Document::ScopedForceActivatableDisplayLocks::
-    ScopedForceActivatableDisplayLocks(Document* document)
-    : document_(document) {
-  if (++document_->activatable_display_locks_forced_ == 1) {
-    for (auto context : document_->display_lock_contexts_)
-      context->DidForceActivatableDisplayLocks();
-  }
-}
-
-Document::ScopedForceActivatableDisplayLocks::
-    ScopedForceActivatableDisplayLocks(
-        ScopedForceActivatableDisplayLocks&& other)
-    : document_(other.document_) {
-  other.document_ = nullptr;
-}
-
-Document::ScopedForceActivatableDisplayLocks&
-Document::ScopedForceActivatableDisplayLocks::operator=(
-    ScopedForceActivatableDisplayLocks&& other) {
-  document_ = other.document_;
-  other.document_ = nullptr;
-  return *this;
-}
-
-Document::ScopedForceActivatableDisplayLocks::
-    ~ScopedForceActivatableDisplayLocks() {
-  if (!document_)
-    return;
-  DCHECK(document_->activatable_display_locks_forced_);
-  --document_->activatable_display_locks_forced_;
-}
-
-void Document::RegisterDisplayLockActivationObservation(Element* element) {
-  EnsureDisplayLockActivationObserver().observe(element);
-}
-
-void Document::UnregisterDisplayLockActivationObservation(Element* element) {
-  EnsureDisplayLockActivationObserver().unobserve(element);
-}
-
-IntersectionObserver& Document::EnsureDisplayLockActivationObserver() {
-  if (!display_lock_activation_observer_) {
-    // Use kPostTaskToDeliver method, since a commit can dirty layout, and we
-    // want to avoid dirtying layout during post-lifecycle steps.
-    // Note that we use 50% margin (on the viewport) so that we get the
-    // observation before the element enters the viewport.
-    display_lock_activation_observer_ = IntersectionObserver::Create(
-        {Length::Percent(50.f)}, {std::numeric_limits<float>::min()}, this,
-        WTF::BindRepeating(&Document::ProcessDisplayLockActivationObservation,
-                           WrapWeakPersistent(this)),
-        IntersectionObserver::kDeliverDuringPostLifecycleSteps);
-  }
-  return *display_lock_activation_observer_;
-}
-
-void Document::ProcessDisplayLockActivationObservation(
-    const HeapVector<Member<IntersectionObserverEntry>>& entries) {
-  DCHECK(View());
-  for (auto& entry : entries) {
-    auto* context = entry->target()->GetDisplayLockContext();
-    DCHECK(context);
-    if (entry->isIntersecting()) {
-      View()->EnqueueStartOfLifecycleTask(
-          WTF::Bind(&DisplayLockContext::NotifyIsIntersectingViewport,
-                    WrapWeakPersistent(context)));
-    } else {
-      View()->EnqueueStartOfLifecycleTask(
-          WTF::Bind(&DisplayLockContext::NotifyIsNotIntersectingViewport,
-                    WrapWeakPersistent(context)));
-    }
-  }
-  View()->ScheduleAnimation();
-}
-
 void Document::ExecuteJavaScriptUrls() {
-  DCHECK(frame_);
+  DCHECK(dom_window_);
   Vector<PendingJavascriptUrl> urls_to_execute;
   urls_to_execute.swap(pending_javascript_urls_);
 
   for (auto& url_to_execute : urls_to_execute) {
-    frame_->GetScriptController().ExecuteJavaScriptURL(
-        url_to_execute.url, url_to_execute.disposition);
-    if (!frame_)
+    dom_window_->GetScriptController().ExecuteJavaScriptURL(
+        url_to_execute.url, network::mojom::CSPDisposition::CHECK,
+        url_to_execute.world.get());
+    if (!GetFrame())
       break;
   }
   CheckCompleted();
@@ -8595,17 +8368,21 @@ void Document::ExecuteJavaScriptUrls() {
 
 void Document::ProcessJavaScriptUrl(
     const KURL& url,
-    network::mojom::CSPDisposition disposition) {
+    scoped_refptr<const DOMWrapperWorld> world) {
   DCHECK(url.ProtocolIsJavaScript());
-  if (frame_->Loader().StateMachine()->IsDisplayingInitialEmptyDocument())
+  if (is_initial_empty_document_)
     load_event_progress_ = kLoadEventNotRun;
-  frame_->Loader().Progress().ProgressStarted();
-  pending_javascript_urls_.push_back(PendingJavascriptUrl(url, disposition));
+  GetFrame()->Loader().Progress().ProgressStarted();
+  pending_javascript_urls_.push_back(PendingJavascriptUrl(url, world));
   if (!javascript_url_task_handle_.IsActive()) {
     javascript_url_task_handle_ = PostCancellableTask(
         *GetTaskRunner(TaskType::kNetworking), FROM_HERE,
         WTF::Bind(&Document::ExecuteJavaScriptUrls, WrapWeakPersistent(this)));
   }
+}
+
+DisplayLockDocumentState& Document::GetDisplayLockDocumentState() const {
+  return *display_lock_document_state_;
 }
 
 void Document::CancelPendingJavaScriptUrls() {
@@ -8624,10 +8401,6 @@ bool Document::IsInWebAppScope() const {
 
   DCHECK_EQ(KURL(web_app_scope).GetString(), web_app_scope);
   return Url().GetString().StartsWith(web_app_scope);
-}
-
-void Document::ClearIsolatedWorldCSPForTesting(int32_t world_id) {
-  isolated_world_csp_map_->erase(world_id);
 }
 
 bool Document::ChildrenCanHaveStyle() const {
@@ -8687,62 +8460,20 @@ bool Document::InForcedColorsMode() const {
   return in_forced_colors_mode_ && !Printing();
 }
 
-bool Document::IsCrossSiteSubframe() const {
-  // It'd be nice to avoid the url::Origin temporaries, but that would require
-  // exposing the net internal helper.
-  // TODO: If the helper gets exposed, we could do this without any new
-  // allocations using StringUTF8Adaptor.
-  return TopFrameOrigin() &&
-         !net::registry_controlled_domains::SameDomainOrHost(
-             TopFrameOrigin()->ToUrlOrigin(),
-             GetSecurityOrigin()->ToUrlOrigin(),
-             net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
+bool Document::InDarkMode() {
+  return !InForcedColorsMode() && !Printing() &&
+         GetStyleEngine().GetPreferredColorScheme() ==
+             PreferredColorScheme::kDark;
 }
 
 void Document::CountUse(mojom::WebFeature feature) const {
-  if (use_counter_during_construction_)
-    use_counter_during_construction_->CountUse(feature);
-  else if (DocumentLoader* loader = Loader())
-    loader->CountUse(feature);
+  if (execution_context_)
+    execution_context_->CountUse(feature);
 }
 
 void Document::CountUse(mojom::WebFeature feature) {
-  if (use_counter_during_construction_)
-    use_counter_during_construction_->CountUse(feature);
-  else if (DocumentLoader* loader = Loader())
-    loader->CountUse(feature);
-}
-
-void Document::CountDeprecation(mojom::WebFeature feature) {
-  // TODO(yoichio): We should remove these counters when v0 APIs are removed.
-  // crbug.com/946875.
-  if (const OriginTrialContext* origin_trial_context =
-          GetOriginTrialContext()) {
-    if (feature == WebFeature::kHTMLImports &&
-        origin_trial_context->IsFeatureEnabled(
-            OriginTrialFeature::kHTMLImports)) {
-      CountUse(WebFeature::kHTMLImportsOnReverseOriginTrials);
-    } else if (feature == WebFeature::kElementCreateShadowRoot &&
-               origin_trial_context->IsFeatureEnabled(
-                   OriginTrialFeature::kShadowDOMV0)) {
-      CountUse(WebFeature::kElementCreateShadowRootOnReverseOriginTrials);
-    } else if (feature == WebFeature::kDocumentRegisterElement &&
-               origin_trial_context->IsFeatureEnabled(
-                   OriginTrialFeature::kCustomElementsV0)) {
-      CountUse(WebFeature::kDocumentRegisterElementOnReverseOriginTrials);
-    }
-  }
-
-  // Don't count usage of WebComponentsV0 for chrome:// URLs, but still report
-  // the deprecation messages.
-  if (Url().ProtocolIs("chrome") &&
-      (feature == WebFeature::kHTMLImports ||
-       feature == WebFeature::kElementCreateShadowRoot ||
-       feature == WebFeature::kDocumentRegisterElement)) {
-    Deprecation::DeprecationWarningOnly(Loader(), feature);
-  } else {
-    Deprecation::CountDeprecation(Loader(), feature);
-  }
+  if (execution_context_)
+    execution_context_->CountUse(feature);
 }
 
 void Document::CountProperty(CSSPropertyID property) const {
@@ -8757,13 +8488,6 @@ void Document::CountAnimatedProperty(CSSPropertyID property) const {
     loader->GetUseCounterHelper().Count(
         property, UseCounterHelper::CSSPropertyType::kAnimation, GetFrame());
   }
-}
-
-void Document::CountUseOnlyInCrossOriginIframe(
-    mojom::WebFeature feature) const {
-  LocalFrame* frame = GetFrame();
-  if (frame && frame->IsCrossOriginToMainFrame())
-    CountUse(feature);
 }
 
 bool Document::IsUseCounted(mojom::WebFeature feature) const {
@@ -8795,7 +8519,7 @@ void Document::ClearUseCounterForTesting(mojom::WebFeature feature) {
 }
 
 void Document::FontPreloadingFinishedOrTimedOut() {
-  DCHECK(!font_preload_manager_.HasPendingRenderBlockingFonts());
+  DCHECK(!font_preload_manager_->HasPendingRenderBlockingFonts());
   if (IsA<HTMLDocument>(this) && body()) {
     // For HTML, we resume only when we're past the body tag, so that we should
     // have something to paint now.
@@ -8805,6 +8529,16 @@ void Document::FontPreloadingFinishedOrTimedOut() {
     // done or has timed out.
     BeginLifecycleUpdatesIfRenderingReady();
   }
+}
+
+void Document::SetFindInPageActiveMatchNode(Node* node) {
+  blink::NotifyPriorityScrollAnchorStatusChanged(
+      find_in_page_active_match_node_, node);
+  find_in_page_active_match_node_ = node;
+}
+
+const Node* Document::GetFindInPageActiveMatchNode() const {
+  return find_in_page_active_match_node_;
 }
 
 template class CORE_TEMPLATE_EXPORT Supplement<Document>;

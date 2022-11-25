@@ -13,10 +13,8 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted_delete_on_sequence.h"
-#include "gpu/command_buffer/service/gl_stream_texture_image.h"
 #include "gpu/command_buffer/service/stream_texture_shared_image_interface.h"
-#include "media/gpu/android/codec_buffer_wait_coordinator.h"
-#include "media/gpu/android/codec_wrapper.h"
+#include "media/gpu/android/codec_output_buffer_renderer.h"
 #include "media/gpu/android/promotion_hint_aggregator.h"
 #include "media/gpu/media_gpu_export.h"
 
@@ -33,9 +31,6 @@ namespace media {
 class MEDIA_GPU_EXPORT CodecImage
     : public gpu::StreamTextureSharedImageInterface {
  public:
-  // Whether RenderToTextureOwnerBackBuffer may block or not.
-  enum class BlockingMode { kForbidBlocking, kAllowBlocking };
-
   // Callback to notify that a codec image is now unused in the sense of not
   // being out for display.  This lets us signal interested folks once a video
   // frame is destroyed and the sync token clears, so that that CodecImage may
@@ -47,15 +42,15 @@ class MEDIA_GPU_EXPORT CodecImage
   // destroying it.
   using UnusedCB = base::OnceCallback<void(CodecImage*)>;
 
-  CodecImage();
+  CodecImage(const gfx::Size& coded_size);
 
   // (Re-)Initialize this CodecImage to use |output_buffer| et. al.
   //
   // May be called on a random thread, but only if the CodecImage is otherwise
   // not in use.
   void Initialize(
-      std::unique_ptr<CodecOutputBuffer> output_buffer,
-      scoped_refptr<CodecBufferWaitCoordinator> codec_buffer_wait_coordinator,
+      std::unique_ptr<CodecOutputBufferRenderer> output_buffer_renderer,
+      bool is_texture_owner_backed,
       PromotionHintAggregator::NotifyPromotionHintCB promotion_hint_cb);
 
   // Add a callback that will be called when we're marked as unused.  Does not
@@ -90,16 +85,7 @@ class MEDIA_GPU_EXPORT CodecImage
                     const std::string& dump_name) override;
   std::unique_ptr<base::android::ScopedHardwareBufferFenceSync>
   GetAHardwareBuffer() override;
-  gfx::Rect GetCropRect() override;
-  // gpu::gles2::GLStreamTextureMatrix implementation
-  void GetTextureMatrix(float xform[16]) override;
-  // Currently this API is implemented by the NotifyOverlayPromotion, since this
-  // API is expected to be removed.
-  void NotifyPromotionHint(bool promotion_hint,
-                           int display_x,
-                           int display_y,
-                           int display_width,
-                           int display_height) override;
+
   // If we re-use one CodecImage with different output buffers, then we must
   // not claim to have mutable state.  Otherwise, CopyTexImage is only called
   // once.  For pooled shared images, this must return false.  For single-use
@@ -123,26 +109,18 @@ class MEDIA_GPU_EXPORT CodecImage
 
   // Whether the codec buffer has been rendered to the front buffer.
   bool was_rendered_to_front_buffer() const {
-    return phase_ == Phase::kInFrontBuffer;
+    return output_buffer_renderer_
+               ? output_buffer_renderer_->was_rendered_to_front_buffer()
+               : false;
   }
 
-  // Whether the TextureOwner's texture is in the front buffer and bound to the
-  // latest image.
-  bool was_tex_image_bound() const { return was_tex_image_bound_; }
 
   // Whether this image is backed by a texture owner.
-  // We want to check for texture_owner owned by
-  // |codec_buffer_wait_coordinator_| and hence only checking for
-  // |codec_buffer_wait_coordinator_| is enough here.
-  // TODO(vikassoni): Update the method name in future refactorings.
-  bool is_texture_owner_backed() const {
-    return !!codec_buffer_wait_coordinator_;
-  }
+  bool is_texture_owner_backed() const { return is_texture_owner_backed_; }
 
   scoped_refptr<gpu::TextureOwner> texture_owner() const {
-    return codec_buffer_wait_coordinator_
-               ? codec_buffer_wait_coordinator_->texture_owner()
-               : nullptr;
+    return output_buffer_renderer_ ? output_buffer_renderer_->texture_owner()
+                                   : nullptr;
   }
 
   // Renders this image to the front buffer of its backing surface.
@@ -154,17 +132,17 @@ class MEDIA_GPU_EXPORT CodecImage
   // Renders this image to the back buffer of its texture owner. Only valid if
   // is_texture_owner_backed(). Returns true if the buffer is in the back
   // buffer. Returns false if the buffer was invalidated.
-  // |blocking_mode| indicates whether this should (a) wait for any previously
-  // pending rendered frame before rendering this one, or (b) fail if a wait
-  // is required.
-  bool RenderToTextureOwnerBackBuffer(
-      BlockingMode blocking_mode = BlockingMode::kAllowBlocking);
+  // RenderToTextureOwnerBackBuffer() will not block if there is any previously
+  // pending frame and will return false in this case.
+  bool RenderToTextureOwnerBackBuffer();
 
   // Release any codec buffer without rendering, if we have one.
   virtual void ReleaseCodecBuffer();
 
   CodecOutputBuffer* get_codec_output_buffer_for_testing() const {
-    return output_buffer_.get();
+    return output_buffer_renderer_
+               ? output_buffer_renderer_->get_codec_output_buffer_for_testing()
+               : nullptr;
   }
 
  protected:
@@ -173,36 +151,26 @@ class MEDIA_GPU_EXPORT CodecImage
  private:
   FRIEND_TEST_ALL_PREFIXES(CodecImageTest, RenderAfterUnusedDoesntCrash);
 
-  // The lifecycle phases of an image.
-  // The only possible transitions are from left to right. Both
-  // kInFrontBuffer and kInvalidated are terminal.
-  enum class Phase { kInCodec, kInBackBuffer, kInFrontBuffer, kInvalidated };
+  std::unique_ptr<CodecOutputBufferRenderer> output_buffer_renderer_;
 
   // Renders this image to the texture owner front buffer by first rendering
   // it to the back buffer if it's not already there, and then waiting for the
   // frame available event before calling UpdateTexImage().
   bool RenderToTextureOwnerFrontBuffer(BindingsMode bindings_mode);
-  void EnsureBoundIfNeeded(BindingsMode mode);
 
-  // The phase of the image buffer's lifecycle.
-  Phase phase_ = Phase::kInvalidated;
-
-  // The buffer backing this image.
-  std::unique_ptr<CodecOutputBuffer> output_buffer_;
-
-  // The CodecBufferWaitCoordinator that |output_buffer_| will be rendered to.
-  // Or null, if this image is backed by an overlay.
-  scoped_refptr<CodecBufferWaitCoordinator> codec_buffer_wait_coordinator_;
+  // Whether this image is texture_owner or overlay backed.
+  bool is_texture_owner_backed_ = false;
 
   // The bounds last sent to the overlay.
   gfx::Rect most_recent_bounds_;
+
+  // Coded size of the image.
+  gfx::Size coded_size_;
 
   // Callback to notify about promotion hints and overlay position.
   PromotionHintAggregator::NotifyPromotionHintCB promotion_hint_cb_;
 
   std::vector<UnusedCB> unused_cbs_;
-
-  bool was_tex_image_bound_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(CodecImage);
 };

@@ -15,7 +15,7 @@
 #include "chrome/browser/favicon/history_ui_favicon_request_handler_factory.h"
 #include "chrome/browser/history/top_sites_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/search/instant_io_context.h"
+#include "chrome/browser/search/instant_service.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/common/webui_url_constants.h"
 #include "components/favicon/core/history_ui_favicon_request_handler.h"
@@ -26,7 +26,6 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/manifest.h"
-#include "net/url_request/url_request.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/layout.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -184,9 +183,7 @@ void FaviconSource::StartDataRequest(
         base::BindOnce(&FaviconSource::OnFaviconDataAvailable,
                        weak_ptr_factory_.GetWeakPtr(), std::move(callback),
                        parsed),
-        parsed_history_ui_origin,
-        /*icon_url_for_uma=*/
-        GURL(parsed.icon_url));
+        parsed_history_ui_origin);
   }
 }
 
@@ -208,13 +205,13 @@ bool FaviconSource::ShouldReplaceExistingSource() {
 
 bool FaviconSource::ShouldServiceRequest(
     const GURL& url,
-    content::ResourceContext* resource_context,
+    content::BrowserContext* browser_context,
     int render_process_id) {
   if (url.SchemeIs(chrome::kChromeSearchScheme)) {
-    return InstantIOContext::ShouldServiceRequest(url, resource_context,
-                                                  render_process_id);
+    return InstantService::ShouldServiceRequest(url, browser_context,
+                                                render_process_id);
   }
-  return URLDataSource::ShouldServiceRequest(url, resource_context,
+  return URLDataSource::ShouldServiceRequest(url, browser_context,
                                              render_process_id);
 }
 

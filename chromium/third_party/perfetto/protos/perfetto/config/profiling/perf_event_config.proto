@@ -40,6 +40,33 @@ message PerfEventConfig {
   // If unset, an implementation-defined default is used.
   optional uint32 ring_buffer_pages = 3;
 
+  // Process ID (TGID) allowlist. If this list is not empty, only matching
+  // samples will be retained. If multiple allow/deny-lists are
+  // specified by the config, then all of them are evaluated for each sampled
+  // process.
+  repeated int32 target_pid = 4;
+
+  // Command line allowlist, matched against the
+  // /proc/<pid>/cmdline (not the comm string), with both sides being
+  // "normalized". Normalization is as follows: (1) trim everything beyond the
+  // first null or "@" byte; (2) if the string contains forward slashes, trim
+  // everything up to and including the last one.
+  repeated string target_cmdline = 5;
+
+  // List of excluded pids.
+  repeated int32 exclude_pid = 6;
+
+  // List of excluded cmdlines. Normalized in the same way as |target_cmdline|.
+  repeated string exclude_cmdline = 7;
+
+  // Number of additional command lines to sample. Only those which are neither
+  // explicitly included nor excluded will be considered. Processes are accepted
+  // on a first come, first served basis.
+  optional uint32 additional_cmdline_count = 11;
+
+  ////////////////////
+  // Uncommon options:
+
   // Timeout for the remote /proc/<pid>/{maps,mem} file descriptors for a
   // sampled process. This is primarily for Android, where this lookup is
   // asynchronous. As long as the producer is waiting, the associated samples
@@ -50,22 +77,9 @@ message PerfEventConfig {
   // If unset, an implementation-defined default is used.
   optional uint32 remote_descriptor_timeout_ms = 9;
 
-  // Process ID (TGID) whitelist. If this list is not empty, only matching
-  // samples will be retained. If multiple whitelists and blacklists are
-  // specified by the config, then all of them are evaluated for each sampled
-  // process.
-  repeated int32 target_pid = 4;
-
-  // Command line whitelist, matched against the
-  // /proc/<pid>/cmdline (not the comm string), with both sides being
-  // "normalized". Normalization is as follows: (1) trim everything beyond the
-  // first null or "@" byte; (2) if the string contains forward slashes, trim
-  // everything up to and including the last one.
-  repeated string target_cmdline = 5;
-
-  // PID blacklist.
-  repeated int32 exclude_pid = 6;
-
-  // Command line blacklist. Normalized in the same way as |target_cmdline|.
-  repeated string exclude_cmdline = 7;
+  // Optional period for clearing state cached by the unwinder. This is a heavy
+  // operation that is only necessary for traces that target a wide set of
+  // processes, and require the memory footprint to be reset periodically.
+  // If unset, the cached state will not be cleared.
+  optional uint32 unwind_state_clear_period_ms = 10;
 }

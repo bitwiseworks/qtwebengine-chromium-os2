@@ -11,8 +11,8 @@
 #include "base/bind_helpers.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
-#include "base/fuchsia/default_context.h"
 #include "base/fuchsia/fuchsia_logging.h"
+#include "base/fuchsia/process_context.h"
 #include "base/test/task_environment.h"
 #include "components/viz/test/test_context_support.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
@@ -30,7 +30,7 @@ namespace {
 class TestBufferCollection {
  public:
   explicit TestBufferCollection(zx::channel collection_token) {
-    sysmem_allocator_ = base::fuchsia::ComponentContextForCurrentProcess()
+    sysmem_allocator_ = base::ComponentContextForProcess()
                             ->svc()
                             ->Connect<fuchsia::sysmem::Allocator>();
     sysmem_allocator_.set_error_handler([](zx_status_t status) {
@@ -85,6 +85,8 @@ class TestSharedImageInterface : public gpu::SharedImageInterface {
   gpu::Mailbox CreateSharedImage(viz::ResourceFormat format,
                                  const gfx::Size& size,
                                  const gfx::ColorSpace& color_space,
+                                 GrSurfaceOrigin surface_origin,
+                                 SkAlphaType alpha_type,
                                  uint32_t usage,
                                  gpu::SurfaceHandle surface_handle) override {
     NOTREACHED();
@@ -95,6 +97,8 @@ class TestSharedImageInterface : public gpu::SharedImageInterface {
       viz::ResourceFormat format,
       const gfx::Size& size,
       const gfx::ColorSpace& color_space,
+      GrSurfaceOrigin surface_origin,
+      SkAlphaType alpha_type,
       uint32_t usage,
       base::span<const uint8_t> pixel_data) override {
     NOTREACHED();
@@ -105,6 +109,8 @@ class TestSharedImageInterface : public gpu::SharedImageInterface {
       gfx::GpuMemoryBuffer* gpu_memory_buffer,
       gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
       const gfx::ColorSpace& color_space,
+      GrSurfaceOrigin surface_origin,
+      SkAlphaType alpha_type,
       uint32_t usage) override {
     gfx::GpuMemoryBufferHandle handle = gpu_memory_buffer->CloneHandle();
     CHECK_EQ(handle.type, gfx::GpuMemoryBufferType::NATIVE_PIXMAP);
@@ -116,7 +122,7 @@ class TestSharedImageInterface : public gpu::SharedImageInterface {
              collection_it->second->GetNumBuffers());
 
     auto result = gpu::Mailbox::Generate();
-    mailoxes_.insert(result);
+    mailboxes_.insert(result);
     return result;
   }
 
@@ -132,12 +138,14 @@ class TestSharedImageInterface : public gpu::SharedImageInterface {
 
   void DestroySharedImage(const gpu::SyncToken& sync_token,
                           const gpu::Mailbox& mailbox) override {
-    CHECK_EQ(mailoxes_.erase(mailbox), 1U);
+    CHECK_EQ(mailboxes_.erase(mailbox), 1U);
   }
 
   SwapChainMailboxes CreateSwapChain(viz::ResourceFormat format,
                                      const gfx::Size& size,
                                      const gfx::ColorSpace& color_space,
+                                     GrSurfaceOrigin surface_origin,
+                                     SkAlphaType alpha_type,
                                      uint32_t usage) override {
     NOTREACHED();
     return SwapChainMailboxes();
@@ -148,7 +156,12 @@ class TestSharedImageInterface : public gpu::SharedImageInterface {
   }
 
   void RegisterSysmemBufferCollection(gfx::SysmemBufferCollectionId id,
-                                      zx::channel token) override {
+                                      zx::channel token,
+                                      gfx::BufferFormat format,
+                                      gfx::BufferUsage usage,
+                                      bool register_with_image_pipe) override {
+    EXPECT_EQ(format, gfx::BufferFormat::YUV_420_BIPLANAR);
+    EXPECT_EQ(usage, gfx::BufferUsage::GPU_READ);
     std::unique_ptr<TestBufferCollection>& collection =
         sysmem_buffer_collections_[id];
     EXPECT_FALSE(collection);
@@ -168,6 +181,10 @@ class TestSharedImageInterface : public gpu::SharedImageInterface {
                           gpu::CommandBufferId(33), 1);
   }
 
+  void WaitSyncToken(const gpu::SyncToken& sync_token) override {
+    NOTREACHED();
+  }
+
   void Flush() override { NOTREACHED(); }
 
   scoped_refptr<gfx::NativePixmap> GetNativePixmap(
@@ -180,7 +197,7 @@ class TestSharedImageInterface : public gpu::SharedImageInterface {
                  std::unique_ptr<TestBufferCollection>>
       sysmem_buffer_collections_;
 
-  base::flat_set<gpu::Mailbox> mailoxes_;
+  base::flat_set<gpu::Mailbox> mailboxes_;
 };
 
 }  // namespace
@@ -244,10 +261,10 @@ class FuchsiaVideoDecoderTest : public testing::Test {
     DecodeBuffer(ReadTestDataFile(name));
   }
 
-  void OnFrameDecoded(size_t frame_pos, DecodeStatus status) {
+  void OnFrameDecoded(size_t frame_pos, Status status) {
     EXPECT_EQ(frame_pos, num_decoded_buffers_);
     num_decoded_buffers_ += 1;
-    last_decode_status_ = status;
+    last_decode_status_ = std::move(status);
     if (run_loop_)
       run_loop_->Quit();
   }
@@ -260,7 +277,7 @@ class FuchsiaVideoDecoderTest : public testing::Test {
       run_loop_ = &run_loop;
       run_loop.Run();
       run_loop_ = nullptr;
-      ASSERT_EQ(last_decode_status_, DecodeStatus::OK);
+      ASSERT_TRUE(last_decode_status_.is_ok());
     }
   }
 
@@ -282,7 +299,7 @@ class FuchsiaVideoDecoderTest : public testing::Test {
   std::list<scoped_refptr<VideoFrame>> output_frames_;
   size_t num_output_frames_ = 0;
 
-  DecodeStatus last_decode_status_ = DecodeStatus::OK;
+  Status last_decode_status_;
   base::RunLoop* run_loop_ = nullptr;
 
   // Number of frames that OnVideoFrame() should keep in |output_frames_|.

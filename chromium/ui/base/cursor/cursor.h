@@ -8,27 +8,23 @@
 #include "base/component_export.h"
 #include "build/build_config.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-#include "ui/base/mojom/cursor_type.mojom-shared.h"
+#include "ui/base/cursor/mojom/cursor_type.mojom-shared.h"
 #include "ui/gfx/geometry/point.h"
 
 #if defined(OS_WIN)
-typedef struct HINSTANCE__* HINSTANCE;
-typedef struct HICON__* HICON;
-typedef HICON HCURSOR;
+#include "base/win/windows_types.h"
 #endif
 
 namespace ui {
 
 #if defined(OS_WIN)
 typedef ::HCURSOR PlatformCursor;
-#elif defined(USE_X11)
-typedef unsigned long PlatformCursor;
 #else
 typedef void* PlatformCursor;
 #endif
 
 // Ref-counted cursor that supports both default and custom cursors.
-class COMPONENT_EXPORT(UI_BASE_CURSOR) Cursor {
+class COMPONENT_EXPORT(UI_BASE_CURSOR_BASE) Cursor {
  public:
   Cursor();
 

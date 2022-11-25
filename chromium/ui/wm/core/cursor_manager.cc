@@ -6,11 +6,12 @@
 
 #include <utility>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/macros.h"
+#include "base/trace_event/trace_event.h"
 #include "ui/aura/client/cursor_client_observer.h"
 #include "ui/base/cursor/cursor_size.h"
-#include "ui/base/mojom/cursor_type.mojom-shared.h"
+#include "ui/base/cursor/mojom/cursor_type.mojom-shared.h"
 #include "ui/wm/core/native_cursor_manager.h"
 #include "ui/wm/core/native_cursor_manager_delegate.h"
 
@@ -94,21 +95,15 @@ void CursorManager::ResetCursorVisibilityStateForTest() {
 }
 
 void CursorManager::SetCursor(gfx::NativeCursor cursor) {
-  bool previously_visible = GetCursor().type() != ui::mojom::CursorType::kNone;
-  state_on_unlock_->set_cursor(cursor);
-  if (cursor_lock_count_ == 0 &&
-      GetCursor() != state_on_unlock_->cursor()) {
-    delegate_->SetCursor(state_on_unlock_->cursor(), this);
-    bool is_visible = cursor.type() != ui::mojom::CursorType::kNone;
-    if (is_visible != previously_visible) {
-      for (auto& observer : observers_)
-        observer.OnCursorVisibilityChanged(is_visible);
-    }
-  }
+  SetCursorImpl(cursor, /*forced=*/false);
 }
 
 gfx::NativeCursor CursorManager::GetCursor() const {
   return current_state_->cursor();
+}
+
+void CursorManager::SetCursorForced(gfx::NativeCursor cursor) {
+  SetCursorImpl(cursor, /*forced=*/true);
 }
 
 void CursorManager::ShowCursor() {
@@ -154,6 +149,7 @@ ui::CursorSize CursorManager::GetCursorSize() const {
 }
 
 void CursorManager::EnableMouseEvents() {
+  TRACE_EVENT0("ui,input", "CursorManager::EnableMouseEvents");
   state_on_unlock_->SetMouseEventsEnabled(true);
   if (cursor_lock_count_ == 0 &&
       IsMouseEventsEnabled() != state_on_unlock_->mouse_events_enabled()) {
@@ -163,6 +159,7 @@ void CursorManager::EnableMouseEvents() {
 }
 
 void CursorManager::DisableMouseEvents() {
+  TRACE_EVENT0("ui,input", "CursorManager::DisableMouseEvents");
   state_on_unlock_->SetMouseEventsEnabled(false);
   if (cursor_lock_count_ == 0 &&
       IsMouseEventsEnabled() != state_on_unlock_->mouse_events_enabled()) {
@@ -249,6 +246,20 @@ void CursorManager::CommitCursorSize(ui::CursorSize cursor_size) {
 
 void CursorManager::CommitMouseEventsEnabled(bool enabled) {
   current_state_->SetMouseEventsEnabled(enabled);
+}
+
+void CursorManager::SetCursorImpl(gfx::NativeCursor cursor, bool forced) {
+  bool previously_visible = GetCursor().type() != ui::mojom::CursorType::kNone;
+  state_on_unlock_->set_cursor(cursor);
+  if (cursor_lock_count_ == 0 &&
+      (forced || GetCursor() != state_on_unlock_->cursor())) {
+    delegate_->SetCursor(state_on_unlock_->cursor(), this);
+    bool is_visible = cursor.type() != ui::mojom::CursorType::kNone;
+    if (is_visible != previously_visible) {
+      for (auto& observer : observers_)
+        observer.OnCursorVisibilityChanged(is_visible);
+    }
+  }
 }
 
 }  // namespace wm

@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "build/build_config.h"
 #include "cc/paint/paint_flags.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "ui/accessibility/ax_enums.mojom.h"
@@ -22,6 +23,7 @@
 #include "ui/views/controls/menu/submenu_view.h"
 #include "ui/views/layout/flex_layout.h"
 #include "ui/views/round_rect_painter.h"
+#include "ui/views/view.h"
 #include "ui/views/view_class_properties.h"
 
 using ui::NativeTheme;
@@ -49,6 +51,12 @@ class MenuScrollButton : public View {
   gfx::Size CalculatePreferredSize() const override {
     return gfx::Size(MenuConfig::instance().scroll_arrow_height * 2 - 1,
                      pref_height_);
+  }
+
+  void OnThemeChanged() override {
+    View::OnThemeChanged();
+    arrow_color_ = GetNativeTheme()->GetSystemColor(
+        ui::NativeTheme::kColorId_EnabledMenuItemForegroundColor);
   }
 
   bool CanDrop(const OSExchangeData& data) override {
@@ -108,7 +116,7 @@ class MenuScrollButton : public View {
     cc::PaintFlags flags;
     flags.setStyle(cc::PaintFlags::kFill_Style);
     flags.setAntiAlias(true);
-    flags.setColor(config.arrow_color);
+    flags.setColor(arrow_color_);
     canvas->DrawPath(path, flags);
   }
 
@@ -121,6 +129,9 @@ class MenuScrollButton : public View {
 
   // Preferred height.
   int pref_height_;
+
+  // Color for the arrow to scroll.
+  SkColor arrow_color_;
 
   DISALLOW_COPY_AND_ASSIGN(MenuScrollButton);
 };
@@ -242,7 +253,16 @@ void MenuScrollViewContainer::OnPaintBackground(gfx::Canvas* canvas) {
 void MenuScrollViewContainer::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   // Get the name from the submenu view.
   content_view_->GetAccessibleNodeData(node_data);
+
+  // On macOS, NSMenus are not supposed to have anything wrapped around them. To
+  // allow VoiceOver to recognize this as a menu and to read aloud the total
+  // number of items inside it, we ignore the MenuScrollViewContainer (which
+  // holds the menu itself: the SubmenuView).
+#if defined(OS_MAC)
+  node_data->role = ax::mojom::Role::kIgnored;
+#else
   node_data->role = ax::mojom::Role::kMenuBar;
+#endif
 }
 
 void MenuScrollViewContainer::OnBoundsChanged(
@@ -338,8 +358,7 @@ BubbleBorder::Arrow MenuScrollViewContainer::BubbleBorderTypeFromAnchor(
   }
 }
 
-BEGIN_METADATA(MenuScrollViewContainer)
-METADATA_PARENT_CLASS(View)
-END_METADATA()
+BEGIN_METADATA(MenuScrollViewContainer, View)
+END_METADATA
 
 }  // namespace views

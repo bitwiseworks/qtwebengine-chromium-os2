@@ -97,10 +97,33 @@ String ExceptionMessages::FailedToDeleteIndexed(const char* type,
          "': " + detail;
 }
 
+String ExceptionMessages::FailedToGetNamed(const char* type,
+                                           const String& detail) {
+  return "Failed to read a named property from '" + String(type) +
+         "': " + detail;
+}
+
+String ExceptionMessages::FailedToSetNamed(const char* type,
+                                           const String& detail) {
+  return "Failed to set a named property on '" + String(type) + "': " + detail;
+}
+
+String ExceptionMessages::FailedToDeleteNamed(const char* type,
+                                              const String& detail) {
+  return "Failed to delete a named property from '" + String(type) +
+         "': " + detail;
+}
+
 String ExceptionMessages::ConstructorNotCallableAsFunction(const char* type) {
   return FailedToConstruct(type,
                            "Please use the 'new' operator, this DOM object "
                            "constructor cannot be called as a function.");
+}
+
+String ExceptionMessages::ConstructorCalledAsFunction() {
+  return (
+      "Please use the 'new' operator, this DOM object constructor cannot "
+      "be called as a function.");
 }
 
 String ExceptionMessages::IncorrectPropertyType(const String& property,

@@ -21,13 +21,13 @@ bool SkDeferredDisplayListRecorder::init() { return false; }
 
 SkCanvas* SkDeferredDisplayListRecorder::getCanvas() { return nullptr; }
 
-std::unique_ptr<SkDeferredDisplayList> SkDeferredDisplayListRecorder::detach() { return nullptr; }
+sk_sp<SkDeferredDisplayList> SkDeferredDisplayListRecorder::detach() { return nullptr; }
 
 sk_sp<SkImage> SkDeferredDisplayListRecorder::makePromiseTexture(
         const GrBackendFormat& backendFormat,
         int width,
         int height,
-        GrMipMapped mipMapped,
+        GrMipmapped mipMapped,
         GrSurfaceOrigin origin,
         SkColorType colorType,
         SkAlphaType alphaType,
@@ -61,8 +61,9 @@ sk_sp<SkImage> SkDeferredDisplayListRecorder::makeYUVAPromiseTexture(
 
 #include "include/core/SkPromiseImageTexture.h"
 #include "include/core/SkYUVASizeInfo.h"
-#include "src/gpu/GrContextPriv.h"
+#include "include/gpu/GrRecordingContext.h"
 #include "src/gpu/GrProxyProvider.h"
+#include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/GrRenderTargetContext.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/SkGr.h"
@@ -73,7 +74,7 @@ sk_sp<SkImage> SkDeferredDisplayListRecorder::makeYUVAPromiseTexture(
 SkDeferredDisplayListRecorder::SkDeferredDisplayListRecorder(const SkSurfaceCharacterization& c)
         : fCharacterization(c) {
     if (fCharacterization.isValid()) {
-        fContext = GrContextPriv::MakeDDL(fCharacterization.refContextInfo());
+        fContext = GrRecordingContextPriv::MakeDDL(fCharacterization.refContextInfo());
     }
 }
 
@@ -97,6 +98,7 @@ SkDeferredDisplayListRecorder::~SkDeferredDisplayListRecorder() {
 
 bool SkDeferredDisplayListRecorder::init() {
     SkASSERT(fContext);
+    SkASSERT(!fTargetProxy);
     SkASSERT(!fLazyProxyData);
     SkASSERT(!fSurface);
 
@@ -118,12 +120,21 @@ bool SkDeferredDisplayListRecorder::init() {
         }
     }
 
+    bool vkRTSupportsInputAttachment = fCharacterization.vkRTSupportsInputAttachment();
+    if (vkRTSupportsInputAttachment && GrBackendApi::kVulkan != fContext->backend()) {
+        return false;
+    }
+
     if (fCharacterization.vulkanSecondaryCBCompatible()) {
         // Because of the restrictive API allowed for a GrVkSecondaryCBDrawContext, we know ahead
-        // of time that we don't be able to support certain parameter combinations. Specifially we
+        // of time that we don't be able to support certain parameter combinations. Specifically we
         // fail on usesGLFBO0 since we can't mix GL and Vulkan. We can't have a texturable object.
-        // And finally the GrVkSecondaryCBDrawContext always assumes a top left origin.
+        // We can't use it as in input attachment since we don't control the render pass this will
+        // be played into and thus can't force it to have an input attachment and the correct
+        // dependencies. And finally the GrVkSecondaryCBDrawContext always assumes a top left
+        // origin.
         if (usesGLFBO0 ||
+            vkRTSupportsInputAttachment ||
             fCharacterization.isTextureable() ||
             fCharacterization.origin() == kBottomLeft_GrSurfaceOrigin) {
             return false;
@@ -132,8 +143,6 @@ bool SkDeferredDisplayListRecorder::init() {
 
     GrColorType grColorType = SkColorTypeToGrColorType(fCharacterization.colorType());
 
-    sk_sp<SkDeferredDisplayList::LazyProxyData> lazyProxyData = fLazyProxyData;
-
     // What we're doing here is we're creating a lazy proxy to back the SkSurface. The lazy
     // proxy, when instantiated, will use the GrRenderTarget that backs the SkSurface that the
     // DDL is being replayed into.
@@ -141,9 +150,17 @@ bool SkDeferredDisplayListRecorder::init() {
     GrInternalSurfaceFlags surfaceFlags = GrInternalSurfaceFlags::kNone;
     if (usesGLFBO0) {
         surfaceFlags |= GrInternalSurfaceFlags::kGLRTFBOIDIs0;
+    } else if (fCharacterization.sampleCount() > 1 && !caps->msaaResolvesAutomatically() &&
+               fCharacterization.isTextureable()) {
+        surfaceFlags |= GrInternalSurfaceFlags::kRequiresManualMSAAResolve;
     }
-    // FIXME: Why do we use GrMipMapped::kNo instead of SkSurfaceCharacterization::fIsMipMapped?
-    static constexpr GrProxyProvider::TextureInfo kTextureInfo{GrMipMapped::kNo,
+
+    if (vkRTSupportsInputAttachment) {
+        surfaceFlags |= GrInternalSurfaceFlags::kVkRTSupportsInputAttachment;
+    }
+
+    // FIXME: Why do we use GrMipmapped::kNo instead of SkSurfaceCharacterization::fIsMipMapped?
+    static constexpr GrProxyProvider::TextureInfo kTextureInfo{GrMipmapped::kNo,
                                                                GrTextureType::k2D};
     const GrProxyProvider::TextureInfo* optionalTextureInfo = nullptr;
     if (fCharacterization.isTextureable()) {
@@ -152,10 +169,12 @@ bool SkDeferredDisplayListRecorder::init() {
 
     GrSwizzle readSwizzle = caps->getReadSwizzle(fCharacterization.backendFormat(), grColorType);
 
-    sk_sp<GrRenderTargetProxy> proxy = proxyProvider->createLazyRenderTargetProxy(
-            [lazyProxyData](GrResourceProvider* resourceProvider) {
+    fTargetProxy = proxyProvider->createLazyRenderTargetProxy(
+            [lazyProxyData = fLazyProxyData](GrResourceProvider* resourceProvider,
+                            const GrSurfaceProxy::LazySurfaceDesc&) {
                 // The proxy backing the destination surface had better have been instantiated
-                // prior to the proxy backing the DLL's surface. Steal its GrRenderTarget.
+                // prior to the this one (i.e., the proxy backing the DLL's surface).
+                // Fulfill this lazy proxy with the destination surface's GrRenderTarget.
                 SkASSERT(lazyProxyData->fReplayDest->peekSurface());
                 auto surface = sk_ref_sp<GrSurface>(lazyProxyData->fReplayDest->peekSurface());
                 return GrSurfaceProxy::LazyCallbackResult(std::move(surface));
@@ -165,24 +184,24 @@ bool SkDeferredDisplayListRecorder::init() {
             fCharacterization.sampleCount(),
             surfaceFlags,
             optionalTextureInfo,
-            GrMipMapsStatus::kNotAllocated,
+            GrMipmapStatus::kNotAllocated,
             SkBackingFit::kExact,
             SkBudgeted::kYes,
             fCharacterization.isProtected(),
             fCharacterization.vulkanSecondaryCBCompatible(),
             GrSurfaceProxy::UseAllocator::kYes);
 
-    if (!proxy) {
+    if (!fTargetProxy) {
         return false;
     }
 
     GrSwizzle writeSwizzle = caps->getWriteSwizzle(fCharacterization.backendFormat(), grColorType);
 
-    GrSurfaceProxyView readView(proxy, fCharacterization.origin(), readSwizzle);
-    GrSurfaceProxyView outputView(std::move(proxy), fCharacterization.origin(), writeSwizzle);
+    GrSurfaceProxyView readView(fTargetProxy, fCharacterization.origin(), readSwizzle);
+    GrSurfaceProxyView writeView(fTargetProxy, fCharacterization.origin(), writeSwizzle);
 
     auto rtc = std::make_unique<GrRenderTargetContext>(fContext.get(), std::move(readView),
-                                                       std::move(outputView), grColorType,
+                                                       std::move(writeView), grColorType,
                                                        fCharacterization.refColorSpace(),
                                                        &fCharacterization.surfaceProps());
     fSurface = SkSurface_Gpu::MakeWrappedRenderTarget(fContext.get(), std::move(rtc));
@@ -201,8 +220,8 @@ SkCanvas* SkDeferredDisplayListRecorder::getCanvas() {
     return fSurface->getCanvas();
 }
 
-std::unique_ptr<SkDeferredDisplayList> SkDeferredDisplayListRecorder::detach() {
-    if (!fContext) {
+sk_sp<SkDeferredDisplayList> SkDeferredDisplayListRecorder::detach() {
+    if (!fContext || !fTargetProxy) {
         return nullptr;
     }
 
@@ -212,8 +231,9 @@ std::unique_ptr<SkDeferredDisplayList> SkDeferredDisplayListRecorder::detach() {
         canvas->restoreToCount(0);
     }
 
-    auto ddl = std::unique_ptr<SkDeferredDisplayList>(
-                           new SkDeferredDisplayList(fCharacterization, std::move(fLazyProxyData)));
+    auto ddl = sk_sp<SkDeferredDisplayList>(new SkDeferredDisplayList(fCharacterization,
+                                                                      std::move(fTargetProxy),
+                                                                      std::move(fLazyProxyData)));
 
     fContext->priv().moveRenderTasksToDDL(ddl.get());
 
@@ -227,7 +247,7 @@ sk_sp<SkImage> SkDeferredDisplayListRecorder::makePromiseTexture(
         const GrBackendFormat& backendFormat,
         int width,
         int height,
-        GrMipMapped mipMapped,
+        GrMipmapped mipMapped,
         GrSurfaceOrigin origin,
         SkColorType colorType,
         SkAlphaType alphaType,

@@ -11,6 +11,7 @@
 
 #include "net/third_party/quiche/src/common/platform/api/quiche_endian.h"
 #include "net/third_party/quiche/src/common/platform/api/quiche_export.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_logging.h"
 #include "net/third_party/quiche/src/common/platform/api/quiche_string_piece.h"
 
 namespace quiche {
@@ -65,6 +66,15 @@ class QUICHE_EXPORT_PRIVATE QuicheDataReader {
   // Returns true on success, false otherwise.
   bool ReadStringPiece16(quiche::QuicheStringPiece* result);
 
+  // Reads a string prefixed with 8-bit length into the given output parameter.
+  //
+  // NOTE: Does not copy but rather references strings in the underlying buffer.
+  // This should be kept in mind when handling memory management!
+  //
+  // Forwards the internal iterator on success.
+  // Returns true on success, false otherwise.
+  bool ReadStringPiece8(quiche::QuicheStringPiece* result);
+
   // Reads a given number of bytes into the given buffer. The buffer
   // must be of adequate size.
   // Forwards the internal iterator on success.
@@ -76,6 +86,11 @@ class QUICHE_EXPORT_PRIVATE QuicheDataReader {
   // 'C','H','L','O') and are read in byte order, so tags in memory are in big
   // endian.
   bool ReadTag(uint32_t* tag);
+
+  // Reads a sequence of a fixed number of decimal digits, parses them as an
+  // unsigned integer and returns them as a uint64_t.  Forwards internal
+  // iterator on success, may forward it even in case of failure.
+  bool ReadDecimal64(size_t num_digits, uint64_t* result);
 
   // Returns the remaining payload as a quiche::QuicheStringPiece.
   //

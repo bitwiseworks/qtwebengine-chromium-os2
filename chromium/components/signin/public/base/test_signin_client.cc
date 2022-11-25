@@ -6,7 +6,7 @@
 
 #include <memory>
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -106,12 +106,6 @@ std::unique_ptr<GaiaAuthFetcher> TestSigninClient::CreateGaiaAuthFetcher(
     gaia::GaiaSource source) {
   return std::make_unique<GaiaAuthFetcher>(consumer, source,
                                            GetURLLoaderFactory());
-}
-
-void TestSigninClient::PreGaiaLogout(base::OnceClosure callback) {
-  if (!callback.is_null()) {
-    std::move(callback).Run();
-  }
 }
 
 void TestSigninClient::SetDiceMigrationCompleted() {

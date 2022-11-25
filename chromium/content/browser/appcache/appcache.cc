@@ -9,7 +9,8 @@
 #include <algorithm>
 #include <vector>
 
-#include "base/logging.h"
+#include "base/check_op.h"
+#include "base/notreached.h"
 #include "base/stl_util.h"
 #include "content/browser/appcache/appcache_database.h"
 #include "content/browser/appcache/appcache_group.h"
@@ -53,7 +54,7 @@ std::string AppCache::GetManifestScope(const GURL& manifest_url,
 AppCache::AppCache(AppCacheStorage* storage, int64_t cache_id)
     : cache_id_(cache_id),
       owning_group_(nullptr),
-      online_whitelist_all_(false),
+      online_safelist_all_(false),
       is_complete_(false),
       cache_size_(0),
       padding_size_(0),
@@ -96,9 +97,6 @@ bool AppCache::AddOrModifyEntry(const GURL& url, const AppCacheEntry& entry) {
     cache_size_ += entry.response_size();  // New entry. Add to cache size.
     padding_size_ += entry.padding_size();
   }
-  // TODO(pwnall): Figure out if we want to overwrite or max the two entries.
-  ret.first->second.set_token_expires(
-      std::max(entry.token_expires(), ret.first->second.token_expires()));
   return ret.second;
 }
 
@@ -149,16 +147,15 @@ bool SortNamespacesByLength(
 }
 }
 
-void AppCache::InitializeWithManifest(AppCacheManifest* manifest,
-                                      base::Time token_expires) {
+void AppCache::InitializeWithManifest(AppCacheManifest* manifest) {
   DCHECK(manifest);
   manifest_parser_version_ = manifest->parser_version;
   manifest_scope_ = manifest->scope;
   intercept_namespaces_.swap(manifest->intercept_namespaces);
   fallback_namespaces_.swap(manifest->fallback_namespaces);
-  online_whitelist_namespaces_.swap(manifest->online_whitelist_namespaces);
-  online_whitelist_all_ = manifest->online_whitelist_all;
-  token_expires_ = token_expires;
+  online_safelist_namespaces_.swap(manifest->online_safelist_namespaces);
+  online_safelist_all_ = manifest->online_safelist_all;
+  token_expires_ = manifest->token_expires;
 
   // Sort the namespaces by url string length, longest to shortest,
   // since longer matches trump when matching a url to a namespace.
@@ -166,12 +163,6 @@ void AppCache::InitializeWithManifest(AppCacheManifest* manifest,
             SortNamespacesByLength);
   std::sort(fallback_namespaces_.begin(), fallback_namespaces_.end(),
             SortNamespacesByLength);
-
-  for (auto& intercept : intercept_namespaces_)
-    intercept.token_expires = token_expires;
-
-  for (auto& fallback : fallback_namespaces_)
-    fallback.token_expires = token_expires;
 }
 
 void AppCache::InitializeWithDatabaseRecords(
@@ -179,18 +170,17 @@ void AppCache::InitializeWithDatabaseRecords(
     const std::vector<AppCacheDatabase::EntryRecord>& entries,
     const std::vector<AppCacheDatabase::NamespaceRecord>& intercepts,
     const std::vector<AppCacheDatabase::NamespaceRecord>& fallbacks,
-    const std::vector<AppCacheDatabase::OnlineWhiteListRecord>& whitelists) {
+    const std::vector<AppCacheDatabase::OnlineSafeListRecord>& safelists) {
   DCHECK_EQ(cache_id_, cache_record.cache_id);
   manifest_parser_version_ = cache_record.manifest_parser_version;
   manifest_scope_ = cache_record.manifest_scope;
-  online_whitelist_all_ = cache_record.online_wildcard;
+  online_safelist_all_ = cache_record.online_wildcard;
   update_time_ = cache_record.update_time;
   token_expires_ = cache_record.token_expires;
 
   for (const AppCacheDatabase::EntryRecord& entry : entries) {
-    AddEntry(entry.url,
-             AppCacheEntry(entry.flags, entry.response_id, entry.response_size,
-                           entry.padding_size, entry.token_expires));
+    AddEntry(entry.url, AppCacheEntry(entry.flags, entry.response_id,
+                                      entry.response_size, entry.padding_size));
   }
   DCHECK_EQ(cache_size_, cache_record.cache_size);
   DCHECK_EQ(padding_size_, cache_record.padding_size);
@@ -208,9 +198,9 @@ void AppCache::InitializeWithDatabaseRecords(
   std::sort(fallback_namespaces_.begin(), fallback_namespaces_.end(),
             SortNamespacesByLength);
 
-  for (const auto& record : whitelists) {
-    online_whitelist_namespaces_.emplace_back(APPCACHE_NETWORK_NAMESPACE,
-                                              record.namespace_url, GURL());
+  for (const auto& record : safelists) {
+    online_safelist_namespaces_.emplace_back(APPCACHE_NETWORK_NAMESPACE,
+                                             record.namespace_url, GURL());
   }
 }
 
@@ -220,13 +210,13 @@ void AppCache::ToDatabaseRecords(
     std::vector<AppCacheDatabase::EntryRecord>* entries,
     std::vector<AppCacheDatabase::NamespaceRecord>* intercepts,
     std::vector<AppCacheDatabase::NamespaceRecord>* fallbacks,
-    std::vector<AppCacheDatabase::OnlineWhiteListRecord>* whitelists) {
-  DCHECK(group && cache_record && entries && fallbacks && whitelists);
-  DCHECK(entries->empty() && fallbacks->empty() && whitelists->empty());
+    std::vector<AppCacheDatabase::OnlineSafeListRecord>* safelists) {
+  DCHECK(group && cache_record && entries && fallbacks && safelists);
+  DCHECK(entries->empty() && fallbacks->empty() && safelists->empty());
 
   cache_record->cache_id = cache_id_;
   cache_record->group_id = group->group_id();
-  cache_record->online_wildcard = online_whitelist_all_;
+  cache_record->online_wildcard = online_safelist_all_;
   cache_record->update_time = update_time_;
   cache_record->cache_size = cache_size_;
   cache_record->padding_size = padding_size_;
@@ -243,7 +233,6 @@ void AppCache::ToDatabaseRecords(
     record.response_id = pair.second.response_id();
     record.response_size = pair.second.response_size();
     record.padding_size = pair.second.padding_size();
-    record.token_expires = pair.second.token_expires();
   }
 
   const url::Origin origin = url::Origin::Create(group->manifest_url());
@@ -254,7 +243,6 @@ void AppCache::ToDatabaseRecords(
     record.cache_id = cache_id_;
     record.origin = origin;
     record.namespace_ = intercept_namespace;
-    record.token_expires = intercept_namespace.token_expires;
   }
 
   for (const AppCacheNamespace& fallback_namespace : fallback_namespaces_) {
@@ -263,13 +251,12 @@ void AppCache::ToDatabaseRecords(
     record.cache_id = cache_id_;
     record.origin = origin;
     record.namespace_ = fallback_namespace;
-    record.token_expires = fallback_namespace.token_expires;
   }
 
   for (const AppCacheNamespace& online_namespace :
-       online_whitelist_namespaces_) {
-    whitelists->push_back(AppCacheDatabase::OnlineWhiteListRecord());
-    AppCacheDatabase::OnlineWhiteListRecord& record = whitelists->back();
+       online_safelist_namespaces_) {
+    safelists->push_back(AppCacheDatabase::OnlineSafeListRecord());
+    AppCacheDatabase::OnlineSafeListRecord& record = safelists->back();
     record.cache_id = cache_id_;
     record.namespace_url = online_namespace.namespace_url;
   }
@@ -321,7 +308,7 @@ bool AppCache::FindResponseForRequest(const GURL& url,
     return true;
   }
 
-  *found_network_namespace = online_whitelist_all_;
+  *found_network_namespace = online_safelist_all_;
   return *found_network_namespace;
 }
 
@@ -341,7 +328,6 @@ void AppCache::ToResourceInfoVector(
     info.response_size = pair.second.response_size();
     info.padding_size = pair.second.padding_size();
     info.response_id = pair.second.response_id();
-    info.token_expires = pair.second.token_expires();
   }
 }
 

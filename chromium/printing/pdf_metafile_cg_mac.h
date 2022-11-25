@@ -27,7 +27,8 @@ class PRINTING_EXPORT PdfMetafileCg : public Metafile {
   bool InitFromData(base::span<const uint8_t> data) override;
   void StartPage(const gfx::Size& page_size,
                  const gfx::Rect& content_area,
-                 float scale_factor) override;
+                 float scale_factor,
+                 mojom::PageOrientation page_orientation) override;
   bool FinishPage() override;
   bool FinishDocument() override;
 
@@ -44,7 +45,8 @@ class PRINTING_EXPORT PdfMetafileCg : public Metafile {
   bool RenderPage(unsigned int page_number,
                   printing::NativeDrawingContext context,
                   const CGRect& rect,
-                  const MacRenderPageParams& params) const override;
+                  bool autorotate,
+                  bool fit_to_page) const override;
 
  private:
   // Returns a CGPDFDocumentRef version of |pdf_data_|.

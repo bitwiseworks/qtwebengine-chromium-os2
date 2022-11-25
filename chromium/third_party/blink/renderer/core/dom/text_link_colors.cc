@@ -31,7 +31,7 @@
 
 #include "third_party/blink/renderer/core/css/css_color_value.h"
 #include "third_party/blink/renderer/core/css/css_identifier_value.h"
-#include "third_party/blink/renderer/core/css/css_light_dark_color_pair.h"
+#include "third_party/blink/renderer/core/css/css_light_dark_value_pair.h"
 #include "third_party/blink/renderer/core/css/style_color.h"
 #include "third_party/blink/renderer/core/layout/layout_theme.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -58,14 +58,14 @@ void TextLinkColors::ResetActiveLinkColor() {
 
 Color TextLinkColors::ColorFromCSSValue(const CSSValue& value,
                                         Color current_color,
-                                        WebColorScheme color_scheme,
+                                        ColorScheme color_scheme,
                                         bool for_visited_link) const {
   if (auto* color_value = DynamicTo<cssvalue::CSSColorValue>(value))
     return color_value->Value();
 
-  if (auto* pair = DynamicTo<CSSLightDarkColorPair>(value)) {
+  if (auto* pair = DynamicTo<CSSLightDarkValuePair>(value)) {
     const CSSValue& color_value =
-        color_scheme == WebColorScheme::kLight ? pair->First() : pair->Second();
+        color_scheme == ColorScheme::kLight ? pair->First() : pair->Second();
     return ColorFromCSSValue(color_value, current_color, color_scheme,
                              for_visited_link);
   }

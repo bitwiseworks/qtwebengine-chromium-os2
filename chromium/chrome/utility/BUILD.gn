@@ -10,6 +10,13 @@ import("//chromeos/assistant/assistant.gni")
 import("//extensions/buildflags/buildflags.gni")
 import("//printing/buildflags/buildflags.gni")
 
+# This file depends on the legacy global sources assignment filter. It should
+# be converted to check target platform before assigning source files to the
+# sources variable. Remove this import and set_sources_assignment_filter call
+# when the file has been converted. See https://crbug.com/1018739 for details.
+import("//build/config/deprecated_default_sources_assignment_filter.gni")
+set_sources_assignment_filter(deprecated_default_sources_assignment_filter)
+
 static_library("utility") {
   sources = [
     "browser_exposed_utility_interfaces.cc",
@@ -33,12 +40,13 @@ static_library("utility") {
     "//chrome:strings",
     "//chrome/common",
     "//chrome/common:mojo_bindings",
+    "//chrome/services/machine_learning",
     "//chrome/services/qrcode_generator",
-    "//chrome/services/soda:lib",
     "//components/mirroring/service:mirroring_service",
     "//components/paint_preview/buildflags",
     "//components/safe_browsing:buildflags",
     "//components/search_engines",
+    "//components/services/language_detection",
     "//components/services/paint_preview_compositor",
     "//components/services/patch:lib",
     "//components/services/unzip:lib",
@@ -104,8 +112,7 @@ static_library("utility") {
     deps += [
       "//chrome/common:mojo_bindings",
       "//chrome/common/importer:interfaces",
-      "//chrome/services/sharing",
-      "//chrome/services/sharing/public/mojom",
+      "//chrome/services/speech:lib",
       "//components/autofill/core/common",
       "//services/proxy_resolver:lib",
     ]
@@ -115,8 +122,8 @@ static_library("utility") {
     sources += [
       "image_writer/disk_unmounter_mac.cc",
       "image_writer/disk_unmounter_mac.h",
-      "image_writer/error_messages.cc",
-      "image_writer/error_messages.h",
+      "image_writer/error_message_strings.cc",
+      "image_writer/error_message_strings.h",
       "image_writer/image_writer.cc",
       "image_writer/image_writer.h",
       "image_writer/image_writer_handler.cc",
@@ -156,9 +163,13 @@ static_library("utility") {
   if (is_chromeos) {
     deps += [
       "//chrome/services/file_util",
+      "//chrome/services/sharing",
+      "//chrome/services/sharing/public/mojom:mojom",
       "//chromeos/assistant:buildflags",
       "//chromeos/services/ime:lib",
       "//chromeos/services/ime/public/mojom",
+      "//chromeos/services/tts",
+      "//chromeos/services/tts/public/mojom",
     ]
 
     if (enable_cros_libassistant) {

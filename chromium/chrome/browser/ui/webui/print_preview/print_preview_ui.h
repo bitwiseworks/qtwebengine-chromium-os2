@@ -19,13 +19,13 @@
 #include "base/optional.h"
 #include "base/time/time.h"
 #include "chrome/browser/ui/webui/constrained_web_dialog_ui.h"
+#include "components/printing/common/print.mojom.h"
+#include "mojo/public/cpp/bindings/associated_receiver.h"
+#include "printing/mojom/print.mojom-forward.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 
-struct PrintHostMsg_DidStartPreview_Params;
-struct PrintHostMsg_PreviewIds;
 struct PrintHostMsg_RequestPrintPreview_Params;
-struct PrintHostMsg_SetOptionsFromDocument_Params;
 
 namespace base {
 class DictionaryValue;
@@ -40,19 +40,32 @@ class Rect;
 namespace printing {
 
 class PrintPreviewHandler;
-struct PageSizeMargins;
 
-class PrintPreviewUI : public ConstrainedWebDialogUI {
+class PrintPreviewUI : public ConstrainedWebDialogUI,
+                       public mojom::PrintPreviewUI {
  public:
   explicit PrintPreviewUI(content::WebUI* web_ui);
 
   ~PrintPreviewUI() override;
+
+  mojo::PendingAssociatedRemote<mojom::PrintPreviewUI> BindPrintPreviewUI();
 
   // Gets the print preview |data|. |index| is zero-based, and can be
   // |COMPLETE_PREVIEW_DOCUMENT_INDEX| to get the entire preview document.
   virtual void GetPrintPreviewDataForIndex(
       int index,
       scoped_refptr<base::RefCountedMemory>* data) const;
+
+  // printing::mojo::PrintPreviewUI:
+  void SetOptionsFromDocument(const mojom::OptionsFromDocumentParamsPtr params,
+                              int32_t request_id) override;
+  void PrintPreviewFailed(int32_t document_cookie, int32_t request_id) override;
+  void PrintPreviewCancelled(int32_t document_cookie,
+                             int32_t request_id) override;
+  void PrinterSettingsInvalid(int32_t document_cookie,
+                              int32_t request_id) override;
+
+  bool IsBound() const;
 
   // Setters
   void SetInitiatorTitle(const base::string16& initiator_title);
@@ -77,11 +90,11 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
 
   // Returns true if |page_number| is the last page in |pages_to_render_|.
   // |page_number| is a 0-based number.
-  bool LastPageComposited(int page_number) const;
+  bool LastPageComposited(uint32_t page_number) const;
 
   // Get the 0-based index of the |page_number| in |pages_to_render_|.
   // Same as above, |page_number| is a 0-based number.
-  int GetPageToNupConvertIndex(int page_number) const;
+  uint32_t GetPageToNupConvertIndex(uint32_t page_number) const;
 
   std::vector<base::ReadOnlySharedMemoryRegion> TakePagesForNupConvert();
 
@@ -118,7 +131,7 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
   // Determines whether to cancel a print preview request based on the request
   // and UI ids in |ids|.
   // Can be called from any thread.
-  static bool ShouldCancelRequest(const PrintHostMsg_PreviewIds& ids);
+  static bool ShouldCancelRequest(const mojom::PreviewIds& ids);
 
   // Returns an id to uniquely identify this PrintPreviewUI.
   base::Optional<int32_t> GetIDForPrintPreviewUI() const;
@@ -127,12 +140,12 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
   virtual void OnPrintPreviewRequest(int request_id);
 
   // Notifies the Web UI about the properties of the request preview.
-  void OnDidStartPreview(const PrintHostMsg_DidStartPreview_Params& params,
+  void OnDidStartPreview(const mojom::DidStartPreviewParams& params,
                          int request_id);
 
   // Notifies the Web UI of the default page layout according to the currently
   // selected printer and page size.
-  void OnDidGetDefaultPageLayout(const PageSizeMargins& page_layout,
+  void OnDidGetDefaultPageLayout(const mojom::PageSizeMargins& page_layout,
                                  const gfx::Rect& printable_area,
                                  bool has_custom_page_size_style,
                                  int request_id);
@@ -140,11 +153,11 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
   // Notifies the Web UI that the 0-based page |page_number| rendering is being
   // processed and an OnPendingPreviewPage() call is imminent. Returns whether
   // |page_number| is the expected page.
-  bool OnPendingPreviewPage(int page_number);
+  bool OnPendingPreviewPage(uint32_t page_number);
 
   // Notifies the Web UI that the 0-based page |page_number| has been rendered.
   // |preview_request_id| indicates which request resulted in this response.
-  void OnDidPreviewPage(int page_number,
+  void OnDidPreviewPage(uint32_t page_number,
                         scoped_refptr<base::RefCountedMemory> data,
                         int preview_request_id);
 
@@ -161,17 +174,9 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
   // closed, which may occur for several reasons, e.g. tab closure or crash.
   void OnPrintPreviewDialogClosed();
 
-  // Notifies the Web UI that the preview request identified by |request_id|
-  // was cancelled.
-  void OnPrintPreviewCancelled(int request_id);
-
   // Notifies the Web UI that initiator is closed, so we can disable all the
   // controls that need the initiator for generating the preview data.
   void OnInitiatorClosed();
-
-  // Notifies the Web UI that the printer is unavailable or its settings are
-  // invalid. |request_id| is the preview request id with the invalid printer.
-  void OnInvalidPrinterSettings(int request_id);
 
   // Notifies the Web UI to cancel the pending preview request.
   virtual void OnCancelPendingPreviewRequest();
@@ -182,15 +187,10 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
   // Closes the print preview dialog.
   virtual void OnClosePrintPreviewDialog();
 
-  // Notifies the WebUI to set print preset options from source PDF.
-  void OnSetOptionsFromDocument(
-      const PrintHostMsg_SetOptionsFromDocument_Params& params,
-      int request_id);
-
   // Allows tests to wait until the print preview dialog is loaded.
   class TestDelegate {
    public:
-    virtual void DidGetPreviewPageCount(int page_count) = 0;
+    virtual void DidGetPreviewPageCount(uint32_t page_count) = 0;
     virtual void DidRenderPreviewPage(content::WebContents* preview_dialog) = 0;
 
    protected:
@@ -279,7 +279,7 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
   base::string16 initiator_title_;
 
   // The list of 0-based page numbers that will be rendered.
-  std::vector<int> pages_to_render_;
+  std::vector<uint32_t> pages_to_render_;
 
   // The list of pages to be converted.
   std::vector<base::ReadOnlySharedMemoryRegion> pages_for_nup_convert_;
@@ -295,6 +295,8 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
 
   // The printable area of the printed document pages.
   gfx::Rect printable_area_;
+
+  mojo::AssociatedReceiver<mojom::PrintPreviewUI> receiver_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PrintPreviewUI);
 };

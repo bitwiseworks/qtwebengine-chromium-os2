@@ -157,6 +157,9 @@ namespace dawn_native {
         // Enable debug capture on Dawn startup
         void EnableBeginCaptureOnStartup(bool beginCaptureOnStartup);
 
+        // Enable GPU based backend validation if it has.
+        void EnableGPUBasedBackendValidation(bool enableGPUBasedBackendValidation);
+
         void SetPlatform(dawn_platform::Platform* platform);
 
         // Returns the underlying WGPUInstance object.
@@ -175,12 +178,17 @@ namespace dawn_native {
     // Backdoor to get the number of lazy clears for testing
     DAWN_NATIVE_EXPORT size_t GetLazyClearCountForTesting(WGPUDevice device);
 
+    // Backdoor to get the number of deprecation warnings for testing
+    DAWN_NATIVE_EXPORT size_t GetDeprecationWarningCountForTesting(WGPUDevice device);
+
     //  Query if texture has been initialized
-    DAWN_NATIVE_EXPORT bool IsTextureSubresourceInitialized(WGPUTexture texture,
-                                                            uint32_t baseMipLevel,
-                                                            uint32_t levelCount,
-                                                            uint32_t baseArrayLayer,
-                                                            uint32_t layerCount);
+    DAWN_NATIVE_EXPORT bool IsTextureSubresourceInitialized(
+        WGPUTexture texture,
+        uint32_t baseMipLevel,
+        uint32_t levelCount,
+        uint32_t baseArrayLayer,
+        uint32_t layerCount,
+        WGPUTextureAspect aspect = WGPUTextureAspect_All);
 
     // Backdoor to get the order of the ProcMap for testing
     DAWN_NATIVE_EXPORT std::vector<const char*> GetProcMapNamesForTesting();
@@ -192,8 +200,8 @@ namespace dawn_native {
     DAWN_NATIVE_EXPORT uint64_t AcquireErrorInjectorCallCount();
     DAWN_NATIVE_EXPORT void InjectErrorAt(uint64_t index);
 
-    // The different types of ExternalImageDescriptors
-    enum ExternalImageDescriptorType {
+    // The different types of external images
+    enum ExternalImageType {
         OpaqueFD,
         DmaBuf,
         IOSurface,
@@ -203,13 +211,26 @@ namespace dawn_native {
     // Common properties of external images
     struct DAWN_NATIVE_EXPORT ExternalImageDescriptor {
       public:
-        const ExternalImageDescriptorType type;
+        const ExternalImageType type;
         const WGPUTextureDescriptor* cTextureDescriptor;  // Must match image creation params
-        bool isCleared;  // Sets whether the texture will be cleared before use
+        union {
+            bool isInitialized;  // Whether the texture is initialized on import
+            bool isCleared;      // DEPRECATED: Sets whether the texture will be cleared before use
+        };
 
       protected:
-        ExternalImageDescriptor(ExternalImageDescriptorType type);
+        ExternalImageDescriptor(ExternalImageType type);
     };
+
+    struct DAWN_NATIVE_EXPORT ExternalImageExportInfo {
+      public:
+        const ExternalImageType type;
+        bool isInitialized;  // Whether the texture is initialized after export
+
+      protected:
+        ExternalImageExportInfo(ExternalImageType type);
+    };
+
 }  // namespace dawn_native
 
 #endif  // DAWNNATIVE_DAWNNATIVE_H_

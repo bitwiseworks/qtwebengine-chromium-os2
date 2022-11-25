@@ -31,8 +31,7 @@ class V8MediaSessionActionHandler;
 class MODULES_EXPORT MediaSession final
     : public ScriptWrappable,
       public ExecutionContextClient,
-      blink::mojom::blink::MediaSessionClient {
-  USING_GARBAGE_COLLECTED_MIXIN(MediaSession);
+      public blink::mojom::blink::MediaSessionClient {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -54,7 +53,7 @@ class MODULES_EXPORT MediaSession final
   // internally when a new MediaMetadata object is set.
   void OnMetadataChanged();
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   friend class V8MediaSession;
@@ -87,6 +86,7 @@ class MODULES_EXPORT MediaSession final
   HeapHashMap<String, Member<V8MediaSessionActionHandler>> action_handlers_;
   mojo::Remote<mojom::blink::MediaSessionService> service_;
   HeapMojoReceiver<blink::mojom::blink::MediaSessionClient,
+                   MediaSession,
                    HeapMojoWrapperMode::kWithoutContextObserver>
       client_receiver_;
 };

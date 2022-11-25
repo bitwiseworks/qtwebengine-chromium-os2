@@ -10,7 +10,6 @@
 #include "base/metrics/field_trial_params.h"
 
 namespace ui {
-
 COMPONENT_EXPORT(EVENTS_OZONE)
 extern const base::Feature kEnableHeuristicPalmDetectionFilter;
 
@@ -19,6 +18,9 @@ extern const base::Feature kEnableNeuralPalmDetectionFilter;
 
 COMPONENT_EXPORT(EVENTS_OZONE)
 extern const base::Feature kEnableNeuralStylusReportFilter;
+
+COMPONENT_EXPORT(EVENTS_OZONE)
+extern const base::Feature kEnableOrdinalMotion;
 
 COMPONENT_EXPORT(EVENTS_OZONE)
 extern const base::Feature kEnablePalmOnMaxTouchMajor;
@@ -30,6 +32,9 @@ COMPONENT_EXPORT(EVENTS_OZONE)
 extern const base::FeatureParam<std::string> kNeuralPalmRadiusPolynomial;
 
 COMPONENT_EXPORT(EVENTS_OZONE)
+extern const base::Feature kEnablePalmSuppression;
+
+COMPONENT_EXPORT(EVENTS_OZONE)
 extern const base::FeatureParam<double> kHeuristicCancelThresholdSeconds;
 
 COMPONENT_EXPORT(EVENTS_OZONE)
@@ -37,6 +42,15 @@ extern const base::FeatureParam<double> kHeuristicHoldThresholdSeconds;
 
 COMPONENT_EXPORT(EVENTS_OZONE)
 extern const base::FeatureParam<int> kHeuristicStrokeCount;
+
+COMPONENT_EXPORT(EVENTS_OZONE)
+extern const char kOzoneNNPalmSwitchName[];
+
+COMPONENT_EXPORT(EVENTS_OZONE)
+extern const char kOzoneNNPalmTouchCompatibleProperty[];
+
+COMPONENT_EXPORT(EVENTS_OZONE)
+extern const char kOzoneNNPalmRadiusPolynomialProperty[];
 
 }  // namespace ui
 

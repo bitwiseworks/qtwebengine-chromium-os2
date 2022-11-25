@@ -30,7 +30,9 @@
 #include <utility>
 
 #include "services/network/public/mojom/content_security_policy.mojom-blink.h"
+#include "services/network/public/mojom/web_sandbox_flags.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom-blink.h"
+#include "third_party/blink/public/mojom/devtools/inspector_issue.mojom-blink.h"
 #include "third_party/blink/public/mojom/security_context/insecure_request_policy.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/web_content_security_policy_struct.h"
 #include "third_party/blink/renderer/bindings/core/v8/source_location.h"
@@ -62,7 +64,7 @@ class ContentSecurityPolicyResponseHeaders;
 class ConsoleMessage;
 class CSPDirectiveList;
 class CSPSource;
-class Document;
+class DOMWrapperWorld;
 class Element;
 class ExecutionContext;
 class LocalFrame;
@@ -73,7 +75,6 @@ class SecurityPolicyViolationEventInit;
 class SourceLocation;
 enum class ResourceType : uint8_t;
 
-using SandboxFlags = mojom::blink::WebSandboxFlags;
 typedef HeapVector<Member<CSPDirectiveList>> CSPDirectiveListVector;
 typedef HeapVector<Member<ConsoleMessage>> ConsoleMessageVector;
 typedef std::pair<String, network::mojom::ContentSecurityPolicyType>
@@ -89,10 +90,6 @@ class CORE_EXPORT ContentSecurityPolicyDelegate : public GarbageCollectedMixin {
   // See https://w3c.github.io/webappsec-csp/#policy-self-origin.
   virtual const SecurityOrigin* GetSecurityOrigin() = 0;
 
-  // Returns the SecureContextMode for the context to which the delegate is
-  // bound.
-  virtual SecureContextMode GetSecureContextMode() = 0;
-
   // Returns the URL this content security policy is bound to.
   // Used for https://w3c.github.io/webappsec-csp/#violation-url and so.
   // Note: Url() is used for several purposes that are specced slightly
@@ -101,7 +98,7 @@ class CORE_EXPORT ContentSecurityPolicyDelegate : public GarbageCollectedMixin {
   virtual const KURL& Url() const = 0;
 
   // Directives support.
-  virtual void SetSandboxFlags(SandboxFlags) = 0;
+  virtual void SetSandboxFlags(network::mojom::blink::WebSandboxFlags) = 0;
   virtual void SetRequireTrustedTypes() = 0;
   virtual void AddInsecureRequestPolicy(
       mojom::blink::InsecureRequestPolicy) = 0;
@@ -127,6 +124,7 @@ class CORE_EXPORT ContentSecurityPolicyDelegate : public GarbageCollectedMixin {
   virtual void Count(WebFeature) = 0;
 
   virtual void AddConsoleMessage(ConsoleMessage*) = 0;
+  virtual void AddInspectorIssue(mojom::blink::InspectorIssueInfoPtr) = 0;
   virtual void DisableEval(const String& error_message) = 0;
   virtual void ReportBlockedScriptExecutionToInspector(
       const String& directive_text) = 0;
@@ -146,7 +144,7 @@ class CORE_EXPORT ContentSecurityPolicy final
   //
   // Trusted Types violation's 'resource' values are defined in
   // https://wicg.github.io/trusted-types/dist/spec/#csp-violation-object-hdr.
-  enum ViolationType {
+  enum ContentSecurityPolicyViolationType {
     kInlineViolation,
     kEvalViolation,
     kURLViolation,
@@ -185,7 +183,6 @@ class CORE_EXPORT ContentSecurityPolicy final
     kPrefetchSrc,
     kReportTo,
     kReportURI,
-    kRequireSRIFor,
     kTrustedTypes,
     kSandbox,
     kScriptSrc,
@@ -218,7 +215,7 @@ class CORE_EXPORT ContentSecurityPolicy final
 
   ContentSecurityPolicy();
   ~ContentSecurityPolicy();
-  void Trace(Visitor*);
+  void Trace(Visitor*) const;
 
   bool IsBound();
   void BindToDelegate(ContentSecurityPolicyDelegate&);
@@ -257,15 +254,6 @@ class CORE_EXPORT ContentSecurityPolicy final
                      ExceptionStatus,
                      const String& script_content) const;
   bool AllowPluginType(
-      const String& type,
-      const String& type_attribute,
-      const KURL&,
-      ReportingDisposition = ReportingDisposition::kReport) const;
-  // Checks whether the plugin type should be allowed in the given
-  // document; enforces the CSP rule that PluginDocuments inherit
-  // plugin-types directives from the parent document.
-  bool AllowPluginTypeForDocument(
-      const Document&,
       const String& type,
       const String& type_attribute,
       const KURL&,
@@ -323,27 +311,21 @@ class CORE_EXPORT ContentSecurityPolicy final
 
   static bool IsScriptInlineType(InlineType);
 
-  // |allowAncestors| does not need to know whether the resource was a
-  // result of a redirect. After a redirect, source paths are usually
-  // ignored to stop a page from learning the path to which the
-  // request was redirected, but this is not a concern for ancestors,
-  // because a child frame can't manipulate the URL of a cross-origin
-  // parent.
-  bool AllowAncestors(
-      LocalFrame*,
-      const KURL&,
-      ReportingDisposition = ReportingDisposition::kReport) const;
-  bool IsFrameAncestorsEnforced() const;
-
+  // TODO(crbug.com/889751): Remove "mojom::RequestContextType" once
+  // all the code migrates.
   bool AllowRequestWithoutIntegrity(
       mojom::RequestContextType,
+      network::mojom::RequestDestination,
       const KURL&,
-      const KURL& url_before_redirect,
+      const KURL& url_before_redirects,
       RedirectStatus,
       ReportingDisposition = ReportingDisposition::kReport,
       CheckHeaderType = CheckHeaderType::kCheckAll) const;
 
+  // TODO(crbug.com/889751): Remove "mojom::RequestContextType" once
+  // all the code migrates.
   bool AllowRequest(mojom::RequestContextType,
+                    network::mojom::RequestDestination,
                     const KURL&,
                     const String& nonce,
                     const IntegrityMetadataSet&,
@@ -383,11 +365,10 @@ class CORE_EXPORT ContentSecurityPolicy final
                                   const String& value,
                                   const char);
   void ReportInvalidPluginTypes(const String&);
-  void ReportInvalidRequireSRIForTokens(const String&);
   void ReportInvalidSandboxFlags(const String&);
   void ReportInvalidSourceExpression(const String& directive_name,
                                      const String& source);
-  void ReportMissingReportURI(const String&);
+  void ReportMultipleReportToEndpoints();
   void ReportUnsupportedDirective(const String&);
   void ReportInvalidInReportOnly(const String&);
   void ReportInvalidDirectiveInMeta(const String& directive_name);
@@ -395,7 +376,7 @@ class CORE_EXPORT ContentSecurityPolicy final
   void ReportMetaOutsideHead(const String&);
   void ReportValueForEmptyDirective(const String& directive_name,
                                     const String& value);
-  void ReportNonsecureTrustedTypes();
+  void ReportMixedContentReportURI(const String& endpoint);
 
   // If a frame is passed in, the report will be sent using it as a context. If
   // no frame is passed in, the report will be sent via this object's
@@ -411,7 +392,7 @@ class CORE_EXPORT ContentSecurityPolicy final
                        bool use_reporting_api,
                        const String& header,
                        network::mojom::ContentSecurityPolicyType,
-                       ViolationType,
+                       ContentSecurityPolicyViolationType,
                        std::unique_ptr<SourceLocation>,
                        LocalFrame* = nullptr,
                        RedirectStatus = RedirectStatus::kFollowedRedirect,
@@ -430,7 +411,7 @@ class CORE_EXPORT ContentSecurityPolicy final
   // Used as <object>'s URL when there is no `src` attribute.
   const KURL FallbackUrlForPlugin() const;
 
-  void EnforceSandboxFlags(SandboxFlags);
+  void EnforceSandboxFlags(network::mojom::blink::WebSandboxFlags);
   void RequireTrustedTypes();
   bool IsRequireTrustedTypes() const { return require_trusted_types_; }
   String EvalDisabledErrorMessage() const;
@@ -453,7 +434,13 @@ class CORE_EXPORT ContentSecurityPolicy final
 
   CSPSource* GetSelfSource() const { return self_source_; }
 
+  // Whether the main world's CSP should be bypassed based on the current
+  // javascript world we are in.
   static bool ShouldBypassMainWorld(const ExecutionContext*);
+
+  // Whether the main world's CSP should be bypassed for operations in the given
+  // |world|.
+  static bool ShouldBypassMainWorld(const DOMWrapperWorld* world);
 
   static bool IsNonceableElement(const Element*);
 
@@ -479,6 +466,7 @@ class CORE_EXPORT ContentSecurityPolicy final
 
   // Returns the 'wasm-eval' source is supported.
   bool SupportsWasmEval() const { return supports_wasm_eval_; }
+  void SetSupportsWasmEval(bool value) { supports_wasm_eval_ = value; }
 
   // Sometimes we don't know the initiator or it might be destroyed already
   // for certain navigational checks. We create a string version of the relevant
@@ -491,7 +479,9 @@ class CORE_EXPORT ContentSecurityPolicy final
   // context will be used for all sandbox checks but there are situations
   // (before installing the document that this CSP will bind to) when
   // there is no execution context to enforce the sandbox flags.
-  SandboxFlags GetSandboxMask() const { return sandbox_mask_; }
+  network::mojom::blink::WebSandboxFlags GetSandboxMask() const {
+    return sandbox_mask_;
+  }
 
   bool HasPolicyFromSource(network::mojom::ContentSecurityPolicySource) const;
 
@@ -568,6 +558,17 @@ class CORE_EXPORT ContentSecurityPolicy final
       const KURL&,
       SchemeRegistry::PolicyAreas = SchemeRegistry::kPolicyAreaAll) const;
 
+  // TODO: Consider replacing 'ContentSecurityPolicy::ViolationType' with the
+  // mojo enum.
+  mojom::blink::ContentSecurityPolicyViolationType BuildCSPViolationType(
+      ContentSecurityPolicy::ContentSecurityPolicyViolationType violation_type);
+
+  void ReportContentSecurityPolicyIssue(
+      const blink::SecurityPolicyViolationEventInit& violation_data,
+      ContentSecurityPolicyViolationType violation_type,
+      LocalFrame* = nullptr,
+      Element* = nullptr);
+
   Member<ContentSecurityPolicyDelegate> delegate_;
   bool override_inline_style_allowed_;
   CSPDirectiveListVector policies_;
@@ -583,7 +584,7 @@ class CORE_EXPORT ContentSecurityPolicy final
   uint8_t style_hash_algorithms_used_;
 
   // State flags used to configure the environment after parsing a policy.
-  SandboxFlags sandbox_mask_;
+  network::mojom::blink::WebSandboxFlags sandbox_mask_;
   bool require_trusted_types_;
   String disable_eval_error_message_;
   mojom::blink::InsecureRequestPolicy insecure_request_policy_;

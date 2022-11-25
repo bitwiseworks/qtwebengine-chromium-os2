@@ -2,17 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/callback.h"
+#include "base/test/bind_test_util.h"
 #include "cc/layers/picture_layer.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/web/web_frame_content_dumper.h"
 #include "third_party/blink/public/web/web_hit_test_result.h"
 #include "third_party/blink/public/web/web_settings.h"
-#include "third_party/blink/renderer/bindings/core/v8/sanitize_script_errors.h"
-#include "third_party/blink/renderer/bindings/core/v8/script_controller.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_source_code.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
-#include "third_party/blink/renderer/core/exported/web_remote_frame_impl.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
@@ -21,8 +21,10 @@
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/paint/compositing/composited_layer_mapping.h"
+#include "third_party/blink/renderer/core/paint/compositing/paint_layer_compositor.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
+#include "third_party/blink/renderer/core/script/classic_script.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_compositor.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
@@ -232,6 +234,97 @@ TEST_P(FrameThrottlingTest, IntersectionObservationOverridesThrottling) {
   EXPECT_TRUE(inner_view->Layer()->SelfNeedsRepaint());
 }
 
+TEST_P(FrameThrottlingTest, NestedIntersectionObservationStateUpdated) {
+  // Create two nested frames which are throttled.
+  SimRequest main_resource("https://example.com/", "text/html");
+  SimRequest frame_resource("https://example.com/iframe.html", "text/html");
+  SimRequest child_frame_resource("https://example.com/child-iframe.html",
+                                  "text/html");
+
+  LoadURL("https://example.com/");
+  main_resource.Complete("<iframe id=frame sandbox src=iframe.html></iframe>");
+  frame_resource.Complete(
+      "<iframe id=child-frame sandbox src=child-iframe.html></iframe>");
+  child_frame_resource.Complete("");
+
+  DocumentLifecycle::AllowThrottlingScope throttling_scope(
+      GetDocument().Lifecycle());
+
+  // Move both frames offscreen to make them throttled.
+  auto* frame_element =
+      To<HTMLIFrameElement>(GetDocument().getElementById("frame"));
+  auto* child_frame_element = To<HTMLIFrameElement>(
+      frame_element->contentDocument()->getElementById("child-frame"));
+  frame_element->setAttribute(kStyleAttr, "transform: translateY(480px)");
+
+  CompositeFrame();
+
+  auto* root_view = LocalFrameRoot().GetFrame()->View();
+  ASSERT_FALSE(root_view->ShouldThrottleRendering());
+  auto* frame_view = frame_element->contentDocument()->View();
+  ASSERT_TRUE(frame_view->ShouldThrottleRendering());
+  auto* child_view = child_frame_element->contentDocument()->View();
+  ASSERT_TRUE(child_view->ShouldThrottleRendering());
+
+  // Force |child_view| to do an intersection observation.
+  child_view->SetIntersectionObservationState(LocalFrameView::kRequired);
+
+  // Ensure all frames need a layout.
+  root_view->SetNeedsLayout();
+  frame_view->SetNeedsLayout();
+  child_view->SetNeedsLayout();
+
+  // Though |frame_view| is throttled, the descendant (|child_view|) should
+  // still be updated which resets the intersection observation state.
+  CompositeFrame();
+  EXPECT_EQ(LocalFrameView::kNotNeeded,
+            root_view->GetIntersectionObservationStateForTesting());
+  EXPECT_EQ(LocalFrameView::kNotNeeded,
+            frame_view->GetIntersectionObservationStateForTesting());
+  EXPECT_EQ(LocalFrameView::kNotNeeded,
+            child_view->GetIntersectionObservationStateForTesting());
+}
+
+// This test creates a throttled local root (simulating a throttled OOPIF) and
+// ensures the intersection observation state of descendants can still be
+// updated.
+TEST_P(FrameThrottlingTest,
+       IntersectionObservationStateUpdatedWithThrottledLocalRoot) {
+  SimRequest local_root_resource("https://example.com/", "text/html");
+  SimRequest child_resource("https://example.com/iframe.html", "text/html");
+
+  LoadURL("https://example.com/");
+  local_root_resource.Complete(
+      "<iframe id=frame sandbox src=iframe.html></iframe>");
+  child_resource.Complete("");
+  CompositeFrame();
+
+  auto* root_frame = LocalFrameRoot().GetFrame();
+  DocumentLifecycle::AllowThrottlingScope throttling_scope(
+      root_frame->GetDocument()->Lifecycle());
+  auto* root_frame_view = root_frame->View();
+  root_frame_view->SetNeedsLayout();
+  root_frame_view->ScheduleAnimation();
+  root_frame_view->SetLifecycleUpdatesThrottledForTesting(true);
+  ASSERT_TRUE(root_frame->IsLocalRoot());
+  ASSERT_TRUE(root_frame_view->ShouldThrottleRendering());
+
+  auto* child_frame_document =
+      To<HTMLIFrameElement>(root_frame->GetDocument()->getElementById("frame"))
+          ->contentDocument();
+  auto* child_frame_view = child_frame_document->View();
+  // Force |child_frame_view| to do an intersection observation.
+  child_frame_view->SetIntersectionObservationState(LocalFrameView::kRequired);
+
+  // Though |root_frame_view| is throttled, the descendant (|child_frame_view|)
+  // should still be updated which resets the intersection observation state.
+  CompositeFrame();
+  EXPECT_EQ(LocalFrameView::kNotNeeded,
+            root_frame_view->GetIntersectionObservationStateForTesting());
+  EXPECT_EQ(LocalFrameView::kNotNeeded,
+            child_frame_view->GetIntersectionObservationStateForTesting());
+}
+
 TEST_P(FrameThrottlingTest,
        ThrottlingOverrideOnlyAppliesDuringLifecycleUpdate) {
   // Create a document with a hidden cross-origin subframe.
@@ -275,6 +368,37 @@ TEST_P(FrameThrottlingTest,
   EXPECT_EQ(DocumentLifecycle::kLayoutClean,
             frame_document->Lifecycle().GetState());
   EXPECT_TRUE(frame_document->View()->ShouldThrottleRendering());
+}
+
+TEST_P(FrameThrottlingTest, ForAllThrottledLocalFrameViews) {
+  // Create a document with a hidden cross-origin subframe.
+  SimRequest main_resource("https://example.com/", "text/html");
+  SimRequest frame_resource("https://example.com/iframe.html", "text/html");
+  LoadURL("https://example.com/");
+  main_resource.Complete(R"HTML(
+    <iframe id="frame" sandbox src="iframe.html"
+        style="transform: translateY(480px)">
+  )HTML");
+  frame_resource.Complete("<!doctype html>");
+
+  DocumentLifecycle::AllowThrottlingScope throttling_scope(
+      GetDocument().Lifecycle());
+  CompositeFrame();
+
+  auto* frame_element =
+      To<HTMLIFrameElement>(GetDocument().getElementById("frame"));
+  auto* frame_document = frame_element->contentDocument();
+  // Hidden cross origin frames are throttled.
+  EXPECT_TRUE(frame_document->View()->ShouldThrottleRendering());
+  // Main frame is not throttled.
+  EXPECT_FALSE(GetDocument().View()->ShouldThrottleRendering());
+
+  unsigned throttled_count = 0;
+  auto throttled_callback = base::BindLambdaForTesting(
+      [&throttled_count](LocalFrameView&) { throttled_count++; });
+  GetDocument().View()->ForAllThrottledLocalFrameViewsForTesting(
+      throttled_callback);
+  EXPECT_EQ(1u, throttled_count);
 }
 
 TEST_P(FrameThrottlingTest, HiddenCrossOriginZeroByZeroFramesAreNotThrottled) {
@@ -337,7 +461,7 @@ TEST_P(FrameThrottlingTest, ThrottledLifecycleUpdate) {
               frame_document->Lifecycle().GetState());
 
     // A hit test will not force a complete lifecycle update.
-    WebView().HitTestResultAt(gfx::Point());
+    WebView().HitTestResultAt(gfx::PointF());
     EXPECT_EQ(DocumentLifecycle::kPaintClean,
               frame_document->Lifecycle().GetState());
   } else {
@@ -347,7 +471,7 @@ TEST_P(FrameThrottlingTest, ThrottledLifecycleUpdate) {
               frame_document->Lifecycle().GetState());
 
     // A hit test will not force a complete lifecycle update.
-    WebView().HitTestResultAt(gfx::Point());
+    WebView().HitTestResultAt(gfx::PointF());
     EXPECT_EQ(DocumentLifecycle::kPaintClean,
               frame_document->Lifecycle().GetState());
   }
@@ -371,7 +495,26 @@ TEST_P(FrameThrottlingTest, UnthrottlingFrameSchedulesAnimation) {
   // Then bring it back on-screen. This should schedule an animation update.
   frame_element->setAttribute(kStyleAttr, "");
   CompositeFrame();
+
+  if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
+    // Compositing inputs need to be re-computed on the next frame after
+    // unthrottling, because while throttled all throttled content is not
+    // considered eligible for compositing (PLC::CanBeComposited often returns
+    // false).
+    EXPECT_TRUE(frame_element->contentDocument()
+                    ->View()
+                    ->GetLayoutView()
+                    ->Layer()
+                    ->NeedsCompositingInputsUpdate());
+  }
+
   EXPECT_TRUE(Compositor().NeedsBeginFrame());
+  CompositeFrame();
+  EXPECT_FALSE(frame_element->contentDocument()
+                   ->View()
+                   ->GetLayoutView()
+                   ->Layer()
+                   ->NeedsCompositingInputsUpdate());
 }
 
 TEST_P(FrameThrottlingTest, MutatingThrottledFrameDoesNotCauseAnimation) {
@@ -857,6 +1000,12 @@ TEST_P(FrameThrottlingTest, ThrottledTopLevelEventHandlerIgnored) {
   WebView().GetSettings()->SetJavaScriptEnabled(true);
   EXPECT_EQ(0u, TouchHandlerRegionSize());
 
+  // This test covers the case where a non-composited iframe is throttled. With
+  // this flag enabled, that is impossible, because only cross-origin iframes
+  // can be throttled.
+  if (base::FeatureList::IsEnabled(features::kCompositeCrossOriginIframes))
+    return;
+
   // Create a frame which is throttled and has two different types of
   // top-level touchstart handlers.
   SimRequest main_resource("https://example.com/", "text/html");
@@ -903,6 +1052,12 @@ TEST_P(FrameThrottlingTest, ThrottledTopLevelEventHandlerIgnored) {
 TEST_P(FrameThrottlingTest, ThrottledEventHandlerIgnored) {
   WebView().GetSettings()->SetJavaScriptEnabled(true);
   EXPECT_EQ(0u, TouchHandlerRegionSize());
+
+  // This test covers the case where a non-composited iframe is throttled. With
+  // this flag enabled, that is impossible, because only cross-origin iframes
+  // can be throttled.
+  if (base::FeatureList::IsEnabled(features::kCompositeCrossOriginIframes))
+    return;
 
   // Create a frame which is throttled and has a non-top-level touchstart
   // handler.
@@ -964,8 +1119,9 @@ TEST_P(FrameThrottlingTest, DumpThrottledFrame) {
   EXPECT_TRUE(frame_element->contentDocument()->View()->CanThrottleRendering());
 
   LocalFrame* local_frame = To<LocalFrame>(frame_element->ContentFrame());
-  local_frame->GetScriptController().ExecuteScriptInMainWorld(
-      "document.body.innerHTML = 'throttled'");
+  ClassicScript::CreateUnspecifiedScript(
+      ScriptSourceCode("document.body.innerHTML = 'throttled'"))
+      ->RunScript(local_frame);
   EXPECT_FALSE(Compositor().NeedsBeginFrame());
 
   // The dumped contents should not include the throttled frame.
@@ -1007,8 +1163,12 @@ TEST_P(FrameThrottlingTest, PaintingViaGraphicsLayerIsThrottled) {
   EXPECT_TRUE(frame_element->contentDocument()->View()->CanThrottleRendering());
 
   // If painting of the iframe is throttled, we should only receive drawing
-  // commands for the main frame.
-  auto commands_throttled = Compositor().PaintFrame();
+  // commands for the main frame. We have to explicitly schedule a frame here
+  // because the iframe becoming throttled will affect the painted output;
+  // but it will not by itself schedule an animation frame, because it doesn't
+  // need display.
+  GetDocument().View()->ScheduleAnimation();
+  auto commands_throttled = CompositeFrame();
   EXPECT_EQ(5u, commands_throttled.DrawCount());
   EXPECT_FALSE(Compositor().NeedsBeginFrame());
 }
@@ -1192,12 +1352,16 @@ TEST_P(FrameThrottlingTest, SynchronousLayoutInAnimationFrameCallback) {
       To<HTMLIFrameElement>(GetDocument().getElementById("second"));
   LocalFrame* local_frame =
       To<LocalFrame>(second_frame_element->ContentFrame());
-  local_frame->GetScriptController().ExecuteScriptInMainWorld(
-      "window.requestAnimationFrame(function() {\n"
-      "  var throttledFrame = window.parent.frames.first;\n"
-      "  throttledFrame.document.documentElement.style = 'margin: 50px';\n"
-      "  throttledFrame.document.querySelector('#d').getBoundingClientRect();\n"
-      "});\n");
+  ClassicScript::CreateUnspecifiedScript(
+      ScriptSourceCode(
+          "window.requestAnimationFrame(function() {\n"
+          "  var throttledFrame = window.parent.frames.first;\n"
+          "  throttledFrame.document.documentElement.style = 'margin: 50px';\n"
+          "  "
+          "throttledFrame.document.querySelector('#d').getBoundingClientRect();"
+          "\n"
+          "});\n"))
+      ->RunScript(local_frame);
   CompositeFrame();
 }
 
@@ -1227,9 +1391,8 @@ TEST_P(FrameThrottlingTest, AllowOneAnimationFrame) {
   LocalFrame* local_frame = To<LocalFrame>(frame_element->ContentFrame());
   v8::HandleScope scope(v8::Isolate::GetCurrent());
   v8::Local<v8::Value> result =
-      local_frame->GetScriptController().ExecuteScriptInMainWorldAndReturnValue(
-          ScriptSourceCode("window.didRaf;"), KURL(),
-          SanitizeScriptErrors::kSanitize);
+      ClassicScript::CreateUnspecifiedScript(ScriptSourceCode("window.didRaf;"))
+          ->RunScriptAndReturnValue(local_frame);
   EXPECT_TRUE(result->IsTrue());
 }
 
@@ -1411,7 +1574,7 @@ TEST_P(FrameThrottlingTest, RebuildCompositedLayerTreeOnLayerRemoval) {
     EXPECT_TRUE(
         frame_element->contentDocument()->View()->ShouldThrottleRendering());
   }
-  EXPECT_EQ(DocumentLifecycle::kCompositingClean,
+  EXPECT_EQ(DocumentLifecycle::kCompositingAssignmentsClean,
             frame_element->contentDocument()->Lifecycle().GetState());
 }
 
@@ -1511,6 +1674,127 @@ TEST_P(FrameThrottlingTest, GraphicsLayerCollection) {
   ASSERT_NE(nullptr, paint_controller);
   // Now we should collect all graphics layers again.
   EXPECT_EQ(display_item_count, paint_controller->GetDisplayItemList().size());
+}
+
+TEST_P(FrameThrottlingTest, GraphicsLayerCollectionLifecycleThrottling) {
+  // GraphicsLayers are not created with CompositeAfterPaint.
+  if (RuntimeEnabledFeatures::CompositeAfterPaintEnabled())
+    return;
+
+  SimRequest main_resource("https://example.com/", "text/html");
+  SimRequest frame_resource("https://example.com/iframe.html", "text/html");
+
+  LoadURL("https://example.com/");
+  // The frame is initially throttled.
+  main_resource.Complete(
+      "<iframe id='frame' sandbox src='iframe.html'></iframe>");
+  frame_resource.Complete(
+      "<div id='div' style='will-change: transform'>Foo</div>");
+
+  CompositeFrame();
+  auto* frame_element =
+      To<HTMLIFrameElement>(GetDocument().getElementById("frame"));
+  auto* paint_controller = GetDocument().View()->GetPaintController();
+  ASSERT_NE(nullptr, paint_controller);
+  auto display_item_count = paint_controller->GetDisplayItemList().size();
+
+  auto* frame_document = frame_element->contentDocument();
+  frame_document->View()->SetLifecycleUpdatesThrottledForTesting(true);
+  GetDocument().View()->SetForeignLayerListNeedsUpdate();
+  GetDocument().View()->ScheduleAnimation();
+  CompositeFrame();
+  paint_controller = GetDocument().View()->GetPaintController();
+  ASSERT_NE(nullptr, paint_controller);
+  // We no longer collect the graphics layers of the iframe and the composited
+  // content.
+  EXPECT_GT(display_item_count, paint_controller->GetDisplayItemList().size());
+
+  frame_document->View()->BeginLifecycleUpdates();
+  // The above will unthrottle the iframe and force re-collection of graphics
+  // layers.
+  EXPECT_EQ(nullptr, GetDocument().View()->GetPaintController());
+  CompositeFrame();
+  paint_controller = GetDocument().View()->GetPaintController();
+  ASSERT_NE(nullptr, paint_controller);
+  // Now we should collect all graphics layers again.
+  EXPECT_EQ(display_item_count, paint_controller->GetDisplayItemList().size());
+}
+
+TEST_P(FrameThrottlingTest, NestedFramesInRemoteFrameHiddenAndShown) {
+  InitializeRemote();
+
+  SimRequest local_root_resource("https://example.com/", "text/html");
+  SimRequest frame_resource("https://example.com/iframe.html", "text/html");
+  SimRequest child_frame_resource("https://example.com/child-iframe.html",
+                                  "text/html");
+
+  LoadURL("https://example.com/");
+  local_root_resource.Complete(
+      "<iframe id=frame sandbox src=iframe.html></iframe>");
+  frame_resource.Complete(
+      "<iframe id=child-frame sandbox src=child-iframe.html></iframe>");
+  child_frame_resource.Complete("");
+
+  ViewportIntersectionState intersection;
+  intersection.main_frame_intersection = WebRect(0, 0, 100, 100);
+  intersection.main_frame_viewport_size = WebSize(100, 100);
+  intersection.viewport_intersection = WebRect(0, 0, 100, 100);
+  LocalFrameRoot().FrameWidget()->Resize(WebSize(300, 200));
+  LocalFrameRoot().FrameWidget()->SetRemoteViewportIntersection(intersection);
+
+  auto* root_frame = LocalFrameRoot().GetFrame();
+  auto* frame_document =
+      To<HTMLIFrameElement>(root_frame->GetDocument()->getElementById("frame"))
+          ->contentDocument();
+  auto* frame_view = frame_document->View();
+  auto* child_document =
+      To<HTMLIFrameElement>(frame_document->getElementById("child-frame"))
+          ->contentDocument();
+  auto* child_view = child_document->View();
+
+  CompositeFrame();
+  EXPECT_FALSE(frame_view->CanThrottleRendering());
+  EXPECT_FALSE(child_view->CanThrottleRendering());
+
+  // Hide the frame without any other change. The new throttling state will not
+  // be computed until the next lifecycle update; but merely hiding the frame
+  // will not schedule an update, so we must force one for the purpose of
+  // testing.
+  LocalFrameRoot().WasHidden();
+  root_frame->View()->ScheduleAnimation();
+  CompositeFrame();
+  EXPECT_EQ(root_frame->RemoteViewportIntersection(), IntRect(0, 0, 100, 100));
+  EXPECT_TRUE(root_frame->View()->CanThrottleRenderingForPropagation());
+  EXPECT_EQ(root_frame->GetOcclusionState(),
+            FrameOcclusionState::kPossiblyOccluded);
+  EXPECT_TRUE(frame_view->CanThrottleRendering());
+  EXPECT_TRUE(child_view->CanThrottleRendering());
+  EXPECT_FALSE(Compositor().NeedsBeginFrame());
+
+  // Simulate a trivial style change that doesn't trigger layout, compositing
+  // update, but schedules layout tree update.
+  frame_document->documentElement()->setAttribute(html_names::kStyleAttr,
+                                                  "color: blue");
+  // This is needed to reproduce crbug.com/1054644 before the fix.
+  frame_view->SetNeedsPaintPropertyUpdate();
+
+  // Show the frame without any other change.
+  LocalFrameRoot().WasShown();
+  LocalFrameRoot().FrameWidget()->SetRemoteViewportIntersection(intersection);
+  CompositeFrame();
+  EXPECT_EQ(root_frame->RemoteViewportIntersection(), IntRect(0, 0, 100, 100));
+  EXPECT_FALSE(root_frame->View()->CanThrottleRenderingForPropagation());
+  EXPECT_NE(root_frame->GetOcclusionState(),
+            FrameOcclusionState::kPossiblyOccluded);
+  EXPECT_FALSE(frame_view->CanThrottleRendering());
+  // The child frame's throtting status is not updated because the parent
+  // document has pending visual update.
+  EXPECT_TRUE(child_view->CanThrottleRendering());
+
+  CompositeFrame();
+  EXPECT_FALSE(frame_view->CanThrottleRendering());
+  // The child frame's throttling status should be updated now.
+  EXPECT_FALSE(child_view->CanThrottleRendering());
 }
 
 }  // namespace blink

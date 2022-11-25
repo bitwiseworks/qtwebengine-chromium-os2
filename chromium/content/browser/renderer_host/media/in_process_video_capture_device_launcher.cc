@@ -11,7 +11,6 @@
 #include "base/command_line.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
-#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "content/browser/renderer_host/media/in_process_launched_video_capture_device.h"
 #include "content/browser/renderer_host/media/video_capture_controller.h"
@@ -57,8 +56,7 @@ namespace {
 std::unique_ptr<media::VideoCaptureJpegDecoder> CreateGpuJpegDecoder(
     media::VideoCaptureJpegDecoder::DecodeDoneCB decode_done_cb,
     base::RepeatingCallback<void(const std::string&)> send_log_message_cb) {
-  auto io_task_runner =
-      base::CreateSingleThreadTaskRunner({content::BrowserThread::IO});
+  auto io_task_runner = content::GetIOThreadTaskRunner({});
   return std::make_unique<media::ScopedVideoCaptureJpegDecoder>(
       std::make_unique<media::VideoCaptureJpegDecoderImpl>(
           base::BindRepeating(
@@ -113,8 +111,7 @@ void InProcessVideoCaptureDeviceLauncher::LaunchDeviceAsync(
   // Wrap the receiver, to trampoline all its method calls from the device
   // to the IO thread.
   auto receiver = std::make_unique<media::VideoFrameReceiverOnTaskRunner>(
-      receiver_on_io_thread,
-      base::CreateSingleThreadTaskRunner({BrowserThread::IO}));
+      receiver_on_io_thread, GetIOThreadTaskRunner({}));
 
   base::OnceClosure start_capture_closure;
   // Use of Unretained |this| is safe, because |done_cb| guarantees that |this|
@@ -253,7 +250,6 @@ InProcessVideoCaptureDeviceLauncher::CreateDeviceClient(
 
   scoped_refptr<media::VideoCaptureBufferPool> buffer_pool =
       new media::VideoCaptureBufferPoolImpl(
-          std::make_unique<media::VideoCaptureBufferTrackerFactoryImpl>(),
           requested_buffer_type, buffer_pool_max_buffer_count);
 
 #if defined(OS_CHROMEOS)
@@ -423,7 +419,7 @@ void InProcessVideoCaptureDeviceLauncher::
   DCHECK(device_task_runner_->BelongsToCurrentThread());
   DCHECK_EQ(DesktopMediaID::kFakeId, desktop_id.id);
 
-  auto fake_device_factory =
+  fake_device_factory_ =
       std::make_unique<media::FakeVideoCaptureDeviceFactory>();
   const base::CommandLine* command_line =
       base::CommandLine::ForCurrentProcess();
@@ -435,17 +431,30 @@ void InProcessVideoCaptureDeviceLauncher::
             command_line->GetSwitchValueASCII(
                 switches::kUseFakeDeviceForMediaStream),
             &config);
-    fake_device_factory->SetToCustomDevicesConfig(config);
+    fake_device_factory_->SetToCustomDevicesConfig(config);
   }
-  media::VideoCaptureDeviceDescriptors device_descriptors;
-  fake_device_factory->GetDeviceDescriptors(&device_descriptors);
-  if (device_descriptors.empty()) {
+
+  // base::Unretained() is safe because |this| owns |fake_device_factory_|.
+  fake_device_factory_->GetDevicesInfo(base::BindOnce(
+      &InProcessVideoCaptureDeviceLauncher::OnFakeDevicesEnumerated,
+      base::Unretained(this), params, std::move(device_client),
+      std::move(result_callback)));
+}
+
+void InProcessVideoCaptureDeviceLauncher::OnFakeDevicesEnumerated(
+    const media::VideoCaptureParams& params,
+    std::unique_ptr<media::VideoCaptureDeviceClient> device_client,
+    ReceiveDeviceCallback result_callback,
+    std::vector<media::VideoCaptureDeviceInfo> devices_info) {
+  DCHECK(device_task_runner_->BelongsToCurrentThread());
+
+  if (devices_info.empty()) {
     LOG(ERROR) << "Cannot start with no fake device config";
     std::move(result_callback).Run(nullptr);
     return;
   }
   auto video_capture_device =
-      fake_device_factory->CreateDevice(device_descriptors.front());
+      fake_device_factory_->CreateDevice(devices_info.front().descriptor);
   video_capture_device->AllocateAndStart(params, std::move(device_client));
   std::move(result_callback).Run(std::move(video_capture_device));
 }

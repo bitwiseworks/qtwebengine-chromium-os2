@@ -25,7 +25,6 @@ enum ActionType : ubyte {
   allow,
   redirect,
   upgrade_scheme,
-  remove_headers,
   modify_headers,
   allow_all_requests,
   count
@@ -61,28 +60,22 @@ table UrlRuleMetadata {
 enum IndexType : ubyte {
   before_request_except_allow_all_requests = 0,
   allow_all_requests,
-  remove_cookie_header,
-  remove_referer_header,
-  remove_set_cookie_header,
   modify_headers,
   count
 }
-enum RemoveHeaderType : ubyte (bit_flags) {
-  cookie,
-  referer,
-  set_cookie
-}
 enum HeaderOperation : ubyte {
+  append,
+  set,
   remove
 }
 table ModifyHeaderInfo {
   operation: HeaderOperation;
   header: string;
+  value: string;
 }
 table RegexRule {
   url_rule: url_pattern_index.flat.UrlRule;
   action_type: ActionType;
-  remove_headers_mask: ubyte;
   regex_substitution: string;
 }
 table ExtensionIndexedRuleset {
@@ -156,7 +149,7 @@ TEST_F(IndexedRulesetFormatVersionTest, CheckVersionUpdated) {
   EXPECT_EQ(StripCommentsAndWhitespace(kFlatbufferSchemaExpected),
             StripCommentsAndWhitespace(flatbuffer_schema))
       << "Schema change detected; update this test and the schema version.";
-  EXPECT_EQ(16, GetIndexedRulesetFormatVersionForTesting())
+  EXPECT_EQ(18, GetIndexedRulesetFormatVersionForTesting())
       << "Update this test if you update the schema version.";
 }
 

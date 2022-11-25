@@ -6,8 +6,21 @@
  * @fileoverview A dialog for showing SSL certificate related error messages.
  * The user can only close the dialog, there is no other possible interaction.
  */
+import '../../cr_elements/cr_button/cr_button.m.js';
+import '../../cr_elements/cr_dialog/cr_dialog.m.js';
+import './certificate_shared_css.js';
+
+import {html, Polymer} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+
+import {I18nBehavior} from '../../js/i18n_behavior.m.js';
+import {loadTimeData} from '../../js/load_time_data.m.js';
+
+import {CertificatesError, CertificatesImportError} from './certificates_browser_proxy.js';
+
 Polymer({
   is: 'certificates-error-dialog',
+
+  _template: html`{__html_template__}`,
 
   behaviors: [I18nBehavior],
 

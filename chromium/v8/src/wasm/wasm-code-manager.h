@@ -6,14 +6,15 @@
 #define V8_WASM_WASM_CODE_MANAGER_H_
 
 #include <atomic>
-#include <list>
 #include <map>
 #include <memory>
+#include <set>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "src/base/address-region.h"
+#include "src/base/bit-field.h"
 #include "src/base/macros.h"
 #include "src/base/optional.h"
 #include "src/builtins/builtins-definitions.h"
@@ -48,12 +49,20 @@ struct WasmModule;
 #define WASM_RUNTIME_STUB_LIST(V, VTRAP) \
   FOREACH_WASM_TRAPREASON(VTRAP)         \
   V(WasmCompileLazy)                     \
+  V(WasmTriggerTierUp)                   \
   V(WasmDebugBreak)                      \
+  V(WasmInt32ToHeapNumber)               \
+  V(WasmTaggedNonSmiToInt32)             \
+  V(WasmFloat32ToNumber)                 \
+  V(WasmFloat64ToNumber)                 \
+  V(WasmTaggedToFloat64)                 \
+  V(WasmAllocateJSArray)                 \
   V(WasmAtomicNotify)                    \
   V(WasmI32AtomicWait32)                 \
   V(WasmI32AtomicWait64)                 \
   V(WasmI64AtomicWait32)                 \
   V(WasmI64AtomicWait64)                 \
+  V(WasmRefFunc)                         \
   V(WasmMemoryGrow)                      \
   V(WasmTableInit)                       \
   V(WasmTableCopy)                       \
@@ -63,8 +72,9 @@ struct WasmModule;
   V(WasmStackOverflow)                   \
   V(WasmThrow)                           \
   V(WasmRethrow)                         \
+  V(WasmTraceEnter)                      \
+  V(WasmTraceExit)                       \
   V(WasmTraceMemory)                     \
-  V(AllocateHeapNumber)                  \
   V(ArgumentsAdaptorTrampoline)          \
   V(BigIntToI32Pair)                     \
   V(BigIntToI64)                         \
@@ -83,10 +93,9 @@ class V8_EXPORT_PRIVATE DisjointAllocationPool final {
   explicit DisjointAllocationPool(base::AddressRegion region)
       : regions_({region}) {}
 
-  // Merge the parameter region into this object while preserving ordering of
-  // the regions. The assumption is that the passed parameter is not
-  // intersecting this object - for example, it was obtained from a previous
-  // Allocate. Returns the merged region.
+  // Merge the parameter region into this object. The assumption is that the
+  // passed parameter is not intersecting this object - for example, it was
+  // obtained from a previous Allocate. Returns the merged region.
   base::AddressRegion Merge(base::AddressRegion);
 
   // Allocate a contiguous region of size {size}. Return an empty pool on
@@ -98,10 +107,11 @@ class V8_EXPORT_PRIVATE DisjointAllocationPool final {
   base::AddressRegion AllocateInRegion(size_t size, base::AddressRegion);
 
   bool IsEmpty() const { return regions_.empty(); }
-  const std::list<base::AddressRegion>& regions() const { return regions_; }
+
+  const auto& regions() const { return regions_; }
 
  private:
-  std::list<base::AddressRegion> regions_;
+  std::set<base::AddressRegion, base::AddressRegion::StartAddressLess> regions_;
 };
 
 class V8_EXPORT_PRIVATE WasmCode final {
@@ -110,7 +120,6 @@ class V8_EXPORT_PRIVATE WasmCode final {
     kFunction,
     kWasmToCapiWrapper,
     kWasmToJsWrapper,
-    kInterpreterEntry,
     kJumpTable
   };
 
@@ -125,9 +134,11 @@ class V8_EXPORT_PRIVATE WasmCode final {
         kRuntimeStubCount
   };
 
-  Vector<byte> instructions() const { return instructions_; }
+  Vector<byte> instructions() const {
+    return VectorOf(instructions_, static_cast<size_t>(instructions_size_));
+  }
   Address instruction_start() const {
-    return reinterpret_cast<Address>(instructions_.begin());
+    return reinterpret_cast<Address>(instructions_);
   }
   Vector<const byte> reloc_info() const {
     return {protected_instructions_data().end(),
@@ -144,9 +155,9 @@ class V8_EXPORT_PRIVATE WasmCode final {
   }
   // Anonymous functions are functions that don't carry an index.
   bool IsAnonymous() const { return index_ == kAnonymousFuncIndex; }
-  Kind kind() const { return kind_; }
+  Kind kind() const { return KindField::decode(flags_); }
   NativeModule* native_module() const { return native_module_; }
-  ExecutionTier tier() const { return tier_; }
+  ExecutionTier tier() const { return ExecutionTierField::decode(flags_); }
   Address constant_pool() const;
   Address handler_table() const;
   int handler_table_size() const;
@@ -159,11 +170,15 @@ class V8_EXPORT_PRIVATE WasmCode final {
   int unpadded_binary_size() const { return unpadded_binary_size_; }
   int stack_slots() const { return stack_slots_; }
   int tagged_parameter_slots() const { return tagged_parameter_slots_; }
-  bool is_liftoff() const { return tier_ == ExecutionTier::kLiftoff; }
+  bool is_liftoff() const { return tier() == ExecutionTier::kLiftoff; }
   bool contains(Address pc) const {
-    return reinterpret_cast<Address>(instructions_.begin()) <= pc &&
-           pc < reinterpret_cast<Address>(instructions_.end());
+    return reinterpret_cast<Address>(instructions_) <= pc &&
+           pc < reinterpret_cast<Address>(instructions_ + instructions_size_);
   }
+
+  // Only Liftoff code that was generated for debugging can be inspected
+  // (otherwise debug side table positions would not match up).
+  bool is_inspectable() const { return is_liftoff() && for_debugging(); }
 
   Vector<const uint8_t> protected_instructions_data() const {
     return {meta_data_.get(),
@@ -219,6 +234,16 @@ class V8_EXPORT_PRIVATE WasmCode final {
   // belonging to different {NativeModule}s. Dead code will be deleted.
   static void DecrementRefCount(Vector<WasmCode* const>);
 
+  // Returns the last source position before {offset}.
+  int GetSourcePositionBefore(int offset);
+
+  // Returns whether this code was generated for debugging. If this returns
+  // {kForDebugging}, but {tier()} is not {kLiftoff}, then Liftoff compilation
+  // bailed out.
+  ForDebugging for_debugging() const {
+    return ForDebuggingField::decode(flags_);
+  }
+
   enum FlushICache : bool { kFlushICache = true, kNoFlushICache = false };
 
  private:
@@ -232,24 +257,25 @@ class V8_EXPORT_PRIVATE WasmCode final {
            Vector<const byte> protected_instructions_data,
            Vector<const byte> reloc_info,
            Vector<const byte> source_position_table, Kind kind,
-           ExecutionTier tier)
-      : instructions_(instructions),
-        native_module_(native_module),
+           ExecutionTier tier, ForDebugging for_debugging)
+      : native_module_(native_module),
+        instructions_(instructions.begin()),
+        flags_(KindField::encode(kind) | ExecutionTierField::encode(tier) |
+               ForDebuggingField::encode(for_debugging)),
         meta_data_(ConcatenateBytes(
             {protected_instructions_data, reloc_info, source_position_table})),
+        instructions_size_(instructions.length()),
         reloc_info_size_(reloc_info.length()),
         source_positions_size_(source_position_table.length()),
         protected_instructions_size_(protected_instructions_data.length()),
         index_(index),
-        kind_(kind),
         constant_pool_offset_(constant_pool_offset),
         stack_slots_(stack_slots),
         tagged_parameter_slots_(tagged_parameter_slots),
         safepoint_table_offset_(safepoint_table_offset),
         handler_table_offset_(handler_table_offset),
         code_comments_offset_(code_comments_offset),
-        unpadded_binary_size_(unpadded_binary_size),
-        tier_(tier) {
+        unpadded_binary_size_(unpadded_binary_size) {
     DCHECK_LE(safepoint_table_offset, unpadded_binary_size);
     DCHECK_LE(handler_table_offset, unpadded_binary_size);
     DCHECK_LE(code_comments_offset, unpadded_binary_size);
@@ -279,32 +305,37 @@ class V8_EXPORT_PRIVATE WasmCode final {
   // Returns whether this code becomes dead and needs to be freed.
   V8_NOINLINE bool DecRefOnPotentiallyDeadCode();
 
-  Vector<byte> instructions_;
-  NativeModule* native_module_ = nullptr;
+  NativeModule* const native_module_ = nullptr;
+  byte* const instructions_;
+  const uint8_t flags_;  // Bit field, see below.
   // {meta_data_} contains several byte vectors concatenated into one:
   //  - protected instructions data of size {protected_instructions_size_}
   //  - relocation info of size {reloc_info_size_}
   //  - source positions of size {source_positions_size_}
   // Note that the protected instructions come first to ensure alignment.
   std::unique_ptr<const byte[]> meta_data_;
+  const int instructions_size_;
   const int reloc_info_size_;
   const int source_positions_size_;
   const int protected_instructions_size_;
-  int index_;
-  Kind kind_;
-  int constant_pool_offset_ = 0;
-  int stack_slots_ = 0;
+  const int index_;
+  const int constant_pool_offset_;
+  const int stack_slots_;
   // Number of tagged parameters passed to this function via the stack. This
   // value is used by the stack walker (e.g. GC) to find references.
-  int tagged_parameter_slots_ = 0;
+  const int tagged_parameter_slots_;
   // We care about safepoint data for wasm-to-js functions, since there may be
   // stack/register tagged values for large number conversions.
-  int safepoint_table_offset_ = 0;
-  int handler_table_offset_ = 0;
-  int code_comments_offset_ = 0;
-  int unpadded_binary_size_ = 0;
+  const int safepoint_table_offset_;
+  const int handler_table_offset_;
+  const int code_comments_offset_;
+  const int unpadded_binary_size_;
   int trap_handler_index_ = -1;
-  ExecutionTier tier_;
+
+  // Bits encoded in {flags_}:
+  using KindField = base::BitField8<Kind, 0, 3>;
+  using ExecutionTierField = KindField::Next<ExecutionTier, 2>;
+  using ForDebuggingField = ExecutionTierField::Next<ForDebugging, 2>;
 
   // WasmCode is ref counted. Counters are held by:
   //   1) The jump table / code table.
@@ -325,7 +356,7 @@ class V8_EXPORT_PRIVATE WasmCode final {
 // often for rather small functions.
 // Increase the limit if needed, but first check if the size increase is
 // justified.
-STATIC_ASSERT(sizeof(WasmCode) <= 96);
+STATIC_ASSERT(sizeof(WasmCode) <= 88);
 
 WasmCode::Kind GetCodeKind(const WasmCompilationResult& result);
 
@@ -335,6 +366,17 @@ const char* GetWasmCodeKindAsString(WasmCode::Kind);
 // Manages the code reservations and allocations of a single {NativeModule}.
 class WasmCodeAllocator {
  public:
+#if V8_TARGET_ARCH_ARM64
+  // ARM64 only supports direct calls within a 128 MB range.
+  static constexpr size_t kMaxCodeSpaceSize = 128 * MB;
+#else
+  // Use 1024 MB limit for code spaces on other platforms. This is smaller than
+  // the total allowed code space (kMaxWasmCodeMemory) to avoid unnecessarily
+  // big reservations, and to ensure that distances within a code space fit
+  // within a 32-bit signed integer.
+  static constexpr size_t kMaxCodeSpaceSize = 1024 * MB;
+#endif
+
   // {OptionalLock} is passed between {WasmCodeAllocator} and {NativeModule} to
   // indicate that the lock on the {WasmCodeAllocator} is already taken. It's
   // optional to allow to also call methods without holding the lock.
@@ -391,6 +433,11 @@ class WasmCodeAllocator {
   size_t GetNumCodeSpaces() const;
 
  private:
+  // Sentinel value to be used for {AllocateForCodeInRegion} for specifying no
+  // restriction on the region to allocate in.
+  static constexpr base::AddressRegion kUnrestrictedRegion{
+      kNullAddress, std::numeric_limits<size_t>::max()};
+
   // The engine-wide wasm code manager.
   WasmCodeManager* const code_manager_;
 
@@ -436,14 +483,14 @@ class V8_EXPORT_PRIVATE NativeModule final {
                                     int stack_slots, int tagged_parameter_slots,
                                     Vector<const byte> protected_instructions,
                                     Vector<const byte> source_position_table,
-                                    WasmCode::Kind kind, ExecutionTier tier);
+                                    WasmCode::Kind kind, ExecutionTier tier,
+                                    ForDebugging for_debugging);
 
   // {PublishCode} makes the code available to the system by entering it into
   // the code table and patching the jump table. It returns a raw pointer to the
-  // given {WasmCode} object.
+  // given {WasmCode} object. Ownership is transferred to the {NativeModule}.
   WasmCode* PublishCode(std::unique_ptr<WasmCode>);
-  // Hold the {allocation_mutex_} when calling {PublishCodeLocked}.
-  WasmCode* PublishCodeLocked(std::unique_ptr<WasmCode>);
+  std::vector<WasmCode*> PublishCode(Vector<std::unique_ptr<WasmCode>>);
 
   WasmCode* AddDeserializedCode(
       int index, Vector<const byte> instructions, int stack_slots,
@@ -537,14 +584,26 @@ class V8_EXPORT_PRIVATE NativeModule final {
   UseTrapHandler use_trap_handler() const { return use_trap_handler_; }
   void set_lazy_compile_frozen(bool frozen) { lazy_compile_frozen_ = frozen; }
   bool lazy_compile_frozen() const { return lazy_compile_frozen_; }
-  Vector<const uint8_t> wire_bytes() const { return wire_bytes_->as_vector(); }
+  Vector<const uint8_t> wire_bytes() const {
+    return std::atomic_load(&wire_bytes_)->as_vector();
+  }
   const WasmModule* module() const { return module_.get(); }
   std::shared_ptr<const WasmModule> shared_module() const { return module_; }
   size_t committed_code_space() const {
     return code_allocator_.committed_code_space();
   }
+  size_t generated_code_size() const {
+    return code_allocator_.generated_code_size();
+  }
+  size_t liftoff_bailout_count() const { return liftoff_bailout_count_.load(); }
+  size_t liftoff_code_size() const { return liftoff_code_size_.load(); }
+  size_t turbofan_code_size() const { return turbofan_code_size_.load(); }
   WasmEngine* engine() const { return engine_; }
 
+  bool HasWireBytes() const {
+    auto wire_bytes = std::atomic_load(&wire_bytes_);
+    return wire_bytes && !wire_bytes->empty();
+  }
   void SetWireBytes(OwnedVector<const uint8_t> wire_bytes);
 
   WasmCode* Lookup(Address) const;
@@ -561,27 +620,33 @@ class V8_EXPORT_PRIVATE NativeModule final {
   // must be a far jump table slot). Returns {kRuntimeStubCount} on failure.
   WasmCode::RuntimeStubId GetRuntimeStubId(Address runtime_stub_target) const;
 
-  const char* GetRuntimeStubName(Address runtime_stub_target) const;
-
   // Sample the current code size of this modules to the given counters.
   enum CodeSamplingTime : int8_t { kAfterBaseline, kAfterTopTier, kSampling };
   void SampleCodeSize(Counters*, CodeSamplingTime) const;
 
-  WasmCode* AddCompiledCode(WasmCompilationResult);
-  std::vector<WasmCode*> AddCompiledCode(Vector<WasmCompilationResult>);
+  V8_WARN_UNUSED_RESULT std::unique_ptr<WasmCode> AddCompiledCode(
+      WasmCompilationResult);
+  V8_WARN_UNUSED_RESULT std::vector<std::unique_ptr<WasmCode>> AddCompiledCode(
+      Vector<WasmCompilationResult>);
 
-  // Allows to check whether a function has been redirected to the interpreter
-  // by publishing an entry stub with the {Kind::kInterpreterEntry} code kind.
-  bool IsRedirectedToInterpreter(uint32_t func_index);
+  // Set a new tiering state, but don't trigger any recompilation yet; use
+  // {RecompileForTiering} for that. The two steps are split because In some
+  // scenarios we need to drop locks before triggering recompilation.
+  void SetTieringState(TieringState);
 
-  // Set {tier_down_} flag. Return previous state.
-  bool SetTieredDown();
+  // Check whether this modules is tiered down for debugging.
   bool IsTieredDown();
 
-  // Sets the flag, triggers recompilation of all methods to tier down or up,
-  // waits for that to complete.
-  void TierDown(Isolate* isolate);
-  void TierUp(Isolate* isolate);
+  // Fully recompile this module in the tier set previously via
+  // {SetTieringState}. The calling thread contributes to compilation and only
+  // returns once recompilation is done.
+  void RecompileForTiering();
+
+  // Find all functions that need to be recompiled for a new tier. Note that
+  // compilation jobs might run concurrently, so this method only considers the
+  // compilation state of this native module at the time of the call.
+  // Returns a vector of function indexes to recompile.
+  std::vector<int> FindFunctionsToRecompile(TieringState);
 
   // Free a set of functions of this module. Uncommits whole pages if possible.
   // The given vector must be ordered by the instruction start address, and all
@@ -593,8 +658,15 @@ class V8_EXPORT_PRIVATE NativeModule final {
   // Retrieve the number of separately reserved code spaces for this module.
   size_t GetNumberOfCodeSpacesForTesting() const;
 
+  // Check whether there is DebugInfo for this NativeModule.
+  bool HasDebugInfo() const;
+
   // Get or create the debug info for this NativeModule.
   DebugInfo* GetDebugInfo();
+
+  uint32_t* num_liftoff_function_calls_array() {
+    return num_liftoff_function_calls_.get();
+  }
 
  private:
   friend class WasmCode;
@@ -620,12 +692,14 @@ class V8_EXPORT_PRIVATE NativeModule final {
       int tagged_parameter_slots,
       Vector<const byte> protected_instructions_data,
       Vector<const byte> source_position_table, WasmCode::Kind kind,
-      ExecutionTier tier, Vector<uint8_t> code_space,
-      const JumpTablesRef& jump_tables_ref);
+      ExecutionTier tier, ForDebugging for_debugging,
+      Vector<uint8_t> code_space, const JumpTablesRef& jump_tables_ref);
 
   WasmCode* CreateEmptyJumpTableInRegion(
       int jump_table_size, base::AddressRegion,
       const WasmCodeAllocator::OptionalLock&);
+
+  void UpdateCodeSize(size_t, ExecutionTier, ForDebugging);
 
   // Hold the {allocation_mutex_} when calling one of these methods.
   // {slot_index} is the index in the declared functions, i.e. function index
@@ -638,29 +712,8 @@ class V8_EXPORT_PRIVATE NativeModule final {
   void AddCodeSpace(base::AddressRegion,
                     const WasmCodeAllocator::OptionalLock&);
 
-  // Hold the {allocation_mutex_} when calling this method.
-  bool has_interpreter_redirection(uint32_t func_index) {
-    DCHECK_LT(func_index, num_functions());
-    DCHECK_LE(module_->num_imported_functions, func_index);
-    if (!interpreter_redirections_) return false;
-    uint32_t bitset_idx = declared_function_index(module(), func_index);
-    uint8_t byte = interpreter_redirections_[bitset_idx / kBitsPerByte];
-    return byte & (1 << (bitset_idx % kBitsPerByte));
-  }
-
-  // Hold the {allocation_mutex_} when calling this method.
-  void SetInterpreterRedirection(uint32_t func_index) {
-    DCHECK_LT(func_index, num_functions());
-    DCHECK_LE(module_->num_imported_functions, func_index);
-    if (!interpreter_redirections_) {
-      interpreter_redirections_.reset(
-          new uint8_t[RoundUp<kBitsPerByte>(module_->num_declared_functions) /
-                      kBitsPerByte]{});
-    }
-    uint32_t bitset_idx = declared_function_index(module(), func_index);
-    uint8_t& byte = interpreter_redirections_[bitset_idx / kBitsPerByte];
-    byte |= 1 << (bitset_idx % kBitsPerByte);
-  }
+  // Hold the {allocation_mutex_} when calling {PublishCodeLocked}.
+  WasmCode* PublishCodeLocked(std::unique_ptr<WasmCode>);
 
   // {WasmCodeAllocator} manages all code reservations and allocations for this
   // {NativeModule}.
@@ -701,6 +754,9 @@ class V8_EXPORT_PRIVATE NativeModule final {
   // A cache of the import wrappers, keyed on the kind and signature.
   std::unique_ptr<WasmImportWrapperCache> import_wrapper_cache_;
 
+  // Array to handle number of function calls.
+  std::unique_ptr<uint32_t[]> num_liftoff_function_calls_;
+
   // This mutex protects concurrent calls to {AddCode} and friends.
   mutable base::Mutex allocation_mutex_;
 
@@ -717,10 +773,6 @@ class V8_EXPORT_PRIVATE NativeModule final {
   // imported functions.
   std::unique_ptr<WasmCode*[]> code_table_;
 
-  // Null if no redirections exist, otherwise a bitset over all functions in
-  // this module marking those functions that have been redirected.
-  std::unique_ptr<uint8_t[]> interpreter_redirections_;
-
   // Data (especially jump table) per code space.
   std::vector<CodeSpaceData> code_space_data_;
 
@@ -730,7 +782,8 @@ class V8_EXPORT_PRIVATE NativeModule final {
   // mutex.
   std::unique_ptr<DebugInfo> debug_info_;
 
-  bool tier_down_ = false;
+  TieringState tiering_state_ = kTieredUp;
+
   // End of fields protected by {allocation_mutex_}.
   //////////////////////////////////////////////////////////////////////////////
 
@@ -738,6 +791,9 @@ class V8_EXPORT_PRIVATE NativeModule final {
   int modification_scope_depth_ = 0;
   UseTrapHandler use_trap_handler_ = kNoTrapHandler;
   bool lazy_compile_frozen_ = false;
+  std::atomic<size_t> liftoff_bailout_count_{0};
+  std::atomic<size_t> liftoff_code_size_{0};
+  std::atomic<size_t> turbofan_code_size_{0};
 
   DISALLOW_COPY_AND_ASSIGN(NativeModule);
 };
@@ -790,7 +846,7 @@ class V8_EXPORT_PRIVATE WasmCodeManager final {
 
   V8_WARN_UNUSED_RESULT VirtualMemory TryAllocate(size_t size,
                                                   void* hint = nullptr);
-  bool Commit(base::AddressRegion);
+  void Commit(base::AddressRegion);
   void Decommit(base::AddressRegion);
 
   void FreeNativeModule(Vector<VirtualMemory> owned_code,
@@ -880,6 +936,8 @@ class GlobalWasmCodeRef {
   const std::shared_ptr<NativeModule> native_module_;
   DISALLOW_COPY_AND_ASSIGN(GlobalWasmCodeRef);
 };
+
+const char* GetRuntimeStubName(WasmCode::RuntimeStubId);
 
 }  // namespace wasm
 }  // namespace internal

@@ -31,10 +31,10 @@ namespace internal {
 // outgoing queue. Additionally, |BeforeWrite()| should be called immediately
 // before writing each message to the corresponding message pipe.
 //
-// Also note that messages posted to a different sequence with
-// |base::PostTask()| and the like, need to be treated as locally queued. Task
-// queues can grow arbitrarily long, and it's ideal to perform unread quota
-// checks before posting.
+// Also note that messages posted to a different sequence with base::ThreadPool
+// and the like, need to be treated as locally queued. Task queues can grow
+// arbitrarily long, and it's ideal to perform unread quota checks before
+// posting.
 //
 // Either |BeforeMessagesEnqueued()| or |BeforeWrite()| may cause the quota
 // to be exceeded, thus invoking the |maybe_crash_function| set in this
@@ -56,7 +56,7 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) MessageQuotaChecker
 
     // The length of a sampling interval in seconds.
     static constexpr base::TimeDelta kSamplingInterval =
-        base::TimeDelta::FromSeconds(5);
+        base::TimeDelta::FromMicroseconds(5 * 1000 * 1000);
 
     // Returns the start of the sampling interval after the interval that
     // |when| falls into.

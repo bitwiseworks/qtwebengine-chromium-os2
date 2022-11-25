@@ -26,6 +26,9 @@
 #include "third_party/blink/renderer/core/editing/commands/composite_edit_command.h"
 
 #include <algorithm>
+
+#include "third_party/blink/renderer/core/accessibility/blink_ax_event_intent.h"
+#include "third_party/blink/renderer/core/accessibility/scoped_blink_ax_event_intent.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/document_fragment.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
@@ -152,6 +155,11 @@ bool CompositeEditCommand::Apply() {
   // executing command same directional will be there.
   SetSelectionIsDirectional(frame->Selection().IsDirectional());
   GetUndoStep()->SetSelectionIsDirectional(SelectionIsDirectional());
+
+  // Provides details to accessibility about any text change caused by applying
+  // this command, throughout the current call stack.
+  ScopedBlinkAXEventIntent scoped_blink_ax_event_intent(
+      BlinkAXEventIntent::FromEditCommand(*this), &GetDocument());
 
   EditingState editing_state;
   EventQueueScope event_queue_scope;
@@ -835,6 +843,25 @@ void CompositeEditCommand::DeleteInsignificantText(Text* text_node,
   if (!text_layout_object)
     return;
 
+  if (!text_layout_object->HasInlineFragments()) {
+    // whole text node is empty
+    // Removing a Text node won't dispatch synchronous events.
+    RemoveNode(text_node, ASSERT_NO_EDITING_ABORT);
+    return;
+  }
+  unsigned length = text_node->length();
+  if (start >= length || end > length)
+    return;
+
+  if (text_layout_object->IsInLayoutNGInlineFormattingContext()) {
+    const String string = PlainText(
+        EphemeralRange(Position(*text_node, start), Position(*text_node, end)));
+    if (string.IsEmpty())
+      return DeleteTextFromNode(text_node, start, end - start);
+    // Replace the text between start and end with collapsed version.
+    return ReplaceTextInNode(text_node, start, end - start, string);
+  }
+
   Vector<InlineTextBox*> sorted_text_boxes;
   wtf_size_t sorted_text_boxes_position = 0;
 
@@ -849,17 +876,6 @@ void CompositeEditCommand::DeleteInsignificantText(Text* text_node,
   InlineTextBox* box = sorted_text_boxes.IsEmpty()
                            ? 0
                            : sorted_text_boxes[sorted_text_boxes_position];
-
-  if (!box) {
-    // whole text node is empty
-    // Removing a Text node won't dispatch synchronous events.
-    RemoveNode(text_node, ASSERT_NO_EDITING_ABORT);
-    return;
-  }
-
-  unsigned length = text_node->length();
-  if (start >= length || end > length)
-    return;
 
   unsigned removed = 0;
   InlineTextBox* prev_box = nullptr;
@@ -981,6 +997,14 @@ HTMLBRElement* CompositeEditCommand::InsertBlockPlaceholder(
   return placeholder;
 }
 
+static bool IsEmptyListItem(const LayoutBlockFlow& block_flow) {
+  if (block_flow.IsLayoutNGListItem())
+    return !block_flow.FirstChild();
+  if (block_flow.IsListItem())
+    return ToLayoutListItem(block_flow).IsEmpty();
+  return false;
+}
+
 HTMLBRElement* CompositeEditCommand::AddBlockPlaceholderIfNeeded(
     Element* container,
     EditingState* editing_state) {
@@ -995,8 +1019,7 @@ HTMLBRElement* CompositeEditCommand::AddBlockPlaceholderIfNeeded(
 
   // append the placeholder to make sure it follows
   // any unrendered blocks
-  if (block->Size().Height() == 0 ||
-      (block->IsListItem() && ToLayoutListItem(block)->IsEmpty()))
+  if (block->Size().Height() == 0 || IsEmptyListItem(*block))
     return AppendBlockPlaceholder(container, editing_state);
 
   return nullptr;
@@ -1492,19 +1515,18 @@ void CompositeEditCommand::MoveParagraphs(
   // FIXME: This is an inefficient way to preserve style on nodes in the
   // paragraph to move. It shouldn't matter though, since moved paragraphs will
   // usually be quite small.
-  DocumentFragment* fragment =
-      start_of_paragraph_to_move.DeepEquivalent() !=
-              end_of_paragraph_to_move.DeepEquivalent()
-          ? CreateFragmentFromMarkup(
-                GetDocument(),
-                CreateMarkup(start.ParentAnchoredEquivalent(),
-                             end.ParentAnchoredEquivalent(),
-                             CreateMarkupOptions::Builder()
-                                 .SetShouldConvertBlocksToInlines(true)
-                                 .SetConstrainingAncestor(constraining_ancestor)
-                                 .Build()),
-                "", kDisallowScriptingAndPluginContent)
-          : nullptr;
+  DocumentFragment* fragment = nullptr;
+  if (start_of_paragraph_to_move.DeepEquivalent() !=
+      end_of_paragraph_to_move.DeepEquivalent()) {
+    const String paragraphs_markup = CreateMarkup(
+        start.ParentAnchoredEquivalent(), end.ParentAnchoredEquivalent(),
+        CreateMarkupOptions::Builder()
+            .SetShouldConvertBlocksToInlines(true)
+            .SetConstrainingAncestor(constraining_ancestor)
+            .Build());
+    fragment = CreateSanitizedFragmentFromMarkupWithContext(
+        GetDocument(), paragraphs_markup, 0, paragraphs_markup.length(), "");
+  }
 
   // A non-empty paragraph's style is moved when we copy and move it.  We don't
   // move anything if we're given an empty paragraph, but an empty paragraph can
@@ -1519,7 +1541,7 @@ void CompositeEditCommand::MoveParagraphs(
     style_in_empty_paragraph->MergeTypingStyle(&GetDocument());
     // The moved paragraph should assume the block style of the destination.
     style_in_empty_paragraph->RemoveBlockProperties(
-        GetDocument().ToExecutionContext());
+        GetDocument().GetExecutionContext());
   }
 
   // FIXME (5098931): We should add a new insert action
@@ -2028,7 +2050,7 @@ bool CompositeEditCommand::IsNodeVisiblyContainedWithin(
   return start_is_visually_same && end_is_visually_same;
 }
 
-void CompositeEditCommand::Trace(Visitor* visitor) {
+void CompositeEditCommand::Trace(Visitor* visitor) const {
   visitor->Trace(commands_);
   visitor->Trace(starting_selection_);
   visitor->Trace(ending_selection_);

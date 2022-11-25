@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/notreached.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/win/events_win_utils.h"
 
@@ -51,6 +52,12 @@ gfx::Vector2d GetMouseWheelOffset(const MSG& native_event) {
   return GetMouseWheelOffsetFromMSG(native_event);
 }
 
+gfx::Vector2d GetMouseWheelTick120ths(const MSG& native_event) {
+  // On Windows, the wheel offset is already in 120ths of a tick
+  // (https://docs.microsoft.com/en-us/windows/win32/inputdev/wm-mousewheel).
+  return GetMouseWheelOffsetFromMSG(native_event);
+}
+
 MSG CopyNativeEvent(const MSG& event) {
   return CopyMSGEvent(event);
 }
@@ -59,7 +66,7 @@ void ReleaseCopiedNativeEvent(const MSG& event) {}
 
 PointerDetails GetTouchPointerDetailsFromNative(const MSG& native_event) {
   NOTIMPLEMENTED();
-  return PointerDetails(EventPointerType::POINTER_TYPE_TOUCH,
+  return PointerDetails(EventPointerType::kTouch,
                         /* pointer_id*/ 0,
                         /* radius_x */ 1.0,
                         /* radius_y */ 1.0,

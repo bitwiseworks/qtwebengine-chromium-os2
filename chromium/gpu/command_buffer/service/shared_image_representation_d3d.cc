@@ -79,13 +79,12 @@ WGPUTexture SharedImageRepresentationDawnD3D::BeginAccess(
     return nullptr;
   }
 
-  WGPUTextureDescriptor texture_descriptor;
+  WGPUTextureDescriptor texture_descriptor = {};
   texture_descriptor.nextInChain = nullptr;
   texture_descriptor.format = wgpu_format;
   texture_descriptor.usage = usage;
   texture_descriptor.dimension = WGPUTextureDimension_2D;
   texture_descriptor.size = {size().width(), size().height(), 1};
-  texture_descriptor.arrayLayerCount = 1;
   texture_descriptor.mipLevelCount = 1;
   texture_descriptor.sampleCount = 1;
 
@@ -132,5 +131,28 @@ void SharedImageRepresentationDawnD3D::EndAccess() {
   d3d_image_backing->EndAccessD3D12();
 }
 #endif  // BUILDFLAG(USE_DAWN)
+
+SharedImageRepresentationOverlayD3D::SharedImageRepresentationOverlayD3D(
+    SharedImageManager* manager,
+    SharedImageBacking* backing,
+    MemoryTypeTracker* tracker)
+    : SharedImageRepresentationOverlay(manager, backing, tracker) {}
+
+bool SharedImageRepresentationOverlayD3D::BeginReadAccess() {
+  // Note: only the DX11 video decoder uses this overlay and does not need to
+  // synchronize read access from different devices.
+  return true;
+}
+
+void SharedImageRepresentationOverlayD3D::EndReadAccess() {}
+
+gl::GLImage* SharedImageRepresentationOverlayD3D::GetGLImage() {
+  return static_cast<SharedImageBackingD3D*>(backing())->GetGLImage();
+}
+
+std::unique_ptr<gfx::GpuFence>
+SharedImageRepresentationOverlayD3D::GetReadFence() {
+  return nullptr;
+}
 
 }  // namespace gpu

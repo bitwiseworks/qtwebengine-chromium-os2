@@ -27,6 +27,7 @@
 #include "libANGLE/formatutils.h"
 #include "libANGLE/renderer/d3d/CompilerD3D.h"
 #include "libANGLE/renderer/d3d/DeviceD3D.h"
+#include "libANGLE/renderer/d3d/DisplayD3D.h"
 #include "libANGLE/renderer/d3d/FramebufferD3D.h"
 #include "libANGLE/renderer/d3d/IndexDataManager.h"
 #include "libANGLE/renderer/d3d/ProgramD3D.h"
@@ -591,8 +592,9 @@ void Renderer9::generateDisplayExtensions(egl::DisplayExtensions *outExtensions)
 
     outExtensions->flexibleSurfaceCompatibility = true;
 
-    // Contexts are virtualized so textures can be shared globally
-    outExtensions->displayTextureShareGroup = true;
+    // Contexts are virtualized so textures and semaphores can be shared globally
+    outExtensions->displayTextureShareGroup   = true;
+    outExtensions->displaySemaphoreShareGroup = true;
 
     // D3D9 can be used without an output surface
     outExtensions->surfacelessContext = true;
@@ -949,6 +951,7 @@ bool Renderer9::supportsFastCopyBufferToTexture(GLenum internalFormat) const
 
 angle::Result Renderer9::fastCopyBufferToTexture(const gl::Context *context,
                                                  const gl::PixelUnpackState &unpack,
+                                                 gl::Buffer *unpackBuffer,
                                                  unsigned int offset,
                                                  RenderTargetD3D *destRenderTarget,
                                                  GLenum destinationFormat,
@@ -1948,10 +1951,12 @@ void Renderer9::clear(const ClearParameters &clearParams,
                                            ? 0.0f
                                            : clearParams.colorF.blue));
 
-        if ((formatInfo.redBits > 0 && !clearParams.colorMaskRed[0]) ||
-            (formatInfo.greenBits > 0 && !clearParams.colorMaskGreen[0]) ||
-            (formatInfo.blueBits > 0 && !clearParams.colorMaskBlue[0]) ||
-            (formatInfo.alphaBits > 0 && !clearParams.colorMaskAlpha[0]))
+        const uint8_t colorMask =
+            gl::BlendStateExt::ColorMaskStorage::GetValueIndexed(0, clearParams.colorMask);
+        bool r, g, b, a;
+        gl::BlendStateExt::UnpackColorMask(colorMask, &r, &g, &b, &a);
+        if ((formatInfo.redBits > 0 && !r) || (formatInfo.greenBits > 0 && !g) ||
+            (formatInfo.blueBits > 0 && !b) || (formatInfo.alphaBits > 0 && !a))
         {
             needMaskedColorClear = true;
         }
@@ -2018,11 +2023,11 @@ void Renderer9::clear(const ClearParameters &clearParams,
 
         if (clearColor)
         {
-            mDevice->SetRenderState(D3DRS_COLORWRITEENABLE,
-                                    gl_d3d9::ConvertColorMask(clearParams.colorMaskRed[0],
-                                                              clearParams.colorMaskGreen[0],
-                                                              clearParams.colorMaskBlue[0],
-                                                              clearParams.colorMaskAlpha[0]));
+            // clearParams.colorMask follows the same packing scheme as
+            // D3DCOLORWRITEENABLE_RED/GREEN/BLUE/ALPHA
+            mDevice->SetRenderState(
+                D3DRS_COLORWRITEENABLE,
+                gl::BlendStateExt::ColorMaskStorage::GetValueIndexed(0, clearParams.colorMask));
         }
         else
         {
@@ -2973,6 +2978,7 @@ angle::Result Renderer9::getVertexSpaceRequired(const gl::Context *context,
                                                 const gl::VertexBinding &binding,
                                                 size_t count,
                                                 GLsizei instances,
+                                                GLuint baseInstance,
                                                 unsigned int *bytesRequiredOut) const
 {
     if (!attrib.enabled)
@@ -3257,5 +3263,10 @@ angle::Result Renderer9::ensureVertexDataManagerInitialized(const gl::Context *c
     }
 
     return angle::Result::Continue;
+}
+
+RendererD3D *CreateRenderer9(egl::Display *display)
+{
+    return new Renderer9(display);
 }
 }  // namespace rx

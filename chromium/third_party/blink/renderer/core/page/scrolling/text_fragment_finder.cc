@@ -7,13 +7,16 @@
 #include <memory>
 
 #include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/renderer/core/display_lock/display_lock_document_state.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/range.h"
+#include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/editing/ephemeral_range.h"
 #include "third_party/blink/renderer/core/editing/finder/find_buffer.h"
 #include "third_party/blink/renderer/core/editing/finder/find_options.h"
 #include "third_party/blink/renderer/core/editing/iterators/character_iterator.h"
 #include "third_party/blink/renderer/core/editing/position.h"
+#include "third_party/blink/renderer/core/html/list_item_ordinal.h"
 #include "third_party/blink/renderer/core/page/scrolling/text_fragment_selector.h"
 #include "third_party/blink/renderer/platform/text/text_boundaries.h"
 
@@ -170,34 +173,75 @@ EphemeralRangeInFlatTree FindMatchInRangeWithContext(
   return EphemeralRangeInFlatTree();
 }
 
+bool ContainedByListItem(const EphemeralRangeInFlatTree& range) {
+  Node* node = range.CommonAncestorContainer();
+  while (node) {
+    if (ListItemOrdinal::IsListItem(*node)) {
+      return true;
+    }
+    node = node->parentNode();
+  }
+  return false;
+}
+
+bool ContainedByTableCell(const EphemeralRangeInFlatTree& range) {
+  Node* node = range.CommonAncestorContainer();
+  while (node) {
+    if (IsTableCell(node)) {
+      return true;
+    }
+    node = node->parentNode();
+  }
+  return false;
+}
+
 }  // namespace
 
 TextFragmentFinder::TextFragmentFinder(Client& client,
                                        const TextFragmentSelector& selector)
     : client_(client), selector_(selector) {
   DCHECK(!selector_.Start().IsEmpty());
+  DCHECK(selector_.Type() != TextFragmentSelector::SelectorType::kInvalid);
 }
 
 void TextFragmentFinder::FindMatch(Document& document) {
   PositionInFlatTree search_start =
       PositionInFlatTree::FirstPositionInNode(document);
 
-  auto forced_lock_scope = document.GetScopedForceActivatableLocks();
+  auto forced_lock_scope =
+      document.GetDisplayLockDocumentState().GetScopedForceActivatableLocks();
   document.UpdateStyleAndLayout(DocumentUpdateReason::kFindInPage);
 
   EphemeralRangeInFlatTree match =
       FindMatchFromPosition(document, search_start);
 
   if (match.IsNotNull()) {
-    client_.DidFindMatch(match);
+    TextFragmentAnchorMetrics::Match match_metrics(selector_);
+
+    if (selector_.Type() == TextFragmentSelector::SelectorType::kExact) {
+      // If it's an exact match, we don't need to do the PlainText conversion,
+      // we can just use the text from the selector.
+      DCHECK_EQ(selector_.Start().length(), PlainText(match).length());
+      match_metrics.text = selector_.Start();
+
+      if (ContainedByListItem(match)) {
+        match_metrics.is_list_item = true;
+      }
+      if (ContainedByTableCell(match)) {
+        match_metrics.is_table_cell = true;
+      }
+    } else if (selector_.Type() == TextFragmentSelector::SelectorType::kRange) {
+      match_metrics.text = PlainText(match);
+    }
 
     // Continue searching to see if we have an ambiguous selector.
     // TODO(crbug.com/919204): This is temporary and only for measuring
     // ambiguous matching during prototyping.
     EphemeralRangeInFlatTree ambiguous_match =
         FindMatchFromPosition(document, match.EndPosition());
-    if (ambiguous_match.IsNotNull())
-      client_.DidFindAmbiguousMatch();
+    client_.DidFindMatch(match, match_metrics, ambiguous_match.IsNull());
+  } else {
+    client_.NoMatchFound();
   }
 }
 

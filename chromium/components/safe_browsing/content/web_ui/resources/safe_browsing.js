@@ -132,22 +132,13 @@ cr.define('safe_browsing', function() {
       addReportingEvent(reportingEvent);
     });
 
-    cr.sendWithPromise('getDeepScanRequests', []).then((requests) => {
+    cr.sendWithPromise('getDeepScans', []).then((requests) => {
       requests.forEach(function(request) {
-        addDeepScanRequest(request);
+        addDeepScan(request);
       });
     });
     cr.addWebUIListener('deep-scan-request-update', function(result) {
-      addDeepScanRequest(result);
-    });
-
-    cr.sendWithPromise('getDeepScanResponses', []).then((responses) => {
-      responses.forEach(function(response) {
-        addDeepScanResponse(response);
-      });
-    });
-    cr.addWebUIListener('deep-scan-response-update', function(result) {
-      addDeepScanResponse(result);
+      addDeepScan(result);
     });
 
     $('get-referrer-chain-form').addEventListener('submit', addReferrerChain);
@@ -170,62 +161,79 @@ cr.define('safe_browsing', function() {
 
   function addExperiments(result) {
     const resLength = result.length;
-    let experimentsListFormatted = '';
 
     for (let i = 0; i < resLength; i += 2) {
-      experimentsListFormatted += "<div><b>" + result[i + 1] +
-          "</b>: " + result[i] + "</div>";
+      const experimentsListFormatted =
+          $('result-template').content.cloneNode(true);
+      experimentsListFormatted.querySelectorAll('span')[0].textContent =
+          result[i + 1] + ': ';
+      experimentsListFormatted.querySelectorAll('span')[1].textContent =
+          result[i];
+      $('experiments-list').appendChild(experimentsListFormatted);
     }
-    $('experiments-list').innerHTML = experimentsListFormatted;
   }
 
   function addPrefs(result) {
     const resLength = result.length;
-    let preferencesListFormatted = "";
 
     for (let i = 0; i < resLength; i += 2) {
-      preferencesListFormatted += "<div><b>" + result[i + 1] + "</b>: " +
-          result[i] + "</div>";
+      const preferencesListFormatted =
+          $('result-template').content.cloneNode(true);
+      preferencesListFormatted.querySelectorAll('span')[0].textContent =
+          result[i + 1] + ': ';
+      preferencesListFormatted.querySelectorAll('span')[1].textContent =
+          result[i];
+      $('preferences-list').appendChild(preferencesListFormatted);
     }
-    $('preferences-list').innerHTML = preferencesListFormatted;
   }
 
   function addCookie(result) {
-    const cookieFormatted = '<b>Value:</b> ' + result[0] + '\n' +
-        '<b>Created:</b> ' + (new Date(result[1])).toLocaleString();
-    $('cookie-panel').innerHTML = cookieFormatted;
+    const cookieFormatted = $('cookie-template').content.cloneNode(true);
+    cookieFormatted.querySelectorAll('.result')[0].textContent = result[0];
+    cookieFormatted.querySelectorAll('.result')[1].textContent =
+        (new Date(result[1])).toLocaleString();
+    $('cookie-panel').appendChild(cookieFormatted);
   }
 
   function addSavedPasswords(result) {
     const resLength = result.length;
-    let savedPasswordFormatted = "";
 
     for (let i = 0; i < resLength; i += 2) {
-      savedPasswordFormatted += "<div>" + result[i];
-      if (result[i+1]) {
-        savedPasswordFormatted += " (GAIA password)";
-      } else {
-        savedPasswordFormatted += " (Enterprise password)";
-      }
-      savedPasswordFormatted += "</div>";
+      const savedPasswordFormatted = document.createElement('div');
+      const suffix = result[i + 1] ? 'GAIA password' : 'Enterprise password';
+      savedPasswordFormatted.textContent = `${result[i]} (${suffix})`;
+      $('saved-passwords').appendChild(savedPasswordFormatted);
     }
-
-    $('saved-passwords').innerHTML = savedPasswordFormatted;
   }
 
   function addDatabaseManagerInfo(result) {
     const resLength = result.length;
-    let preferencesListFormatted = "";
 
     for (let i = 0; i < resLength; i += 2) {
-      preferencesListFormatted += "<div><b>" + result[i] + "</b>: " +
-          result[i + 1] + "</div>";
+      const preferencesListFormatted =
+          $('result-template').content.cloneNode(true);
+      preferencesListFormatted.querySelectorAll('span')[0].textContent =
+          result[i] + ': ';
+      const value = result[i + 1];
+      if (Array.isArray(value)) {
+        const blockQuote = document.createElement('blockquote');
+        value.forEach(item => {
+          const div = document.createElement('div');
+          div.textContent = item;
+          blockQuote.appendChild(div);
+        });
+        preferencesListFormatted.querySelectorAll('span')[1].appendChild(
+            blockQuote);
+      } else {
+        preferencesListFormatted.querySelectorAll('span')[1].textContent =
+            value;
+      }
+      $('database-info-list').appendChild(preferencesListFormatted);
     }
-    $('database-info-list').innerHTML = preferencesListFormatted;
   }
 
   function addFullHashCacheInfo(result) {
-    $('full-hash-cache-info').innerHTML = result;
+    $('full-hash-cache-info').textContent = result;
   }
 
   function addSentClientDownloadRequestsInfo(result) {
@@ -265,51 +273,60 @@ cr.define('safe_browsing', function() {
     row.insertCell().className = 'content';
   }
 
-  function addResultToTable(tableId, result, position) {
-    const token = result[0];
-    const request = result[1];
-
+  function addResultToTable(tableId, token, result, position) {
     if ($(tableId + '-' + token) === null) {
       insertTokenToTable(tableId, token);
     }
 
     const cell = $(tableId + '-' + token).cells[position];
-    appendChildWithInnerText(cell, request);
+    cell.innerText = result;
   }
 
   function addPGPing(result) {
-    addResultToTable('pg-ping-list', result, 0);
+    addResultToTable('pg-ping-list', result[0], result[1], 0);
   }
 
   function addPGResponse(result) {
-    addResultToTable('pg-ping-list', result, 1);
+    addResultToTable('pg-ping-list', result[0], result[1], 1);
   }
 
   function addRTLookupPing(result) {
-    addResultToTable('rt-lookup-ping-list', result, 0);
+    addResultToTable('rt-lookup-ping-list', result[0], result[1], 0);
   }
 
   function addRTLookupResponse(result) {
-    addResultToTable('rt-lookup-ping-list', result, 1);
+    addResultToTable('rt-lookup-ping-list', result[0], result[1], 1);
   }
 
-  function addDeepScanRequest(result) {
-    addResultToTable('deep-scan-list', result, 0);
-  }
+  function addDeepScan(result) {
+    if (result['request_time'] != null) {
+      const requestFormatted = '[' +
+          (new Date(result['request_time'])).toLocaleString() + ']\n' +
+          result['request'];
+      addResultToTable('deep-scan-list', result['token'], requestFormatted, 0);
+    }
 
-  function addDeepScanResponse(result) {
-    if (result[1] === 'SUCCESS') {
-      // Display the response instead
-      addResultToTable('deep-scan-list', [result[0], result[2]], 1);
-    } else {
-      // Display the error code
-      addResultToTable('deep-scan-list', [result[0], result[1]], 1);
+    if (result['response_time'] != null) {
+      if (result['response_status'] == 'SUCCESS') {
+        // Display the response instead
+        const resultFormatted = '[' +
+            (new Date(result['response_time'])).toLocaleString() + ']\n' +
+            result['response'];
+        addResultToTable('deep-scan-list', result['token'], resultFormatted, 1);
+      } else {
+        // Display the error
+        const resultFormatted = '[' +
+            (new Date(result['response_time'])).toLocaleString() + ']\n' +
+            result['response_status'];
+        addResultToTable('deep-scan-list', result['token'], resultFormatted, 1);
+      }
     }
   }
 
   function addRTLookupExperimentEnabled(enabled) {
-    const enabledFormatted = '<b>RT Lookup Experiment Enabled:</b> ' + enabled;
-    $('rt-lookup-experiment-enabled').innerHTML = enabledFormatted;
+    const enabledFormatted = $('rt-lookup-template').content.cloneNode(true);
+    enabledFormatted.querySelector('#experiment-bool').textContent = enabled;
+    $('rt-lookup-experiment-enabled').appendChild(enabledFormatted);
   }
 
   function addLogMessage(result) {
@@ -340,7 +357,8 @@ cr.define('safe_browsing', function() {
 
     cr.sendWithPromise('getReferrerChain', $('referrer-chain-url').value)
         .then((response) => {
-          $('referrer-chain-content').innerHTML = response;
+          $('referrer-chain-content').innerHTML = trustedTypes.emptyHTML;
+          $('referrer-chain-content').textContent = response;
         });
   }
 

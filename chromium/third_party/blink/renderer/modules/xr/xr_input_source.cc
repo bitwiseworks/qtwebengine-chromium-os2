@@ -229,7 +229,22 @@ void XRInputSource::UpdateGamepad(
   }
 }
 
-base::Optional<XRNativeOriginInformation> XRInputSource::nativeOrigin() const {
+base::Optional<TransformationMatrix> XRInputSource::MojoFromInput() const {
+  if (!mojo_from_input_.get()) {
+    return base::nullopt;
+  }
+  return *(mojo_from_input_.get());
+}
+
+base::Optional<TransformationMatrix> XRInputSource::InputFromPointer() const {
+  if (!input_from_pointer_.get()) {
+    return base::nullopt;
+  }
+  return *(input_from_pointer_.get());
+}
+
+base::Optional<device::mojom::blink::XRNativeOriginInformation>
+XRInputSource::nativeOrigin() const {
   return XRNativeOriginInformation::Create(this);
 }
 
@@ -288,7 +303,8 @@ void XRInputSource::OnSelect() {
   }
 
   LocalFrame* frame = session_->xr()->GetFrame();
-  LocalFrame::NotifyUserActivation(frame);
+  LocalFrame::NotifyUserActivation(
+      frame, mojom::blink::UserActivationNotificationType::kInteraction);
 
   // If SelectStart caused the session to end, we shouldn't try to fire the
   // select event.
@@ -361,7 +377,8 @@ void XRInputSource::OnSqueeze() {
   }
 
   LocalFrame* frame = session_->xr()->GetFrame();
-  LocalFrame::NotifyUserActivation(frame);
+  LocalFrame::NotifyUserActivation(
+      frame, mojom::blink::UserActivationNotificationType::kInteraction);
 
   // If SelectStart caused the session to end, we shouldn't try to fire the
   // select event.
@@ -589,7 +606,7 @@ XRInputSourceEvent* XRInputSource::CreateInputSourceEvent(
   return XRInputSourceEvent::Create(type, presentation_frame, this);
 }
 
-void XRInputSource::Trace(Visitor* visitor) {
+void XRInputSource::Trace(Visitor* visitor) const {
   visitor->Trace(session_);
   visitor->Trace(target_ray_space_);
   visitor->Trace(grip_space_);

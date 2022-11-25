@@ -13,6 +13,7 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/json/json_writer.h"
+#include "base/optional.h"
 #include "base/strings/pattern.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -84,6 +85,7 @@ static const char kInternal[] = "internal";
 static const char kLabelImages[] = "labelImages";
 static const char kNative[] = "native";
 static const char kPage[] = "page";
+static const char kPDF[] = "pdf";
 static const char kScreenReader[] = "screenreader";
 static const char kShowOrRefreshTree[] = "showOrRefreshTree";
 static const char kText[] = "text";
@@ -181,6 +183,7 @@ void HandleAccessibilityRequestCallback(
   bool text = mode.has_mode(ui::AXMode::kInlineTextBoxes);
   bool screenreader = mode.has_mode(ui::AXMode::kScreenReader);
   bool html = mode.has_mode(ui::AXMode::kHTML);
+  bool pdf = mode.has_mode(ui::AXMode::kPDF);
 
   // The "native" and "web" flags are disabled if
   // --disable-renderer-accessibility is set.
@@ -206,6 +209,9 @@ void HandleAccessibilityRequestCallback(
   data.SetString(kLabelImages, are_accessibility_image_labels_enabled
                                    ? (label_images ? kOn : kOff)
                                    : kDisabled);
+
+  // The "pdf" flag is independent of the others.
+  data.SetString(kPDF, pdf ? kOn : kOff);
 
   bool show_internal = pref->GetBoolean(prefs::kShowInternalAccessibilityTree);
   data.SetString(kInternal, show_internal ? kOn : kOff);
@@ -260,7 +266,7 @@ void HandleAccessibilityRequestCallback(
 bool MatchesPropertyFilters(
     const std::vector<content::AccessibilityTreeFormatter::PropertyFilter>&
         property_filters,
-    const base::string16& text) {
+    const std::string& text) {
   bool allow = false;
   for (const auto& filter : property_filters) {
     if (base::MatchPattern(text, filter.match_str)) {
@@ -269,7 +275,7 @@ bool MatchesPropertyFilters(
           allow = true;
           break;
         case content::AccessibilityTreeFormatter::PropertyFilter::ALLOW:
-          allow = (!base::MatchPattern(text, base::UTF8ToUTF16("*=''")));
+          allow = (!base::MatchPattern(text, "*=''"));
           break;
         case content::AccessibilityTreeFormatter::PropertyFilter::DENY:
           allow = false;
@@ -292,8 +298,7 @@ std::string RecursiveDumpAXPlatformNodeAsString(
   std::vector<std::string> attributes = base::SplitString(
       line, " ", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
   for (std::string attribute : attributes) {
-    if (MatchesPropertyFilters(property_filters,
-                               base::UTF8ToUTF16(attribute))) {
+    if (MatchesPropertyFilters(property_filters, attribute)) {
       str += attribute + " ";
     }
   }
@@ -318,9 +323,7 @@ void AddPropertyFilters(
     content::AccessibilityTreeFormatter::PropertyFilter::Type type) {
   for (const std::string& attribute : base::SplitString(
            attributes, " ", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
-    property_filters.push_back(
-        content::AccessibilityTreeFormatter::PropertyFilter(
-            base::ASCIIToUTF16(attribute), type));
+    property_filters.emplace_back(attribute, type);
   }
 }
 
@@ -343,8 +346,8 @@ AccessibilityUI::AccessibilityUI(content::WebUI* web_ui)
   html_source->SetDefaultResource(IDR_ACCESSIBILITY_HTML);
   html_source->SetRequestFilter(
       base::BindRepeating(&ShouldHandleAccessibilityRequestCallback),
-      base::Bind(&HandleAccessibilityRequestCallback,
-                 web_ui->GetWebContents()->GetBrowserContext()));
+      base::BindRepeating(&HandleAccessibilityRequestCallback,
+                          web_ui->GetWebContents()->GetBrowserContext()));
 
   content::BrowserContext* browser_context =
       web_ui->GetWebContents()->GetBrowserContext();
@@ -371,7 +374,14 @@ void AccessibilityUIObserver::AccessibilityEventReceived(
 
 AccessibilityUIMessageHandler::AccessibilityUIMessageHandler() = default;
 
-AccessibilityUIMessageHandler::~AccessibilityUIMessageHandler() = default;
+AccessibilityUIMessageHandler::~AccessibilityUIMessageHandler() {
+  if (!observer_)
+    return;
+  content::WebContents* web_contents = observer_->web_contents();
+  if (!web_contents)
+    return;
+  StopRecording(web_contents);
+}
 
 void AccessibilityUIMessageHandler::RegisterMessages() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -575,10 +585,9 @@ void AccessibilityUIMessageHandler::RequestWebContentsTree(
 
   PrefService* pref = Profile::FromWebUI(web_ui())->GetPrefs();
   bool internal = pref->GetBoolean(prefs::kShowInternalAccessibilityTree);
-  base::string16 accessibility_contents_utf16 =
+  std::string accessibility_contents =
       web_contents->DumpAccessibilityTree(internal, property_filters);
-  result->SetString(kTreeField,
-                    base::UTF16ToUTF8(accessibility_contents_utf16));
+  result->SetString(kTreeField, accessibility_contents);
   CallJavascriptFunction(request_type, *(result.get()));
 }
 
@@ -645,6 +654,12 @@ void AccessibilityUIMessageHandler::Callback(const std::string& str) {
   event_logs_.push_back(str);
 }
 
+void AccessibilityUIMessageHandler::StopRecording(
+    content::WebContents* web_contents) {
+  web_contents->RecordAccessibilityEvents(false, base::nullopt);
+  observer_.reset(nullptr);
+}
+
 void AccessibilityUIMessageHandler::RequestAccessibilityEvents(
     const base::ListValue* args) {
   const base::DictionaryValue* data;
@@ -652,7 +667,7 @@ void AccessibilityUIMessageHandler::RequestAccessibilityEvents(
 
   int process_id = *data->FindIntPath(kProcessIdField);
   int routing_id = *data->FindIntPath(kRoutingIdField);
-  bool start = *data->FindBoolPath(kStartField);
+  bool start_recording = *data->FindBoolPath(kStartField);
 
   AllowJavascript();
 
@@ -665,22 +680,17 @@ void AccessibilityUIMessageHandler::RequestAccessibilityEvents(
   std::unique_ptr<base::DictionaryValue> result(BuildTargetDescriptor(rvh));
   content::WebContents* web_contents =
       content::WebContents::FromRenderViewHost(rvh);
-  if (start) {
+  if (start_recording) {
     if (observer_) {
       return;
     }
     web_contents->RecordAccessibilityEvents(
-        base::BindRepeating(&AccessibilityUIMessageHandler::Callback,
-                            base::Unretained(this)),
-        true);
+        true, base::BindRepeating(&AccessibilityUIMessageHandler::Callback,
+                                  base::Unretained(this)));
     observer_ =
         std::make_unique<AccessibilityUIObserver>(web_contents, &event_logs_);
   } else {
-    web_contents->RecordAccessibilityEvents(
-        base::BindRepeating(&AccessibilityUIMessageHandler::Callback,
-                            base::Unretained(this)),
-        false);
-    observer_.release();
+    StopRecording(web_contents);
 
     std::string event_logs_str;
     for (std::string log : event_logs_) {

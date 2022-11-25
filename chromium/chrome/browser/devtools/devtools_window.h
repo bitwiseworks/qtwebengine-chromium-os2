@@ -58,15 +58,15 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
                                content::WebContents* web_contents);
 
   // Return the DevToolsWindow for the given WebContents if one exists,
-  // otherwise NULL.
+  // otherwise nullptr.
   static DevToolsWindow* GetInstanceForInspectedWebContents(
       content::WebContents* inspected_web_contents);
 
   // Return the docked DevTools WebContents for the given inspected WebContents
-  // if one exists and should be shown in browser window, otherwise NULL.
+  // if one exists and should be shown in browser window, otherwise nullptr.
   // This method will return only fully initialized window ready to be
   // presented in UI.
-  // If |out_strategy| is not NULL, it will contain resizing strategy.
+  // If |out_strategy| is not nullptr, it will contain resizing strategy.
   // For immediately-ready-to-use but maybe not yet fully initialized DevTools
   // use |GetInstanceForInspectedRenderViewHost| instead.
   static content::WebContents* GetInTabWebContents(
@@ -128,7 +128,8 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   // Updates the WebContents inspected by the DevToolsWindow by reattaching
   // the binding to |new_web_contents|. Called when swapping an outer
   // WebContents with its inner WebContents.
-  void UpdateInspectedWebContents(content::WebContents* new_web_contents);
+  void UpdateInspectedWebContents(content::WebContents* new_web_contents,
+                                  base::OnceCallback<void()> callback);
 
   // Sets closure to be called after load is done. If already loaded, calls
   // closure immediately.
@@ -309,6 +310,7 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   void ActivateContents(content::WebContents* contents) override;
   void AddNewContents(content::WebContents* source,
                       std::unique_ptr<content::WebContents> new_contents,
+                      const GURL& target_url,
                       WindowOpenDisposition disposition,
                       const gfx::Rect& initial_rect,
                       bool user_gesture,
@@ -338,7 +340,7 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
       const std::vector<blink::mojom::ColorSuggestionPtr>& suggestions)
       override;
   void RunFileChooser(content::RenderFrameHost* render_frame_host,
-                      std::unique_ptr<content::FileSelectListener> listener,
+                      scoped_refptr<content::FileSelectListener> listener,
                       const blink::mojom::FileChooserParams& params) override;
   bool PreHandleGestureEvent(content::WebContents* source,
                              const blink::WebGestureEvent& event) override;
@@ -380,6 +382,17 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   // display web modal dialogs triggered by it.
   void RegisterModalDialogManager(Browser* browser);
 
+  void OnReattachMainTargetComplete(base::Value);
+
+  // Called when the accepted language changes. |navigator.language| of the
+  // DevTools window should match the application language. When the user
+  // changes the accepted language then this listener flips the language back
+  // to the application language for the DevTools renderer process.
+  // Please note that |navigator.language| will have the wrong language for
+  // a very short period of time (until this handler has reset it again).
+  void OnLocaleChanged();
+  void OverrideAndSyncDevToolsRendererPrefs();
+
   std::unique_ptr<ObserverWithAccessor> inspected_contents_observer_;
 
   FrontendType frontend_type_;
@@ -402,7 +415,8 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   // When DevToolsWindow is docked, it owns main_web_contents_. When it isn't
   // docked, the tab strip model owns the main_web_contents_.
   bool is_docked_;
-  std::unique_ptr<content::WebContents> owned_main_web_contents_;
+  class OwnedMainWebContents;
+  std::unique_ptr<OwnedMainWebContents> owned_main_web_contents_;
 
   const bool can_dock_;
   bool close_on_detach_;
@@ -424,6 +438,10 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   class Throttle;
   Throttle* throttle_ = nullptr;
   bool open_new_window_for_popups_ = false;
+
+  base::OnceCallback<void()> reattach_complete_callback_;
+
+  PrefChangeRegistrar pref_change_registrar_;
 
   friend class DevToolsEventForwarder;
   DISALLOW_COPY_AND_ASSIGN(DevToolsWindow);

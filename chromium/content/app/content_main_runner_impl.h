@@ -20,7 +20,7 @@
 
 #if defined(OS_WIN)
 #include "sandbox/win/src/sandbox_types.h"
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
 #include "base/mac/scoped_nsautorelease_pool.h"
 #endif  // OS_WIN
 
@@ -39,7 +39,7 @@ class ServiceManagerEnvironment;
 
 class ContentMainRunnerImpl : public ContentMainRunner {
  public:
-  static ContentMainRunnerImpl* Create();
+  static std::unique_ptr<ContentMainRunnerImpl> Create();
 
   ContentMainRunnerImpl();
   ~ContentMainRunnerImpl() override;
@@ -52,7 +52,6 @@ class ContentMainRunnerImpl : public ContentMainRunner {
   void Shutdown() override;
 
  private:
-#if !defined(CHROME_MULTIPLE_DLL_CHILD)
   int RunServiceManager(MainFunctionParams& main_function_params,
                         bool start_service_manager_only);
 
@@ -65,7 +64,6 @@ class ContentMainRunnerImpl : public ContentMainRunner {
       discardable_shared_memory_manager_;
   std::unique_ptr<StartupDataImpl> startup_data_;
   std::unique_ptr<ServiceManagerEnvironment> service_manager_environment_;
-#endif  // !defined(CHROME_MULTIPLE_DLL_CHILD)
 
   // True if the runner has been initialized.
   bool is_initialized_ = false;
@@ -83,7 +81,7 @@ class ContentMainRunnerImpl : public ContentMainRunner {
 
 #if defined(OS_WIN)
   sandbox::SandboxInterfaceInfo sandbox_info_;
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
   base::mac::ScopedNSAutoreleasePool* autorelease_pool_ = nullptr;
 #endif
 

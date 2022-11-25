@@ -80,8 +80,8 @@ class COMPONENT_EXPORT(URL) SchemeHostPort {
 
   // Creates a (scheme, host, port) tuple. |host| must be a canonicalized
   // A-label (that is, '☃.net' must be provided as 'xn--n3h.net'). |scheme|
-  // must be a standard scheme. |port| must not be 0, unless |scheme| does not
-  // support ports (e.g. 'file'). In that case, |port| must be 0.
+  // must be a standard scheme. |port| must be 0 if |scheme| does not support
+  // ports (e.g. 'file').
   //
   // Copies the data in |scheme| and |host|.
   SchemeHostPort(base::StringPiece scheme,
@@ -111,8 +111,8 @@ class COMPONENT_EXPORT(URL) SchemeHostPort {
   // Copyable and movable.
   SchemeHostPort(const SchemeHostPort&) = default;
   SchemeHostPort& operator=(const SchemeHostPort&) = default;
-  SchemeHostPort(SchemeHostPort&&) = default;
-  SchemeHostPort& operator=(SchemeHostPort&&) = default;
+  SchemeHostPort(SchemeHostPort&&) noexcept = default;
+  SchemeHostPort& operator=(SchemeHostPort&&) noexcept = default;
 
   ~SchemeHostPort();
 
@@ -158,7 +158,7 @@ class COMPONENT_EXPORT(URL) SchemeHostPort {
 
   std::string scheme_;
   std::string host_;
-  uint16_t port_;
+  uint16_t port_ = 0;
 };
 
 COMPONENT_EXPORT(URL)

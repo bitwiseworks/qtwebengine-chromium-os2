@@ -20,19 +20,17 @@ public:
     struct Format {
         VkFormat  fInternalFormat;
         int  fStencilBits;
-        int  fTotalBits;
-        bool fPacked;
     };
 
-    static GrVkStencilAttachment* Create(GrVkGpu* gpu, int width, int height,
-                                         int sampleCnt, const Format& format);
+    static GrVkStencilAttachment* Create(GrVkGpu* gpu, SkISize dimensions, int sampleCnt,
+                                         const Format& format);
 
     ~GrVkStencilAttachment() override;
 
-    const GrManagedResource* imageResource() const { return this->resource(); }
-    const GrVkImageView* stencilView() const { return fStencilView; }
+    GrBackendFormat backendFormat() const override { return this->getBackendFormat(); }
 
-    VkFormat vkFormat() const { return fFormat.fInternalFormat; }
+    const GrManagedResource* imageResource() const { return this->resource(); }
+    const GrVkImageView* stencilView() const { return fStencilView.get(); }
 
 protected:
     void onRelease() override;
@@ -42,17 +40,16 @@ private:
     size_t onGpuMemorySize() const override;
 
     GrVkStencilAttachment(GrVkGpu* gpu,
+                          SkISize dimensions,
                           const Format& format,
                           const GrVkImage::ImageDesc&,
                           const GrVkImageInfo&,
-                          sk_sp<GrVkImageLayout> layout,
-                          const GrVkImageView* stencilView);
+                          sk_sp<GrBackendSurfaceMutableStateImpl> mutableState,
+                          sk_sp<const GrVkImageView> stencilView);
 
     GrVkGpu* getVkGpu() const;
 
-    Format fFormat;
-
-    const GrVkImageView*       fStencilView;
+    sk_sp<const GrVkImageView> fStencilView;
 };
 
 #endif

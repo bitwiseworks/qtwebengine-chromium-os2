@@ -30,7 +30,8 @@ QboneClientSession::~QboneClientSession() {}
 
 std::unique_ptr<QuicCryptoStream> QboneClientSession::CreateCryptoStream() {
   return std::make_unique<QuicCryptoClientStream>(
-      server_id_, this, nullptr, quic_crypto_client_config_, this);
+      server_id_, this, nullptr, quic_crypto_client_config_, this,
+      /*has_application_state = */ true);
 }
 
 void QboneClientSession::Initialize() {
@@ -93,8 +94,7 @@ void QboneClientSession::OnProofVerifyDetailsAvailable(
     const ProofVerifyDetails& verify_details) {}
 
 bool QboneClientSession::HasActiveRequests() const {
-  return (stream_map().size() - num_incoming_static_streams() -
-          num_outgoing_static_streams()) > 0;
+  return (stream_map_size() - num_static_streams() - num_zombie_streams()) > 0;
 }
 
 }  // namespace quic

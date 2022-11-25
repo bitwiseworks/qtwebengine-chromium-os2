@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/webui/devtools_ui.h"
 
+#include "base/command_line.h"
 #ifndef TOOLKIT_QT
 #include "chrome/browser/devtools/url_constants.h"
 #endif

@@ -6,15 +6,17 @@
 
 #include <utility>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "components/performance_manager/graph/frame_node_impl.h"
 #include "components/performance_manager/graph/graph_impl.h"
 #include "components/performance_manager/graph/page_node_impl.h"
 
 namespace performance_manager {
 
-ProcessNodeImpl::ProcessNodeImpl(RenderProcessHostProxy render_process_proxy)
-    : render_process_host_proxy_(std::move(render_process_proxy)) {
+ProcessNodeImpl::ProcessNodeImpl(content::ProcessType process_type,
+                                 RenderProcessHostProxy render_process_proxy)
+    : process_type_(process_type),
+      render_process_host_proxy_(std::move(render_process_proxy)) {
   DETACH_FROM_SEQUENCE(sequence_checker_);
 }
 
@@ -32,11 +34,6 @@ void ProcessNodeImpl::Bind(
   // which case we will receive a new receiver from the newly spawned process.
   receiver_.reset();
   receiver_.Bind(std::move(receiver));
-}
-
-void ProcessNodeImpl::SetExpectedTaskQueueingDuration(
-    base::TimeDelta duration) {
-  expected_task_queueing_duration_.SetAndNotify(this, duration);
 }
 
 void ProcessNodeImpl::SetMainThreadTaskLoadIsLow(
@@ -87,9 +84,10 @@ PageNodeImpl* ProcessNodeImpl::GetPageNodeIfExclusive() const {
   return page_node;
 }
 
-int ProcessNodeImpl::GetRenderProcessId() const {
+RenderProcessHostId ProcessNodeImpl::GetRenderProcessId() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return render_process_host_proxy_.render_process_host_id();
+  return RenderProcessHostId(
+      render_process_host_proxy_.render_process_host_id());
 }
 
 void ProcessNodeImpl::AddFrame(FrameNodeImpl* frame_node) {
@@ -142,6 +140,11 @@ void ProcessNodeImpl::SetProcessImpl(base::Process process,
   process_.SetAndNotify(this, std::move(process));
 }
 
+content::ProcessType ProcessNodeImpl::GetProcessType() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return process_type();
+}
+
 base::ProcessId ProcessNodeImpl::GetProcessId() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return process_id();
@@ -162,13 +165,14 @@ base::Optional<int32_t> ProcessNodeImpl::GetExitStatus() const {
   return exit_status();
 }
 
-void ProcessNodeImpl::VisitFrameNodes(const FrameNodeVisitor& visitor) const {
+bool ProcessNodeImpl::VisitFrameNodes(const FrameNodeVisitor& visitor) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   for (auto* frame_impl : frame_nodes()) {
     const FrameNode* frame = frame_impl;
     if (!visitor.Run(frame))
-      return;
+      return false;
   }
+  return true;
 }
 
 base::flat_set<const FrameNode*> ProcessNodeImpl::GetFrameNodes() const {
@@ -180,11 +184,6 @@ base::flat_set<const FrameNode*> ProcessNodeImpl::GetFrameNodes() const {
     frames.insert(frame);
   }
   return frames;
-}
-
-base::TimeDelta ProcessNodeImpl::GetExpectedTaskQueueingDuration() const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return expected_task_queueing_duration();
 }
 
 bool ProcessNodeImpl::GetMainThreadTaskLoadIsLow() const {
@@ -200,6 +199,11 @@ uint64_t ProcessNodeImpl::GetPrivateFootprintKb() const {
 uint64_t ProcessNodeImpl::GetResidentSetKb() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return resident_set_kb();
+}
+
+RenderProcessHostId ProcessNodeImpl::GetRenderProcessHostId() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return GetRenderProcessId();
 }
 
 const RenderProcessHostProxy& ProcessNodeImpl::GetRenderProcessHostProxy()

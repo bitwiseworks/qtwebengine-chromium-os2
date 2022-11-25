@@ -45,12 +45,10 @@ class CORE_EXPORT ColorChooserUIController
     : public GarbageCollected<ColorChooserUIController>,
       public mojom::blink::ColorChooserClient,
       public ColorChooser {
-  USING_GARBAGE_COLLECTED_MIXIN(ColorChooserUIController);
-
  public:
   ColorChooserUIController(LocalFrame*, blink::ColorChooserClient*);
   ~ColorChooserUIController() override;
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   void Dispose();
 
@@ -74,6 +72,7 @@ class CORE_EXPORT ColorChooserUIController
  private:
   mojo::Remote<mojom::blink::ColorChooserFactory> color_chooser_factory_;
   HeapMojoReceiver<mojom::blink::ColorChooserClient,
+                   ColorChooserUIController,
                    HeapMojoWrapperMode::kWithoutContextObserver>
       receiver_;
 };

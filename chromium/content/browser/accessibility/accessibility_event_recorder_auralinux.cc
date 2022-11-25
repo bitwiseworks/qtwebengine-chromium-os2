@@ -35,7 +35,7 @@ class AccessibilityEventRecorderAuraLinux : public AccessibilityEventRecorder {
   explicit AccessibilityEventRecorderAuraLinux(
       BrowserAccessibilityManager* manager,
       base::ProcessId pid,
-      const base::StringPiece& application_name_match_pattern);
+      const AccessibilityTreeFormatter::TreeSelector& selector);
   ~AccessibilityEventRecorderAuraLinux() override;
 
   void ProcessATKEvent(const char* event,
@@ -98,9 +98,9 @@ gboolean AccessibilityEventRecorderAuraLinux::OnATKEventReceived(
 std::unique_ptr<AccessibilityEventRecorder> AccessibilityEventRecorder::Create(
     BrowserAccessibilityManager* manager,
     base::ProcessId pid,
-    const base::StringPiece& application_name_match_pattern) {
-  return std::make_unique<AccessibilityEventRecorderAuraLinux>(
-      manager, pid, application_name_match_pattern);
+    const AccessibilityTreeFormatter::TreeSelector& selector) {
+  return std::make_unique<AccessibilityEventRecorderAuraLinux>(manager, pid,
+                                                               selector);
 }
 
 std::vector<AccessibilityEventRecorder::TestPass>
@@ -120,10 +120,10 @@ bool AccessibilityEventRecorderAuraLinux::ShouldUseATSPI() {
 AccessibilityEventRecorderAuraLinux::AccessibilityEventRecorderAuraLinux(
     BrowserAccessibilityManager* manager,
     base::ProcessId pid,
-    const base::StringPiece& application_name_match_pattern)
+    const AccessibilityTreeFormatter::TreeSelector& selector)
     : AccessibilityEventRecorder(manager),
       pid_(pid),
-      application_name_match_pattern_(application_name_match_pattern) {
+      application_name_match_pattern_(selector.pattern) {
   CHECK(!instance_) << "There can be only one instance of"
                     << " AccessibilityEventRecorder at a time.";
 
@@ -166,7 +166,10 @@ void AccessibilityEventRecorderAuraLinux::AddATKEventListeners() {
   AddATKEventListener("ATK:AtkText:text-remove");
   AddATKEventListener("ATK:AtkText:text-selection-changed");
   AddATKEventListener("ATK:AtkText:text-caret-moved");
+  AddATKEventListener("ATK:AtkText:text-attributes-changed");
   AddATKEventListener("ATK:AtkSelection:selection-changed");
+  AddATKEventListener("ATK:AtkTable:column-reordered");
+  AddATKEventListener("ATK:AtkTable:row-reordered");
 }
 
 void AccessibilityEventRecorderAuraLinux::RemoveATKEventListeners() {
@@ -282,7 +285,7 @@ void AccessibilityEventRecorderAuraLinux::ProcessATKEvent(
   AtkObject* obj = ATK_OBJECT(g_value_get_object(&params[0]));
   log += " " + AtkObjectToString(obj, log_name);
 
-  std::string states = "";
+  std::string states;
   AtkStateSet* state_set = atk_object_ref_state_set(obj);
   for (int i = ATK_STATE_INVALID; i < ATK_STATE_LAST_DEFINED; i++) {
     AtkStateType state_type = static_cast<AtkStateType>(i);
@@ -326,6 +329,7 @@ const char* const kEventNames[] = {
     "object:row-reordered",
     "object:selection-changed",
     "object:state-changed",
+    "object:text-attributes-changed",
     "object:text-caret-moved",
     "object:text-changed",
     "object:text-selection-changed",

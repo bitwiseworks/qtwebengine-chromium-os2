@@ -6,7 +6,9 @@
 
 #include <memory>
 
+#include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/notreached.h"
 #include "ui/events/event.h"
 #include "ui/events/fuchsia/input_event_dispatcher_delegate.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
@@ -133,7 +135,7 @@ bool InputEventDispatcher::ProcessTouchEvent(
 
   // TODO(crbug.com/876933): Add more detailed fields such as
   // force/orientation/tilt once they are added to PointerEvent.
-  ui::PointerDetails pointer_details(ui::EventPointerType::POINTER_TYPE_TOUCH,
+  ui::PointerDetails pointer_details(ui::EventPointerType::kTouch,
                                      event.pointer_id);
 
   ui::TouchEvent touch_event(event_type, gfx::Point(),

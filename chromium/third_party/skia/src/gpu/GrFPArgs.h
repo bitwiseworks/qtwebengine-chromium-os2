@@ -13,25 +13,31 @@
 
 class GrColorInfo;
 class GrRecordingContext;
+class SkMatrixProvider;
 
 struct GrFPArgs {
     GrFPArgs(GrRecordingContext* context,
-             const SkMatrix* viewMatrix,
+             const SkMatrixProvider& matrixProvider,
              SkFilterQuality filterQuality,
              const GrColorInfo* dstColorInfo)
             : fContext(context)
-            , fViewMatrix(viewMatrix)
+            , fMatrixProvider(matrixProvider)
             , fFilterQuality(filterQuality)
             , fDstColorInfo(dstColorInfo) {
         SkASSERT(fContext);
-        SkASSERT(fViewMatrix);
     }
 
     class WithPreLocalMatrix;
-    class WithPostLocalMatrix;
+
+    GrFPArgs withNewMatrixProvider(const SkMatrixProvider& provider) const {
+        GrFPArgs newArgs(fContext, provider, fFilterQuality, fDstColorInfo);
+        newArgs.fInputColorIsOpaque = fInputColorIsOpaque;
+        newArgs.fPreLocalMatrix = fPreLocalMatrix;
+        return newArgs;
+    }
 
     GrRecordingContext* fContext;
-    const SkMatrix* fViewMatrix;
+    const SkMatrixProvider& fMatrixProvider;
 
     const SkMatrix* fPreLocalMatrix  = nullptr;
 
@@ -39,6 +45,7 @@ struct GrFPArgs {
     bool fInputColorIsOpaque = false;
 
     SkFilterQuality fFilterQuality;
+    bool fAllowFilterQualityReduction = true;
     const GrColorInfo* fDstColorInfo;
 };
 
@@ -65,4 +72,3 @@ private:
 };
 
 #endif
-

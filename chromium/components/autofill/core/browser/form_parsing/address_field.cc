@@ -9,13 +9,14 @@
 #include <memory>
 #include <utility>
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/autofill_field.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/form_parsing/autofill_scanner.h"
+#include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_regex_constants.h"
 
 using base::UTF8ToUTF16;
@@ -45,6 +46,7 @@ const int AddressField::kStateMatchType =
     MATCH_DEFAULT | MATCH_SELECT | MATCH_SEARCH;
 
 std::unique_ptr<FormField> AddressField::Parse(AutofillScanner* scanner,
+                                               const std::string& page_language,
                                                LogManager* log_manager) {
   if (scanner->IsEnd())
     return nullptr;
@@ -55,6 +57,10 @@ std::unique_ptr<FormField> AddressField::Parse(AutofillScanner* scanner,
 
   base::string16 attention_ignored = UTF8ToUTF16(kAttentionIgnoredRe);
   base::string16 region_ignored = UTF8ToUTF16(kRegionIgnoredRe);
+
+  const bool is_enabled_merged_city_state_country_zip =
+      base::FeatureList::IsEnabled(
+          features::kAutofillUseParseCityStateCountryZipCodeInHeuristic);
 
   // Allow address fields to appear in any order.
   size_t begin_trailing_non_labeled_fields = 0;
@@ -72,9 +78,12 @@ std::unique_ptr<FormField> AddressField::Parse(AutofillScanner* scanner,
                                    MATCH_DEFAULT | MATCH_TEXT_AREA, nullptr,
                                    {log_manager, "kEmailRe"})) {
       continue;
-    } else if (address_field->ParseAddressLines(scanner) ||
-               address_field->ParseCityStateZipCode(scanner) ||
-               address_field->ParseCountry(scanner) ||
+    } else if (address_field->ParseAddress(scanner) ||
+               (!is_enabled_merged_city_state_country_zip &&
+                (address_field->ParseCityStateZipCode(scanner) ||
+                 address_field->ParseCountry(scanner))) ||
+               (is_enabled_merged_city_state_country_zip &&
+                address_field->ParseCityStateCountryZipCode(scanner)) ||
                address_field->ParseCompany(scanner)) {
       has_trailing_non_labeled_fields = false;
       continue;
@@ -113,6 +122,7 @@ std::unique_ptr<FormField> AddressField::Parse(AutofillScanner* scanner,
       address_field->address2_ || address_field->address3_ ||
       address_field->street_address_ || address_field->city_ ||
       address_field->state_ || address_field->zip_ || address_field->zip4_ ||
+      address_field->street_name_ || address_field->house_number_ ||
       address_field->country_) {
     // Don't slurp non-labeled fields at the end into the address.
     if (has_trailing_non_labeled_fields)
@@ -125,17 +135,7 @@ std::unique_ptr<FormField> AddressField::Parse(AutofillScanner* scanner,
 }
 
 AddressField::AddressField(LogManager* log_manager)
-    : log_manager_(log_manager),
-      company_(nullptr),
-      address1_(nullptr),
-      address2_(nullptr),
-      address3_(nullptr),
-      street_address_(nullptr),
-      city_(nullptr),
-      state_(nullptr),
-      zip_(nullptr),
-      zip4_(nullptr),
-      country_(nullptr) {}
+    : log_manager_(log_manager) {}
 
 void AddressField::AddClassifications(
     FieldCandidatesMap* field_candidates) const {
@@ -164,6 +164,10 @@ void AddressField::AddClassifications(
                     field_candidates);
   AddClassification(country_, ADDRESS_HOME_COUNTRY, kBaseAddressParserScore,
                     field_candidates);
+  AddClassification(house_number_, ADDRESS_HOME_HOUSE_NUMBER,
+                    kBaseAddressParserScore, field_candidates);
+  AddClassification(street_name_, ADDRESS_HOME_STREET_NAME,
+                    kBaseAddressParserScore, field_candidates);
 }
 
 bool AddressField::ParseCompany(AutofillScanner* scanner) {
@@ -172,6 +176,53 @@ bool AddressField::ParseCompany(AutofillScanner* scanner) {
 
   return ParseField(scanner, UTF8ToUTF16(kCompanyRe), &company_,
                     {log_manager_, "kCompanyRe"});
+}
+
+bool AddressField::ParseAddressFieldSequence(AutofillScanner* scanner) {
+  // Search for a sequence of a street name field followed by a house number
+  // field. Only if both are found in an abitrary order, the parsing is
+  // considered successful.
+
+  // TODO(crbug.com/1125978): Remove once launched.
+  if (!base::FeatureList::IsEnabled(
+          features::kAutofillEnableSupportForMoreStructureInAddresses)) {
+    return false;
+  }
+
+  const size_t cursor_position = scanner->CursorPosition();
+
+  while (!scanner->IsEnd()) {
+    if (!street_name_ &&
+        ParseFieldSpecifics(scanner, UTF8ToUTF16(kStreetNameRe), MATCH_DEFAULT,
+                            &street_name_, {log_manager_, "kStreetNameRe"})) {
+      continue;
+    }
+    if (!house_number_ &&
+        ParseFieldSpecifics(scanner, UTF8ToUTF16(kHouseNumberRe), MATCH_DEFAULT,
+                            &house_number_, {log_manager_, "kHouseNumberRe"})) {
+      continue;
+    }
+
+    break;
+  }
+
+  if (street_name_ && house_number_)
+    return true;
+
+  // Reset both fields in case one of them was found.
+  if (street_name_ || house_number_) {
+    street_name_ = nullptr;
+    house_number_ = nullptr;
+  }
+  scanner->RewindTo(cursor_position);
+  return false;
+}
+
+bool AddressField::ParseAddress(AutofillScanner* scanner) {
+  if (street_name_ && house_number_) {
+    return false;
+  }
+  return ParseAddressFieldSequence(scanner) || ParseAddressLines(scanner);
 }
 
 bool AddressField::ParseAddressLines(AutofillScanner* scanner) {
@@ -372,6 +423,80 @@ bool AddressField::ParseCityStateZipCode(AutofillScanner* scanner) {
   return false;
 }
 
+bool AddressField::ParseCityStateCountryZipCode(AutofillScanner* scanner) {
+  // The |scanner| is not pointing at a field.
+  if (scanner->IsEnd())
+    return false;
+
+  // All the field types have already been detected.
+  if (city_ && state_ && country_ && zip_)
+    return false;
+
+  // Exactly one field type is missing.
+  if (state_ && country_ && zip_)
+    return ParseCity(scanner);
+  if (city_ && country_ && zip_)
+    return ParseState(scanner);
+  if (city_ && state_ && zip_)
+    return ParseCountry(scanner);
+  if (city_ && state_ && country_)
+    return ParseZipCode(scanner);
+
+  // Check for matches to both the name and the label.
+  ParseNameLabelResult city_result = ParseNameAndLabelForCity(scanner);
+  if (city_result == RESULT_MATCH_NAME_LABEL)
+    return true;
+  ParseNameLabelResult state_result = ParseNameAndLabelForState(scanner);
+  if (state_result == RESULT_MATCH_NAME_LABEL)
+    return true;
+  ParseNameLabelResult country_result = ParseNameAndLabelForCountry(scanner);
+  if (country_result == RESULT_MATCH_NAME_LABEL)
+    return true;
+  ParseNameLabelResult zip_result = ParseNameAndLabelForZipCode(scanner);
+  if (zip_result == RESULT_MATCH_NAME_LABEL)
+    return true;
+
+  // Check if there is only one potential match.
+  bool maybe_city = city_result != RESULT_MATCH_NONE;
+  bool maybe_state = state_result != RESULT_MATCH_NONE;
+  bool maybe_country = country_result != RESULT_MATCH_NONE;
+  bool maybe_zip = zip_result != RESULT_MATCH_NONE;
+  if (maybe_city && !maybe_state && !maybe_country && !maybe_zip)
+    return SetFieldAndAdvanceCursor(scanner, &city_);
+  if (maybe_state && !maybe_city && !maybe_country && !maybe_zip)
+    return SetFieldAndAdvanceCursor(scanner, &state_);
+  if (maybe_country && !maybe_city && !maybe_state && !maybe_zip)
+    return SetFieldAndAdvanceCursor(scanner, &country_);
+  if (maybe_zip && !maybe_city && !maybe_state && !maybe_country)
+    return ParseZipCode(scanner);
+
+  // If there is a clash between the country and the state, set the type of
+  // the field to the country.
+  if (maybe_state && maybe_country && !maybe_city && !maybe_zip)
+    return SetFieldAndAdvanceCursor(scanner, &country_);
+
+  // Otherwise give the name priority over the label.
+  if (city_result == RESULT_MATCH_NAME)
+    return SetFieldAndAdvanceCursor(scanner, &city_);
+  if (state_result == RESULT_MATCH_NAME)
+    return SetFieldAndAdvanceCursor(scanner, &state_);
+  if (country_result == RESULT_MATCH_NAME)
+    return SetFieldAndAdvanceCursor(scanner, &country_);
+  if (zip_result == RESULT_MATCH_NAME)
+    return ParseZipCode(scanner);
+
+  if (city_result == RESULT_MATCH_LABEL)
+    return SetFieldAndAdvanceCursor(scanner, &city_);
+  if (state_result == RESULT_MATCH_LABEL)
+    return SetFieldAndAdvanceCursor(scanner, &state_);
+  if (country_result == RESULT_MATCH_LABEL)
+    return SetFieldAndAdvanceCursor(scanner, &country_);
+  if (zip_result == RESULT_MATCH_LABEL)
+    return ParseZipCode(scanner);
+
+  return false;
+}
+
 AddressField::ParseNameLabelResult AddressField::ParseNameAndLabelForZipCode(
     AutofillScanner* scanner) {
   if (zip_)
@@ -423,6 +548,26 @@ AddressField::ParseNameLabelResult AddressField::ParseNameAndLabelForState(
   return ParseNameAndLabelSeparately(scanner, UTF8ToUTF16(kStateRe),
                                      kStateMatchType, &state_,
                                      {log_manager_, "kStateRe"});
+}
+
+AddressField::ParseNameLabelResult AddressField::ParseNameAndLabelForCountry(
+    AutofillScanner* scanner) {
+  if (country_)
+    return RESULT_MATCH_NONE;
+
+  ParseNameLabelResult country_result =
+      ParseNameAndLabelSeparately(scanner, UTF8ToUTF16(kCountryRe),
+                                  MATCH_DEFAULT | MATCH_SELECT | MATCH_SEARCH,
+                                  &country_, {log_manager_, "kCountryRe"});
+  if (country_result != RESULT_MATCH_NONE)
+    return country_result;
+
+  // The occasional page (e.g. google account registration page) calls this a
+  // "location". However, this only makes sense for select tags.
+  return ParseNameAndLabelSeparately(
+      scanner, UTF8ToUTF16(kCountryLocationRe),
+      MATCH_LABEL | MATCH_NAME | MATCH_SELECT | MATCH_SEARCH, &country_,
+      {log_manager_, "kCountryLocationRe"});
 }
 
 }  // namespace autofill

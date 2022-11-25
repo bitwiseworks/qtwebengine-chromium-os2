@@ -9,6 +9,7 @@
 
 #include "core/fxcrt/fx_string.h"
 #include "core/fxcrt/unowned_ptr.h"
+#include "v8/include/cppgc/macros.h"
 #include "xfa/fxfa/fxfa_basic.h"
 
 class CXFA_Node;
@@ -48,13 +49,15 @@ enum XFA_EVENTTYPE : uint8_t {
 };
 
 class CXFA_EventParam {
+  CPPGC_STACK_ALLOCATED();  // Raw/Unowned pointers allowed.
+
  public:
   CXFA_EventParam();
   CXFA_EventParam(const CXFA_EventParam& other);
   ~CXFA_EventParam();
 
   CXFA_EventParam& operator=(const CXFA_EventParam& other);
-  CXFA_EventParam& operator=(CXFA_EventParam&& other);
+  CXFA_EventParam& operator=(CXFA_EventParam&& other) noexcept;
 
   WideString GetNewText() const;
 

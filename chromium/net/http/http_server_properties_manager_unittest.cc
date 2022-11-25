@@ -98,7 +98,7 @@ class MockPrefDelegate : public net::HttpServerProperties::PrefDelegate {
     if (!prefs_changed_callback_.is_null())
       std::move(prefs_changed_callback_).Run();
     if (!extra_prefs_changed_callback_.is_null())
-      extra_prefs_changed_callback_.Run();
+      std::move(extra_prefs_changed_callback_).Run();
     set_properties_callback_ = std::move(callback);
   }
 
@@ -122,8 +122,8 @@ class MockPrefDelegate : public net::HttpServerProperties::PrefDelegate {
 
   // Additional callback to call when prefs are updated, used to check prefs are
   // updated on destruction.
-  void set_extra_update_prefs_callback(const base::Closure& callback) {
-    extra_prefs_changed_callback_ = callback;
+  void set_extra_update_prefs_callback(base::OnceClosure callback) {
+    extra_prefs_changed_callback_ = std::move(callback);
   }
 
   // Returns the base::OnceCallback, if any, passed to the last call to
@@ -135,7 +135,7 @@ class MockPrefDelegate : public net::HttpServerProperties::PrefDelegate {
  private:
   base::DictionaryValue prefs_;
   base::OnceClosure prefs_changed_callback_;
-  base::Closure extra_prefs_changed_callback_;
+  base::OnceClosure extra_prefs_changed_callback_;
   int num_pref_updates_ = 0;
 
   base::OnceClosure set_properties_callback_;
@@ -1200,8 +1200,7 @@ TEST_F(HttpServerPropertiesManagerTest, UpdatePrefsWithCache) {
   std::string expiration_string;
   ASSERT_TRUE(broken_alt_svcs_list_entry->GetStringWithoutPathExpansion(
       "broken_until", &expiration_string));
-  broken_alt_svcs_list_entry->RemoveWithoutPathExpansion("broken_until",
-                                                         nullptr);
+  broken_alt_svcs_list_entry->RemoveKey("broken_until");
 
   // Expiration time of "www.google.com:1234" should be 5 minutes minus the
   // update-prefs-delay from when the prefs were written.
@@ -1463,7 +1462,7 @@ TEST_F(HttpServerPropertiesManagerTest, UpdatePrefsOnShutdown) {
 
   int pref_updates = 0;
   pref_delegate_->set_extra_update_prefs_callback(
-      base::Bind([](int* updates) { (*updates)++; }, &pref_updates));
+      base::BindRepeating([](int* updates) { (*updates)++; }, &pref_updates));
   http_server_props_.reset();
   EXPECT_EQ(1, pref_updates);
 }
@@ -1481,10 +1480,7 @@ TEST_F(HttpServerPropertiesManagerTest, PersistAdvertisedVersionsToPref) {
   base::Time expiration1;
   ASSERT_TRUE(base::Time::FromUTCString("2036-12-01 10:00:00", &expiration1));
   quic::ParsedQuicVersionVector advertised_versions = {
-      quic::ParsedQuicVersion(quic::PROTOCOL_QUIC_CRYPTO,
-                              quic::QUIC_VERSION_46),
-      quic::ParsedQuicVersion(quic::PROTOCOL_QUIC_CRYPTO,
-                              quic::QUIC_VERSION_43)};
+      quic::ParsedQuicVersion::Q046(), quic::ParsedQuicVersion::Q043()};
   alternative_service_info_vector.push_back(
       AlternativeServiceInfo::CreateQuicAlternativeServiceInfo(
           quic_alternative_service1, expiration1, advertised_versions));
@@ -1536,14 +1532,14 @@ TEST_F(HttpServerPropertiesManagerTest, PersistAdvertisedVersionsToPref) {
       "\"server_info\":\"quic_server_info1\"}],"
       "\"servers\":["
       "{\"alternative_service\":[{"
-      "\"advertised_versions\":[43,46],\"expiration\":\"13756212000000000\","
+      "\"advertised_versions\":[46,43],\"expiration\":\"13756212000000000\","
       "\"port\":443,\"protocol_str\":\"quic\"},{\"advertised_versions\":[],"
       "\"expiration\":\"13758804000000000\",\"host\":\"www.google.com\","
       "\"port\":1234,\"protocol_str\":\"h2\"}],"
       "\"isolation\":[],"
       "\"server\":\"https://www.google.com:80\"},"
       "{\"alternative_service\":[{"
-      "\"advertised_versions\":[46],\"expiration\":\"9223372036854775807\","
+      "\"advertised_versions\":[50],\"expiration\":\"9223372036854775807\","
       "\"host\":\"foo.google.com\",\"port\":444,\"protocol_str\":\"quic\"}],"
       "\"isolation\":[],"
       "\"network_stats\":{\"srtt\":42},"
@@ -1606,12 +1602,8 @@ TEST_F(HttpServerPropertiesManagerTest, ReadAdvertisedVersionsFromPref) {
   const quic::ParsedQuicVersionVector loaded_advertised_versions =
       alternative_service_info_vector[1].advertised_versions();
   EXPECT_EQ(2u, loaded_advertised_versions.size());
-  EXPECT_EQ(quic::ParsedQuicVersion(quic::PROTOCOL_QUIC_CRYPTO,
-                                    quic::QUIC_VERSION_43),
-            loaded_advertised_versions[0]);
-  EXPECT_EQ(quic::ParsedQuicVersion(quic::PROTOCOL_QUIC_CRYPTO,
-                                    quic::QUIC_VERSION_46),
-            loaded_advertised_versions[1]);
+  EXPECT_EQ(quic::ParsedQuicVersion::Q043(), loaded_advertised_versions[0]);
+  EXPECT_EQ(quic::ParsedQuicVersion::Q046(), loaded_advertised_versions[1]);
 
   // No other fields should have been populated.
   server_info.alternative_services.reset();
@@ -1626,8 +1618,7 @@ TEST_F(HttpServerPropertiesManagerTest,
 
   // #1: Set alternate protocol.
   AlternativeServiceInfoVector alternative_service_info_vector;
-  // Quic alternative service set with a single QUIC version:
-  // quic::QUIC_VERSION_46.
+  // Quic alternative service set with a single QUIC version: Q046.
   AlternativeService quic_alternative_service1(kProtoQUIC, "", 443);
   base::Time expiration1;
   ASSERT_TRUE(base::Time::FromUTCString("2036-12-01 10:00:00", &expiration1));
@@ -1660,7 +1651,7 @@ TEST_F(HttpServerPropertiesManagerTest,
       "\"server_id\":\"https://mail.google.com:80\","
       "\"server_info\":\"quic_server_info1\"}],"
       "\"servers\":["
-      "{\"alternative_service\":[{\"advertised_versions\":[46],"
+      "{\"alternative_service\":[{\"advertised_versions\":[50],"
       "\"expiration\":\"13756212000000000\",\"port\":443,"
       "\"protocol_str\":\"quic\"}],"
       "\"isolation\":[],"
@@ -1680,10 +1671,7 @@ TEST_F(HttpServerPropertiesManagerTest,
   AlternativeServiceInfoVector alternative_service_info_vector_2;
   // Quic alternative service set with two advertised QUIC versions.
   quic::ParsedQuicVersionVector advertised_versions = {
-      quic::ParsedQuicVersion(quic::PROTOCOL_QUIC_CRYPTO,
-                              quic::QUIC_VERSION_46),
-      quic::ParsedQuicVersion(quic::PROTOCOL_QUIC_CRYPTO,
-                              quic::QUIC_VERSION_43)};
+      quic::ParsedQuicVersion::Q046(), quic::ParsedQuicVersion::Q043()};
   alternative_service_info_vector_2.push_back(
       AlternativeServiceInfo::CreateQuicAlternativeServiceInfo(
           quic_alternative_service1, expiration1, advertised_versions));
@@ -1703,7 +1691,7 @@ TEST_F(HttpServerPropertiesManagerTest,
       "\"server_id\":\"https://mail.google.com:80\","
       "\"server_info\":\"quic_server_info1\"}],"
       "\"servers\":["
-      "{\"alternative_service\":[{\"advertised_versions\":[43,46],"
+      "{\"alternative_service\":[{\"advertised_versions\":[46,43],"
       "\"expiration\":\"13756212000000000\",\"port\":443,"
       "\"protocol_str\":\"quic\"}],"
       "\"isolation\":[],"
@@ -1718,19 +1706,36 @@ TEST_F(HttpServerPropertiesManagerTest,
   AlternativeServiceInfoVector alternative_service_info_vector_3;
   // A same set of QUIC versions but listed in a different order.
   quic::ParsedQuicVersionVector advertised_versions_2 = {
-      quic::ParsedQuicVersion(quic::PROTOCOL_QUIC_CRYPTO,
-                              quic::QUIC_VERSION_43),
-      quic::ParsedQuicVersion(quic::PROTOCOL_QUIC_CRYPTO,
-                              quic::QUIC_VERSION_46)};
+      quic::ParsedQuicVersion::Q043(), quic::ParsedQuicVersion::Q046()};
   alternative_service_info_vector_3.push_back(
       AlternativeServiceInfo::CreateQuicAlternativeServiceInfo(
           quic_alternative_service1, expiration1, advertised_versions_2));
   http_server_props_->SetAlternativeServices(server_www, NetworkIsolationKey(),
                                              alternative_service_info_vector_3);
 
-  // No Prefs update.
-  EXPECT_EQ(0u, GetPendingMainThreadTaskCount());
+  // Change in version ordering causes prefs update.
   EXPECT_EQ(0, pref_delegate_->GetAndClearNumPrefUpdates());
+  EXPECT_NE(0u, GetPendingMainThreadTaskCount());
+  FastForwardUntilNoTasksRemain();
+  EXPECT_EQ(1, pref_delegate_->GetAndClearNumPrefUpdates());
+
+  // Verify preferences updated with new advertised versions.
+  const char expected_json_updated2[] =
+      "{\"quic_servers\":"
+      "[{\"isolation\":[],"
+      "\"server_id\":\"https://mail.google.com:80\","
+      "\"server_info\":\"quic_server_info1\"}],"
+      "\"servers\":["
+      "{\"alternative_service\":[{\"advertised_versions\":[43,46],"
+      "\"expiration\":\"13756212000000000\",\"port\":443,"
+      "\"protocol_str\":\"quic\"}],"
+      "\"isolation\":[],"
+      "\"server\":\"https://www.google.com:80\"}],"
+      "\"supports_quic\":"
+      "{\"address\":\"127.0.0.1\",\"used_quic\":true},\"version\":5}";
+  EXPECT_TRUE(
+      base::JSONWriter::Write(*http_server_properties, &preferences_json));
+  EXPECT_EQ(expected_json_updated2, preferences_json);
 }
 
 TEST_F(HttpServerPropertiesManagerTest, UpdateCacheWithPrefs) {

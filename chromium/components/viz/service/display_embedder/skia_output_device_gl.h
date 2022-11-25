@@ -11,22 +11,17 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "build/build_config.h"
 #include "components/viz/service/display_embedder/skia_output_device.h"
-#include "gpu/command_buffer/common/mailbox.h"
 
 namespace gl {
 class GLImage;
 class GLSurface;
 }  // namespace gl
 
-namespace gfx {
-class GpuFence;
-}  // namespace gfx
-
 namespace gpu {
 class MailboxManager;
 class SharedContextState;
+class SharedImageRepresentationFactory;
 
 namespace gles2 {
 class FeatureInfo;
@@ -39,16 +34,14 @@ class SkiaOutputDeviceGL final : public SkiaOutputDevice {
  public:
   SkiaOutputDeviceGL(
       gpu::MailboxManager* mailbox_manager,
+      gpu::SharedImageRepresentationFactory*
+          shared_image_representation_factory,
       gpu::SharedContextState* context_state,
       scoped_refptr<gl::GLSurface> gl_surface,
       scoped_refptr<gpu::gles2::FeatureInfo> feature_info,
       gpu::MemoryTracker* memory_tracker,
       DidSwapBufferCompleteCallback did_swap_buffer_complete_callback);
   ~SkiaOutputDeviceGL() override;
-
-  bool supports_alpha() {
-    return supports_alpha_;
-  }
 
   // SkiaOutputDevice implementation:
   bool Reshape(const gfx::Size& size,
@@ -63,12 +56,10 @@ class SkiaOutputDeviceGL final : public SkiaOutputDevice {
                      std::vector<ui::LatencyInfo> latency_info) override;
   void CommitOverlayPlanes(BufferPresentedCallback feedback,
                            std::vector<ui::LatencyInfo> latency_info) override;
-  void SetDrawRectangle(const gfx::Rect& draw_rectangle) override;
+  bool SetDrawRectangle(const gfx::Rect& draw_rectangle) override;
   void SetGpuVSyncEnabled(bool enabled) override;
-#if defined(OS_WIN)
   void SetEnableDCLayers(bool enable) override;
   void ScheduleOverlays(SkiaOutputSurface::OverlayList overlays) override;
-#endif
   void EnsureBackbuffer() override;
   void DiscardBackbuffer() override;
   SkSurface* BeginPaint(
@@ -80,12 +71,14 @@ class SkiaOutputDeviceGL final : public SkiaOutputDevice {
   // operation
   void DoFinishSwapBuffers(const gfx::Size& size,
                            std::vector<ui::LatencyInfo> latency_info,
-                           gfx::SwapResult result,
-                           std::unique_ptr<gfx::GpuFence>);
+                           gfx::SwapCompletionResult result);
 
   scoped_refptr<gl::GLImage> GetGLImageForMailbox(const gpu::Mailbox& mailbox);
 
   gpu::MailboxManager* const mailbox_manager_;
+
+  gpu::SharedImageRepresentationFactory* const
+      shared_image_representation_factory_;
 
   gpu::SharedContextState* const context_state_;
   scoped_refptr<gl::GLSurface> gl_surface_;
@@ -93,7 +86,6 @@ class SkiaOutputDeviceGL final : public SkiaOutputDevice {
 
   sk_sp<SkSurface> sk_surface_;
 
-  bool supports_alpha_ = false;
   uint64_t backbuffer_estimated_size_ = 0;
 
   base::WeakPtrFactory<SkiaOutputDeviceGL> weak_ptr_factory_{this};

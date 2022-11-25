@@ -4,7 +4,7 @@
 
 #include "base/memory/platform_shared_memory_region.h"
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/memory/shared_memory_mapping.h"
 #include "base/process/process_metrics.h"
 #include "base/system/sys_info.h"
@@ -13,7 +13,7 @@
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MAC)
 #include <mach/mach_vm.h>
 #include <sys/mman.h>
 #elif defined(OS_POSIX) && !defined(OS_IOS)
@@ -21,6 +21,7 @@
 #include "base/debug/proc_maps_linux.h"
 #elif defined(OS_WIN)
 #include <windows.h>
+#include "base/logging.h"
 #elif defined(OS_FUCHSIA)
 #include <lib/zx/object.h>
 #include <lib/zx/process.h>
@@ -208,8 +209,7 @@ TEST_F(PlatformSharedMemoryRegionTest, MapAtWithOverflowTest) {
   EXPECT_FALSE(mapping.IsValid());
 }
 
-#if defined(OS_POSIX) && !defined(OS_ANDROID) && \
-    (!defined(OS_MACOSX) || defined(OS_IOS))
+#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_MAC)
 // Tests that the second handle is closed after a conversion to read-only on
 // POSIX.
 TEST_F(PlatformSharedMemoryRegionTest,
@@ -235,7 +235,7 @@ TEST_F(PlatformSharedMemoryRegionTest, ConvertToUnsafeInvalidatesSecondHandle) {
 #endif
 
 void CheckReadOnlyMapProtection(void* addr) {
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MAC)
   vm_region_basic_info_64 basic_info;
   mach_vm_size_t dummy_size = 0;
   void* temp_addr = addr;

@@ -5,7 +5,7 @@
 #include "ui/views/accessibility/accessibility_alert_window.h"
 
 #include "base/strings/utf_string_conversions.h"
-#include "ui/accessibility/platform/aura_window_properties.h"
+#include "ui/accessibility/aura/aura_window_properties.h"
 #include "ui/aura/window.h"
 #include "ui/compositor/layer_type.h"
 #include "ui/views/accessibility/ax_aura_obj_cache.h"
@@ -29,7 +29,7 @@ AccessibilityAlertWindow::AccessibilityAlertWindow(aura::Window* parent,
 AccessibilityAlertWindow::~AccessibilityAlertWindow() = default;
 
 void AccessibilityAlertWindow::HandleAlert(const std::string& alert_string) {
-  if (!alert_window_->parent())
+  if (!alert_window_ || !alert_window_->parent())
     return;
 
   alert_window_->SetTitle(base::UTF8ToUTF16(alert_string));

@@ -3,6 +3,8 @@ cfroussios@chromium.org
 dvadym@chromium.org
 estade@chromium.org
 ftirelo@chromium.org
+koerber@google.com
+schwering@google.com
 kolos@chromium.org
 mahmadi@chromium.org
 rogerm@chromium.org
@@ -10,3 +12,4 @@ sebsg@chromium.org
 tmartino@chromium.org
 
 # COMPONENT: UI>Browser>Autofill
+# TEAM: chrome-autofill@google.com

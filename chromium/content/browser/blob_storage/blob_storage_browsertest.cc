@@ -6,13 +6,13 @@
 
 #include "base/bind.h"
 #include "base/run_loop.h"
-#include "base/task/post_task.h"
 #include "base/test/bind_test_util.h"
 #include "content/browser/blob_storage/chrome_blob_storage_context.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -62,8 +62,8 @@ class BlobStorageBrowserTest : public ContentBrowserTest {
   }
 
   void SetBlobLimits() {
-    base::PostTask(FROM_HERE, {BrowserThread::IO},
-                   base::BindOnce(&SetBlobLimitsOnIO, GetBlobContext(),
+    GetIOThreadTaskRunner({})->PostTask(
+        FROM_HERE, base::BindOnce(&SetBlobLimitsOnIO, GetBlobContext(),
                                   std::cref(limits_)));
   }
 
@@ -100,8 +100,8 @@ IN_PROC_BROWSER_TEST_F(BlobStorageBrowserTest, BlobCombinations) {
 
   auto blob_context = GetBlobContext();
   base::RunLoop loop;
-  base::PostTask(
-      FROM_HERE, {BrowserThread::IO}, base::BindLambdaForTesting([&]() {
+  GetIOThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindLambdaForTesting([&]() {
         const storage::BlobMemoryController& memory_controller =
             blob_context->context()->memory_controller();
         // Our exact usages depend on IPC message ordering & garbage collection.

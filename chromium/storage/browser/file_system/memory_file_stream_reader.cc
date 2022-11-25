@@ -77,6 +77,7 @@ void MemoryFileStreamReader::OnReadCompleted(
     int result) {
   if (result > 0)
     offset_ += result;
+
   std::move(callback).Run(result);
 }
 
@@ -94,12 +95,12 @@ int64_t MemoryFileStreamReader::GetLength(
             if (util->GetFileInfo(path, &file_info) != base::File::FILE_OK) {
               return net::ERR_FILE_NOT_FOUND;
             }
- 
+
             if (!FileStreamReader::VerifySnapshotTime(
                     expected_modification_time, file_info)) {
               return net::ERR_UPLOAD_FILE_CHANGED;
             }
- 
+
             return file_info.size;
           },
           memory_file_util_, file_path_, expected_modification_time_),

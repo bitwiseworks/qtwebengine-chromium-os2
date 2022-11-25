@@ -45,18 +45,13 @@ struct hb_serialize_context_t
 {
   typedef unsigned objidx_t;
 
-  struct range_t
-  {
-    char *head, *tail;
-  };
-
   enum whence_t {
      Head,	/* Relative to the current object head (default). */
      Tail,	/* Relative to the current object tail after packed. */
      Absolute	/* Absolute: from the start of the serialize buffer. */
    };
 
-  struct object_t : range_t
+  struct object_t
   {
     void fini () { links.fini (); }
 
@@ -83,12 +78,22 @@ struct hb_serialize_context_t
       objidx_t objidx;
     };
 
+    char *head;
+    char *tail;
     hb_vector_t<link_t> links;
     object_t *next;
   };
 
-  range_t snapshot () { range_t s = {head, tail} ; return s; }
+  struct snapshot_t
+  {
+    char *head;
+    char *tail;
+    object_t *current; // Just for sanity check
+    unsigned num_links;
+  };
 
+  snapshot_t snapshot ()
+  { return snapshot_t { head, tail, current, current->links.length }; }
 
   hb_serialize_context_t (void *start_, unsigned int size) :
     start ((char *) start_),
@@ -167,6 +172,8 @@ struct hb_serialize_context_t
     propagate_error (packed, packed_map);
 
     if (unlikely (!current)) return;
+    if (unlikely (in_error())) return;
+
     assert (!current->next);
 
     /* Only "pack" if there exist other objects... Otherwise, don't bother.
@@ -182,6 +189,8 @@ struct hb_serialize_context_t
   template <typename Type = void>
   Type *push ()
   {
+    if (unlikely (in_error ())) return start_embed<Type> ();
+
     object_t *obj = object_pool.alloc ();
     if (unlikely (!obj))
       check_success (false);
@@ -198,8 +207,10 @@ struct hb_serialize_context_t
   {
     object_t *obj = current;
     if (unlikely (!obj)) return;
+    if (unlikely (in_error())) return;
+
     current = current->next;
-    revert (*obj);
+    revert (obj->head, obj->tail);
     obj->fini ();
     object_pool.free (obj);
   }
@@ -212,6 +223,8 @@ struct hb_serialize_context_t
   {
     object_t *obj = current;
     if (unlikely (!obj)) return 0;
+    if (unlikely (in_error())) return 0;
+
     current = current->next;
     obj->tail = head;
     obj->next = nullptr;
@@ -243,27 +256,44 @@ struct hb_serialize_context_t
 
     packed.push (obj);
 
-    if (unlikely (packed.in_error ()))
+    if (unlikely (packed.in_error ())) {
+      // obj wasn't successfully added to packed, so clean it up otherwise it's
+      // links will be leaked.
+      propagate_error (packed);
+      obj->fini ();
       return 0;
+    }
 
     objidx = packed.length - 1;
 
     if (share) packed_map.set (obj, objidx);
+    propagate_error (packed_map);
 
     return objidx;
   }
 
-  void revert (range_t snap)
+  void revert (snapshot_t snap)
   {
-    assert (snap.head <= head);
-    assert (tail <= snap.tail);
-    head = snap.head;
-    tail = snap.tail;
+    if (unlikely (in_error ())) return;
+    assert (snap.current == current);
+    current->links.shrink (snap.num_links);
+    revert (snap.head, snap.tail);
+  }
+
+  void revert (char *snap_head,
+	       char *snap_tail)
+  {
+    if (unlikely (in_error ())) return;
+    assert (snap_head <= head);
+    assert (tail <= snap_tail);
+    head = snap_head;
+    tail = snap_tail;
     discard_stale_objects ();
   }
 
   void discard_stale_objects ()
   {
+    if (unlikely (in_error ())) return;
     while (packed.length > 1 &&
 	   packed.tail ()->head < tail)
     {
@@ -282,6 +312,7 @@ struct hb_serialize_context_t
 		 unsigned bias = 0)
   {
     static_assert (sizeof (T) == 2 || sizeof (T) == 4, "");
+    if (unlikely (in_error ())) return;
 
     if (!objidx)
       return;
@@ -319,12 +350,11 @@ struct hb_serialize_context_t
       {
 	const object_t* child = packed[link.objidx];
 	if (unlikely (!child)) { err_other_error(); return; }
-	unsigned offset;
-	switch ((whence_t)link.whence) {
+	unsigned offset = 0;
+	switch ((whence_t) link.whence) {
 	case Head:     offset = child->head - parent->head; break;
 	case Tail:     offset = child->head - parent->tail; break;
 	case Absolute: offset = (head - start) + (child->head - tail); break;
-	default: assert (0);
 	}
 
 	assert (offset >= link.bias);
@@ -346,7 +376,11 @@ struct hb_serialize_context_t
       }
   }
 
-  unsigned int length () const { return this->head - current->head; }
+  unsigned int length () const
+  {
+    if (unlikely (!current)) return 0;
+    return this->head - current->head;
+  }
 
   void align (unsigned int alignment)
   {
@@ -434,6 +468,8 @@ struct hb_serialize_context_t
   template <typename Type>
   Type *extend_size (Type *obj, unsigned int size)
   {
+    if (unlikely (in_error ())) return nullptr;
+
     assert (this->start <= (char *) obj);
     assert ((char *) obj <= this->head);
     assert ((char *) obj + size >= this->head);

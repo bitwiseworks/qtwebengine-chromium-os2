@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
@@ -15,8 +15,6 @@
 #include "url/gurl.h"
 
 namespace password_manager {
-
-using ::autofill::PasswordForm;
 
 namespace {
 
@@ -104,7 +102,7 @@ CSVPassword::Status CSVPassword::ParseImpl(PasswordForm* form) const {
   form->signon_realm = IsValidAndroidFacetURI(origin.spec())
                            ? origin.spec()
                            : origin.GetOrigin().spec();
-  form->origin = std::move(origin);
+  form->url = std::move(origin);
   form->username_value = Convert(username);
   form->password_value = Convert(password);
   form->date_created = base::Time::Now();

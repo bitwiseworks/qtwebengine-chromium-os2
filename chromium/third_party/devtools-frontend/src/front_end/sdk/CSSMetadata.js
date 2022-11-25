@@ -32,17 +32,17 @@
 
 import * as Common from '../common/common.js';
 import * as SupportedCSSProperties from '../generated/SupportedCSSProperties.js';
+import * as Platform from '../platform/platform.js';
 
-/**
- * @unrestricted
- */
+
 export class CSSMetadata {
   /**
-   * @param {!Array.<!CSSPropertyDefinition>} properties
+   * @param {!Array<!CSSPropertyDefinition>} properties
    * @param {!Map<string, string>} aliasesFor
    */
   constructor(properties, aliasesFor) {
-    this._values = /** !Array.<string> */ ([]);
+    /** @type {!Array<string>} */
+    this._values = [];
     /** @type {!Map<string, !Array<string>>} */
     this._longhands = new Map();
     /** @type {!Map<string, !Array<string>>} */
@@ -96,7 +96,7 @@ export class CSSMetadata {
     // and add manually maintained map of extra prop-value pairs
     for (const [propertyName, extraValueObj] of Object.entries(_extraPropertyValues)) {
       if (propertyValueSets.has(propertyName)) {
-        propertyValueSets.get(propertyName).addAll(extraValueObj.values);
+        Platform.SetUtilities.addAll(propertyValueSets.get(propertyName), extraValueObj.values);
       } else {
         propertyValueSets.set(propertyName, new Set(extraValueObj.values));
       }
@@ -171,7 +171,7 @@ export class CSSMetadata {
 
   /**
    * @param {string} shorthand
-   * @return {?Array.<string>}
+   * @return {?Array<string>}
    */
   longhands(shorthand) {
     return this._longhands.get(shorthand) || null;
@@ -179,7 +179,7 @@ export class CSSMetadata {
 
   /**
    * @param {string} longhand
-   * @return {?Array.<string>}
+   * @return {?Array<string>}
    */
   shorthands(longhand) {
     return this._shorthands.get(longhand) || null;
@@ -191,6 +191,14 @@ export class CSSMetadata {
    */
   isColorAwareProperty(propertyName) {
     return !!_colorAwareProperties.has(propertyName.toLowerCase()) || this.isCustomProperty(propertyName.toLowerCase());
+  }
+
+  /**
+   * @param {string} propertyName
+   * @return {boolean}
+   */
+  isFontFamilyProperty(propertyName) {
+    return propertyName.toLowerCase() === 'font-family';
   }
 
   /**
@@ -284,8 +292,8 @@ export class CSSMetadata {
    */
   isCSSPropertyName(propertyName) {
     propertyName = propertyName.toLowerCase();
-    if (propertyName.startsWith('-moz-') || propertyName.startsWith('-o-') || propertyName.startsWith('-webkit-') ||
-        propertyName.startsWith('-ms-')) {
+    if ((propertyName.startsWith('--') && propertyName.length > 2) || propertyName.startsWith('-moz-') ||
+        propertyName.startsWith('-ms-') || propertyName.startsWith('-o-') || propertyName.startsWith('-webkit-')) {
       return true;
     }
     return this._valuesSet.has(propertyName);
@@ -327,7 +335,7 @@ export class CSSMetadata {
    * @return {!Array<string>}
    */
   propertyValues(propertyName) {
-    const acceptedKeywords = ['inherit', 'initial', 'unset'];
+    const acceptedKeywords = ['inherit', 'initial', 'revert', 'unset'];
     propertyName = propertyName.toLowerCase();
     acceptedKeywords.push(...this._specificPropertyValues(propertyName));
     if (this.isColorAwareProperty(propertyName)) {
@@ -344,7 +352,7 @@ export class CSSMetadata {
    * @return {number}
    */
   propertyUsageWeight(property) {
-    return Weight[property] || Weight[this.canonicalPropertyName(property)] || 0;
+    return Weight.get(property) || Weight.get(this.canonicalPropertyName(property)) || 0;
   }
 
   /**
@@ -383,15 +391,19 @@ export const URLRegex = /url\(\s*('.+?'|".+?"|[^)]+)\s*\)/g;
  */
 export const GridAreaRowRegex = /((?:\[[\w\- ]+\]\s*)*(?:"[^"]+"|'[^']+'))[^'"\[]*\[?[^'"\[]*/;
 
+/** @type {?CSSMetadata} */
+let _instance = null;
+
 /**
  * @return {!CSSMetadata}
  */
 export function cssMetadata() {
-  if (!CSSMetadata._instance) {
-    CSSMetadata._instance =
-        new CSSMetadata(SupportedCSSProperties.generatedProperties, SupportedCSSProperties.generatedAliasesFor);
+  if (!_instance) {
+    const supportedProperties =
+        /** @type {!Array<!CSSPropertyDefinition>} */ (SupportedCSSProperties.generatedProperties);
+    _instance = new CSSMetadata(supportedProperties, SupportedCSSProperties.generatedAliasesFor);
   }
-  return CSSMetadata._instance;
+  return _instance;
 }
 
 /**
@@ -405,24 +417,23 @@ const _imageValuePresetMap = new Map([
   ['url', 'url(||)'],
 ]);
 
+const _filterValuePresetMap = new Map([
+  ['blur', 'blur(|1px|)'],
+  ['brightness', 'brightness(|0.5|)'],
+  ['contrast', 'contrast(|0.5|)'],
+  ['drop-shadow', 'drop-shadow(|2px 4px 6px black|)'],
+  ['grayscale', 'grayscale(|1|)'],
+  ['hue-rotate', 'hue-rotate(|45deg|)'],
+  ['invert', 'invert(|1|)'],
+  ['opacity', 'opacity(|0.5|)'],
+  ['saturate', 'saturate(|0.5|)'],
+  ['sepia', 'sepia(|1|)'],
+  ['url', 'url(||)'],
+]);
+
 const _valuePresets = new Map([
-  [
-    'filter', new Map([
-      ['blur', 'blur(|1px|)'],
-      ['brightness', 'brightness(|0.5|)'],
-      ['contrast', 'contrast(|0.5|)'],
-      ['drop-shadow', 'drop-shadow(|2px 4px 6px black|)'],
-      ['grayscale', 'grayscale(|1|)'],
-      ['hue-rotate', 'hue-rotate(|45deg|)'],
-      ['invert', 'invert(|1|)'],
-      ['opacity', 'opacity(|0.5|)'],
-      ['saturate', 'saturate(|0.5|)'],
-      ['sepia', 'sepia(|1|)'],
-      ['url', 'url(||)'],
-    ])
-  ],
-  ['background', _imageValuePresetMap], ['background-image', _imageValuePresetMap],
-  ['-webkit-mask-image', _imageValuePresetMap],
+  ['filter', _filterValuePresetMap], ['backdrop-filter', _filterValuePresetMap], ['background', _imageValuePresetMap],
+  ['background-image', _imageValuePresetMap], ['-webkit-mask-image', _imageValuePresetMap],
   [
     'transform', new Map([
       ['scale', 'scale(|1.5|)'],
@@ -461,7 +472,6 @@ const _bezierAwareProperties = new Set([
 ]);
 
 const _colorAwareProperties = new Set([
-  'backdrop-filter',
   'background',
   'background-color',
   'background-image',
@@ -500,7 +510,6 @@ const _colorAwareProperties = new Set([
   '-webkit-box-reflect',
   '-webkit-box-shadow',
   '-webkit-column-rule-color',
-  '-webkit-filter',
   '-webkit-mask',
   '-webkit-mask-box-image',
   '-webkit-mask-box-image-source',
@@ -520,7 +529,10 @@ const _extraPropertyValues = {
   'content': {values: ['normal', 'close-quote', 'no-close-quote', 'no-open-quote', 'open-quote']},
   'baseline-shift': {values: ['baseline']},
   'max-height': {values: ['min-content', 'max-content', '-webkit-fill-available', 'fit-content']},
+  'color': {values: ['black']},
+  'background-color': {values: ['white']},
   'box-shadow': {values: ['inset']},
+  'text-shadow': {values: ['0 0 black']},
   '-webkit-writing-mode': {values: ['horizontal-tb', 'vertical-rl', 'vertical-lr']},
   'writing-mode': {values: ['lr', 'rl', 'tb', 'lr-tb', 'rl-tb', 'tb-rl']},
   'page-break-inside': {values: ['avoid']},
@@ -555,8 +567,13 @@ const _extraPropertyValues = {
   'border-image': {values: ['repeat', 'stretch', 'space', 'round']},
   'text-decoration':
       {values: ['blink', 'line-through', 'overline', 'underline', 'wavy', 'double', 'solid', 'dashed', 'dotted']},
-  'font-family':
-      {values: ['serif', 'sans-serif', 'cursive', 'fantasy', 'monospace', '-webkit-body', '-webkit-pictograph']},
+  // List taken from https://drafts.csswg.org/css-fonts-4/#generic-font-families
+  'font-family': {
+    values: [
+      'serif', 'sans-serif', 'cursive', 'fantasy', 'monospace', 'system-ui', 'emoji', 'math', 'fangsong', 'ui-serif',
+      'ui-sans-serif', 'ui-monospace', 'ui-rounded', '-webkit-body', '-webkit-pictograph'
+    ]
+  },
   'zoom': {values: ['normal']},
   'max-width': {values: ['min-content', 'max-content', '-webkit-fill-available', 'fit-content']},
   '-webkit-font-smoothing': {values: ['antialiased', 'subpixel-antialiased']},
@@ -668,6 +685,12 @@ const _extraPropertyValues = {
   '-webkit-column-span': {values: ['all']},
   '-webkit-column-gap': {values: ['normal']},
   'filter': {
+    values: [
+      'url', 'blur', 'brightness', 'contrast', 'drop-shadow', 'grayscale', 'hue-rotate', 'invert', 'opacity',
+      'saturate', 'sepia'
+    ]
+  },
+  'backdrop-filter': {
     values: [
       'url', 'blur', 'brightness', 'contrast', 'drop-shadow', 'grayscale', 'hue-rotate', 'invert', 'opacity',
       'saturate', 'sepia'
@@ -904,266 +927,267 @@ const _extraPropertyValues = {
 };
 
 // Weight of CSS properties based on their usage from https://www.chromestatus.com/metrics/css/popularity
-const Weight = {
-  'align-content': 57,
-  'align-items': 129,
-  'align-self': 55,
-  'animation': 175,
-  'animation-delay': 114,
-  'animation-direction': 113,
-  'animation-duration': 137,
-  'animation-fill-mode': 132,
-  'animation-iteration-count': 124,
-  'animation-name': 139,
-  'animation-play-state': 104,
-  'animation-timing-function': 141,
-  'backface-visibility': 123,
-  'background': 260,
-  'background-attachment': 119,
-  'background-clip': 165,
-  'background-color': 259,
-  'background-image': 246,
-  'background-origin': 107,
-  'background-position': 237,
-  'background-position-x': 108,
-  'background-position-y': 93,
-  'background-repeat': 234,
-  'background-size': 203,
-  'border': 263,
-  'border-bottom': 233,
-  'border-bottom-color': 190,
-  'border-bottom-left-radius': 186,
-  'border-bottom-right-radius': 185,
-  'border-bottom-style': 150,
-  'border-bottom-width': 179,
-  'border-collapse': 209,
-  'border-color': 226,
-  'border-image': 89,
-  'border-image-outset': 50,
-  'border-image-repeat': 49,
-  'border-image-slice': 58,
-  'border-image-source': 32,
-  'border-image-width': 52,
-  'border-left': 221,
-  'border-left-color': 174,
-  'border-left-style': 142,
-  'border-left-width': 172,
-  'border-radius': 224,
-  'border-right': 223,
-  'border-right-color': 182,
-  'border-right-style': 130,
-  'border-right-width': 178,
-  'border-spacing': 198,
-  'border-style': 206,
-  'border-top': 231,
-  'border-top-color': 192,
-  'border-top-left-radius': 187,
-  'border-top-right-radius': 189,
-  'border-top-style': 152,
-  'border-top-width': 180,
-  'border-width': 214,
-  'bottom': 227,
-  'box-shadow': 213,
-  'box-sizing': 216,
-  'caption-side': 96,
-  'clear': 229,
-  'clip': 173,
-  'clip-rule': 5,
-  'color': 256,
-  'content': 219,
-  'counter-increment': 111,
-  'counter-reset': 110,
-  'cursor': 250,
-  'direction': 176,
-  'display': 262,
-  'empty-cells': 99,
-  'fill': 140,
-  'fill-opacity': 82,
-  'fill-rule': 22,
-  'filter': 160,
-  'flex': 133,
-  'flex-basis': 66,
-  'flex-direction': 85,
-  'flex-flow': 94,
-  'flex-grow': 112,
-  'flex-shrink': 61,
-  'flex-wrap': 68,
-  'float': 252,
-  'font': 211,
-  'font-family': 254,
-  'font-kerning': 18,
-  'font-size': 264,
-  'font-stretch': 77,
-  'font-style': 220,
-  'font-variant': 161,
-  'font-weight': 257,
-  'height': 266,
-  'image-rendering': 90,
-  'justify-content': 127,
-  'left': 248,
-  'letter-spacing': 188,
-  'line-height': 244,
-  'list-style': 215,
-  'list-style-image': 145,
-  'list-style-position': 149,
-  'list-style-type': 199,
-  'margin': 267,
-  'margin-bottom': 241,
-  'margin-left': 243,
-  'margin-right': 238,
-  'margin-top': 253,
-  'mask': 20,
-  'max-height': 205,
-  'max-width': 225,
-  'min-height': 217,
-  'min-width': 218,
-  'object-fit': 33,
-  'opacity': 251,
-  'order': 117,
-  'orphans': 146,
-  'outline': 222,
-  'outline-color': 153,
-  'outline-offset': 147,
-  'outline-style': 151,
-  'outline-width': 148,
-  'overflow': 255,
-  'overflow-wrap': 105,
-  'overflow-x': 184,
-  'overflow-y': 196,
-  'padding': 265,
-  'padding-bottom': 230,
-  'padding-left': 235,
-  'padding-right': 232,
-  'padding-top': 240,
-  'page': 8,
-  'page-break-after': 120,
-  'page-break-before': 69,
-  'page-break-inside': 121,
-  'perspective': 92,
-  'perspective-origin': 103,
-  'pointer-events': 183,
-  'position': 261,
-  'quotes': 158,
-  'resize': 168,
-  'right': 245,
-  'shape-rendering': 38,
-  'size': 64,
-  'speak': 118,
-  'src': 170,
-  'stop-color': 42,
-  'stop-opacity': 31,
-  'stroke': 98,
-  'stroke-dasharray': 36,
-  'stroke-dashoffset': 3,
-  'stroke-linecap': 30,
-  'stroke-linejoin': 21,
-  'stroke-miterlimit': 12,
-  'stroke-opacity': 34,
-  'stroke-width': 87,
-  'table-layout': 171,
-  'tab-size': 46,
-  'text-align': 260,
-  'text-anchor': 35,
-  'text-decoration': 247,
-  'text-indent': 207,
-  'text-overflow': 204,
-  'text-rendering': 155,
-  'text-shadow': 208,
-  'text-transform': 202,
-  'top': 258,
-  'touch-action': 80,
-  'transform': 181,
-  'transform-origin': 162,
-  'transform-style': 86,
-  'transition': 193,
-  'transition-delay': 134,
-  'transition-duration': 135,
-  'transition-property': 131,
-  'transition-timing-function': 122,
-  'unicode-bidi': 156,
-  'unicode-range': 136,
-  'vertical-align': 236,
-  'visibility': 242,
-  '-webkit-appearance': 191,
-  '-webkit-backface-visibility': 154,
-  '-webkit-background-clip': 164,
-  '-webkit-background-origin': 40,
-  '-webkit-background-size': 163,
-  '-webkit-border-end': 9,
-  '-webkit-border-horizontal-spacing': 81,
-  '-webkit-border-image': 75,
-  '-webkit-border-radius': 212,
-  '-webkit-border-start': 10,
-  '-webkit-border-start-color': 16,
-  '-webkit-border-start-width': 13,
-  '-webkit-border-vertical-spacing': 43,
-  '-webkit-box-align': 101,
-  '-webkit-box-direction': 51,
-  '-webkit-box-flex': 128,
-  '-webkit-box-ordinal-group': 91,
-  '-webkit-box-orient': 144,
-  '-webkit-box-pack': 106,
-  '-webkit-box-reflect': 39,
-  '-webkit-box-shadow': 210,
-  '-webkit-column-break-inside': 60,
-  '-webkit-column-count': 84,
-  '-webkit-column-gap': 76,
-  '-webkit-column-rule': 25,
-  '-webkit-column-rule-color': 23,
-  '-webkit-columns': 44,
-  '-webkit-column-span': 29,
-  '-webkit-column-width': 47,
-  '-webkit-filter': 159,
-  '-webkit-font-feature-settings': 59,
-  '-webkit-font-smoothing': 177,
-  '-webkit-highlight': 1,
-  '-webkit-line-break': 45,
-  '-webkit-line-clamp': 126,
-  '-webkit-margin-after': 67,
-  '-webkit-margin-before': 70,
-  '-webkit-margin-collapse': 14,
-  '-webkit-margin-end': 65,
-  '-webkit-margin-start': 100,
-  '-webkit-margin-top-collapse': 78,
-  '-webkit-mask': 19,
-  '-webkit-mask-box-image': 72,
-  '-webkit-mask-image': 88,
-  '-webkit-mask-position': 54,
-  '-webkit-mask-repeat': 63,
-  '-webkit-mask-size': 79,
-  '-webkit-padding-after': 15,
-  '-webkit-padding-before': 28,
-  '-webkit-padding-end': 48,
-  '-webkit-padding-start': 73,
-  '-webkit-print-color-adjust': 83,
-  '-webkit-rtl-ordering': 7,
-  '-webkit-tap-highlight-color': 169,
-  '-webkit-text-emphasis-color': 11,
-  '-webkit-text-fill-color': 71,
-  '-webkit-text-security': 17,
-  '-webkit-text-stroke': 56,
-  '-webkit-text-stroke-color': 37,
-  '-webkit-text-stroke-width': 53,
-  '-webkit-user-drag': 95,
-  '-webkit-user-modify': 62,
-  '-webkit-user-select': 194,
-  '-webkit-writing-mode': 4,
-  'white-space': 228,
-  'widows': 115,
-  'width': 268,
-  'will-change': 74,
-  'word-break': 166,
-  'word-spacing': 157,
-  'word-wrap': 197,
-  'writing-mode': 41,
-  'z-index': 239,
-  'zoom': 200
-};
+const Weight = new Map([
+  ['align-content', 57],
+  ['align-items', 129],
+  ['align-self', 55],
+  ['animation', 175],
+  ['animation-delay', 114],
+  ['animation-direction', 113],
+  ['animation-duration', 137],
+  ['animation-fill-mode', 132],
+  ['animation-iteration-count', 124],
+  ['animation-name', 139],
+  ['animation-play-state', 104],
+  ['animation-timing-function', 141],
+  ['backface-visibility', 123],
+  ['background', 260],
+  ['background-attachment', 119],
+  ['background-clip', 165],
+  ['background-color', 259],
+  ['background-image', 246],
+  ['background-origin', 107],
+  ['background-position', 237],
+  ['background-position-x', 108],
+  ['background-position-y', 93],
+  ['background-repeat', 234],
+  ['background-size', 203],
+  ['border', 263],
+  ['border-bottom', 233],
+  ['border-bottom-color', 190],
+  ['border-bottom-left-radius', 186],
+  ['border-bottom-right-radius', 185],
+  ['border-bottom-style', 150],
+  ['border-bottom-width', 179],
+  ['border-collapse', 209],
+  ['border-color', 226],
+  ['border-image', 89],
+  ['border-image-outset', 50],
+  ['border-image-repeat', 49],
+  ['border-image-slice', 58],
+  ['border-image-source', 32],
+  ['border-image-width', 52],
+  ['border-left', 221],
+  ['border-left-color', 174],
+  ['border-left-style', 142],
+  ['border-left-width', 172],
+  ['border-radius', 224],
+  ['border-right', 223],
+  ['border-right-color', 182],
+  ['border-right-style', 130],
+  ['border-right-width', 178],
+  ['border-spacing', 198],
+  ['border-style', 206],
+  ['border-top', 231],
+  ['border-top-color', 192],
+  ['border-top-left-radius', 187],
+  ['border-top-right-radius', 189],
+  ['border-top-style', 152],
+  ['border-top-width', 180],
+  ['border-width', 214],
+  ['bottom', 227],
+  ['box-shadow', 213],
+  ['box-sizing', 216],
+  ['caption-side', 96],
+  ['clear', 229],
+  ['clip', 173],
+  ['clip-rule', 5],
+  ['color', 256],
+  ['content', 219],
+  ['counter-increment', 111],
+  ['counter-reset', 110],
+  ['cursor', 250],
+  ['direction', 176],
+  ['display', 262],
+  ['empty-cells', 99],
+  ['fill', 140],
+  ['fill-opacity', 82],
+  ['fill-rule', 22],
+  ['filter', 160],
+  ['flex', 133],
+  ['flex-basis', 66],
+  ['flex-direction', 85],
+  ['flex-flow', 94],
+  ['flex-grow', 112],
+  ['flex-shrink', 61],
+  ['flex-wrap', 68],
+  ['float', 252],
+  ['font', 211],
+  ['font-family', 254],
+  ['font-kerning', 18],
+  ['font-size', 264],
+  ['font-stretch', 77],
+  ['font-style', 220],
+  ['font-variant', 161],
+  ['font-weight', 257],
+  ['height', 266],
+  ['image-rendering', 90],
+  ['justify-content', 127],
+  ['left', 248],
+  ['letter-spacing', 188],
+  ['line-height', 244],
+  ['list-style', 215],
+  ['list-style-image', 145],
+  ['list-style-position', 149],
+  ['list-style-type', 199],
+  ['margin', 267],
+  ['margin-bottom', 241],
+  ['margin-left', 243],
+  ['margin-right', 238],
+  ['margin-top', 253],
+  ['mask', 20],
+  ['max-height', 205],
+  ['max-width', 225],
+  ['min-height', 217],
+  ['min-width', 218],
+  ['object-fit', 33],
+  ['opacity', 251],
+  ['order', 117],
+  ['orphans', 146],
+  ['outline', 222],
+  ['outline-color', 153],
+  ['outline-offset', 147],
+  ['outline-style', 151],
+  ['outline-width', 148],
+  ['overflow', 255],
+  ['overflow-wrap', 105],
+  ['overflow-x', 184],
+  ['overflow-y', 196],
+  ['padding', 265],
+  ['padding-bottom', 230],
+  ['padding-left', 235],
+  ['padding-right', 232],
+  ['padding-top', 240],
+  ['page', 8],
+  ['page-break-after', 120],
+  ['page-break-before', 69],
+  ['page-break-inside', 121],
+  ['perspective', 92],
+  ['perspective-origin', 103],
+  ['pointer-events', 183],
+  ['position', 261],
+  ['quotes', 158],
+  ['resize', 168],
+  ['right', 245],
+  ['shape-rendering', 38],
+  ['size', 64],
+  ['speak', 118],
+  ['src', 170],
+  ['stop-color', 42],
+  ['stop-opacity', 31],
+  ['stroke', 98],
+  ['stroke-dasharray', 36],
+  ['stroke-dashoffset', 3],
+  ['stroke-linecap', 30],
+  ['stroke-linejoin', 21],
+  ['stroke-miterlimit', 12],
+  ['stroke-opacity', 34],
+  ['stroke-width', 87],
+  ['table-layout', 171],
+  ['tab-size', 46],
+  ['text-align', 260],
+  ['text-anchor', 35],
+  ['text-decoration', 247],
+  ['text-indent', 207],
+  ['text-overflow', 204],
+  ['text-rendering', 155],
+  ['text-shadow', 208],
+  ['text-transform', 202],
+  ['top', 258],
+  ['touch-action', 80],
+  ['transform', 181],
+  ['transform-origin', 162],
+  ['transform-style', 86],
+  ['transition', 193],
+  ['transition-delay', 134],
+  ['transition-duration', 135],
+  ['transition-property', 131],
+  ['transition-timing-function', 122],
+  ['unicode-bidi', 156],
+  ['unicode-range', 136],
+  ['vertical-align', 236],
+  ['visibility', 242],
+  ['-webkit-appearance', 191],
+  ['-webkit-backface-visibility', 154],
+  ['-webkit-background-clip', 164],
+  ['-webkit-background-origin', 40],
+  ['-webkit-background-size', 163],
+  ['-webkit-border-end', 9],
+  ['-webkit-border-horizontal-spacing', 81],
+  ['-webkit-border-image', 75],
+  ['-webkit-border-radius', 212],
+  ['-webkit-border-start', 10],
+  ['-webkit-border-start-color', 16],
+  ['-webkit-border-start-width', 13],
+  ['-webkit-border-vertical-spacing', 43],
+  ['-webkit-box-align', 101],
+  ['-webkit-box-direction', 51],
+  ['-webkit-box-flex', 128],
+  ['-webkit-box-ordinal-group', 91],
+  ['-webkit-box-orient', 144],
+  ['-webkit-box-pack', 106],
+  ['-webkit-box-reflect', 39],
+  ['-webkit-box-shadow', 210],
+  ['-webkit-column-break-inside', 60],
+  ['-webkit-column-count', 84],
+  ['-webkit-column-gap', 76],
+  ['-webkit-column-rule', 25],
+  ['-webkit-column-rule-color', 23],
+  ['-webkit-columns', 44],
+  ['-webkit-column-span', 29],
+  ['-webkit-column-width', 47],
+  ['-webkit-filter', 159],
+  ['-webkit-font-feature-settings', 59],
+  ['-webkit-font-smoothing', 177],
+  ['-webkit-highlight', 1],
+  ['-webkit-line-break', 45],
+  ['-webkit-line-clamp', 126],
+  ['-webkit-margin-after', 67],
+  ['-webkit-margin-before', 70],
+  ['-webkit-margin-collapse', 14],
+  ['-webkit-margin-end', 65],
+  ['-webkit-margin-start', 100],
+  ['-webkit-margin-top-collapse', 78],
+  ['-webkit-mask', 19],
+  ['-webkit-mask-box-image', 72],
+  ['-webkit-mask-image', 88],
+  ['-webkit-mask-position', 54],
+  ['-webkit-mask-repeat', 63],
+  ['-webkit-mask-size', 79],
+  ['-webkit-padding-after', 15],
+  ['-webkit-padding-before', 28],
+  ['-webkit-padding-end', 48],
+  ['-webkit-padding-start', 73],
+  ['-webkit-print-color-adjust', 83],
+  ['-webkit-rtl-ordering', 7],
+  ['-webkit-tap-highlight-color', 169],
+  ['-webkit-text-emphasis-color', 11],
+  ['-webkit-text-fill-color', 71],
+  ['-webkit-text-security', 17],
+  ['-webkit-text-stroke', 56],
+  ['-webkit-text-stroke-color', 37],
+  ['-webkit-text-stroke-width', 53],
+  ['-webkit-user-drag', 95],
+  ['-webkit-user-modify', 62],
+  ['-webkit-user-select', 194],
+  ['-webkit-writing-mode', 4],
+  ['white-space', 228],
+  ['widows', 115],
+  ['width', 268],
+  ['will-change', 74],
+  ['word-break', 166],
+  ['word-spacing', 157],
+  ['word-wrap', 197],
+  ['writing-mode', 41],
+  ['z-index', 239],
+  ['zoom', 200]
+]);
 
 // Common keywords to CSS properties
 const CommonKeywords = ['auto', 'none'];
 
 /**
- * @typedef {{name: string, longhands: !Array.<string>, inherited: boolean, svg: boolean}}
+ * @typedef {{name: string, longhands: ?Array<string>, inherited: ?boolean, svg: ?boolean}}
  */
+// @ts-ignore typedef
 export let CSSPropertyDefinition;

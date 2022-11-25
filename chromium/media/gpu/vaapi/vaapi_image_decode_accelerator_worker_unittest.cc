@@ -14,11 +14,12 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 #include "base/bind.h"
+#include "base/check_op.h"
 #include "base/containers/span.h"
-#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/notreached.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "gpu/config/gpu_finch_features.h"
@@ -112,7 +113,7 @@ class MockVaapiImageDecoder : public VaapiImageDecoder {
     return gpu::ImageDecodeAcceleratorSupportedProfile();
   }
 
-  MOCK_METHOD1(Initialize, bool(const base::RepeatingClosure&));
+  MOCK_METHOD1(Initialize, bool(const ReportErrorToUMACB&));
   MOCK_METHOD1(Decode, VaapiImageDecodeStatus(base::span<const uint8_t>));
   MOCK_CONST_METHOD0(GetScopedVASurface, const ScopedVASurface*());
   MOCK_METHOD1(

@@ -73,17 +73,12 @@
 #include "third_party/blink/renderer/platform/wtf/text/string_utf8_adaptor.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
 
-static const size_t kMaxByteSizeForHistogram = 100 * 1000 * 1000;
-static const int32_t kBucketCountForMessageSizeHistogram = 50;
-
 namespace blink {
 
 DOMWebSocket::EventQueue::EventQueue(EventTarget* target)
     : state_(kActive), target_(target) {}
 
-DOMWebSocket::EventQueue::~EventQueue() {
-  ContextDestroyed();
-}
+DOMWebSocket::EventQueue::~EventQueue() = default;
 
 void DOMWebSocket::EventQueue::Dispatch(Event* event) {
   switch (state_) {
@@ -165,7 +160,7 @@ void DOMWebSocket::EventQueue::UnpauseTask() {
   DispatchQueuedEvents();
 }
 
-void DOMWebSocket::EventQueue::Trace(Visitor* visitor) {
+void DOMWebSocket::EventQueue::Trace(Visitor* visitor) const {
   visitor->Trace(target_);
   visitor->Trace(events_);
 }
@@ -357,8 +352,6 @@ void DOMWebSocket::send(DOMArrayBuffer* binary_data,
     return;
   }
   RecordSendTypeHistogram(WebSocketSendType::kArrayBuffer);
-  RecordSendMessageSizeHistogram(WebSocketSendType::kArrayBuffer,
-                                 binary_data->ByteLengthAsSizeT());
   DCHECK(channel_);
   buffered_amount_ += binary_data->ByteLengthAsSizeT();
   channel_->Send(*binary_data, 0, binary_data->ByteLengthAsSizeT(),
@@ -380,8 +373,6 @@ void DOMWebSocket::send(NotShared<DOMArrayBufferView> array_buffer_view,
     return;
   }
   RecordSendTypeHistogram(WebSocketSendType::kArrayBufferView);
-  RecordSendMessageSizeHistogram(WebSocketSendType::kArrayBufferView,
-                                 array_buffer_view.View()->byteLengthAsSizeT());
   DCHECK(channel_);
   buffered_amount_ += array_buffer_view.View()->byteLengthAsSizeT();
   channel_->Send(*array_buffer_view.View()->buffer(),
@@ -404,9 +395,6 @@ void DOMWebSocket::send(Blob* binary_data, ExceptionState& exception_state) {
   }
   uint64_t size = binary_data->size();
   RecordSendTypeHistogram(WebSocketSendType::kBlob);
-  RecordSendMessageSizeHistogram(
-      WebSocketSendType::kBlob,
-      clampTo<size_t>(size, 0, kMaxByteSizeForHistogram));
   buffered_amount_ += size;
   DCHECK(channel_);
 
@@ -498,9 +486,6 @@ void DOMWebSocket::ContextDestroyed() {
   NETWORK_DVLOG(1) << "WebSocket " << this << " contextDestroyed()";
   event_queue_->ContextDestroyed();
   if (channel_) {
-    if (common_.GetState() == kOpen) {
-      channel_->Close(WebSocketChannel::kCloseEventCodeGoingAway, String());
-    }
     ReleaseChannel();
   }
   if (common_.GetState() != kClosed) {
@@ -572,15 +557,12 @@ void DOMWebSocket::DidReceiveBinaryMessage(
       }
       auto* blob = MakeGarbageCollected<Blob>(
           BlobDataHandle::Create(std::move(blob_data), size));
-      RecordReceiveMessageSizeHistogram(WebSocketReceiveType::kBlob, size);
       event_queue_->Dispatch(MessageEvent::Create(blob, origin_string_));
       break;
     }
 
     case kBinaryTypeArrayBuffer:
       DOMArrayBuffer* array_buffer = DOMArrayBuffer::Create(data);
-      RecordReceiveMessageSizeHistogram(WebSocketReceiveType::kArrayBuffer,
-                                        size);
       event_queue_->Dispatch(
           MessageEvent::Create(array_buffer, origin_string_));
       break;
@@ -636,61 +618,7 @@ void DOMWebSocket::RecordSendTypeHistogram(WebSocketSendType type) {
   base::UmaHistogramEnumeration("WebCore.WebSocket.SendType", type);
 }
 
-void DOMWebSocket::RecordSendMessageSizeHistogram(WebSocketSendType type,
-                                                  size_t size) {
-  // Truncate |size| to avoid overflowing int32_t.
-  int32_t size_to_count = clampTo<int32_t>(size, 0, kMaxByteSizeForHistogram);
-  switch (type) {
-    case WebSocketSendType::kArrayBuffer:
-      base::UmaHistogramCustomCounts(
-          "WebCore.WebSocket.MessageSize.Send.ArrayBuffer", size_to_count, 1,
-          kMaxByteSizeForHistogram, kBucketCountForMessageSizeHistogram);
-      return;
-
-    case WebSocketSendType::kArrayBufferView:
-      base::UmaHistogramCustomCounts(
-          "WebCore.WebSocket.MessageSize.Send.ArrayBufferView", size_to_count,
-          1, kMaxByteSizeForHistogram, kBucketCountForMessageSizeHistogram);
-      return;
-
-    case WebSocketSendType::kBlob:
-      base::UmaHistogramCustomCounts("WebCore.WebSocket.MessageSize.Send.Blob",
-                                     size_to_count, 1, kMaxByteSizeForHistogram,
-                                     kBucketCountForMessageSizeHistogram);
-      return;
-
-    case WebSocketSendType::kString:
-      NOTREACHED();
-      return;
-  }
-  NOTREACHED();
-}
-
-void DOMWebSocket::RecordReceiveMessageSizeHistogram(WebSocketReceiveType type,
-                                                     size_t size) {
-  // Truncate |size| to avoid overflowing int32_t.
-  int32_t size_to_count = clampTo<int32_t>(size, 0, kMaxByteSizeForHistogram);
-  switch (type) {
-    case WebSocketReceiveType::kArrayBuffer:
-      base::UmaHistogramCustomCounts(
-          "WebCore.WebSocket.MessageSize.Receive.ArrayBuffer", size_to_count, 1,
-          kMaxByteSizeForHistogram, kBucketCountForMessageSizeHistogram);
-      return;
-
-    case WebSocketReceiveType::kBlob:
-      base::UmaHistogramCustomCounts(
-          "WebCore.WebSocket.MessageSize.Receive.Blob", size_to_count, 1,
-          kMaxByteSizeForHistogram, kBucketCountForMessageSizeHistogram);
-      return;
-
-    case WebSocketReceiveType::kString:
-      NOTREACHED();
-      return;
-  }
-  NOTREACHED();
-}
-
-void DOMWebSocket::Trace(Visitor* visitor) {
+void DOMWebSocket::Trace(Visitor* visitor) const {
   visitor->Trace(channel_);
   visitor->Trace(event_queue_);
   WebSocketChannelClient::Trace(visitor);

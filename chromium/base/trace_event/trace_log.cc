@@ -16,10 +16,10 @@
 #include "base/command_line.h"
 #include "base/debug/leak_annotations.h"
 #include "base/location.h"
+#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/message_loop/message_loop_current.h"
 #include "base/no_destructor.h"
 #include "base/process/process.h"
 #include "base/process/process_metrics.h"
@@ -29,6 +29,7 @@
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
+#include "base/task/current_thread.h"
 #include "base/task/post_task.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/platform_thread.h"
@@ -118,8 +119,8 @@ void InitializeMetadataEvent(TraceEvent* trace_event,
 
   TraceArguments args(arg_name, value);
   base::TimeTicks now = TRACE_TIME_TICKS_NOW();
-  ThreadTicks thread_now = ThreadNow();
-  ThreadInstructionCount thread_instruction_count = ThreadInstructionNow();
+  ThreadTicks thread_now;
+  ThreadInstructionCount thread_instruction_count;
   trace_event->Reset(thread_id, now, thread_now, thread_instruction_count,
                      TRACE_EVENT_PHASE_METADATA,
                      CategoryRegistry::kCategoryMetadata->state_ptr(),
@@ -172,7 +173,7 @@ void ForEachCategoryFilter(const unsigned char* category_group_enabled,
 }
 
 // The fallback arguments filtering function will filter away every argument.
-bool DefaultIsTraceEventArgsWhitelisted(
+bool DefaultIsTraceEventArgsAllowlisted(
     const char* category_group_name,
     const char* event_name,
     base::trace_event::ArgumentNameFilterPredicate* arg_name_filter) {
@@ -208,7 +209,7 @@ class TraceLog::OptionalAutoLock {
 };
 
 class TraceLog::ThreadLocalEventBuffer
-    : public MessageLoopCurrent::DestructionObserver,
+    : public CurrentThread::DestructionObserver,
       public MemoryDumpProvider {
  public:
   explicit ThreadLocalEventBuffer(TraceLog* trace_log);
@@ -228,7 +229,7 @@ class TraceLog::ThreadLocalEventBuffer
   int generation() const { return generation_; }
 
  private:
-  // MessageLoopCurrent::DestructionObserver
+  // CurrentThread::DestructionObserver
   void WillDestroyCurrentMessageLoop() override;
 
   // MemoryDumpProvider implementation.
@@ -257,7 +258,7 @@ TraceLog::ThreadLocalEventBuffer::ThreadLocalEventBuffer(TraceLog* trace_log)
       generation_(trace_log->generation()) {
   // ThreadLocalEventBuffer is created only if the thread has a message loop, so
   // the following message_loop won't be NULL.
-  MessageLoopCurrent::Get()->AddDestructionObserver(this);
+  CurrentThread::Get()->AddDestructionObserver(this);
 
   // This is to report the local memory usage when memory-infra is enabled.
   MemoryDumpManager::GetInstance()->RegisterDumpProvider(
@@ -271,7 +272,7 @@ TraceLog::ThreadLocalEventBuffer::ThreadLocalEventBuffer(TraceLog* trace_log)
 
 TraceLog::ThreadLocalEventBuffer::~ThreadLocalEventBuffer() {
   CheckThisIsCurrentBuffer();
-  MessageLoopCurrent::Get()->RemoveDestructionObserver(this);
+  CurrentThread::Get()->RemoveDestructionObserver(this);
   MemoryDumpManager::GetInstance()->UnregisterDumpProvider(this);
 
   {
@@ -400,7 +401,7 @@ TraceLog::TraceLog()
 
 // Linux renderer processes and Android O processes are not allowed to read
 // "proc/stat" file, crbug.com/788870.
-#if defined(OS_WIN) || (defined(OS_MACOSX) && !defined(OS_IOS))
+#if defined(OS_WIN) || defined(OS_MAC)
   process_creation_time_ = Process::Current().CreationTime();
 #else
   // Use approximate time when creation time is not available.
@@ -422,7 +423,7 @@ void TraceLog::InitializeThreadLocalEventBufferIfSupported() {
   // - to handle the final flush.
   // For a thread without a message loop or if the message loop may be blocked,
   // the trace events will be added into the main buffer directly.
-  if (thread_blocks_message_loop_.Get() || !MessageLoopCurrent::IsSet() ||
+  if (thread_blocks_message_loop_.Get() || !CurrentThread::IsSet() ||
       !ThreadTaskRunnerHandle::IsSet()) {
     return;
   }
@@ -715,8 +716,6 @@ void TraceLog::SetDisabled(uint8_t modes_to_disable) {
 }
 
 void TraceLog::SetDisabledWhileLocked(uint8_t modes_to_disable) {
-  lock_.AssertAcquired();
-
   if (!(enabled_modes_ & modes_to_disable))
     return;
 
@@ -829,8 +828,6 @@ bool TraceLog::BufferIsFull() const {
 TraceEvent* TraceLog::AddEventToThreadSharedChunkWhileLocked(
     TraceEventHandle* handle,
     bool check_buffer_is_full) {
-  lock_.AssertAcquired();
-
   if (thread_shared_chunk_ && thread_shared_chunk_->IsFull()) {
     logged_events_->ReturnChunk(thread_shared_chunk_index_,
                                 std::move(thread_shared_chunk_));
@@ -855,7 +852,6 @@ TraceEvent* TraceLog::AddEventToThreadSharedChunkWhileLocked(
 }
 
 void TraceLog::CheckIfBufferIsFullWhileLocked() {
-  lock_.AssertAcquired();
   if (logged_events_->IsFull()) {
     if (buffer_limit_reached_timestamp_.is_null()) {
       buffer_limit_reached_timestamp_ = OffsetNow();
@@ -993,7 +989,7 @@ void TraceLog::FinishFlush(int generation, bool discard_events) {
       // use the safe default filtering predicate.
       if (argument_filter_predicate_.is_null()) {
         argument_filter_predicate =
-            base::BindRepeating(&DefaultIsTraceEventArgsWhitelisted);
+            base::BindRepeating(&DefaultIsTraceEventArgsAllowlisted);
       } else {
         argument_filter_predicate = argument_filter_predicate_;
       }
@@ -1226,6 +1222,32 @@ TraceEventHandle TraceLog::AddTraceEventWithThreadIdAndTimestamp(
     int thread_id,
     const TimeTicks& timestamp,
     TraceArguments* args,
+    unsigned int flags) {
+  ThreadTicks thread_now;
+  // If timestamp is provided explicitly, don't record thread time as it would
+  // be for the wrong timestamp. Similarly, if we record an event for another
+  // process or thread, we shouldn't report the current thread's thread time.
+  if (!(flags & TRACE_EVENT_FLAG_EXPLICIT_TIMESTAMP ||
+        flags & TRACE_EVENT_FLAG_HAS_PROCESS_ID ||
+        thread_id != static_cast<int>(PlatformThread::CurrentId()))) {
+    thread_now = ThreadNow();
+  }
+  return AddTraceEventWithThreadIdAndTimestamps(
+      phase, category_group_enabled, name, scope, id, bind_id, thread_id,
+      timestamp, thread_now, args, flags);
+}
+
+TraceEventHandle TraceLog::AddTraceEventWithThreadIdAndTimestamps(
+    char phase,
+    const unsigned char* category_group_enabled,
+    const char* name,
+    const char* scope,
+    unsigned long long id,
+    unsigned long long bind_id,
+    int thread_id,
+    const TimeTicks& timestamp,
+    const ThreadTicks& thread_timestamp,
+    TraceArguments* args,
     unsigned int flags) NO_THREAD_SAFETY_ANALYSIS {
   TraceEventHandle handle = {0, 0, 0};
   if (!ShouldAddAfterUpdatingState(phase, category_group_enabled, name, id,
@@ -1244,8 +1266,16 @@ TraceEventHandle TraceLog::AddTraceEventWithThreadIdAndTimestamp(
     bind_id = MangleEventId(bind_id);
 
   TimeTicks offset_event_timestamp = OffsetTimestamp(timestamp);
-  ThreadTicks thread_now = ThreadNow();
-  ThreadInstructionCount thread_instruction_now = ThreadInstructionNow();
+  ThreadInstructionCount thread_instruction_now;
+  // If timestamp is provided explicitly, don't record thread instruction count
+  // as it would be for the wrong timestamp. Similarly, if we record an event
+  // for another process or thread, we shouldn't report the current thread's
+  // thread time.
+  if (!(flags & TRACE_EVENT_FLAG_EXPLICIT_TIMESTAMP ||
+        flags & TRACE_EVENT_FLAG_HAS_PROCESS_ID ||
+        thread_id != static_cast<int>(PlatformThread::CurrentId()))) {
+    thread_instruction_now = ThreadInstructionNow();
+  }
 
   ThreadLocalEventBuffer* thread_local_event_buffer = nullptr;
   if (*category_group_enabled & RECORDING_MODE) {
@@ -1259,9 +1289,10 @@ TraceEventHandle TraceLog::AddTraceEventWithThreadIdAndTimestamp(
     auto trace_event_override =
         add_trace_event_override_.load(std::memory_order_relaxed);
     if (trace_event_override) {
-      TraceEvent new_trace_event(
-          thread_id, offset_event_timestamp, thread_now, thread_instruction_now,
-          phase, category_group_enabled, name, scope, id, bind_id, args, flags);
+      TraceEvent new_trace_event(thread_id, offset_event_timestamp,
+                                 thread_timestamp, thread_instruction_now,
+                                 phase, category_group_enabled, name, scope, id,
+                                 bind_id, args, flags);
 
       trace_event_override(
           &new_trace_event,
@@ -1275,8 +1306,9 @@ TraceEventHandle TraceLog::AddTraceEventWithThreadIdAndTimestamp(
   bool disabled_by_filters = false;
   if (*category_group_enabled & TraceCategory::ENABLED_FOR_FILTERING) {
     auto new_trace_event = std::make_unique<TraceEvent>(
-        thread_id, offset_event_timestamp, thread_now, thread_instruction_now,
-        phase, category_group_enabled, name, scope, id, bind_id, args, flags);
+        thread_id, offset_event_timestamp, thread_timestamp,
+        thread_instruction_now, phase, category_group_enabled, name, scope, id,
+        bind_id, args, flags);
 
     disabled_by_filters = true;
     ForEachCategoryFilter(
@@ -1308,7 +1340,7 @@ TraceEventHandle TraceLog::AddTraceEventWithThreadIdAndTimestamp(
       if (filtered_trace_event) {
         *trace_event = std::move(*filtered_trace_event);
       } else {
-        trace_event->Reset(thread_id, offset_event_timestamp, thread_now,
+        trace_event->Reset(thread_id, offset_event_timestamp, thread_timestamp,
                            thread_instruction_now, phase,
                            category_group_enabled, name, scope, id, bind_id,
                            args, flags);
@@ -1452,7 +1484,7 @@ void TraceLog::UpdateTraceEventDurationExplicit(
 #if defined(OS_WIN)
   // Generate an ETW event that marks the end of a complete event.
   if (category_group_enabled_local & TraceCategory::ENABLED_FOR_ETW_EXPORT)
-    TraceEventETWExport::AddCompleteEndEvent(name);
+    TraceEventETWExport::AddCompleteEndEvent(category_group_enabled, name);
 #endif  // OS_WIN
 
   if (category_group_enabled_local & TraceCategory::ENABLED_FOR_RECORDING) {
@@ -1517,8 +1549,6 @@ void TraceLog::AddMetadataEventWhileLocked(int thread_id,
 }
 
 void TraceLog::AddMetadataEventsWhileLocked() {
-  lock_.AssertAcquired();
-
   auto trace_event_override =
       add_trace_event_override_.load(std::memory_order_relaxed);
 
@@ -1681,6 +1711,7 @@ void TraceLog::SetTimeOffset(TimeDelta offset) {
 }
 
 size_t TraceLog::GetObserverCountForTest() const {
+  AutoLock lock(observers_lock_);
   return enabled_state_observers_.size();
 }
 
@@ -1816,6 +1847,23 @@ base::trace_event::TraceEventHandle AddTraceEventWithThreadIdAndTimestamp(
       ->AddTraceEventWithThreadIdAndTimestamp(
           phase, category_group_enabled, name, scope, id, bind_id, thread_id,
           timestamp, args, flags);
+}
+
+base::trace_event::TraceEventHandle AddTraceEventWithThreadIdAndTimestamps(
+    char phase,
+    const unsigned char* category_group_enabled,
+    const char* name,
+    const char* scope,
+    unsigned long long id,
+    int thread_id,
+    const base::TimeTicks& timestamp,
+    const base::ThreadTicks& thread_timestamp,
+    unsigned int flags) {
+  return base::trace_event::TraceLog::GetInstance()
+      ->AddTraceEventWithThreadIdAndTimestamps(
+          phase, category_group_enabled, name, scope, id,
+          /*bind_id=*/trace_event_internal::kNoId, thread_id, timestamp,
+          thread_timestamp, nullptr, flags);
 }
 
 void AddMetadataEvent(const unsigned char* category_group_enabled,

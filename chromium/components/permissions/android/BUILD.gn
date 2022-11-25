@@ -11,7 +11,6 @@ generate_jni("jni_headers") {
     "java/src/org/chromium/components/permissions/PermissionDialogDelegate.java",
     "java/src/org/chromium/components/permissions/PermissionUmaUtil.java",
     "java/src/org/chromium/components/permissions/PermissionUtil.java",
-    "java/src/org/chromium/components/permissions/PermissionsClient.java",
     "java/src/org/chromium/components/permissions/nfc/NfcSystemLevelSetting.java",
   ]
 }
@@ -88,9 +87,9 @@ android_resources("java_resources") {
     "res/drawable-xxxhdpi/permission_cookie.png",
     "res/drawable-xxxhdpi/settings_nfc.png",
     "res/drawable-xxxhdpi/vr_headset.png",
+    "res/drawable/permission_idle_detection.xml",
     "res/layout/update_permissions_dialog.xml",
   ]
-  custom_package = "org.chromium.components.permissions"
   deps = [
     ":permissions_strings_grd",
     "//components/browser_ui/modaldialog/android:java_resources",
@@ -116,7 +115,6 @@ android_library("java") {
     "java/src/org/chromium/components/permissions/PermissionDialogModel.java",
     "java/src/org/chromium/components/permissions/PermissionUmaUtil.java",
     "java/src/org/chromium/components/permissions/PermissionUtil.java",
-    "java/src/org/chromium/components/permissions/PermissionsClient.java",
     "java/src/org/chromium/components/permissions/nfc/NfcSystemLevelPrompt.java",
     "java/src/org/chromium/components/permissions/nfc/NfcSystemLevelSetting.java",
   ]
@@ -125,22 +123,28 @@ android_library("java") {
     "//base:base_java",
     "//base:jni_java",
     "//components/browser_ui/modaldialog/android:java",
+    "//components/content_settings/android:content_settings_enums_java",
     "//content/public/android:content_java",
     "//third_party/android_deps:android_support_v4_java",
+    "//third_party/android_deps:androidx_annotation_annotation_java",
     "//ui/android:ui_java",
   ]
-  srcjar_deps = [
-    "//components/content_settings/core/common:content_settings_type_javagen",
-  ]
   annotation_processor_deps = [ "//base/android/jni_generator:jni_processor" ]
+  resources_package = "org.chromium.components.permissions"
 }
 
-junit_binary("components_permissions_junit_tests") {
+java_library("components_permissions_junit_tests") {
+  # Platform checks are broken for Robolectric. See https://crbug.com/1071638.
+  bypass_platform_checks = true
+  testonly = true
   sources = [ "junit/src/org/chromium/components/permissions/nfc/NfcSystemLevelPromptTest.java" ]
   deps = [
     ":java",
     "//base:base_java_test_support",
     "//base:base_junit_test_support",
+    "//third_party/android_deps:robolectric_all_java",
+    "//third_party/junit",
+    "//third_party/mockito:mockito_java",
     "//ui/android:ui_java",
   ]
 }

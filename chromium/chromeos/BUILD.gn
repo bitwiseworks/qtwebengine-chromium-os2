@@ -21,12 +21,7 @@ declare_args() {
   # PpdProvider class.
   # TODO(crbug.com/1025995): remove this and all related scaffolding
   # once we're ready to cut over.
-  is_printing_ppd_provider_v3 = false
-}
-
-buildflag_header("chromeos_buildflags") {
-  header = "chromeos_buildflags.h"
-  flags = [ "IS_CHROMEOS_DEVICE=$is_chromeos_device" ]
+  is_printing_ppd_provider_v3 = true
 }
 
 component("chromeos") {
@@ -37,14 +32,16 @@ component("chromeos") {
   if (is_chromeos_device) {
     configs += [ "//build/config/compiler:use_orderfile_for_hugepage" ]
   }
-  public_deps = [ "//chromeos/constants" ]
+  public_deps = [
+    "//chromeos/constants",
+    "//components/policy/proto",
+  ]
   deps = [
     ":chromeos_export",
     "//base",
     "//base:i18n",
     "//chromeos/dbus",
     "//chromeos/dbus/constants",
-    "//components/policy/proto",
     "//google_apis",
     "//services/network/public/cpp:cpp",
     "//third_party/protobuf:protobuf_lite",
@@ -52,18 +49,14 @@ component("chromeos") {
   sources = [
     "hugepage_text/hugepage_text.cc",
     "hugepage_text/hugepage_text.h",
-    "memory/kstaled.cc",
-    "memory/kstaled.h",
-    "memory/memory.cc",
-    "memory/memory.h",
-    "memory/swap_configuration.cc",
-    "memory/swap_configuration.h",
     "policy/weekly_time/time_utils.cc",
     "policy/weekly_time/time_utils.h",
     "policy/weekly_time/weekly_time.cc",
     "policy/weekly_time/weekly_time.h",
     "policy/weekly_time/weekly_time_interval.cc",
     "policy/weekly_time/weekly_time_interval.h",
+    "printing/cups_printer_status.cc",
+    "printing/cups_printer_status.h",
     "printing/epson_driver_matching.cc",
     "printing/epson_driver_matching.h",
     "printing/ppd_cache.cc",
@@ -75,8 +68,10 @@ component("chromeos") {
     "printing/printer_configuration.h",
     "printing/printer_translator.cc",
     "printing/printer_translator.h",
-    "printing/uri_components.cc",
-    "printing/uri_components.h",
+    "printing/uri.cc",
+    "printing/uri.h",
+    "printing/uri_impl.cc",
+    "printing/uri_impl.h",
     "printing/usb_printer_id.cc",
     "printing/usb_printer_id.h",
     "process_proxy/process_output_watcher.cc",
@@ -85,6 +80,8 @@ component("chromeos") {
     "process_proxy/process_proxy.h",
     "process_proxy/process_proxy_registry.cc",
     "process_proxy/process_proxy_registry.h",
+    "scanning/scanner.cc",
+    "scanning/scanner.h",
   ]
   if (current_cpu == "arm" || current_cpu == "x86") {
     defines = [ "BINDER_IPC_32BIT" ]
@@ -92,7 +89,12 @@ component("chromeos") {
 
   if (is_printing_ppd_provider_v3) {
     sources += [
+      "printing/ppd_metadata_manager.cc",
+      "printing/ppd_metadata_manager.h",
+      "printing/ppd_metadata_parser.cc",
+      "printing/ppd_metadata_parser.h",
       "printing/ppd_provider_v3.cc",
+      "printing/ppd_provider_v3.h",
       "printing/printer_config_cache.cc",
       "printing/printer_config_cache.h",
     ]
@@ -152,10 +154,11 @@ test("chromeos_unittests") {
     "//build/config/linux/dbus",
     "//build/config/linux/nss:system_nss_no_ssl_config",
   ]
+
   deps = [
-    ":chromeos_buildflags",
     ":test_support",
     "//base/test:test_support",
+    "//build:chromeos_buildflags",
     "//chromeos/attestation:unit_tests",
     "//chromeos/audio:unit_tests",
     "//chromeos/cryptohome:unit_tests",
@@ -167,6 +170,8 @@ test("chromeos_unittests") {
     "//chromeos/login/auth:unit_tests",
     "//chromeos/login/login_state:unit_tests",
     "//chromeos/login/session:unit_tests",
+    "//chromeos/memory:unit_tests",
+    "//chromeos/memory/userspace_swap:unit_tests",
     "//chromeos/network:test_support",
     "//chromeos/network:unit_tests",
     "//chromeos/services:unit_tests",
@@ -179,6 +184,8 @@ test("chromeos_unittests") {
     "//components/policy/proto",
     "//components/prefs:test_support",
     "//components/proxy_config",
+    "//crypto",
+    "//crypto:platform",
     "//dbus:test_support",
     "//google_apis",
     "//mojo/core/embedder",
@@ -195,11 +202,15 @@ test("chromeos_unittests") {
     "policy/weekly_time/time_utils_unittest.cc",
     "policy/weekly_time/weekly_time_interval_unittest.cc",
     "policy/weekly_time/weekly_time_unittest.cc",
+    "printing/cups_printer_status_unittest.cc",
     "printing/epson_driver_matching_unittest.cc",
     "printing/ppd_cache_unittest.cc",
     "printing/ppd_line_reader_unittest.cc",
     "printing/printer_configuration_unittest.cc",
     "printing/printer_translator_unittest.cc",
+    "printing/uri_unittest.cc",
+    "printing/uri_unittest.h",
+    "printing/uri_unittest_consistency.cc",
     "printing/usb_printer_id_unittest.cc",
     "process_proxy/process_output_watcher_unittest.cc",
     "process_proxy/process_proxy_unittest.cc",
@@ -207,7 +218,15 @@ test("chromeos_unittests") {
   ]
 
   if (is_printing_ppd_provider_v3) {
-    sources += [ "printing/printer_config_cache_unittest.cc" ]
+    sources += [
+      "printing/fake_printer_config_cache.cc",
+      "printing/fake_printer_config_cache.h",
+      "printing/ppd_metadata_manager_unittest.cc",
+      "printing/ppd_metadata_matchers.h",
+      "printing/ppd_metadata_parser_unittest.cc",
+      "printing/ppd_provider_v3_unittest.cc",
+      "printing/printer_config_cache_unittest.cc",
+    ]
   } else {
     sources += [ "printing/ppd_provider_unittest.cc" ]
   }
@@ -230,21 +249,6 @@ if (is_chromeos_device) {
     deploy_chrome = true
   }
 
-  # The sanity test's actual binary is baked into the OS image. All we need to
-  # do is build the test wrapper and build our own browser to push to the DUT
-  # before testing it.
-  generate_runner_script("cros_browser_sanity_test") {
-    testonly = true
-    test_exe = "cros_browser_sanity_test"
-    generated_script = "$root_build_dir/bin/run_cros_browser_sanity_test"
-    runtime_deps_file = "$root_out_dir/cros_browser_sanity_test.runtime_deps"
-
-    data_deps = [
-      ":cros_chrome_deploy",
-      "//:chromiumos_preflight",  # Builds the browser.
-    ]
-  }
-
   tast_test("chrome_login_tast_tests") {
     tast_tests = [
       "ui.ChromeLogin",
@@ -264,6 +268,13 @@ if (is_chromeos_device) {
   tast_test("chrome_all_tast_tests") {
     # To disable a specific test, add it the following list and cite a bug.
     tast_disabled_tests = [
+      # crbug.com/1115622
+      "ui.ChromeLoginGAIA",
+      "inputs.VirtualKeyboardOOBE",
+
+      # crbug.com/1097630
+      "security.OpenFDs",
+
       # crbug.com/1051059
       "security.SELinuxProcessesARC",
 
@@ -273,6 +284,33 @@ if (is_chromeos_device) {
 
       # crbug.com/1056163
       "hwsec.LoginGuest",
+
+      # crbug.com/1059426
+      "ui.ChromeCrashNotLoggedInDirect.breakpad",
+      "ui.ChromeCrashLoggedInDirect.breakpad",
+
+      # crbug.com/1073084
+      "crostini.CopyPaste.wayland_to_x11_artifact",
+
+      # crbug.com/1098810
+      "security.SELinuxFilesSystem",
+
+      # crbug.com/1099695
+      "platform.Drivefs",
+
+      # crbug.com/1114654
+      "crostini.Restart.artifact",
+
+      # crbug.com/1114752
+      "arc.ContainerMount",
+
+      # crbug.com/1131496
+      "apps.LaunchHelpApp.clamshell_oobe_stable",
+      "apps.LaunchHelpApp.tablet_oobe_stable",
+
+      # crbug.com/1131304
+      "printer.PinPrintLexmark.no_pin",
+      "printer.PinPrintLexmark.pin",
     ]
   }
 
@@ -304,10 +342,8 @@ fuzzer_test("ppd_line_reader_fuzzer") {
   deps = [ ":chromeos" ]
 }
 
-fuzzer_test("printer_configuration_fuzzer") {
-  sources = [ "printing/printer_configuration_fuzzer.cc" ]
-  deps = [
-    ":chromeos",
-    "//base",
-  ]
+fuzzer_test("uri_fuzzer") {
+  sources = [ "printing/uri_fuzzer.cc" ]
+  seed_corpus = "printing/uri_fuzzer_seed_corpus"
+  deps = [ ":chromeos" ]
 }

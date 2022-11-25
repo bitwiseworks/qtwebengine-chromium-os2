@@ -9,8 +9,7 @@
 #include <algorithm>
 #include <utility>
 
-#include "core/fxge/render_defines.h"
-#include "third_party/base/ptr_util.h"
+#include "third_party/base/stl_util.h"
 #include "xfa/fwl/cfwl_edit.h"
 #include "xfa/fwl/cfwl_eventmouse.h"
 #include "xfa/fwl/cfwl_messagekey.h"
@@ -49,6 +48,11 @@ CXFA_FFField* CXFA_FFField::AsField() {
   return this;
 }
 
+void CXFA_FFField::Trace(cppgc::Visitor* visitor) const {
+  CXFA_FFWidget::Trace(visitor);
+  visitor->Trace(m_pNormalWidget);
+}
+
 CFX_RectF CXFA_FFField::GetBBox(FocusOption focus) {
   if (focus == kDoNotDrawFocus)
     return CXFA_FFWidget::GetBBox(kDoNotDrawFocus);
@@ -59,7 +63,7 @@ CFX_RectF CXFA_FFField::GetBBox(FocusOption focus) {
     case XFA_FFWidgetType::kImageEdit:
     case XFA_FFWidgetType::kSignature:
     case XFA_FFWidgetType::kChoiceList:
-      return GetRotateMatrix().TransformRect(m_rtUI);
+      return GetRotateMatrix().TransformRect(m_UIRect);
     default:
       return CFX_RectF();
   }
@@ -75,7 +79,7 @@ void CXFA_FFField::RenderWidget(CXFA_Graphics* pGS,
   mtRotate.Concat(matrix);
 
   CXFA_FFWidget::RenderWidget(pGS, mtRotate, highlight);
-  DrawBorder(pGS, m_pNode->GetUIBorder(), m_rtUI, mtRotate);
+  DrawBorder(pGS, m_pNode->GetUIBorder(), m_UIRect, mtRotate);
   RenderCaption(pGS, &mtRotate);
   DrawHighlight(pGS, &mtRotate, highlight, kSquareShape);
 
@@ -92,20 +96,19 @@ void CXFA_FFField::DrawHighlight(CXFA_Graphics* pGS,
   if (highlight == kNoHighlight)
     return;
 
-  if (m_rtUI.IsEmpty() || !GetDoc()->GetXFADoc()->IsInteractive() ||
+  if (m_UIRect.IsEmpty() || !GetDoc()->GetXFADoc()->IsInteractive() ||
       !m_pNode->IsOpenAccess()) {
     return;
   }
-  CXFA_FFDoc* pDoc = GetDoc();
-  pGS->SetFillColor(
-      CXFA_GEColor(pDoc->GetDocEnvironment()->GetHighlightColor(pDoc)));
+  pGS->SetFillColor(CXFA_GEColor(GetDoc()->GetHighlightColor()));
   CXFA_GEPath path;
   if (shape == kRoundShape)
-    path.AddEllipse(m_rtUI);
+    path.AddEllipse(m_UIRect);
   else
-    path.AddRectangle(m_rtUI.left, m_rtUI.top, m_rtUI.width, m_rtUI.height);
+    path.AddRectangle(m_UIRect.left, m_UIRect.top, m_UIRect.width,
+                      m_UIRect.height);
 
-  pGS->FillPath(&path, FXFILL_WINDING, pMatrix);
+  pGS->FillPath(&path, CFX_FillRenderOptions::FillType::kWinding, pMatrix);
 }
 
 void CXFA_FFField::DrawFocus(CXFA_Graphics* pGS, CFX_Matrix* pMatrix) {
@@ -115,29 +118,25 @@ void CXFA_FFField::DrawFocus(CXFA_Graphics* pGS, CFX_Matrix* pMatrix) {
   pGS->SetStrokeColor(CXFA_GEColor(0xFF000000));
 
   static constexpr float kDashPattern[2] = {1, 1};
-  pGS->SetLineDash(0.0f, kDashPattern, FX_ArraySize(kDashPattern));
+  pGS->SetLineDash(0.0f, kDashPattern, pdfium::size(kDashPattern));
   pGS->SetLineWidth(0);
 
   CXFA_GEPath path;
-  path.AddRectangle(m_rtUI.left, m_rtUI.top, m_rtUI.width, m_rtUI.height);
+  path.AddRectangle(m_UIRect.left, m_UIRect.top, m_UIRect.width,
+                    m_UIRect.height);
   pGS->StrokePath(&path, pMatrix);
 }
 
-void CXFA_FFField::SetFWLThemeProvider() {
-  if (GetNormalWidget())
-    GetNormalWidget()->SetThemeProvider(GetApp()->GetFWLTheme(GetDoc()));
-}
-
 CFWL_Widget* CXFA_FFField::GetNormalWidget() {
-  return m_pNormalWidget.get();
+  return m_pNormalWidget;
 }
 
 const CFWL_Widget* CXFA_FFField::GetNormalWidget() const {
-  return m_pNormalWidget.get();
+  return m_pNormalWidget;
 }
 
-void CXFA_FFField::SetNormalWidget(std::unique_ptr<CFWL_Widget> widget) {
-  m_pNormalWidget = std::move(widget);
+void CXFA_FFField::SetNormalWidget(CFWL_Widget* widget) {
+  m_pNormalWidget = widget;
 }
 
 bool CXFA_FFField::IsLoaded() {
@@ -145,10 +144,6 @@ bool CXFA_FFField::IsLoaded() {
 }
 
 bool CXFA_FFField::LoadWidget() {
-  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
-  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
-
-  SetFWLThemeProvider();
   m_pNode->LoadCaption(GetDoc());
   PerformLayout();
   return true;
@@ -169,7 +164,7 @@ void CXFA_FFField::SetEditScrollOffset() {
     fScrollOffset = -(m_pNode->GetUIMargin().top);
 
   while (pPrev) {
-    fScrollOffset += pPrev->m_rtUI.height;
+    fScrollOffset += pPrev->m_UIRect.height;
     pItem = pPrev->GetLayoutItem()->GetPrev();
     pPrev = pItem ? ToField(pItem->GetFFWidget()) : nullptr;
   }
@@ -217,7 +212,7 @@ void CXFA_FFField::CapPlacement() {
          GetLayoutItem()->GetPrev()) ||
         (iCapPlacement == XFA_AttributeValue::Bottom &&
          GetLayoutItem()->GetNext())) {
-      m_rtCaption = CFX_RectF();
+      m_CaptionRect = CFX_RectF();
     } else {
       fCapReserve = caption->GetReserve();
       if (iCapPlacement == XFA_AttributeValue::Top ||
@@ -228,16 +223,16 @@ void CXFA_FFField::CapPlacement() {
       }
       CXFA_ContentLayoutItem* pItem = GetLayoutItem();
       if (!pItem->GetPrev() && !pItem->GetNext()) {
-        m_rtCaption = rtWidget;
+        m_CaptionRect = rtWidget;
       } else {
         pItem = pItem->GetFirst();
-        m_rtCaption = pItem->GetRect(false);
+        m_CaptionRect = pItem->GetRect(false);
         pItem = pItem->GetNext();
         while (pItem) {
-          m_rtCaption.height += pItem->GetRect(false).Height();
+          m_CaptionRect.height += pItem->GetRect(false).Height();
           pItem = pItem->GetNext();
         }
-        XFA_RectWithoutMargin(&m_rtCaption, margin);
+        XFA_RectWithoutMargin(&m_CaptionRect, margin);
       }
 
       CXFA_TextLayout* pCapTextLayout = m_pNode->GetCaptionTextLayout();
@@ -255,35 +250,35 @@ void CXFA_FFField::CapPlacement() {
     }
   }
 
-  m_rtUI = rtWidget;
+  m_UIRect = rtWidget;
   CXFA_Margin* capMargin = caption ? caption->GetMarginIfExists() : nullptr;
   switch (iCapPlacement) {
     case XFA_AttributeValue::Left: {
-      m_rtCaption.width = fCapReserve;
+      m_CaptionRect.width = fCapReserve;
       CapLeftRightPlacement(capMargin, rtWidget, iCapPlacement);
-      m_rtUI.width -= fCapReserve;
-      m_rtUI.left += fCapReserve;
+      m_UIRect.width -= fCapReserve;
+      m_UIRect.left += fCapReserve;
       break;
     }
     case XFA_AttributeValue::Top: {
-      m_rtCaption.height = fCapReserve;
+      m_CaptionRect.height = fCapReserve;
       CapTopBottomPlacement(capMargin, rtWidget, iCapPlacement);
-      m_rtUI.top += fCapReserve;
-      m_rtUI.height -= fCapReserve;
+      m_UIRect.top += fCapReserve;
+      m_UIRect.height -= fCapReserve;
       break;
     }
     case XFA_AttributeValue::Right: {
-      m_rtCaption.left = m_rtCaption.right() - fCapReserve;
-      m_rtCaption.width = fCapReserve;
+      m_CaptionRect.left = m_CaptionRect.right() - fCapReserve;
+      m_CaptionRect.width = fCapReserve;
       CapLeftRightPlacement(capMargin, rtWidget, iCapPlacement);
-      m_rtUI.width -= fCapReserve;
+      m_UIRect.width -= fCapReserve;
       break;
     }
     case XFA_AttributeValue::Bottom: {
-      m_rtCaption.top = m_rtCaption.bottom() - fCapReserve;
-      m_rtCaption.height = fCapReserve;
+      m_CaptionRect.top = m_CaptionRect.bottom() - fCapReserve;
+      m_CaptionRect.height = fCapReserve;
       CapTopBottomPlacement(capMargin, rtWidget, iCapPlacement);
-      m_rtUI.height -= fCapReserve;
+      m_UIRect.height -= fCapReserve;
       break;
     }
     case XFA_AttributeValue::Inline:
@@ -295,34 +290,34 @@ void CXFA_FFField::CapPlacement() {
   CXFA_Border* borderUI = m_pNode->GetUIBorder();
   if (borderUI) {
     CXFA_Margin* borderMargin = borderUI->GetMarginIfExists();
-    XFA_RectWithoutMargin(&m_rtUI, borderMargin);
+    XFA_RectWithoutMargin(&m_UIRect, borderMargin);
   }
-  m_rtUI.Normalize();
+  m_UIRect.Normalize();
 }
 
 void CXFA_FFField::CapTopBottomPlacement(const CXFA_Margin* margin,
                                          const CFX_RectF& rtWidget,
                                          XFA_AttributeValue iCapPlacement) {
   CFX_RectF rtUIMargin = m_pNode->GetUIMargin();
-  m_rtCaption.left += rtUIMargin.left;
+  m_CaptionRect.left += rtUIMargin.left;
   if (margin) {
-    XFA_RectWithoutMargin(&m_rtCaption, margin);
-    if (m_rtCaption.height < 0)
-      m_rtCaption.top += m_rtCaption.height;
+    XFA_RectWithoutMargin(&m_CaptionRect, margin);
+    if (m_CaptionRect.height < 0)
+      m_CaptionRect.top += m_CaptionRect.height;
   }
 
   float fWidth = rtUIMargin.left + rtUIMargin.width;
-  float fHeight = m_rtCaption.height + rtUIMargin.top + rtUIMargin.height;
+  float fHeight = m_CaptionRect.height + rtUIMargin.top + rtUIMargin.height;
   if (fWidth > rtWidget.width)
-    m_rtUI.width += fWidth - rtWidget.width;
+    m_UIRect.width += fWidth - rtWidget.width;
 
-  if (fHeight == XFA_DEFAULTUI_HEIGHT && m_rtUI.height < XFA_MINUI_HEIGHT) {
-    m_rtUI.height = XFA_MINUI_HEIGHT;
-    m_rtCaption.top += rtUIMargin.top + rtUIMargin.height;
+  if (fHeight == XFA_DEFAULTUI_HEIGHT && m_UIRect.height < XFA_MINUI_HEIGHT) {
+    m_UIRect.height = XFA_MINUI_HEIGHT;
+    m_CaptionRect.top += rtUIMargin.top + rtUIMargin.height;
   } else if (fHeight > rtWidget.height) {
-    m_rtUI.height += fHeight - rtWidget.height;
+    m_UIRect.height += fHeight - rtWidget.height;
     if (iCapPlacement == XFA_AttributeValue::Bottom)
-      m_rtCaption.top += fHeight - rtWidget.height;
+      m_CaptionRect.top += fHeight - rtWidget.height;
   }
 }
 
@@ -330,27 +325,27 @@ void CXFA_FFField::CapLeftRightPlacement(const CXFA_Margin* margin,
                                          const CFX_RectF& rtWidget,
                                          XFA_AttributeValue iCapPlacement) {
   CFX_RectF rtUIMargin = m_pNode->GetUIMargin();
-  m_rtCaption.top += rtUIMargin.top;
-  m_rtCaption.height -= rtUIMargin.top;
+  m_CaptionRect.top += rtUIMargin.top;
+  m_CaptionRect.height -= rtUIMargin.top;
   if (margin) {
-    XFA_RectWithoutMargin(&m_rtCaption, margin);
-    if (m_rtCaption.height < 0)
-      m_rtCaption.top += m_rtCaption.height;
+    XFA_RectWithoutMargin(&m_CaptionRect, margin);
+    if (m_CaptionRect.height < 0)
+      m_CaptionRect.top += m_CaptionRect.height;
   }
 
-  float fWidth = m_rtCaption.width + rtUIMargin.left + rtUIMargin.width;
+  float fWidth = m_CaptionRect.width + rtUIMargin.left + rtUIMargin.width;
   float fHeight = rtUIMargin.top + rtUIMargin.height;
   if (fWidth > rtWidget.width) {
-    m_rtUI.width += fWidth - rtWidget.width;
+    m_UIRect.width += fWidth - rtWidget.width;
     if (iCapPlacement == XFA_AttributeValue::Right)
-      m_rtCaption.left += fWidth - rtWidget.width;
+      m_CaptionRect.left += fWidth - rtWidget.width;
   }
 
-  if (fHeight == XFA_DEFAULTUI_HEIGHT && m_rtUI.height < XFA_MINUI_HEIGHT) {
-    m_rtUI.height = XFA_MINUI_HEIGHT;
-    m_rtCaption.top += rtUIMargin.top + rtUIMargin.height;
+  if (fHeight == XFA_DEFAULTUI_HEIGHT && m_UIRect.height < XFA_MINUI_HEIGHT) {
+    m_UIRect.height = XFA_MINUI_HEIGHT;
+    m_CaptionRect.top += rtUIMargin.top + rtUIMargin.height;
   } else if (fHeight > rtWidget.height) {
-    m_rtUI.height += fHeight - rtWidget.height;
+    m_UIRect.height += fHeight - rtWidget.height;
   }
 }
 
@@ -370,7 +365,7 @@ void CXFA_FFField::SetFWLRect() {
   if (!GetNormalWidget())
     return;
 
-  CFX_RectF rtUi = m_rtUI;
+  CFX_RectF rtUi = m_UIRect;
   rtUi.width = std::max(rtUi.width, 1.0f);
   if (!GetDoc()->GetXFADoc()->IsInteractive()) {
     float fFontSize = m_pNode->GetFontSize();
@@ -383,12 +378,8 @@ bool CXFA_FFField::OnMouseEnter() {
   if (!GetNormalWidget())
     return false;
 
-  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
-  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
-
-  SendMessageToFWLWidget(pdfium::MakeUnique<CFWL_MessageMouse>(
-      GetNormalWidget(), FWL_MouseCommand::Enter));
-
+  CFWL_MessageMouse msg(GetNormalWidget(), FWL_MouseCommand::Enter);
+  SendMessageToFWLWidget(&msg);
   return true;
 }
 
@@ -396,12 +387,8 @@ bool CXFA_FFField::OnMouseExit() {
   if (!GetNormalWidget())
     return false;
 
-  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
-  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
-
-  SendMessageToFWLWidget(pdfium::MakeUnique<CFWL_MessageMouse>(
-      GetNormalWidget(), FWL_MouseCommand::Leave));
-
+  CFWL_MessageMouse msg(GetNormalWidget(), FWL_MouseCommand::Leave);
+  SendMessageToFWLWidget(&msg);
   return true;
 }
 
@@ -425,14 +412,10 @@ bool CXFA_FFField::AcceptsFocusOnButtonDown(uint32_t dwFlags,
 }
 
 bool CXFA_FFField::OnLButtonDown(uint32_t dwFlags, const CFX_PointF& point) {
-  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
-  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
-
   SetButtonDown(true);
-  SendMessageToFWLWidget(pdfium::MakeUnique<CFWL_MessageMouse>(
-      GetNormalWidget(), FWL_MouseCommand::LeftButtonDown, dwFlags,
-      FWLToClient(point)));
-
+  CFWL_MessageMouse msg(GetNormalWidget(), FWL_MouseCommand::LeftButtonDown,
+                        dwFlags, FWLToClient(point));
+  SendMessageToFWLWidget(&msg);
   return true;
 }
 
@@ -442,14 +425,11 @@ bool CXFA_FFField::OnLButtonUp(uint32_t dwFlags, const CFX_PointF& point) {
   if (!IsButtonDown())
     return false;
 
-  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
-  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
-
   SetButtonDown(false);
-  SendMessageToFWLWidget(pdfium::MakeUnique<CFWL_MessageMouse>(
-      GetNormalWidget(), FWL_MouseCommand::LeftButtonUp, dwFlags,
-      FWLToClient(point)));
 
+  CFWL_MessageMouse msg(GetNormalWidget(), FWL_MouseCommand::LeftButtonUp,
+                        dwFlags, FWLToClient(point));
+  SendMessageToFWLWidget(&msg);
   return true;
 }
 
@@ -457,13 +437,9 @@ bool CXFA_FFField::OnLButtonDblClk(uint32_t dwFlags, const CFX_PointF& point) {
   if (!GetNormalWidget())
     return false;
 
-  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
-  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
-
-  SendMessageToFWLWidget(pdfium::MakeUnique<CFWL_MessageMouse>(
-      GetNormalWidget(), FWL_MouseCommand::LeftButtonDblClk, dwFlags,
-      FWLToClient(point)));
-
+  CFWL_MessageMouse msg(GetNormalWidget(), FWL_MouseCommand::LeftButtonDblClk,
+                        dwFlags, FWLToClient(point));
+  SendMessageToFWLWidget(&msg);
   return true;
 }
 
@@ -471,39 +447,29 @@ bool CXFA_FFField::OnMouseMove(uint32_t dwFlags, const CFX_PointF& point) {
   if (!GetNormalWidget())
     return false;
 
-  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
-  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
-
-  SendMessageToFWLWidget(pdfium::MakeUnique<CFWL_MessageMouse>(
-      GetNormalWidget(), FWL_MouseCommand::Move, dwFlags, FWLToClient(point)));
-
+  CFWL_MessageMouse msg(GetNormalWidget(), FWL_MouseCommand::Move, dwFlags,
+                        FWLToClient(point));
+  SendMessageToFWLWidget(&msg);
   return true;
 }
 
 bool CXFA_FFField::OnMouseWheel(uint32_t dwFlags,
-                                int16_t zDelta,
-                                const CFX_PointF& point) {
+                                const CFX_PointF& point,
+                                const CFX_Vector& delta) {
   if (!GetNormalWidget())
     return false;
 
-  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
-  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
-
-  SendMessageToFWLWidget(pdfium::MakeUnique<CFWL_MessageMouseWheel>(
-      GetNormalWidget(), dwFlags, FWLToClient(point), CFX_PointF(zDelta, 0)));
-
+  CFWL_MessageMouseWheel msg(GetNormalWidget(), FWLToClient(point), delta);
+  SendMessageToFWLWidget(&msg);
   return true;
 }
 
 bool CXFA_FFField::OnRButtonDown(uint32_t dwFlags, const CFX_PointF& point) {
-  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
-  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
-
   SetButtonDown(true);
-  SendMessageToFWLWidget(pdfium::MakeUnique<CFWL_MessageMouse>(
-      GetNormalWidget(), FWL_MouseCommand::RightButtonDown, dwFlags,
-      FWLToClient(point)));
 
+  CFWL_MessageMouse msg(GetNormalWidget(), FWL_MouseCommand::RightButtonDown,
+                        dwFlags, FWLToClient(point));
+  SendMessageToFWLWidget(&msg);
   return true;
 }
 
@@ -513,14 +479,10 @@ bool CXFA_FFField::OnRButtonUp(uint32_t dwFlags, const CFX_PointF& point) {
   if (!IsButtonDown())
     return false;
 
-  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
-  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
-
   SetButtonDown(false);
-  SendMessageToFWLWidget(pdfium::MakeUnique<CFWL_MessageMouse>(
-      GetNormalWidget(), FWL_MouseCommand::RightButtonUp, dwFlags,
-      FWLToClient(point)));
-
+  CFWL_MessageMouse msg(GetNormalWidget(), FWL_MouseCommand::RightButtonUp,
+                        dwFlags, FWLToClient(point));
+  SendMessageToFWLWidget(&msg);
   return true;
 }
 
@@ -528,13 +490,9 @@ bool CXFA_FFField::OnRButtonDblClk(uint32_t dwFlags, const CFX_PointF& point) {
   if (!GetNormalWidget())
     return false;
 
-  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
-  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
-
-  SendMessageToFWLWidget(pdfium::MakeUnique<CFWL_MessageMouse>(
-      GetNormalWidget(), FWL_MouseCommand::RightButtonDblClk, dwFlags,
-      FWLToClient(point)));
-
+  CFWL_MessageMouse msg(GetNormalWidget(), FWL_MouseCommand::RightButtonDblClk,
+                        dwFlags, FWLToClient(point));
+  SendMessageToFWLWidget(&msg);
   return true;
 }
 
@@ -545,11 +503,8 @@ bool CXFA_FFField::OnSetFocus(CXFA_FFWidget* pOldWidget) {
   if (!GetNormalWidget())
     return false;
 
-  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
-  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
-
-  SendMessageToFWLWidget(
-      pdfium::MakeUnique<CFWL_MessageSetFocus>(nullptr, GetNormalWidget()));
+  CFWL_MessageSetFocus msg(nullptr, GetNormalWidget());
+  SendMessageToFWLWidget(&msg);
   GetLayoutItem()->SetStatusBits(XFA_WidgetStatus_Focused);
   InvalidateRect();
 
@@ -557,29 +512,22 @@ bool CXFA_FFField::OnSetFocus(CXFA_FFWidget* pOldWidget) {
 }
 
 bool CXFA_FFField::OnKillFocus(CXFA_FFWidget* pNewWidget) {
-  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
-  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
-
-  ObservedPtr<CXFA_FFWidget> pNewWatched(pNewWidget);
   if (GetNormalWidget()) {
-    SendMessageToFWLWidget(
-        pdfium::MakeUnique<CFWL_MessageKillFocus>(nullptr, GetNormalWidget()));
+    CFWL_MessageKillFocus msg(nullptr, GetNormalWidget());
+    SendMessageToFWLWidget(&msg);
     GetLayoutItem()->ClearStatusBits(XFA_WidgetStatus_Focused);
     InvalidateRect();
   }
-  return pNewWatched && CXFA_FFWidget::OnKillFocus(pNewWatched.Get());
+  return pNewWidget && CXFA_FFWidget::OnKillFocus(pNewWidget);
 }
 
 bool CXFA_FFField::OnKeyDown(uint32_t dwKeyCode, uint32_t dwFlags) {
   if (!GetNormalWidget() || !GetDoc()->GetXFADoc()->IsInteractive())
     return false;
 
-  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
-  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
-
-  SendMessageToFWLWidget(pdfium::MakeUnique<CFWL_MessageKey>(
-      GetNormalWidget(), FWL_KeyCommand::KeyDown, dwFlags, dwKeyCode));
-
+  CFWL_MessageKey msg(GetNormalWidget(), CFWL_MessageKey::Type::kKeyDown,
+                      dwFlags, dwKeyCode);
+  SendMessageToFWLWidget(&msg);
   return true;
 }
 
@@ -587,12 +535,9 @@ bool CXFA_FFField::OnKeyUp(uint32_t dwKeyCode, uint32_t dwFlags) {
   if (!GetNormalWidget() || !GetDoc()->GetXFADoc()->IsInteractive())
     return false;
 
-  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
-  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
-
-  SendMessageToFWLWidget(pdfium::MakeUnique<CFWL_MessageKey>(
-      GetNormalWidget(), FWL_KeyCommand::KeyUp, dwFlags, dwKeyCode));
-
+  CFWL_MessageKey msg(GetNormalWidget(), CFWL_MessageKey::Type::kKeyUp, dwFlags,
+                      dwKeyCode);
+  SendMessageToFWLWidget(&msg);
   return true;
 }
 
@@ -606,12 +551,9 @@ bool CXFA_FFField::OnChar(uint32_t dwChar, uint32_t dwFlags) {
   if (!m_pNode->IsOpenAccess())
     return false;
 
-  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
-  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
-
-  SendMessageToFWLWidget(pdfium::MakeUnique<CFWL_MessageKey>(
-      GetNormalWidget(), FWL_KeyCommand::Char, dwFlags, dwChar));
-
+  CFWL_MessageKey msg(GetNormalWidget(), CFWL_MessageKey::Type::kChar, dwFlags,
+                      dwChar);
+  SendMessageToFWLWidget(&msg);
   return true;
 }
 
@@ -621,7 +563,7 @@ FWL_WidgetHit CXFA_FFField::HitTest(const CFX_PointF& point) {
     return FWL_WidgetHit::Client;
   if (!GetRectWithoutRotate().Contains(point))
     return FWL_WidgetHit::Unknown;
-  if (m_rtCaption.Contains(point))
+  if (m_CaptionRect.Contains(point))
     return FWL_WidgetHit::Titlebar;
   return FWL_WidgetHit::Border;
 }
@@ -636,8 +578,8 @@ void CXFA_FFField::LayoutCaption() {
   if (!pCapTextLayout)
     return;
 
-  float fHeight = pCapTextLayout->Layout(m_rtCaption.Size());
-  m_rtCaption.height = std::max(m_rtCaption.height, fHeight);
+  float fHeight = pCapTextLayout->Layout(m_CaptionRect.Size());
+  m_CaptionRect.height = std::max(m_CaptionRect.height, fHeight);
 }
 
 void CXFA_FFField::RenderCaption(CXFA_Graphics* pGS, CFX_Matrix* pMatrix) {
@@ -650,12 +592,12 @@ void CXFA_FFField::RenderCaption(CXFA_Graphics* pGS, CFX_Matrix* pMatrix) {
     return;
 
   if (!pCapTextLayout->IsLoaded())
-    pCapTextLayout->Layout(m_rtCaption.Size());
+    pCapTextLayout->Layout(m_CaptionRect.Size());
 
-  CFX_RectF rtClip = m_rtCaption;
+  CFX_RectF rtClip = m_CaptionRect;
   rtClip.Intersect(GetRectWithoutRotate());
   CFX_RenderDevice* pRenderDevice = pGS->GetRenderDevice();
-  CFX_Matrix mt(1, 0, 0, 1, m_rtCaption.left, m_rtCaption.top);
+  CFX_Matrix mt(1, 0, 0, 1, m_CaptionRect.left, m_CaptionRect.top);
   if (pMatrix) {
     rtClip = pMatrix->TransformRect(rtClip);
     mt.Concat(*pMatrix);
@@ -768,17 +710,14 @@ bool CXFA_FFField::IsDataChanged() {
   return false;
 }
 
-void CXFA_FFField::SendMessageToFWLWidget(
-    std::unique_ptr<CFWL_Message> pMessage) {
-  GetApp()->GetFWLWidgetMgr()->OnProcessMessageToForm(std::move(pMessage));
+void CXFA_FFField::SendMessageToFWLWidget(CFWL_Message* pMessage) {
+  ASSERT(pMessage);
+  GetApp()->GetFWLWidgetMgr()->OnProcessMessageToForm(pMessage);
 }
 
 void CXFA_FFField::OnProcessMessage(CFWL_Message* pMessage) {}
 
 void CXFA_FFField::OnProcessEvent(CFWL_Event* pEvent) {
-  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
-  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
-
   switch (pEvent->GetType()) {
     case CFWL_Event::Type::Mouse: {
       CFWL_EventMouse* event = static_cast<CFWL_EventMouse*>(pEvent);

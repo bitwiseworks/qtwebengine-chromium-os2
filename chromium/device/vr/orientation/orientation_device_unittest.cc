@@ -48,6 +48,11 @@ class FakeScreen : public display::Screen {
   gfx::NativeWindow GetWindowAtScreenPoint(const gfx::Point& point) override {
     return nullptr;
   }
+  gfx::NativeWindow GetLocalProcessWindowAtPoint(
+      const gfx::Point& point,
+      const std::set<gfx::NativeWindow>& ignore) override {
+    return nullptr;
+  }
   display::Display GetDisplayNearestWindow(
       gfx::NativeWindow window) const override {
     return display;
@@ -157,10 +162,6 @@ class VROrientationDeviceTest : public testing::Test {
       device_->GetInlineFrameData(base::BindOnce(
           [](device::mojom::XRFrameDataPtr data) { EXPECT_FALSE(data); }));
     }
-  }
-
-  void SetInlinePosesEnabled(bool enabled) {
-    device_->SetInlinePosesEnabled(enabled);
   }
 
   std::unique_ptr<VROrientationSession> MakeDisplay() {
@@ -376,14 +377,6 @@ TEST_F(VROrientationDeviceTest, OrientationLandscape270Test) {
                    EXPECT_NEAR(ptr->orientation->z(), 0, 0.001);
                    EXPECT_NEAR(ptr->orientation->w(), 0.924, 0.001);
                  }));
-}
-
-TEST_F(VROrientationDeviceTest, NoMagicWindowPosesWhileBrowsing) {
-  InitializeDevice(FakeInitParams());
-
-  AssertInlineFrameDataAvailable(true);
-  SetInlinePosesEnabled(false);
-  AssertInlineFrameDataAvailable(false);
 }
 
 TEST_F(VROrientationDeviceTest, GetFrameDataHelper) {

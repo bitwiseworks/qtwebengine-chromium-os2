@@ -61,8 +61,8 @@ namespace {
 
 const char kReceivingEndDoesntExistError[] =
     "Could not establish connection. Receiving end does not exist.";
-#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX) || \
-    defined(OS_OS2)
+#if defined(OS_WIN) || defined(OS_MAC) || defined(OS_LINUX) || \
+    defined(OS_CHROMEOS) || defined(OS_OS2)
 const char kMissingPermissionError[] =
     "Access to native messaging requires nativeMessaging permission.";
 const char kProhibitedByPoliciesError[] =
@@ -309,12 +309,16 @@ void MessageService::OpenChannelToExtension(
     source_frame_id =
         ExtensionApiFrameIdMap::GetFrameId(source_render_frame_host);
   } else {
+#if !defined(TOOLKIT_QT)
     // Check to see if it was a WebView making the request.
     // Sending messages from WebViews to extensions breaks webview isolation,
     // so only allow component extensions to receive messages from WebViews.
     bool is_web_view = !!WebViewGuest::FromWebContents(source_contents);
     if (is_web_view &&
         Manifest::IsComponentLocation(target_extension->location())) {
+#else
+    if (Manifest::IsComponentLocation(target_extension->location())) {
+#endif
       include_guest_process_info = true;
     }
   }
@@ -392,8 +396,8 @@ void MessageService::OpenChannelToNativeApp(
   if (!opener_port->IsValidPort())
     return;
 
-#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX) || \
-    defined(OS_OS2)
+#if defined(OS_WIN) || defined(OS_MAC) || defined(OS_LINUX) || \
+    defined(OS_CHROMEOS) || defined(OS_OS2)
   bool has_permission = extension->permissions_data()->HasAPIPermission(
       APIPermission::kNativeMessaging);
   if (!has_permission) {
@@ -443,13 +447,13 @@ void MessageService::OpenChannelToNativeApp(
   channel->opener->IncrementLazyKeepaliveCount();
 
   AddChannel(std::move(channel), receiver_port_id);
-#else  // !(defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX) || \
-            defined(OS_OS2))
+#else   // !(defined(OS_WIN) || defined(OS_MAC) || defined(OS_LINUX) ||
+        // defined(OS_CHROMEOS) || defined(OS_OS2))
   const char kNativeMessagingNotSupportedError[] =
       "Native Messaging is not supported on this platform.";
   opener_port->DispatchOnDisconnect(kNativeMessagingNotSupportedError);
-#endif  // !(defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)) || \
-             defined(OS_OS2))
+#endif  // !(defined(OS_WIN) || defined(OS_MAC) || defined(OS_LINUX) ||
+        // defined(OS_CHROMEOS) || defined(OS_OS2))
 }
 
 void MessageService::OpenChannelToTab(const ChannelEndpoint& source,
@@ -571,8 +575,10 @@ void MessageService::OpenChannelImpl(BrowserContext* browser_context,
     DCHECK(port_context.frame);
     guest_render_frame_routing_id = port_context.frame->routing_id;
 
+#if !defined(TOOLKIT_QT)
     DCHECK(WebViewGuest::FromWebContents(
         WebContents::FromRenderFrameHost(source.GetRenderFrameHost())));
+#endif
   }
 
   // Send the connect event to the receiver.  Give it the opener's port ID (the

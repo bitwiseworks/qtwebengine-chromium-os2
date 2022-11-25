@@ -24,12 +24,9 @@
 namespace v8 {
 namespace internal {
 
-OBJECT_CONSTRUCTORS_IMPL(DescriptorArray, HeapObject)
+TQ_OBJECT_CONSTRUCTORS_IMPL(DescriptorArray)
 TQ_OBJECT_CONSTRUCTORS_IMPL(EnumCache)
 
-CAST_ACCESSOR(DescriptorArray)
-
-ACCESSORS(DescriptorArray, enum_cache, EnumCache, kEnumCacheOffset)
 RELAXED_INT16_ACCESSORS(DescriptorArray, number_of_all_descriptors,
                         kNumberOfAllDescriptorsOffset)
 RELAXED_INT16_ACCESSORS(DescriptorArray, number_of_descriptors,
@@ -58,17 +55,19 @@ void DescriptorArray::CopyEnumCacheFrom(DescriptorArray array) {
   set_enum_cache(array.enum_cache());
 }
 
-InternalIndex DescriptorArray::Search(Name name, int valid_descriptors) {
+InternalIndex DescriptorArray::Search(Name name, int valid_descriptors,
+                                      bool concurrent_search) {
   DCHECK(name.IsUniqueName());
-  return InternalIndex(
-      internal::Search<VALID_ENTRIES>(this, name, valid_descriptors, nullptr));
+  return InternalIndex(internal::Search<VALID_ENTRIES>(
+      this, name, valid_descriptors, nullptr, concurrent_search));
 }
 
-InternalIndex DescriptorArray::Search(Name name, Map map) {
+InternalIndex DescriptorArray::Search(Name name, Map map,
+                                      bool concurrent_search) {
   DCHECK(name.IsUniqueName());
   int number_of_own_descriptors = map.NumberOfOwnDescriptors();
   if (number_of_own_descriptors == 0) return InternalIndex::NotFound();
-  return Search(name, number_of_own_descriptors);
+  return Search(name, number_of_own_descriptors, concurrent_search);
 }
 
 InternalIndex DescriptorArray::SearchWithCache(Isolate* isolate, Name name,
@@ -229,7 +228,7 @@ void DescriptorArray::Append(Descriptor* desc) {
 
   for (insertion = descriptor_number; insertion > 0; --insertion) {
     Name key = GetSortedKey(insertion - 1);
-    if (key.Hash() <= hash) break;
+    if (key.hash() <= hash) break;
     SetSortedKey(insertion, GetSortedKeyIndex(insertion - 1));
   }
 

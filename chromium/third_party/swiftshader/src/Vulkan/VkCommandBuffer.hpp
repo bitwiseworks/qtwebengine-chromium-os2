@@ -15,7 +15,7 @@
 #ifndef VK_COMMAND_BUFFER_HPP_
 #define VK_COMMAND_BUFFER_HPP_
 
-#include "VkConfig.h"
+#include "VkConfig.hpp"
 #include "VkDescriptorSet.hpp"
 #include "VkObject.hpp"
 #include "Device/Context.hpp"
@@ -54,11 +54,6 @@ public:
 
 	CommandBuffer(Device *device, VkCommandBufferLevel pLevel);
 
-	static inline CommandBuffer *Cast(VkCommandBuffer object)
-	{
-		return reinterpret_cast<CommandBuffer *>(object);
-	}
-
 	void destroy(const VkAllocationCallbacks *pAllocator);
 
 	VkResult begin(VkCommandBufferUsageFlags flags, const VkCommandBufferInheritanceInfo *pInheritanceInfo);
@@ -66,7 +61,8 @@ public:
 	VkResult reset(VkCommandPoolResetFlags flags);
 
 	void beginRenderPass(RenderPass *renderPass, Framebuffer *framebuffer, VkRect2D renderArea,
-	                     uint32_t clearValueCount, const VkClearValue *pClearValues, VkSubpassContents contents);
+	                     uint32_t clearValueCount, const VkClearValue *pClearValues, VkSubpassContents contents,
+	                     const VkRenderPassAttachmentBeginInfo *attachmentBeginInfo);
 	void nextSubpass(VkSubpassContents contents);
 	void endRenderPass();
 	void executeCommands(uint32_t commandBufferCount, const VkCommandBuffer *pCommandBuffers);
@@ -138,12 +134,17 @@ public:
 	void drawIndirect(Buffer *buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t stride);
 	void drawIndexedIndirect(Buffer *buffer, VkDeviceSize offset, uint32_t drawCount, uint32_t stride);
 
+	void beginDebugUtilsLabel(const VkDebugUtilsLabelEXT *pLabelInfo);
+	void endDebugUtilsLabel();
+	void insertDebugUtilsLabel(const VkDebugUtilsLabelEXT *pLabelInfo);
+
 	// TODO(sugoi): Move ExecutionState out of CommandBuffer (possibly into Device)
 	struct ExecutionState
 	{
 		struct PipelineState
 		{
 			Pipeline *pipeline = nullptr;
+			vk::DescriptorSet::Array descriptorSetObjects = {};
 			vk::DescriptorSet::Bindings descriptorSets = {};
 			vk::DescriptorSet::DynamicOffsets descriptorDynamicOffsets = {};
 		};
@@ -152,7 +153,7 @@ public:
 		sw::TaskEvents *events = nullptr;
 		RenderPass *renderPass = nullptr;
 		Framebuffer *renderPassFramebuffer = nullptr;
-		std::array<PipelineState, VK_PIPELINE_BIND_POINT_RANGE_SIZE> pipelineState;
+		std::array<PipelineState, vk::VK_PIPELINE_BIND_POINT_RANGE_SIZE> pipelineState;
 
 		struct DynamicState
 		{

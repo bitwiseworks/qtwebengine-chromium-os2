@@ -6,7 +6,7 @@
 
 #include <limits>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/system/sys_info.h"
 
 namespace media {
@@ -56,6 +56,10 @@ AudioDeviceThread::~AudioDeviceThread() {
   if (thread_handle_.is_null())
     return;
   base::PlatformThread::Join(thread_handle_);
+}
+
+base::TimeDelta AudioDeviceThread::GetRealtimePeriod() {
+  return callback_->buffer_duration();
 }
 
 void AudioDeviceThread::ThreadMain() {

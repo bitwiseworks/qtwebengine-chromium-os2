@@ -16,9 +16,13 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as DataGrid from '../data_grid/data_grid.js';
 import * as Host from '../host/host.js';
+import * as Platform from '../platform/platform.js';
 import * as SDK from '../sdk/sdk.js';
 import * as SourceFrame from '../source_frame/source_frame.js';
 import * as TextUtils from '../text_utils/text_utils.js';
@@ -294,7 +298,7 @@ export class ResourceWebSocketFrameNode extends DataGrid.SortableDataGrid.Sortab
       description = dataText;
 
     } else if (frame.opCode === OpCodes.BinaryFrame) {
-      length = Number.bytesToString(base64ToSize(frame.text));
+      length = Platform.NumberUtilities.bytesToString(base64ToSize(frame.text));
       description = opCodeDescriptions[frame.opCode];
 
     } else {
@@ -354,8 +358,10 @@ export class ResourceWebSocketFrameNode extends DataGrid.SortableDataGrid.Sortab
     }
 
     if (!this._binaryView) {
-      this._binaryView =
-          new BinaryResourceView(this._dataText, /* url */ '', Common.ResourceType.resourceTypes.WebSocket);
+      if (this.dataText.length > 0) {
+        this._binaryView =
+            new BinaryResourceView(this._dataText, /* url */ '', Common.ResourceType.resourceTypes.WebSocket);
+      }
     }
     return this._binaryView;
   }

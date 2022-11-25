@@ -26,7 +26,6 @@
 #include "components/sync/driver/sync_driver_switches.h"
 #include "components/sync/model/entity_data.h"
 #include "components/sync/model/mutable_data_batch.h"
-#include "components/sync/model/sync_merge_result.h"
 #include "components/sync/model_impl/client_tag_based_model_type_processor.h"
 #include "components/sync/model_impl/sync_metadata_store_change_list.h"
 
@@ -436,7 +435,7 @@ bool AutofillWalletSyncBridge::SetCreditCardCloudTokenData(
   std::vector<std::unique_ptr<CreditCardCloudTokenData>> existing_data;
   table->GetCreditCardCloudTokenData(&existing_data);
 
-  if (ShouldResetAutofillWalletData(existing_data, cloud_token_data)) {
+  if (AreAnyItemsDifferent(existing_data, cloud_token_data)) {
     table->SetCreditCardCloudTokenData(cloud_token_data);
     return true;
   }
@@ -511,36 +510,6 @@ AutofillWalletSyncBridge::ComputeAutofillWalletDiff(
             new_data.size());
 
   return result;
-}
-
-template <class Item>
-bool AutofillWalletSyncBridge::ShouldResetAutofillWalletData(
-    const std::vector<std::unique_ptr<Item>>& old_data,
-    const std::vector<Item>& new_data) {
-  std::vector<const Item*> old_ptrs;
-  old_ptrs.reserve(old_data.size());
-  for (const std::unique_ptr<Item>& old_item : old_data)
-    old_ptrs.push_back(old_item.get());
-  std::vector<const Item*> new_ptrs;
-  new_ptrs.reserve(new_data.size());
-  for (const Item& new_item : new_data)
-    new_ptrs.push_back(&new_item);
-
-  if (old_ptrs.size() != new_ptrs.size())
-    return true;
-
-  // Sort our vectors.
-  auto compare_less = [](const Item* lhs, const Item* rhs) {
-    return lhs->Compare(*rhs) < 0;
-  };
-  std::sort(old_ptrs.begin(), old_ptrs.end(), compare_less);
-  std::sort(new_ptrs.begin(), new_ptrs.end(), compare_less);
-
-  auto compare_equal = [](const Item* lhs, const Item* rhs) {
-    return lhs->Compare(*rhs) == 0;
-  };
-  return !std::equal(old_ptrs.begin(), old_ptrs.end(), new_ptrs.begin(),
-                     compare_equal);
 }
 
 AutofillTable* AutofillWalletSyncBridge::GetAutofillTable() {

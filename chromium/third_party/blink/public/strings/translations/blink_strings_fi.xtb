@@ -13,9 +13,12 @@
 <translation id="1211441953136645838">loppuhuomautus</translation>
 <translation id="1281252709823657822">valintaikkuna</translation>
 <translation id="1306460908038601864">Pois päältä</translation>
+<translation id="1311894908970423688">Arvon on oltava <ph name="VALUE_DATE_OR_TIME" />.</translation>
 <translation id="1335095011850992622">tunnustukset</translation>
 <translation id="1342835525016946179">artikkeli</translation>
 <translation id="1359897965706325498">banneri</translation>
+<translation id="145015347812617860"><ph name="COUNT" /> kohdetta</translation>
+<translation id="1480676835519562650">monta valittavissa, <ph name="SELECTED" />/<ph name="COUNT" /> valittu.</translation>
 <translation id="1589122976691792535">alue</translation>
 <translation id="1591562245178063882">Tässä kuussa</translation>
 <translation id="1637811476055996098">Valitse tiedostot</translation>
@@ -35,6 +38,7 @@
 <translation id="1938124657309484470">Arvon on oltava <ph name="MAXIMUM_DATE_OR_TIME" /> tai aiempi.</translation>
 <translation id="1946271899482435442">Näytä päivämäärävalitsin</translation>
 <translation id="1993104285338243655">Peilaus käynnissä</translation>
+<translation id="2031987842108996681">Punainen kanava</translation>
 <translation id="2060505056492490888"><ph name="DOT" />-merkkiä on käytetty väärässä kohdassa osoitteessa <ph name="INVALIDDOMAIN" />.</translation>
 <translation id="2148716181193084225">Tänään</translation>
 <translation id="2158401438286456825">sivuluettelo</translation>
@@ -43,15 +47,19 @@
 <translation id="2247351761944213033">Viikko <ph name="WEEKNUMBER" />, <ph name="YEAR" /></translation>
 <translation id="2277199496770840904">Kappale <ph name="NUMBER" /></translation>
 <translation id="2291999235780842123">valintaruutu</translation>
+<translation id="2307576640803031502">listassa, kohde <ph name="INDEX" />/<ph name="COUNT" /></translation>
 <translation id="2311842470354187719">sivunvaihto</translation>
 <translation id="2335594187091864976">päivämäärän ja ajan valitsin</translation>
+<translation id="2393030564806080191">Heksadesimaalinen väriarvo</translation>
 <translation id="245932805758469625">videon jäljellä oleva aika sekunteina</translation>
 <translation id="248395913932153421">Päivä</translation>
 <translation id="2507943997699731163">Täytä tämä kenttä.</translation>
 <translation id="2508569020611168319">välilehtiluettelo</translation>
+<translation id="2530182415807757784">monta valittavissa, mitään ei ole valittu.</translation>
 <translation id="2561842179657104141">näytä lisää mediaohjaimia</translation>
 <translation id="2572483411312390101">toista</translation>
 <translation id="2613802280814924224">Syötä kelvollinen arvo. Lähin kelvollinen arvo on <ph name="VALID_VALUE" />.</translation>
+<translation id="2634240155926812724">Vihreä kanava</translation>
 <translation id="2653659639078652383">Lähetä</translation>
 <translation id="2657045182931379222">grafiikkaobjekti</translation>
 <translation id="2674318244760992338">alaviite</translation>
@@ -69,9 +77,10 @@
 <translation id="3075154866155599887">Anna kelvollinen arvo. Kentän arvo on puutteellinen tai annettu päivä on virheellinen.</translation>
 <translation id="3078740164268491126">taulukko</translation>
 <translation id="3086746722712840547">huom.</translation>
-<translation id="310520048233152454">Anna URL-osoite.</translation>
+<translation id="310520048233152454">Lisää URL-osoite.</translation>
 <translation id="3175736971608411871">ajastin</translation>
 <translation id="3199563858620722075">yhdistelmäruutu</translation>
+<translation id="3329013043687509092">Värikylläisyys</translation>
 <translation id="3450233048674729344">Arvon tulee olla pienempi tai yhtä suuri kuin <ph name="MAXIMUM" />.</translation>
 <translation id="3486220673238053218">määritelmä</translation>
 <translation id="3557673793733683882">otsikko <ph name="HEADING_LEVEL" /></translation>
@@ -98,7 +107,6 @@
 <translation id="4248100235867064564">valikkopalkki</translation>
 <translation id="4360991593054037559">Syötä kelvollinen arvo. Kaksi lähintä kelvollista arvoa ovat <ph name="VALID_VALUE_LOW" /> ja <ph name="VALID_VALUE_HIGHER" />.</translation>
 <translation id="4384583879834880242">K &amp; V</translation>
-<translation id="4413860115965805769">valikkopainike</translation>
 <translation id="4444765639179266822">Kuuluu sanovan: <ph name="OCR_TEXT" /></translation>
 <translation id="4446524499724042288">sanastoviittaus</translation>
 <translation id="4522570452068850558">Tiedot</translation>
@@ -126,6 +134,7 @@
 <translation id="5034860022980953847">etenemisen osoitin</translation>
 <translation id="5090250355906949916">videon ajan liukusäädin</translation>
 <translation id="5093189678851173835">epigrafi</translation>
+<translation id="509897012892853729">Sininen kanava</translation>
 <translation id="5117590920725113268">Näytä seuraava kuukausi</translation>
 <translation id="512758898067543763">rivin otsikko</translation>
 <translation id="5143125788380636750">epilogi</translation>
@@ -149,9 +158,11 @@
 <translation id="5677946354068040947">lisäasetukset</translation>
 <translation id="576709008726043716">johdanto</translation>
 <translation id="57838592816432529">Mykistä</translation>
+<translation id="5860033963881614850">Pois päältä</translation>
 <translation id="588258955323874662">Koko ruutu</translation>
 <translation id="5888666972993069672">Katsotaan TV:stä <ph name="DEVICE_FRIENDLY_NAME" /></translation>
 <translation id="591047860372322273">hakukenttä</translation>
+<translation id="5916664084637901428">Päällä</translation>
 <translation id="5939518447894949180">Tyhjennä</translation>
 <translation id="5966707198760109579">Viikko</translation>
 <translation id="5987525920412732405">pyöräytyspainike</translation>
@@ -163,6 +174,7 @@
 <translation id="6166809985690652833">jälkipuhe</translation>
 <translation id="6209276755895393898">Näkyy olevan: <ph name="DESCRIPTION" /></translation>
 <translation id="6213469881011901533">sanasto</translation>
+<translation id="6281588256137006900">Valoisuus</translation>
 <translation id="6281763101136022427">url-osoite</translation>
 <translation id="6310801910862476708">Sulje kuva kuvassa ‑tila</translation>
 <translation id="6398862346408813489">Näytä kuukaudenvalintapaneeli</translation>
@@ -178,11 +190,13 @@
 <translation id="6643016212128521049">Tyhjennä</translation>
 <translation id="668171684555832681">Joku muu profiili...</translation>
 <translation id="6692633176391053278">askellin</translation>
+<translation id="6709093583001123835">Arvon on oltava <ph name="VALUE" />.</translation>
 <translation id="6709570249143506788">Heikko toiston laatu</translation>
 <translation id="6755330956360078551">työkaluvinkki</translation>
 <translation id="6790428901817661496">Toista</translation>
 <translation id="6820355525329141109">Laajennuksen lataaminen epäonnistui.</translation>
 <translation id="6820615603175220800">lähdeluetteloviittaus</translation>
+<translation id="6831465880655513317">Väripyörä, jossa on kahteen suuntaan liikkuva liukusäädin kylläisyyden ja valoisuuden valintaan</translation>
 <translation id="6843725295806269523">äänetön</translation>
 <translation id="6885760532393684712">hakemisto</translation>
 <translation id="689129560213475294">kolofoni</translation>
@@ -200,6 +214,7 @@
 <translation id="7263440858009898357">Valitse kohde luettelosta.</translation>
 <translation id="727747134524199931">sarakkeen otsikko</translation>
 <translation id="7320576522385648310">puskuroidaan</translation>
+<translation id="7341556277900466204">Väripyörä</translation>
 <translation id="7353453495576941748">tunnustus</translation>
 <translation id="7364796246159120393">Valitse tiedosto</translation>
 <translation id="739024184232394898">Muu...</translation>
@@ -220,6 +235,7 @@
 <translation id="775297008183122718">Virheellinen arvo</translation>
 <translation id="7789962463072032349">tauko</translation>
 <translation id="7802800022689234070">näyttämiskolmio</translation>
+<translation id="7852167693871241274">Värisävyliukusäädin</translation>
 <translation id="7888071071722539607">Sähköpostiosoitteeseen kuuluu <ph name="ATSIGN" />-osa. Osoitteesta <ph name="INVALIDADDRESS" /> puuttuu <ph name="ATSIGN" />.</translation>
 <translation id="7891486169920085145">jakaja</translation>
 <translation id="795667975304826397">Ei valittua tiedostoa</translation>
@@ -260,7 +276,9 @@
 <translation id="8845239796550121995">Suoratoistetaan televisioosi</translation>
 <translation id="8851136666856101339">pää</translation>
 <translation id="8875657656876809964">Videon toistovirhe</translation>
+<translation id="8889402386540077796">Sävy</translation>
 <translation id="8901569739625249689"><ph name="QUANTITY" /> kt</translation>
+<translation id="894736920926684893">Muodon valitsin</translation>
 <translation id="8987927404178983737">Kuukausi</translation>
 <translation id="901493112792887934">nykyinen toistoaika sekunteina</translation>
 <translation id="901834265349196618">sähköposti</translation>
@@ -273,6 +291,7 @@
 <translation id="9155987714137265666"><ph name="WEEK" />, alkupäivä: <ph name="WEEK_START_DATE" /></translation>
 <translation id="916607977885256133">Kuva kuvassa</translation>
 <translation id="9168329111483466115">alaviite</translation>
+<translation id="945780513535800434">Osittain valittu</translation>
 <translation id="954003015749068518">avaa kuva kuvassa ‑tila</translation>
 <translation id="966787709310836684">valikko</translation>
 </translationbundle>

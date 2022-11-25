@@ -6,9 +6,8 @@
 
 #include <algorithm>
 
-#include "base/logging.h"
 #include "build/build_config.h"
-#include "ui/base/mojom/cursor_type.mojom-shared.h"
+#include "ui/base/cursor/mojom/cursor_type.mojom-shared.h"
 
 namespace content {
 
@@ -62,11 +61,11 @@ bool WebCursor::SetCursor(const ui::Cursor& cursor) {
 }
 
 bool WebCursor::operator==(const WebCursor& other) const {
-  return cursor_ == other.cursor_ &&
+  return
 #if defined(USE_AURA) || defined(USE_OZONE)
-         rotation_ == other.rotation_ &&
+      rotation_ == other.rotation_ &&
 #endif
-         IsPlatformDataEqual(other);
+      cursor_ == other.cursor_;
 }
 
 bool WebCursor::operator!=(const WebCursor& other) const {

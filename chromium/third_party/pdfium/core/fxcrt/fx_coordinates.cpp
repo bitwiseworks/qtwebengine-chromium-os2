@@ -11,7 +11,7 @@
 #include "build/build_config.h"
 #include "core/fxcrt/fx_extension.h"
 #include "core/fxcrt/fx_safe_types.h"
-#include "third_party/base/numerics/safe_conversions.h"
+#include "third_party/base/stl_util.h"
 
 namespace {
 
@@ -54,6 +54,14 @@ static_assert(sizeof(FX_RECT::bottom) == sizeof(RECT::bottom),
 #endif
 
 }  // namespace
+
+bool FX_RECT::Valid() const {
+  FX_SAFE_INT32 w = right;
+  FX_SAFE_INT32 h = bottom;
+  w -= left;
+  h -= top;
+  return w.IsValid() && h.IsValid();
+}
 
 void FX_RECT::Normalize() {
   if (left > right)
@@ -405,7 +413,7 @@ CFX_FloatRect CFX_Matrix::TransformRect(const CFX_FloatRect& rect) const {
   float new_left = points[0].x;
   float new_top = points[0].y;
   float new_bottom = points[0].y;
-  for (size_t i = 1; i < FX_ArraySize(points); i++) {
+  for (size_t i = 1; i < pdfium::size(points); i++) {
     new_right = std::max(new_right, points[i].x);
     new_left = std::min(new_left, points[i].x);
     new_top = std::max(new_top, points[i].y);

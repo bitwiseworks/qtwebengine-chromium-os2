@@ -51,9 +51,6 @@ namespace {
 constexpr char kDetachDurationHistogramPrefix[] = "ThreadPool.DetachDuration.";
 constexpr char kNumTasksBeforeDetachHistogramPrefix[] =
     "ThreadPool.NumTasksBeforeDetach.";
-constexpr char kNumWorkersHistogramPrefix[] = "ThreadPool.NumWorkers.";
-constexpr char kNumActiveWorkersHistogramPrefix[] =
-    "ThreadPool.NumActiveWorkers.";
 constexpr size_t kMaxNumberOfWorkers = 256;
 
 // In a background thread group:
@@ -76,12 +73,12 @@ constexpr size_t kMaxNumberOfWorkers = 256;
 // Currently, only 1. is true as the configuration is per thread group.
 // TODO(https://crbug.com/927755): Fix racy condition when MayBlockThreshold ==
 // BlockedWorkersPoll.
-constexpr TimeDelta kForegroundMayBlockThreshold =
+const TimeDelta kForegroundMayBlockThreshold =
     TimeDelta::FromMilliseconds(1000);
-constexpr TimeDelta kForegroundBlockedWorkersPoll =
+const TimeDelta kForegroundBlockedWorkersPoll =
     TimeDelta::FromMilliseconds(1200);
-constexpr TimeDelta kBackgroundMayBlockThreshold = TimeDelta::FromSeconds(10);
-constexpr TimeDelta kBackgroundBlockedWorkersPoll = TimeDelta::FromSeconds(12);
+const TimeDelta kBackgroundMayBlockThreshold = TimeDelta::FromSeconds(10);
+const TimeDelta kBackgroundBlockedWorkersPoll = TimeDelta::FromSeconds(12);
 
 // Only used in DCHECKs.
 bool ContainsWorker(const std::vector<scoped_refptr<WorkerThread>>& workers,
@@ -185,6 +182,8 @@ class ThreadGroupImpl::ScopedCommandsExecutor
     // and is woken up immediately after.
     workers_to_start_.ForEachWorker([&](WorkerThread* worker) {
       worker->Start(outer_->after_start().worker_thread_observer);
+      if (outer_->worker_started_for_testing_)
+        outer_->worker_started_for_testing_->Wait();
     });
 
     if (must_schedule_adjust_max_tasks_)
@@ -240,19 +239,15 @@ class ThreadGroupImpl::WorkerThreadDelegateImpl : public WorkerThread::Delegate,
   void BlockingTypeUpgraded() override;
   void BlockingEnded() override;
 
-  void MayBlockEntered();
-  void WillBlockEntered();
-
   // Returns true iff the worker can get work. Cleans up the worker or puts it
   // on the idle stack if it can't get work.
   bool CanGetWorkLockRequired(ScopedCommandsExecutor* executor,
                               WorkerThread* worker)
       EXCLUSIVE_LOCKS_REQUIRED(outer_->lock_);
 
-  // Returns true iff this worker has been within a MAY_BLOCK ScopedBlockingCall
-  // for more than |may_block_threshold|. The max tasks must be
-  // incremented if this returns true.
-  bool MustIncrementMaxTasksLockRequired()
+  // Increments max [best effort] tasks iff this worker has been within a
+  // ScopedBlockingCall for more than |may_block_threshold|.
+  void MaybeIncrementMaxTasksLockRequired()
       EXCLUSIVE_LOCKS_REQUIRED(outer_->lock_);
 
   TaskPriority current_task_priority_lock_required() const
@@ -307,7 +302,7 @@ class ThreadGroupImpl::WorkerThreadDelegateImpl : public WorkerThread::Delegate,
 
     // Time when MayBlockScopeEntered() was last called. Reset when
     // BlockingScopeExited() is called.
-    TimeTicks may_block_start_time;
+    TimeTicks blocking_start_time;
   } write_worker_read_any_;
 
   WorkerOnly& worker_only() {
@@ -332,9 +327,11 @@ class ThreadGroupImpl::WorkerThreadDelegateImpl : public WorkerThread::Delegate,
 
   const TrackedRef<ThreadGroupImpl> outer_;
 
-  // Whether |outer_->max_tasks_| was incremented due to a ScopedBlockingCall on
-  // the thread.
+  // Whether |outer_->max_tasks_|/|outer_->max_best_effort_tasks_| was
+  // incremented due to a ScopedBlockingCall on the thread.
   bool incremented_max_tasks_since_blocked_ GUARDED_BY(outer_->lock_) = false;
+  bool incremented_max_best_effort_tasks_since_blocked_
+      GUARDED_BY(outer_->lock_) = false;
 
   // Verifies that specific calls are always made from the worker thread.
   THREAD_CHECKER(worker_thread_checker_);
@@ -377,31 +374,6 @@ ThreadGroupImpl::ThreadGroupImpl(StringPiece histogram_label,
                     1000,
                     50,
                     HistogramBase::kUmaTargetedHistogramFlag)),
-      // Mimics the UMA_HISTOGRAM_COUNTS_100 macro. A ThreadGroup is
-      // expected to run between zero and a few tens of workers.
-      // When it runs more than 100 worker, there is no need to know the exact
-      // number of workers that ran.
-      num_workers_histogram_(
-          histogram_label.empty()
-              ? nullptr
-              : Histogram::FactoryGet(
-                    JoinString({kNumWorkersHistogramPrefix, histogram_label},
-                               ""),
-                    1,
-                    100,
-                    50,
-                    HistogramBase::kUmaTargetedHistogramFlag)),
-      num_active_workers_histogram_(
-          histogram_label.empty()
-              ? nullptr
-              : Histogram::FactoryGet(
-                    JoinString(
-                        {kNumActiveWorkersHistogramPrefix, histogram_label},
-                        ""),
-                    1,
-                    100,
-                    50,
-                    HistogramBase::kUmaTargetedHistogramFlag)),
       tracked_ref_factory_(this) {
   DCHECK(!thread_group_label_.empty());
 }
@@ -413,13 +385,12 @@ void ThreadGroupImpl::Start(
     scoped_refptr<SequencedTaskRunner> service_thread_task_runner,
     WorkerThreadObserver* worker_thread_observer,
     WorkerEnvironment worker_environment,
+    bool synchronous_thread_start_for_testing,
     Optional<TimeDelta> may_block_threshold) {
   DCHECK(!replacement_thread_group_);
 
   in_start().may_block_without_delay =
       FeatureList::IsEnabled(kMayBlockWithoutDelay);
-  in_start().fixed_max_best_effort_tasks =
-      FeatureList::IsEnabled(kFixedMaxBestEffortTasks);
   in_start().may_block_threshold =
       may_block_threshold ? may_block_threshold.value()
                           : (priority_hint_ == ThreadPriority::NORMAL
@@ -446,6 +417,14 @@ void ThreadGroupImpl::Start(
 #if DCHECK_IS_ON()
   in_start().initialized = true;
 #endif
+
+  if (synchronous_thread_start_for_testing) {
+    worker_started_for_testing_.emplace(WaitableEvent::ResetPolicy::AUTOMATIC);
+    // Don't emit a ScopedBlockingCallWithBaseSyncPrimitives from this
+    // WaitableEvent or it defeats the purpose of having threads start without
+    // externally visible side-effects.
+    worker_started_for_testing_->declare_only_used_while_idle();
+  }
 
   EnsureEnoughWorkersLockRequired(&executor);
 }
@@ -549,28 +528,14 @@ size_t ThreadGroupImpl::GetMaxTasksForTesting() const {
   return max_tasks_;
 }
 
+size_t ThreadGroupImpl::GetMaxBestEffortTasksForTesting() const {
+  CheckedAutoLock auto_lock(lock_);
+  return max_best_effort_tasks_;
+}
+
 size_t ThreadGroupImpl::NumberOfIdleWorkersForTesting() const {
   CheckedAutoLock auto_lock(lock_);
   return idle_workers_stack_.Size();
-}
-
-void ThreadGroupImpl::ReportHeartbeatMetrics() const {
-  HistogramBase::Sample num_workers_sample;
-  HistogramBase::Sample num_active_workers_sample;
-
-  // Increase histogram counts while |lock_| isn't being held,
-  // in case histogram code triggers PostTasks in callbacks.
-  {
-    CheckedAutoLock auto_lock(lock_);
-    num_workers_sample = workers_.size();
-    num_active_workers_sample = workers_.size() - idle_workers_stack_.Size();
-  }
-
-  if (num_workers_histogram_)
-    num_workers_histogram_->Add(num_workers_sample);
-
-  if (num_active_workers_histogram_)
-    num_active_workers_histogram_->Add(num_active_workers_sample);
 }
 
 ThreadGroupImpl::WorkerThreadDelegateImpl::WorkerThreadDelegateImpl(
@@ -611,6 +576,14 @@ void ThreadGroupImpl::WorkerThreadDelegateImpl::OnMainEntry(
 
   outer_->BindToCurrentThread();
   SetBlockingObserverForCurrentThread(this);
+
+  if (outer_->worker_started_for_testing_) {
+    // When |worker_started_for_testing_| is set, the thread that starts workers
+    // should wait for a worker to have started before starting the next one,
+    // and there should only be one thread that wakes up workers at a time.
+    DCHECK(!outer_->worker_started_for_testing_->IsSignaled());
+    outer_->worker_started_for_testing_->Signal();
+  }
 }
 
 RegisteredTaskSource ThreadGroupImpl::WorkerThreadDelegateImpl::GetWork(
@@ -665,7 +638,7 @@ void ThreadGroupImpl::WorkerThreadDelegateImpl::DidProcessTask(
     RegisteredTaskSource task_source) {
   DCHECK_CALLED_ON_VALID_THREAD(worker_thread_checker_);
   DCHECK(worker_only().is_running_task);
-  DCHECK(read_worker().may_block_start_time.is_null());
+  DCHECK(read_worker().blocking_start_time.is_null());
 
   ++worker_only().num_tasks_since_last_detach;
 
@@ -684,6 +657,7 @@ void ThreadGroupImpl::WorkerThreadDelegateImpl::DidProcessTask(
   CheckedAutoLock auto_lock(outer_->lock_);
 
   DCHECK(!incremented_max_tasks_since_blocked_);
+  DCHECK(!incremented_max_best_effort_tasks_since_blocked_);
 
   // Running task bookkeeping.
   outer_->DecrementTasksRunningLockRequired(
@@ -827,14 +801,26 @@ void ThreadGroupImpl::WorkerThreadDelegateImpl::BlockingStarted(
     blocking_type = BlockingType::WILL_BLOCK;
   }
 
-  switch (blocking_type) {
-    case BlockingType::MAY_BLOCK:
-      MayBlockEntered();
-      break;
-    case BlockingType::WILL_BLOCK:
-      WillBlockEntered();
-      break;
+  ScopedCommandsExecutor executor(outer_.get());
+  CheckedAutoLock auto_lock(outer_->lock_);
+
+  DCHECK(!incremented_max_tasks_since_blocked_);
+  DCHECK(!incremented_max_best_effort_tasks_since_blocked_);
+  DCHECK(read_worker().blocking_start_time.is_null());
+  write_worker().blocking_start_time = subtle::TimeTicksNowIgnoringOverride();
+
+  if (*read_worker().current_task_priority == TaskPriority::BEST_EFFORT)
+    ++outer_->num_unresolved_best_effort_may_block_;
+
+  if (blocking_type == BlockingType::WILL_BLOCK) {
+    incremented_max_tasks_since_blocked_ = true;
+    outer_->IncrementMaxTasksLockRequired();
+    outer_->EnsureEnoughWorkersLockRequired(&executor);
+  } else {
+    ++outer_->num_unresolved_may_block_;
   }
+
+  outer_->MaybeScheduleAdjustMaxTasksLockRequired(&executor);
 }
 
 void ThreadGroupImpl::WorkerThreadDelegateImpl::BlockingTypeUpgraded() {
@@ -848,25 +834,21 @@ void ThreadGroupImpl::WorkerThreadDelegateImpl::BlockingTypeUpgraded() {
     return;
   }
 
-  {
-    CheckedAutoLock auto_lock(outer_->lock_);
+  ScopedCommandsExecutor executor(outer_.get());
+  CheckedAutoLock auto_lock(outer_->lock_);
 
-    // Don't do anything if a MAY_BLOCK ScopedBlockingCall instantiated in the
-    // same scope already caused the max tasks to be incremented.
-    if (incremented_max_tasks_since_blocked_)
-      return;
+  // Don't do anything if a MAY_BLOCK ScopedBlockingCall instantiated in the
+  // same scope already caused the max tasks to be incremented.
+  if (incremented_max_tasks_since_blocked_)
+    return;
 
-    // Cancel the effect of a MAY_BLOCK ScopedBlockingCall instantiated in the
-    // same scope.
-    if (!read_worker().may_block_start_time.is_null()) {
-      write_worker().may_block_start_time = TimeTicks();
-      --outer_->num_unresolved_may_block_;
-      if (*read_worker().current_task_priority == TaskPriority::BEST_EFFORT)
-        --outer_->num_unresolved_best_effort_may_block_;
-    }
-  }
+  // Cancel the effect of a MAY_BLOCK ScopedBlockingCall instantiated in the
+  // same scope.
+  --outer_->num_unresolved_may_block_;
 
-  WillBlockEntered();
+  incremented_max_tasks_since_blocked_ = true;
+  outer_->IncrementMaxTasksLockRequired();
+  outer_->EnsureEnoughWorkersLockRequired(&executor);
 }
 
 void ThreadGroupImpl::WorkerThreadDelegateImpl::BlockingEnded() {
@@ -874,48 +856,22 @@ void ThreadGroupImpl::WorkerThreadDelegateImpl::BlockingEnded() {
   DCHECK(worker_only().is_running_task);
 
   CheckedAutoLock auto_lock(outer_->lock_);
-  if (incremented_max_tasks_since_blocked_) {
-    outer_->DecrementMaxTasksLockRequired(*read_worker().current_task_priority);
-  } else {
-    DCHECK(!read_worker().may_block_start_time.is_null());
+  DCHECK(!read_worker().blocking_start_time.is_null());
+  if (incremented_max_tasks_since_blocked_)
+    outer_->DecrementMaxTasksLockRequired();
+  else
     --outer_->num_unresolved_may_block_;
-    if (*read_worker().current_task_priority == TaskPriority::BEST_EFFORT)
+
+  if (*read_worker().current_task_priority == TaskPriority::BEST_EFFORT) {
+    if (incremented_max_best_effort_tasks_since_blocked_)
+      outer_->DecrementMaxBestEffortTasksLockRequired();
+    else
       --outer_->num_unresolved_best_effort_may_block_;
   }
 
   incremented_max_tasks_since_blocked_ = false;
-  write_worker().may_block_start_time = TimeTicks();
-}
-
-void ThreadGroupImpl::WorkerThreadDelegateImpl::MayBlockEntered() {
-  DCHECK_CALLED_ON_VALID_THREAD(worker_thread_checker_);
-  DCHECK(worker_only().is_running_task);
-
-  ScopedCommandsExecutor executor(outer_.get());
-  CheckedAutoLock auto_lock(outer_->lock_);
-
-  DCHECK(!incremented_max_tasks_since_blocked_);
-  DCHECK(read_worker().may_block_start_time.is_null());
-  write_worker().may_block_start_time = subtle::TimeTicksNowIgnoringOverride();
-  ++outer_->num_unresolved_may_block_;
-  if (*read_worker().current_task_priority == TaskPriority::BEST_EFFORT)
-    ++outer_->num_unresolved_best_effort_may_block_;
-
-  outer_->MaybeScheduleAdjustMaxTasksLockRequired(&executor);
-}
-
-void ThreadGroupImpl::WorkerThreadDelegateImpl::WillBlockEntered() {
-  DCHECK_CALLED_ON_VALID_THREAD(worker_thread_checker_);
-  DCHECK(worker_only().is_running_task);
-
-  ScopedCommandsExecutor executor(outer_.get());
-  CheckedAutoLock auto_lock(outer_->lock_);
-
-  DCHECK(!incremented_max_tasks_since_blocked_);
-  DCHECK(read_worker().may_block_start_time.is_null());
-  incremented_max_tasks_since_blocked_ = true;
-  outer_->IncrementMaxTasksLockRequired(*read_worker().current_task_priority);
-  outer_->EnsureEnoughWorkersLockRequired(&executor);
+  incremented_max_best_effort_tasks_since_blocked_ = false;
+  write_worker().blocking_start_time = TimeTicks();
 }
 
 bool ThreadGroupImpl::WorkerThreadDelegateImpl::CanGetWorkLockRequired(
@@ -949,23 +905,25 @@ bool ThreadGroupImpl::WorkerThreadDelegateImpl::CanGetWorkLockRequired(
   return true;
 }
 
-bool ThreadGroupImpl::WorkerThreadDelegateImpl::
-    MustIncrementMaxTasksLockRequired() {
-  if (!incremented_max_tasks_since_blocked_ &&
-      !read_any().may_block_start_time.is_null() &&
-      subtle::TimeTicksNowIgnoringOverride() -
-              read_any().may_block_start_time >=
+void ThreadGroupImpl::WorkerThreadDelegateImpl::
+    MaybeIncrementMaxTasksLockRequired() {
+  if (read_any().blocking_start_time.is_null() ||
+      subtle::TimeTicksNowIgnoringOverride() - read_any().blocking_start_time <
           outer_->after_start().may_block_threshold) {
-    incremented_max_tasks_since_blocked_ = true;
-
-    --outer_->num_unresolved_may_block_;
-    if (*read_any().current_task_priority == TaskPriority::BEST_EFFORT)
-      --outer_->num_unresolved_best_effort_may_block_;
-
-    return true;
+    return;
   }
 
-  return false;
+  if (!incremented_max_tasks_since_blocked_) {
+    incremented_max_tasks_since_blocked_ = true;
+    --outer_->num_unresolved_may_block_;
+    outer_->IncrementMaxTasksLockRequired();
+  }
+  if (*read_any().current_task_priority == TaskPriority::BEST_EFFORT &&
+      !incremented_max_best_effort_tasks_since_blocked_) {
+    incremented_max_best_effort_tasks_since_blocked_ = true;
+    --outer_->num_unresolved_best_effort_may_block_;
+    outer_->IncrementMaxBestEffortTasksLockRequired();
+  }
 }
 
 void ThreadGroupImpl::WaitForWorkersIdleLockRequiredForTesting(size_t n) {
@@ -1123,10 +1081,7 @@ void ThreadGroupImpl::AdjustMaxTasks() {
     WorkerThreadDelegateImpl* delegate =
         static_cast<WorkerThreadDelegateImpl*>(worker->delegate());
     AnnotateAcquiredLockAlias annotate(lock_, delegate->lock());
-    if (delegate->MustIncrementMaxTasksLockRequired()) {
-      IncrementMaxTasksLockRequired(
-          delegate->current_task_priority_lock_required());
-    }
+    delegate->MaybeIncrementMaxTasksLockRequired();
   }
 
   // Wake up workers according to the updated |max_tasks_|. This will also
@@ -1184,10 +1139,11 @@ bool ThreadGroupImpl::ShouldPeriodicallyAdjustMaxTasksLockRequired() {
 
 void ThreadGroupImpl::UpdateMinAllowedPriorityLockRequired() {
   if (priority_queue_.IsEmpty() || num_running_tasks_ < max_tasks_) {
-    min_allowed_priority_.store(TaskPriority::BEST_EFFORT,
+    max_allowed_sort_key_.store({TaskPriority::BEST_EFFORT, 0},
                                 std::memory_order_relaxed);
   } else {
-    min_allowed_priority_.store(priority_queue_.PeekSortKey().priority(),
+    max_allowed_sort_key_.store({priority_queue_.PeekSortKey().priority(),
+                                 priority_queue_.PeekSortKey().worker_count()},
                                 std::memory_order_relaxed);
   }
 }
@@ -1214,24 +1170,29 @@ void ThreadGroupImpl::IncrementTasksRunningLockRequired(TaskPriority priority) {
   UpdateMinAllowedPriorityLockRequired();
 }
 
-void ThreadGroupImpl::DecrementMaxTasksLockRequired(TaskPriority priority) {
+void ThreadGroupImpl::DecrementMaxTasksLockRequired() {
   DCHECK_GT(num_running_tasks_, 0U);
   DCHECK_GT(max_tasks_, 0U);
   --max_tasks_;
-  if (priority == TaskPriority::BEST_EFFORT &&
-      !after_start().fixed_max_best_effort_tasks) {
-    --max_best_effort_tasks_;
-  }
   UpdateMinAllowedPriorityLockRequired();
 }
 
-void ThreadGroupImpl::IncrementMaxTasksLockRequired(TaskPriority priority) {
+void ThreadGroupImpl::IncrementMaxTasksLockRequired() {
   DCHECK_GT(num_running_tasks_, 0U);
   ++max_tasks_;
-  if (priority == TaskPriority::BEST_EFFORT &&
-      !after_start().fixed_max_best_effort_tasks) {
-    ++max_best_effort_tasks_;
-  }
+  UpdateMinAllowedPriorityLockRequired();
+}
+
+void ThreadGroupImpl::DecrementMaxBestEffortTasksLockRequired() {
+  DCHECK_GT(num_running_tasks_, 0U);
+  DCHECK_GT(max_best_effort_tasks_, 0U);
+  --max_best_effort_tasks_;
+  UpdateMinAllowedPriorityLockRequired();
+}
+
+void ThreadGroupImpl::IncrementMaxBestEffortTasksLockRequired() {
+  DCHECK_GT(num_running_tasks_, 0U);
+  ++max_best_effort_tasks_;
   UpdateMinAllowedPriorityLockRequired();
 }
 

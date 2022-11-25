@@ -4,8 +4,9 @@
 
 #include "cc/scheduler/scheduler_state_machine.h"
 
+#include "base/check_op.h"
 #include "base/format_macros.h"
-#include "base/logging.h"
+#include "base/notreached.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
 #include "base/values.h"
@@ -266,7 +267,7 @@ void SchedulerStateMachine::AsProtozeroInto(
   minor_state->set_video_needs_begin_frames(video_needs_begin_frames_);
   minor_state->set_defer_begin_main_frame(defer_begin_main_frame_);
   minor_state->set_last_commit_had_no_updates(last_commit_had_no_updates_);
-  minor_state->set_did_draw_in_last_frame(did_draw_in_last_frame_);
+  minor_state->set_did_draw_in_last_frame(did_attempt_draw_in_last_frame_);
   minor_state->set_did_submit_in_last_frame(did_submit_in_last_frame_);
   minor_state->set_needs_impl_side_invalidation(needs_impl_side_invalidation_);
   minor_state->set_current_pending_tree_is_impl_side(
@@ -871,9 +872,13 @@ void SchedulerStateMachine::WillCommit(bool commit_has_no_updates) {
     has_pending_tree_ = true;
     pending_tree_needs_first_draw_on_activation_ = true;
     pending_tree_is_ready_for_activation_ = false;
-    // Wait for the new pending tree to become ready to draw, which may happen
-    // before or after activation.
-    active_tree_is_ready_to_draw_ = false;
+    if (!active_tree_needs_first_draw_ ||
+        !settings_.wait_for_all_pipeline_stages_before_draw) {
+      // Wait for the new pending tree to become ready to draw, which may happen
+      // before or after activation (unless we're in full-pipeline mode and
+      // need first draw to come through).
+      active_tree_is_ready_to_draw_ = false;
+    }
   }
 
   // Update state related to forced draws.
@@ -981,10 +986,11 @@ void SchedulerStateMachine::WillDraw() {
   // Set this to true to proactively request a new BeginFrame. We can't set this
   // in WillDrawInternal because AbortDraw calls WillDrawInternal but shouldn't
   // request another frame.
-  did_draw_in_last_frame_ = true;
+  did_attempt_draw_in_last_frame_ = true;
 }
 
 void SchedulerStateMachine::DidDraw(DrawResult draw_result) {
+  draw_succeeded_in_last_frame_ = draw_result == DRAW_SUCCESS;
   DidDrawInternal(draw_result);
 }
 
@@ -1126,7 +1132,7 @@ bool SchedulerStateMachine::ProactiveBeginFrameWanted() const {
   // frame soon. This helps avoid negative glitches in our SetNeedsBeginFrame
   // requests, which may propagate to the BeginImplFrame provider and get
   // sampled at an inopportune time, delaying the next BeginImplFrame.
-  if (did_draw_in_last_frame_)
+  if (did_attempt_draw_in_last_frame_)
     return true;
 
   // If the last commit was aborted because of early out (no updates), we should
@@ -1154,7 +1160,8 @@ void SchedulerStateMachine::OnBeginImplFrame(const viz::BeginFrameId& frame_id,
   last_frame_events_.did_commit_during_frame = did_commit_during_frame_;
 
   last_commit_had_no_updates_ = false;
-  did_draw_in_last_frame_ = false;
+  did_attempt_draw_in_last_frame_ = false;
+  draw_succeeded_in_last_frame_ = false;
   did_submit_in_last_frame_ = false;
   needs_one_begin_impl_frame_ = false;
 
@@ -1188,8 +1195,6 @@ void SchedulerStateMachine::OnBeginImplFrameIdle() {
   // then the main thread is in a high latency mode.
   main_thread_missed_last_deadline_ =
       CommitPending() || has_pending_tree_ || active_tree_needs_first_draw_;
-  main_thread_failed_to_respond_last_deadline_ =
-      begin_main_frame_state_ == BeginMainFrameState::SENT;
 
   // If we're entering a state where we won't get BeginFrames set all the
   // funnels so that we don't perform any actions that we shouldn't.
@@ -1436,7 +1441,6 @@ void SchedulerStateMachine::BeginMainFrameAborted(CommitEarlyOutReason reason) {
   main_thread_missed_last_deadline_ = false;
 
   switch (reason) {
-    case CommitEarlyOutReason::ABORTED_LAYER_TREE_FRAME_SINK_LOST:
     case CommitEarlyOutReason::ABORTED_NOT_VISIBLE:
     case CommitEarlyOutReason::ABORTED_DEFERRED_MAIN_FRAME_UPDATE:
     case CommitEarlyOutReason::ABORTED_DEFERRED_COMMIT:

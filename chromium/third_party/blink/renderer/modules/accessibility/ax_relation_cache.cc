@@ -24,11 +24,13 @@ void AXRelationCache::Init() {
     if (!id.IsEmpty())
       all_previously_seen_label_target_ids_.insert(id);
 
+    // Ensure correct ancestor chains even when not all AXObject's in the
+    // document are created, e.g. in the devtools accessibility panel.
+    // Defers adding aria-owns targets as children of their new parents,
+    // and to the relation cache, until the appropriate document lifecycle.
     if (element.FastHasAttribute(html_names::kAriaOwnsAttr)) {
-      if (AXObject* obj = object_cache_->GetOrCreate(&element)) {
-        obj->ClearChildren();
-        obj->AddChildren();
-      }
+      object_cache_->HandleAttributeChanged(html_names::kAriaOwnsAttr,
+                                            &element);
     }
   }
 }
@@ -318,11 +320,11 @@ AXObject* AXRelationCache::GetOrCreate(Node* node) {
 }
 
 void AXRelationCache::ChildrenChanged(AXObject* object) {
-  object_cache_->ChildrenChanged(object);
+  object->ChildrenChanged();
 }
 
 void AXRelationCache::TextChanged(AXObject* object) {
-  object_cache_->TextChanged(object);
+  object_cache_->PostNotification(object, ax::mojom::Event::kTextChanged);
 }
 
 void AXRelationCache::LabelChanged(Node* node) {
@@ -330,8 +332,10 @@ void AXRelationCache::LabelChanged(Node* node) {
       To<HTMLElement>(node)->FastGetAttribute(html_names::kForAttr);
   if (!id.IsEmpty()) {
     all_previously_seen_label_target_ids_.insert(id);
-    if (auto* control = To<HTMLLabelElement>(node)->control())
-      TextChanged(Get(control));
+    if (auto* control = To<HTMLLabelElement>(node)->control()) {
+      if (AXObject* obj = Get(control))
+        TextChanged(obj);
+    }
   }
 }
 

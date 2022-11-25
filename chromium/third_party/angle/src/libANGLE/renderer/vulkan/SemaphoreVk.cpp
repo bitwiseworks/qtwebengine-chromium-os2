@@ -117,11 +117,11 @@ angle::Result SemaphoreVk::wait(gl::Context *context,
             BufferVk *bufferVk             = vk::GetImpl(buffer);
             vk::BufferHelper &bufferHelper = bufferVk->getBuffer();
 
-            vk::CommandBuffer *commandBuffer;
-            ANGLE_TRY(contextVk->endRenderPassAndGetCommandBuffer(&commandBuffer));
+            vk::CommandBuffer &commandBuffer = contextVk->getOutsideRenderPassCommandBuffer();
 
             // Queue ownership transfer.
-            bufferHelper.changeQueue(rendererQueueFamilyIndex, commandBuffer);
+            bufferHelper.acquireFromExternal(contextVk, VK_QUEUE_FAMILY_EXTERNAL,
+                                             rendererQueueFamilyIndex, &commandBuffer);
         }
     }
 
@@ -136,19 +136,19 @@ angle::Result SemaphoreVk::wait(gl::Context *context,
             vk::ImageHelper &image = textureVk->getImage();
             vk::ImageLayout layout = GetVulkanImageLayout(textureAndLayout.layout);
 
-            // Inform the image that the layout has been externally changed.
-            image.onExternalLayoutChange(layout);
+            vk::CommandBuffer &commandBuffer = contextVk->getOutsideRenderPassCommandBuffer();
 
-            vk::CommandBuffer *commandBuffer;
-            ANGLE_TRY(contextVk->endRenderPassAndGetCommandBuffer(&commandBuffer));
+            // Image should not be accessed while unowned. Emulated formats may have staged updates
+            // to clear the image after initialization.
+            ASSERT(!image.hasStagedUpdates() || image.getFormat().hasEmulatedImageChannels());
 
-            // Queue ownership transfer.
-            image.changeLayoutAndQueue(image.getAspectFlags(), layout, rendererQueueFamilyIndex,
-                                       commandBuffer);
+            // Queue ownership transfer and layout transition.
+            image.acquireFromExternal(contextVk, VK_QUEUE_FAMILY_EXTERNAL, rendererQueueFamilyIndex,
+                                      layout, &commandBuffer);
         }
     }
 
-    contextVk->insertWaitSemaphore(&mSemaphore);
+    contextVk->addWaitSemaphore(mSemaphore.getHandle(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
     return angle::Result::Continue;
 }
 
@@ -158,6 +158,8 @@ angle::Result SemaphoreVk::signal(gl::Context *context,
 {
     ContextVk *contextVk = vk::GetImpl(context);
 
+    uint32_t rendererQueueFamilyIndex = contextVk->getRenderer()->getQueueFamilyIndex();
+
     if (!bufferBarriers.empty())
     {
         // Perform a queue ownership transfer for each buffer.
@@ -166,11 +168,11 @@ angle::Result SemaphoreVk::signal(gl::Context *context,
             BufferVk *bufferVk             = vk::GetImpl(buffer);
             vk::BufferHelper &bufferHelper = bufferVk->getBuffer();
 
-            vk::CommandBuffer *commandBuffer;
-            ANGLE_TRY(contextVk->endRenderPassAndGetCommandBuffer(&commandBuffer));
+            vk::CommandBuffer &commandBuffer = contextVk->getOutsideRenderPassCommandBuffer();
 
             // Queue ownership transfer.
-            bufferHelper.changeQueue(VK_QUEUE_FAMILY_EXTERNAL, commandBuffer);
+            bufferHelper.releaseToExternal(contextVk, rendererQueueFamilyIndex,
+                                           VK_QUEUE_FAMILY_EXTERNAL, &commandBuffer);
         }
     }
 
@@ -192,12 +194,13 @@ angle::Result SemaphoreVk::signal(gl::Context *context,
                 layout = image.getCurrentImageLayout();
             }
 
-            vk::CommandBuffer *commandBuffer;
-            ANGLE_TRY(contextVk->endRenderPassAndGetCommandBuffer(&commandBuffer));
+            ANGLE_TRY(textureVk->ensureImageInitialized(contextVk, ImageMipLevels::EnabledLevels));
+
+            vk::CommandBuffer &commandBuffer = contextVk->getOutsideRenderPassCommandBuffer();
 
             // Queue ownership transfer and layout transition.
-            image.changeLayoutAndQueue(image.getAspectFlags(), layout, VK_QUEUE_FAMILY_EXTERNAL,
-                                       commandBuffer);
+            image.releaseToExternal(contextVk, rendererQueueFamilyIndex, VK_QUEUE_FAMILY_EXTERNAL,
+                                    layout, &commandBuffer);
         }
     }
 

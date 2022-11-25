@@ -28,8 +28,9 @@ enum NTPLoggingEventType {
   // by the single-iframe version of the NTP.
   NTP_ALL_TILES_LOADED = 11,
 
-  // Activated by clicking on the fakebox icon. Logged by Voice Search.
-  NTP_VOICE_ACTION_ACTIVATE_FAKEBOX = 13,
+  // Activated by clicking on the fakebox or realbox icon. Logged by Voice
+  // Search.
+  NTP_VOICE_ACTION_ACTIVATE_SEARCH_BOX = 13,
   // Activated by keyboard shortcut.
   NTP_VOICE_ACTION_ACTIVATE_KEYBOARD = 14,
   // Close the voice overlay by a user's explicit action.
@@ -172,7 +173,10 @@ enum NTPLoggingEventType {
   // Daily refresh was enabled by clicked 'Done' in the richer picker.
   NTP_BACKGROUND_DAILY_REFRESH_ENABLED = 82,
 
-  NTP_EVENT_TYPE_LAST = NTP_BACKGROUND_DAILY_REFRESH_ENABLED
+  // The NTP modules were shown.
+  NTP_MODULES_SHOWN = 83,
+
+  NTP_EVENT_TYPE_LAST = NTP_MODULES_SHOWN
 };
 
 // The different types of events that are logged for NTP search suggestions,

@@ -116,6 +116,7 @@ class MockDownloadItem : public DownloadItem {
   MOCK_METHOD0(CanShowInFolder, bool());
   MOCK_METHOD0(CanOpenDownload, bool());
   MOCK_METHOD0(ShouldOpenFileBasedOnExtension, bool());
+  MOCK_METHOD0(ShouldOpenFileByPolicyBasedOnExtension, bool());
   MOCK_CONST_METHOD0(GetOpenWhenComplete, bool());
   MOCK_METHOD0(GetAutoOpened, bool());
   MOCK_CONST_METHOD0(GetOpened, bool());
@@ -123,6 +124,8 @@ class MockDownloadItem : public DownloadItem {
   MOCK_CONST_METHOD0(IsTransient, bool());
   MOCK_CONST_METHOD0(IsParallelDownload, bool());
   MOCK_CONST_METHOD0(GetDownloadCreationType, DownloadCreationType());
+  MOCK_CONST_METHOD0(GetDownloadSchedule,
+                     const base::Optional<DownloadSchedule>&());
   MOCK_METHOD2(OnContentCheckCompleted,
                void(DownloadDangerType, DownloadInterruptReason));
   MOCK_METHOD1(SetOpenWhenComplete, void(bool));
@@ -134,6 +137,10 @@ class MockDownloadItem : public DownloadItem {
   MOCK_METHOD1(SimulateErrorForTesting, void(DownloadInterruptReason));
   MOCK_METHOD2(Rename, void(const base::FilePath&, RenameDownloadCallback));
   MOCK_METHOD1(OnAsyncScanningCompleted, void(DownloadDangerType));
+  MOCK_METHOD(void,
+              OnDownloadScheduleChanged,
+              (base::Optional<DownloadSchedule>),
+              (override));
 
  private:
   base::ObserverList<Observer>::Unchecked observers_;

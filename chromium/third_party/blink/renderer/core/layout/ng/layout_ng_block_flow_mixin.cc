@@ -7,7 +7,9 @@
 #include <memory>
 #include <utility>
 
+#include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/editing/position_with_affinity.h"
+#include "third_party/blink/renderer/core/editing/visible_units.h"
 #include "third_party/blink/renderer/core/layout/hit_test_location.h"
 #include "third_party/blink/renderer/core/layout/layout_analyzer.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
@@ -34,7 +36,6 @@ LayoutNGBlockFlowMixin<Base>::LayoutNGBlockFlowMixin(Element* element)
   static_assert(std::is_base_of<LayoutBlockFlow, Base>::value,
                 "Base class of LayoutNGBlockFlowMixin must be LayoutBlockFlow "
                 "or derived class.");
-  DCHECK(!element || !element->ShouldForceLegacyLayout());
 }
 
 template <typename Base>
@@ -46,7 +47,7 @@ void LayoutNGBlockFlowMixin<Base>::StyleDidChange(
     const ComputedStyle* old_style) {
   Base::StyleDidChange(diff, old_style);
 
-  if (diff.NeedsCollectInlines()) {
+  if (diff.NeedsReshape()) {
     Base::SetNeedsCollectInlines();
   }
 }
@@ -74,7 +75,7 @@ void LayoutNGBlockFlowMixin<Base>::ClearNGInlineNodeData() {
 
 template <typename Base>
 void LayoutNGBlockFlowMixin<Base>::AddLayoutOverflowFromChildren() {
-  if (Base::LayoutBlockedByDisplayLock(DisplayLockLifecycleTarget::kChildren))
+  if (Base::ChildLayoutBlockedByDisplayLock())
     return;
 
   // |ComputeOverflow()| calls this, which is called from
@@ -92,7 +93,8 @@ void LayoutNGBlockFlowMixin<Base>::AddScrollingOverflowFromChildren() {
   const NGPhysicalBoxFragment* physical_fragment = CurrentFragment();
   DCHECK(physical_fragment);
   PhysicalRect children_overflow =
-      physical_fragment->ScrollableOverflowFromChildren();
+      physical_fragment->ScrollableOverflowFromChildren(
+          NGPhysicalFragment::kNormalHeight);
 
   // LayoutOverflow takes flipped blocks coordinates, adjust as needed.
   const ComputedStyle& style = physical_fragment->Style();
@@ -181,8 +183,7 @@ template <typename Base>
 void LayoutNGBlockFlowMixin<Base>::Paint(const PaintInfo& paint_info) const {
   // Avoid painting dirty objects because descendants maybe already destroyed.
   if (UNLIKELY(Base::NeedsLayout() &&
-               !Base::LayoutBlockedByDisplayLock(
-                   DisplayLockLifecycleTarget::kChildren))) {
+               !Base::ChildLayoutBlockedByDisplayLock())) {
     NOTREACHED();
     return;
   }
@@ -219,14 +220,14 @@ bool LayoutNGBlockFlowMixin<Base>::NodeAtPoint(
     if (!Base::IsEffectiveRootScroller()) {
       // Check if we need to do anything at all.
       // If we have clipping, then we can't have any spillout.
-      PhysicalRect overflow_box = Base::HasOverflowClip()
+      PhysicalRect overflow_box = Base::IsScrollContainer()
                                       ? Base::PhysicalBorderBoxRect()
                                       : Base::PhysicalVisualOverflowRect();
       overflow_box.Move(accumulated_offset);
       if (!hit_test_location.Intersects(overflow_box))
         return false;
     }
-    if (Base::IsInSelfHitTestingPhase(action) && Base::HasOverflowClip() &&
+    if (Base::IsInSelfHitTestingPhase(action) && Base::IsScrollContainer() &&
         Base::HitTestOverflowControl(result, hit_test_location,
                                      accumulated_offset))
       return true;
@@ -252,6 +253,33 @@ bool LayoutNGBlockFlowMixin<Base>::NodeAtPoint(
                                       accumulated_offset, action);
 }
 
+// Move specified position to start/end of non-editable region.
+// If it can be found, we prefer a visually equivalent position that is
+// editable.
+// See also LayoutObject::CreatePositionWithAffinity()
+// Example:
+//  <editable><non-editable>|abc</non-editable></editable>
+//  =>
+//  <editable>|<non-editable>abc</non-editable></editable>
+static PositionWithAffinity AdjustForEditingBoundary(
+    const PositionWithAffinity& position_with_affinity) {
+  if (position_with_affinity.IsNull())
+    return position_with_affinity;
+  const Position& position = position_with_affinity.GetPosition();
+  const Node& node = *position.ComputeContainerNode();
+  if (HasEditableStyle(node))
+    return position_with_affinity;
+  const Position& forward =
+      MostForwardCaretPosition(position, kCanCrossEditingBoundary);
+  if (HasEditableStyle(*forward.ComputeContainerNode()))
+    return PositionWithAffinity(forward);
+  const Position& backward =
+      MostBackwardCaretPosition(position, kCanCrossEditingBoundary);
+  if (HasEditableStyle(*backward.ComputeContainerNode()))
+    return PositionWithAffinity(backward);
+  return position_with_affinity;
+}
+
 template <typename Base>
 PositionWithAffinity LayoutNGBlockFlowMixin<Base>::PositionForPoint(
     const PhysicalOffset& point) const {
@@ -272,7 +300,7 @@ PositionWithAffinity LayoutNGBlockFlowMixin<Base>::PositionForPoint(
     Base::OffsetForContents(point_in_contents);
     if (const PositionWithAffinity position =
             paint_fragment->PositionForPoint(point_in_contents))
-      return position;
+      return AdjustForEditingBoundary(position);
   } else if (const NGPhysicalBoxFragment* fragment = CurrentFragment()) {
     if (const NGFragmentItems* items = fragment->Items()) {
       // The given offset is relative to this |LayoutBlockFlow|. Convert to the
@@ -283,7 +311,7 @@ PositionWithAffinity LayoutNGBlockFlowMixin<Base>::PositionForPoint(
       if (const PositionWithAffinity position =
               cursor.PositionForPointInInlineFormattingContext(
                   point_in_contents, *fragment))
-        return position;
+        return AdjustForEditingBoundary(position);
     }
   }
 
@@ -299,8 +327,12 @@ void LayoutNGBlockFlowMixin<Base>::DirtyLinesFromChangedChild(
   // We need to dirty line box fragments only if the child is once laid out in
   // LayoutNG inline formatting context. New objects are handled in
   // NGInlineNode::MarkLineBoxesDirty().
-  if (child->IsInLayoutNGInlineFormattingContext())
-    NGPaintFragment::DirtyLinesFromChangedChild(child);
+  if (child->IsInLayoutNGInlineFormattingContext()) {
+    if (RuntimeEnabledFeatures::LayoutNGFragmentItemEnabled()) {
+      if (const NGFragmentItems* items = Base::FragmentItems())
+        items->DirtyLinesFromChangedChild(child);
+    }
+  }
 }
 
 template <typename Base>
@@ -341,6 +373,10 @@ void LayoutNGBlockFlowMixin<Base>::UpdateMargins() {
 
 template class CORE_TEMPLATE_EXPORT LayoutNGBlockFlowMixin<LayoutBlockFlow>;
 template class CORE_TEMPLATE_EXPORT LayoutNGBlockFlowMixin<LayoutProgress>;
+template class CORE_TEMPLATE_EXPORT LayoutNGBlockFlowMixin<LayoutRubyAsBlock>;
+template class CORE_TEMPLATE_EXPORT LayoutNGBlockFlowMixin<LayoutRubyBase>;
+template class CORE_TEMPLATE_EXPORT LayoutNGBlockFlowMixin<LayoutRubyRun>;
+template class CORE_TEMPLATE_EXPORT LayoutNGBlockFlowMixin<LayoutRubyText>;
 template class CORE_TEMPLATE_EXPORT LayoutNGBlockFlowMixin<LayoutTableCaption>;
 template class CORE_TEMPLATE_EXPORT LayoutNGBlockFlowMixin<LayoutTableCell>;
 

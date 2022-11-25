@@ -23,15 +23,15 @@
 
 namespace blink {
 
-PresentationReceiver::PresentationReceiver(LocalFrame* frame)
+PresentationReceiver::PresentationReceiver(LocalDOMWindow* window)
     : connection_list_(
-          MakeGarbageCollected<PresentationConnectionList>(frame->DomWindow())),
-      presentation_receiver_receiver_(this, frame->DomWindow()),
-      presentation_service_remote_(frame->DomWindow()),
-      frame_(frame) {
+          MakeGarbageCollected<PresentationConnectionList>(window)),
+      presentation_receiver_receiver_(this, window),
+      presentation_service_remote_(window),
+      window_(window) {
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-      frame->GetTaskRunner(TaskType::kPresentation);
-  frame->GetBrowserInterfaceBroker().GetInterface(
+      window->GetTaskRunner(TaskType::kPresentation);
+  window->GetBrowserInterfaceBroker().GetInterface(
       presentation_service_remote_.BindNewPipeAndPassReceiver(task_runner));
 
   // Set the mojo::Remote<T> that remote implementation of PresentationService
@@ -67,14 +67,8 @@ ScriptPromise PresentationReceiver::connectionList(ScriptState* script_state) {
 }
 
 void PresentationReceiver::Terminate() {
-  if (!GetFrame())
-    return;
-
-  auto* window = GetFrame()->DomWindow();
-  if (!window || window->closed())
-    return;
-
-  window->Close(window);
+  if (window_ && !window_->closed())
+    window_->Close(window_.Get());
 }
 
 void PresentationReceiver::RemoveConnection(
@@ -115,12 +109,12 @@ void PresentationReceiver::RegisterConnection(
   connection_list_->AddConnection(connection);
 }
 
-void PresentationReceiver::Trace(Visitor* visitor) {
+void PresentationReceiver::Trace(Visitor* visitor) const {
   visitor->Trace(connection_list_);
   visitor->Trace(connection_list_property_);
   visitor->Trace(presentation_receiver_receiver_);
   visitor->Trace(presentation_service_remote_);
-  visitor->Trace(frame_);
+  visitor->Trace(window_);
   ScriptWrappable::Trace(visitor);
 }
 

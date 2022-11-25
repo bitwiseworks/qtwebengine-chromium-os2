@@ -8,8 +8,9 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/check.h"
 #include "base/containers/flat_map.h"
-#include "base/logging.h"
+#include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
@@ -17,7 +18,6 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/resource_coordinator/lifecycle_unit.h"
 #include "chrome/browser/resource_coordinator/lifecycle_unit_state.mojom.h"
-#include "chrome/browser/resource_coordinator/local_site_characteristics_data_store_inspector.h"
 #include "chrome/browser/resource_coordinator/tab_activity_watcher.h"
 #include "chrome/browser/resource_coordinator/tab_lifecycle_unit_external.h"
 #include "chrome/browser/resource_coordinator/tab_manager.h"
@@ -40,13 +40,10 @@
 #include "content/public/browser/web_ui_message_handler.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver.h"
+#include "services/network/public/mojom/content_security_policy.mojom.h"
 #include "ui/resources/grit/ui_resources.h"
 #include "url/gurl.h"
 #include "url/origin.h"
-
-namespace resource_coordinator {
-class LocalSiteCharacteristicsDataStoreInspector;
-}  // namespace resource_coordinator
 
 namespace {
 
@@ -132,9 +129,6 @@ class DiscardsDetailsProviderImpl : public discards::mojom::DetailsProvider {
           GetLifecycleUnitVisibility(lifecycle_unit->GetVisibility());
       info->loading_state = lifecycle_unit->GetLoadingState();
       info->state = lifecycle_unit->GetState();
-      resource_coordinator::DecisionDetails freeze_details;
-      info->can_freeze = lifecycle_unit->CanFreeze(&freeze_details);
-      info->cannot_freeze_reasons = freeze_details.GetFailureReasonStrings();
       resource_coordinator::DecisionDetails discard_details;
       info->cannot_discard_reasons = discard_details.GetFailureReasonStrings();
       info->discard_reason = lifecycle_unit->GetDiscardReason();
@@ -192,12 +186,6 @@ class DiscardsDetailsProviderImpl : public discards::mojom::DetailsProvider {
     std::move(callback).Run();
   }
 
-  void FreezeById(int32_t id) override {
-    auto* lifecycle_unit = GetLifecycleUnitById(id);
-    if (lifecycle_unit)
-      lifecycle_unit->Freeze();
-  }
-
   void LoadById(int32_t id) override {
     auto* lifecycle_unit = GetLifecycleUnitById(id);
     if (lifecycle_unit)
@@ -224,8 +212,10 @@ DiscardsUI::DiscardsUI(content::WebUI* web_ui)
   std::unique_ptr<content::WebUIDataSource> source(
       content::WebUIDataSource::Create(chrome::kChromeUIDiscardsHost));
 
-  source->OverrideContentSecurityPolicyScriptSrc(
+  source->OverrideContentSecurityPolicy(
+      network::mojom::CSPDirectiveName::ScriptSrc,
       "script-src chrome://resources chrome://test 'self';");
+  source->DisableTrustedTypesCSP();
 
   source->AddResourcePath("discards.js", IDR_DISCARDS_JS);
 
@@ -264,8 +254,7 @@ DiscardsUI::DiscardsUI(content::WebUI* web_ui)
       profile, std::make_unique<FaviconSource>(
                    profile, chrome::FaviconUrlFormat::kFavicon2));
 
-  data_store_inspector_ = resource_coordinator::
-      LocalSiteCharacteristicsDataStoreInspector::GetForProfile(profile);
+  profile_id_ = profile->UniqueId();
 }
 
 WEB_UI_CONTROLLER_TYPE_IMPL(DiscardsUI)
@@ -280,8 +269,12 @@ void DiscardsUI::BindInterface(
 
 void DiscardsUI::BindInterface(
     mojo::PendingReceiver<discards::mojom::SiteDataProvider> receiver) {
-  site_data_provider_ = std::make_unique<SiteDataProviderImpl>(
-      data_store_inspector_, std::move(receiver));
+  if (performance_manager::PerformanceManager::IsAvailable()) {
+    // Forward the interface receiver directly to the service.
+    performance_manager::PerformanceManager::CallOnGraph(
+        FROM_HERE, base::BindOnce(&SiteDataProviderImpl::CreateAndBind,
+                                  std::move(receiver), profile_id_));
+  }
 }
 
 void DiscardsUI::BindInterface(

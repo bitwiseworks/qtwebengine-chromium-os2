@@ -12,10 +12,10 @@
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_permission_descriptor.h"
-#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/frame.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/modules/permissions/permission_status.h"
@@ -30,6 +30,9 @@ namespace blink {
 using mojom::blink::PermissionDescriptorPtr;
 using mojom::blink::PermissionName;
 using mojom::blink::PermissionService;
+
+Permissions::Permissions(ExecutionContext* execution_context)
+    : service_(execution_context) {}
 
 ScriptPromise Permissions::query(ScriptState* script_state,
                                  const ScriptValue& raw_permission,
@@ -69,14 +72,13 @@ ScriptPromise Permissions::request(ScriptState* script_state,
   ScriptPromise promise = resolver->Promise();
 
   PermissionDescriptorPtr descriptor_copy = descriptor->Clone();
-  Document* doc = Document::DynamicFrom(context);
-  LocalFrame* frame = doc ? doc->GetFrame() : nullptr;
-  GetService(ExecutionContext::From(script_state))
-      ->RequestPermission(
-          std::move(descriptor), LocalFrame::HasTransientUserActivation(frame),
-          WTF::Bind(&Permissions::TaskComplete, WrapPersistent(this),
-                    WrapPersistent(resolver),
-                    WTF::Passed(std::move(descriptor_copy))));
+  LocalDOMWindow* window = DynamicTo<LocalDOMWindow>(context);
+  LocalFrame* frame = window ? window->GetFrame() : nullptr;
+  GetService(context)->RequestPermission(
+      std::move(descriptor), LocalFrame::HasTransientUserActivation(frame),
+      WTF::Bind(&Permissions::TaskComplete, WrapPersistent(this),
+                WrapPersistent(resolver),
+                WTF::Passed(std::move(descriptor_copy))));
   return promise;
 }
 
@@ -142,20 +144,19 @@ ScriptPromise Permissions::requestAll(
   for (const auto& descriptor : internal_permissions)
     internal_permissions_copy.push_back(descriptor->Clone());
 
-  Document* doc = Document::DynamicFrom(context);
-  LocalFrame* frame = doc ? doc->GetFrame() : nullptr;
-  GetService(ExecutionContext::From(script_state))
-      ->RequestPermissions(
-          std::move(internal_permissions),
-          LocalFrame::HasTransientUserActivation(frame),
-          WTF::Bind(&Permissions::BatchTaskComplete, WrapPersistent(this),
-                    WrapPersistent(resolver),
-                    WTF::Passed(std::move(internal_permissions_copy)),
-                    WTF::Passed(std::move(caller_index_to_internal_index))));
+  LocalDOMWindow* window = DynamicTo<LocalDOMWindow>(context);
+  LocalFrame* frame = window ? window->GetFrame() : nullptr;
+  GetService(context)->RequestPermissions(
+      std::move(internal_permissions),
+      LocalFrame::HasTransientUserActivation(frame),
+      WTF::Bind(&Permissions::BatchTaskComplete, WrapPersistent(this),
+                WrapPersistent(resolver),
+                WTF::Passed(std::move(internal_permissions_copy)),
+                WTF::Passed(std::move(caller_index_to_internal_index))));
   return promise;
 }
 
-void Permissions::Trace(Visitor* visitor) {
+void Permissions::Trace(Visitor* visitor) const {
   visitor->Trace(service_);
   ScriptWrappable::Trace(visitor);
 }

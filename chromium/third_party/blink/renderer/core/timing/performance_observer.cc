@@ -57,7 +57,7 @@ Vector<AtomicString> PerformanceObserver::supportedEntryTypes(
   // The list of supported types, in alphabetical order.
   Vector<AtomicString> supportedEntryTypes;
   auto* execution_context = ExecutionContext::From(script_state);
-  if (execution_context->IsDocument()) {
+  if (execution_context->IsWindow()) {
     supportedEntryTypes.push_back(performance_entry_names::kElement);
     if (RuntimeEnabledFeatures::EventTimingEnabled(execution_context))
       supportedEntryTypes.push_back(performance_entry_names::kEvent);
@@ -69,11 +69,15 @@ Vector<AtomicString> PerformanceObserver::supportedEntryTypes(
   }
   supportedEntryTypes.push_back(performance_entry_names::kMark);
   supportedEntryTypes.push_back(performance_entry_names::kMeasure);
-  if (execution_context->IsDocument()) {
+  if (execution_context->IsWindow()) {
     supportedEntryTypes.push_back(performance_entry_names::kNavigation);
     supportedEntryTypes.push_back(performance_entry_names::kPaint);
   }
   supportedEntryTypes.push_back(performance_entry_names::kResource);
+  if (RuntimeEnabledFeatures::VisibilityStateEntryEnabled() &&
+      execution_context->IsWindow()) {
+    supportedEntryTypes.push_back(performance_entry_names::kVisibilityState);
+  }
   return supportedEntryTypes;
 }
 
@@ -102,9 +106,11 @@ void PerformanceObserver::observe(const PerformanceObserverInit* observer_init,
   bool is_buffered = false;
   if (observer_init->hasEntryTypes()) {
     if (observer_init->hasType()) {
-      exception_state.ThrowDOMException(DOMExceptionCode::kSyntaxError,
-                                        "An observe() call must not include "
-                                        "both entryTypes and type arguments.");
+      UseCounter::Count(GetExecutionContext(),
+                        WebFeature::kPerformanceObserverTypeError);
+      exception_state.ThrowTypeError(
+          "An observe() call must not include "
+          "both entryTypes and type arguments.");
       return;
     }
     if (type_ == PerformanceObserverType::kTypeObserver) {
@@ -134,7 +140,9 @@ void PerformanceObserver::observe(const PerformanceObserverInit* observer_init,
     if (entry_types == PerformanceEntry::kInvalid) {
       return;
     }
-    if (observer_init->buffered()) {
+    if (observer_init->buffered() || observer_init->hasDurationThreshold()) {
+      UseCounter::Count(GetExecutionContext(),
+                        WebFeature::kPerformanceObserverEntryTypesAndBuffered);
       String message =
           "The PerformanceObserver does not support buffered flag with "
           "the entryTypes argument.";
@@ -146,9 +154,11 @@ void PerformanceObserver::observe(const PerformanceObserverInit* observer_init,
     filter_options_ = entry_types;
   } else {
     if (!observer_init->hasType()) {
-      exception_state.ThrowDOMException(DOMExceptionCode::kSyntaxError,
-                                        "An observe() call must include either "
-                                        "entryTypes or type arguments.");
+      UseCounter::Count(GetExecutionContext(),
+                        WebFeature::kPerformanceObserverTypeError);
+      exception_state.ThrowTypeError(
+          "An observe() call must include either "
+          "entryTypes or type arguments.");
       return;
     }
     if (type_ == PerformanceObserverType::kEntryTypesObserver) {
@@ -179,6 +189,11 @@ void PerformanceObserver::observe(const PerformanceObserverInit* observer_init,
                 PerformanceEntry::StartTimeCompareLessThan);
       is_buffered = true;
     }
+    if (entry_type == PerformanceEntry::kEvent &&
+        observer_init->hasDurationThreshold()) {
+      // TODO(npm): should we do basic validation (like negative values etc?).
+      duration_threshold_ = std::max(16.0, observer_init->durationThreshold());
+    }
     filter_options_ |= entry_type;
   }
   if (filter_options_ & PerformanceEntry::kLayoutShift) {
@@ -192,6 +207,9 @@ void PerformanceObserver::observe(const PerformanceObserverInit* observer_init,
   if (filter_options_ & PerformanceEntry::kLargestContentfulPaint) {
     UseCounter::Count(GetExecutionContext(),
                       WebFeature::kLargestContentfulPaintExplicitlyRequested);
+  }
+  if (filter_options_ & PerformanceEntry::kResource) {
+    UseCounter::Count(GetExecutionContext(), WebFeature::kResourceTiming);
   }
   if (is_registered_)
     performance_->UpdatePerformanceObserverFilterOptions();
@@ -225,6 +243,12 @@ void PerformanceObserver::EnqueuePerformanceEntry(PerformanceEntry& entry) {
     performance_->ActivateObserver(*this);
 }
 
+bool PerformanceObserver::CanObserve(const PerformanceEntry& entry) const {
+  if (entry.EntryTypeEnum() != PerformanceEntry::kEvent)
+    return true;
+  return entry.duration() >= duration_threshold_;
+}
+
 bool PerformanceObserver::HasPendingActivity() const {
   return is_registered_;
 }
@@ -252,7 +276,7 @@ void PerformanceObserver::ContextLifecycleStateChanged(
     performance_->SuspendObserver(*this);
 }
 
-void PerformanceObserver::Trace(Visitor* visitor) {
+void PerformanceObserver::Trace(Visitor* visitor) const {
   visitor->Trace(callback_);
   visitor->Trace(performance_);
   visitor->Trace(performance_entries_);

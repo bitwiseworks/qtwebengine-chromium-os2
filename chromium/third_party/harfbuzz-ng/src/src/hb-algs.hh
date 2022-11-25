@@ -577,6 +577,12 @@ static inline unsigned char TOUPPER (unsigned char c)
 { return (c >= 'a' && c <= 'z') ? c - 'a' + 'A' : c; }
 static inline unsigned char TOLOWER (unsigned char c)
 { return (c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c; }
+static inline bool ISHEX (unsigned char c)
+{ return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
+static inline unsigned char TOHEX (uint8_t c)
+{ return (c & 0xF) <= 9 ? (c & 0xF) + '0' : (c & 0xF) + 'a' - 10; }
+static inline uint8_t FROMHEX (unsigned char c)
+{ return (c >= '0' && c <= '9') ? c - '0' : TOLOWER (c) - 'a' + 10; }
 
 static inline unsigned int DIV_CEIL (const unsigned int a, unsigned int b)
 { return (a + (b - 1)) / b; }
@@ -644,17 +650,6 @@ hb_unsigned_mul_overflows (unsigned int count, unsigned int size)
 {
   return (size > 0) && (count >= ((unsigned int) -1) / size);
 }
-
-/* Right now we only have one use for signed overflow and as it
- * is GCC 5.1 > and clang we don't care about its fallback ATM */
-#ifndef __has_builtin
-# define __has_builtin(x) 0
-#endif
-#if __has_builtin(__builtin_mul_overflow)
-# define hb_signed_mul_overflows(x, y, result) __builtin_mul_overflow(x, y, &result)
-#else
-# define hb_signed_mul_overflows(x, y, result) (result = (x) * (y), false)
-#endif
 
 
 /*

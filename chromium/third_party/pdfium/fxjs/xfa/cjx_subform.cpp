@@ -28,7 +28,7 @@ CJX_Subform::CJX_Subform(CXFA_Node* node) : CJX_Container(node) {
   DefineMethods(MethodSpecs);
 }
 
-CJX_Subform::~CJX_Subform() {}
+CJX_Subform::~CJX_Subform() = default;
 
 bool CJX_Subform::DynamicTypeIs(TypeTag eType) const {
   return eType == static_type__ || ParentType__::DynamicTypeIs(eType);
@@ -91,7 +91,7 @@ void CJX_Subform::locale(CFXJSE_Value* pValue,
                          bool bSetting,
                          XFA_Attribute eAttribute) {
   if (bSetting) {
-    SetCData(XFA_Attribute::Locale, pValue->ToWideString(), true, true);
+    SetCDataImpl(XFA_Attribute::Locale, pValue->ToWideString(), true, true);
     return;
   }
 
@@ -109,7 +109,7 @@ void CJX_Subform::instanceManager(CFXJSE_Value* pValue,
 
   WideString wsName = GetCData(XFA_Attribute::Name);
   CXFA_Node* pInstanceMgr = nullptr;
-  for (CXFA_Node* pNode = ToNode(GetXFAObject())->GetPrevSibling(); pNode;
+  for (CXFA_Node* pNode = GetXFANode()->GetPrevSibling(); pNode;
        pNode = pNode->GetPrevSibling()) {
     if (pNode->GetElementType() == XFA_Element::InstanceManager) {
       WideString wsInstMgrName =

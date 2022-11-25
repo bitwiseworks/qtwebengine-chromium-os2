@@ -12,26 +12,38 @@
 
 namespace quic {
 
-GeneralLossAlgorithm::GeneralLossAlgorithm()
-    : loss_detection_timeout_(QuicTime::Zero()),
-      reordering_shift_(kDefaultLossDelayShift),
-      reordering_threshold_(kNumberOfNacksBeforeRetransmission),
-      use_adaptive_reordering_threshold_(true),
-      use_adaptive_time_threshold_(false),
-      use_packet_threshold_for_runt_packets_(true),
-      least_in_flight_(1),
-      packet_number_space_(NUM_PACKET_NUMBER_SPACES) {}
+namespace {
+float DetectionResponseTime(QuicTime::Delta rtt,
+                            QuicTime send_time,
+                            QuicTime detection_time) {
+  if (detection_time <= send_time || rtt.IsZero()) {
+    // Time skewed, assume a very fast detection where |detection_time| is
+    // |send_time| + |rtt|.
+    return 1.0;
+  }
+  float send_to_detection_us = (detection_time - send_time).ToMicroseconds();
+  return send_to_detection_us / rtt.ToMicroseconds();
+}
+
+QuicTime::Delta GetMaxRtt(const RttStats& rtt_stats) {
+  return std::max(kAlarmGranularity,
+                  std::max(rtt_stats.previous_srtt(), rtt_stats.latest_rtt()));
+}
+
+}  // namespace
 
 // Uses nack counts to decide when packets are lost.
-void GeneralLossAlgorithm::DetectLosses(
+LossDetectionInterface::DetectionStats GeneralLossAlgorithm::DetectLosses(
     const QuicUnackedPacketMap& unacked_packets,
     QuicTime time,
     const RttStats& rtt_stats,
     QuicPacketNumber largest_newly_acked,
     const AckedPacketVector& packets_acked,
     LostPacketVector* packets_lost) {
+  DetectionStats detection_stats;
+
   loss_detection_timeout_ = QuicTime::Zero();
-  if (!packets_acked.empty() &&
+  if (!packets_acked.empty() && least_in_flight_.IsInitialized() &&
       packets_acked.front().packet_number == least_in_flight_) {
     if (packets_acked.back().packet_number == largest_newly_acked &&
         least_in_flight_ + packets_acked.size() - 1 == largest_newly_acked) {
@@ -40,7 +52,7 @@ void GeneralLossAlgorithm::DetectLosses(
       // do not use this optimization if largest_newly_acked is not the largest
       // packet in packets_acked.
       least_in_flight_ = largest_newly_acked + 1;
-      return;
+      return detection_stats;
     }
     // There is hole in acked_packets, increment least_in_flight_ if possible.
     for (const auto& acked : packets_acked) {
@@ -50,10 +62,9 @@ void GeneralLossAlgorithm::DetectLosses(
       ++least_in_flight_;
     }
   }
-  QuicTime::Delta max_rtt =
-      std::max(rtt_stats.previous_srtt(), rtt_stats.latest_rtt());
-  max_rtt = std::max(kAlarmGranularity, max_rtt);
-  QuicTime::Delta loss_delay = max_rtt + (max_rtt >> reordering_shift_);
+
+  const QuicTime::Delta max_rtt = GetMaxRtt(rtt_stats);
+
   QuicPacketNumber packet_number = unacked_packets.GetLeastUnacked();
   auto it = unacked_packets.begin();
   if (least_in_flight_.IsInitialized() && least_in_flight_ >= packet_number) {
@@ -77,28 +88,43 @@ void GeneralLossAlgorithm::DetectLosses(
       // Skip packets of different packet number space.
       continue;
     }
+
     if (!it->in_flight) {
       continue;
     }
+
+    if (parent_ != nullptr && largest_newly_acked != packet_number) {
+      parent_->OnReorderingDetected();
+    }
+
+    if (largest_newly_acked - packet_number >
+        detection_stats.sent_packets_max_sequence_reordering) {
+      detection_stats.sent_packets_max_sequence_reordering =
+          largest_newly_acked - packet_number;
+    }
+
     // Packet threshold loss detection.
     // Skip packet threshold loss detection if largest_newly_acked is a runt.
     const bool skip_packet_threshold_detection =
         !use_packet_threshold_for_runt_packets_ &&
         it->bytes_sent >
             unacked_packets.GetTransmissionInfo(largest_newly_acked).bytes_sent;
-    if (skip_packet_threshold_detection) {
-      QUIC_RELOADABLE_FLAG_COUNT_N(
-          quic_skip_packet_threshold_loss_detection_with_runt, 2, 2);
-    }
     if (!skip_packet_threshold_detection &&
         largest_newly_acked - packet_number >= reordering_threshold_) {
       packets_lost->push_back(LostPacket(packet_number, it->bytes_sent));
+      detection_stats.total_loss_detection_response_time +=
+          DetectionResponseTime(max_rtt, it->sent_time, time);
       continue;
     }
 
     // Time threshold loss detection.
+    const QuicTime::Delta loss_delay = max_rtt + (max_rtt >> reordering_shift_);
     QuicTime when_lost = it->sent_time + loss_delay;
     if (time < when_lost) {
+      if (time >=
+          it->sent_time + max_rtt + (max_rtt >> (reordering_shift_ + 1))) {
+        ++detection_stats.sent_packets_num_borderline_time_reorderings;
+      }
       loss_detection_timeout_ = when_lost;
       if (!least_in_flight_.IsInitialized()) {
         // At this point, packet_number is in flight and not detected as lost.
@@ -107,11 +133,15 @@ void GeneralLossAlgorithm::DetectLosses(
       break;
     }
     packets_lost->push_back(LostPacket(packet_number, it->bytes_sent));
+    detection_stats.total_loss_detection_response_time +=
+        DetectionResponseTime(max_rtt, it->sent_time, time);
   }
   if (!least_in_flight_.IsInitialized()) {
     // There is no in flight packet.
     least_in_flight_ = largest_newly_acked + 1;
   }
+
+  return detection_stats;
 }
 
 QuicTime GeneralLossAlgorithm::GetLossTimeout() const {
@@ -147,8 +177,9 @@ void GeneralLossAlgorithm::SpuriousLossDetected(
   }
 }
 
-void GeneralLossAlgorithm::SetPacketNumberSpace(
-    PacketNumberSpace packet_number_space) {
+void GeneralLossAlgorithm::Initialize(PacketNumberSpace packet_number_space,
+                                      LossDetectionInterface* parent) {
+  parent_ = parent;
   if (packet_number_space_ < NUM_PACKET_NUMBER_SPACES) {
     QUIC_BUG << "Cannot switch packet_number_space";
     return;

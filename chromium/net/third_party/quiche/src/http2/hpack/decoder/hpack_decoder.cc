@@ -16,9 +16,7 @@ HpackDecoder::HpackDecoder(HpackDecoderListener* listener,
     : decoder_state_(listener),
       entry_buffer_(&decoder_state_, max_string_size),
       block_decoder_(&entry_buffer_),
-      error_(HpackDecodingError::kOk),
-      http2_skip_querying_entry_buffer_error_(
-          GetHttp2ReloadableFlag(http2_skip_querying_entry_buffer_error)) {}
+      error_(HpackDecodingError::kOk) {}
 
 HpackDecoder::~HpackDecoder() = default;
 
@@ -62,7 +60,7 @@ bool HpackDecoder::DecodeFragment(DecodeBuffer* db) {
   // which finally forwards them to the HpackDecoderListener.
   DecodeStatus status = block_decoder_.Decode(db);
   if (status == DecodeStatus::kDecodeError) {
-    ReportError(block_decoder_.error());
+    ReportError(block_decoder_.error(), "");
     HTTP2_CODE_COUNT_N(decompress_failure_3, 4, 23);
     return false;
   } else if (DetectError()) {
@@ -87,7 +85,7 @@ bool HpackDecoder::EndDecodingBlock() {
   }
   if (!block_decoder_.before_entry()) {
     // The HPACK block ended in the middle of an entry.
-    ReportError(HpackDecodingError::kTruncatedBlock);
+    ReportError(HpackDecodingError::kTruncatedBlock, "");
     HTTP2_CODE_COUNT_N(decompress_failure_3, 7, 23);
     return false;
   }
@@ -108,21 +106,8 @@ bool HpackDecoder::DetectError() {
   if (decoder_state_.error() != HpackDecodingError::kOk) {
     HTTP2_DVLOG(2) << "Error detected in decoder_state_";
     HTTP2_CODE_COUNT_N(decompress_failure_3, 10, 23);
-    HTTP2_CODE_COUNT_N(http2_skip_querying_entry_buffer_error, 1, 3);
     error_ = decoder_state_.error();
-  } else if (entry_buffer_.error_detected()) {
-    // This should never happen, because if an error had occured in
-    // |entry_buffer_|, it would have notified its listener, |decoder_state_|.
-    if (http2_skip_querying_entry_buffer_error_) {
-      HTTP2_CODE_COUNT_N(http2_skip_querying_entry_buffer_error, 2, 3);
-    } else {
-      HTTP2_DVLOG(2) << "Error detected in entry_buffer_";
-      HTTP2_CODE_COUNT_N(decompress_failure_3, 9, 23);
-      HTTP2_CODE_COUNT_N(http2_skip_querying_entry_buffer_error, 3, 3);
-      // Since this code path should never be executed, error code does not
-      // matter as long as it is not HpackDecodingError::kOk.
-      error_ = HpackDecodingError::kIndexVarintError;
-    }
+    detailed_error_ = decoder_state_.detailed_error();
   }
 
   return error_ != HpackDecodingError::kOk;
@@ -132,12 +117,14 @@ size_t HpackDecoder::EstimateMemoryUsage() const {
   return Http2EstimateMemoryUsage(entry_buffer_);
 }
 
-void HpackDecoder::ReportError(HpackDecodingError error) {
+void HpackDecoder::ReportError(HpackDecodingError error,
+                               std::string detailed_error) {
   HTTP2_DVLOG(3) << "HpackDecoder::ReportError is new="
                  << (error_ == HpackDecodingError::kOk ? "true" : "false")
                  << ", error: " << HpackDecodingErrorToString(error);
   if (error_ == HpackDecodingError::kOk) {
     error_ = error;
+    detailed_error_ = detailed_error;
     decoder_state_.listener()->OnHeaderErrorDetected(
         HpackDecodingErrorToString(error));
   }

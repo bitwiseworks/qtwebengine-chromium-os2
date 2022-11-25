@@ -4,7 +4,10 @@
 
 #include "third_party/blink/renderer/core/frame/csp/execution_context_csp_delegate.h"
 
+#include "services/network/public/cpp/web_sandbox_flags.h"
+#include "services/network/public/mojom/web_sandbox_flags.mojom-blink.h"
 #include "third_party/blink/public/common/security_context/insecure_request_policy.h"
+#include "third_party/blink/public/mojom/devtools/inspector_issue.mojom-blink.h"
 #include "third_party/blink/public/mojom/security_context/insecure_request_policy.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/source_location.h"
 #include "third_party/blink/renderer/core/dom/document.h"
@@ -32,7 +35,7 @@ ExecutionContextCSPDelegate::ExecutionContextCSPDelegate(
     ExecutionContext& execution_context)
     : execution_context_(&execution_context) {}
 
-void ExecutionContextCSPDelegate::Trace(Visitor* visitor) {
+void ExecutionContextCSPDelegate::Trace(Visitor* visitor) const {
   visitor->Trace(execution_context_);
   ContentSecurityPolicyDelegate::Trace(visitor);
 }
@@ -41,15 +44,12 @@ const SecurityOrigin* ExecutionContextCSPDelegate::GetSecurityOrigin() {
   return execution_context_->GetSecurityOrigin();
 }
 
-SecureContextMode ExecutionContextCSPDelegate::GetSecureContextMode() {
-  return GetSecurityContext().GetSecureContextMode();
-}
-
 const KURL& ExecutionContextCSPDelegate::Url() const {
   return execution_context_->Url();
 }
 
-void ExecutionContextCSPDelegate::SetSandboxFlags(SandboxFlags mask) {
+void ExecutionContextCSPDelegate::SetSandboxFlags(
+    network::mojom::blink::WebSandboxFlags mask) {
   // Ideally sandbox flags are determined at construction time since
   // sandbox flags influence the security origin and that influences
   // the Agent that is assigned for the ExecutionContext. Changing
@@ -67,7 +67,8 @@ void ExecutionContextCSPDelegate::SetSandboxFlags(SandboxFlags mask) {
   // already been set on the security context. Meta tags can't set them
   // and we should have already constructed the document with the correct
   // sandbox flags from CSP already.
-  mojom::blink::WebSandboxFlags flags = GetSecurityContext().GetSandboxFlags();
+  network::mojom::blink::WebSandboxFlags flags =
+      execution_context_->GetSandboxFlags();
   CHECK_EQ(flags | mask, flags);
 }
 
@@ -79,14 +80,16 @@ void ExecutionContextCSPDelegate::AddInsecureRequestPolicy(
     mojom::blink::InsecureRequestPolicy policy) {
   SecurityContext& security_context = GetSecurityContext();
 
-  Document* document = GetDocument();
+  auto* window = DynamicTo<LocalDOMWindow>(execution_context_.Get());
 
   // Step 2. Set settings’s insecure requests policy to Upgrade. [spec text]
   // Upgrade Insecure Requests: Update the policy.
   security_context.SetInsecureRequestPolicy(
       security_context.GetInsecureRequestPolicy() | policy);
-  if (document)
-    document->DidEnforceInsecureRequestPolicy();
+  if (window && window->GetFrame()) {
+    window->GetFrame()->GetLocalFrameHostRemote().EnforceInsecureRequestPolicy(
+        security_context.GetInsecureRequestPolicy());
+  }
 
   // Upgrade Insecure Requests: Update the set of insecure URLs to upgrade.
   if ((policy &
@@ -99,14 +102,18 @@ void ExecutionContextCSPDelegate::AddInsecureRequestPolicy(
     // Step 4. Insert tuple into settings’s upgrade insecure navigations set.
     // [spec text]
     Count(WebFeature::kUpgradeInsecureRequestsEnabled);
-    // We don't add the hash if |document| is null, to prevent
+    // We don't add the hash if |window| is null, to prevent
     // WorkerGlobalScope::Url() before it's ready. https://crbug.com/861564
     // This should be safe, because the insecure navigations set is not used
     // in non-Document contexts.
-    if (document && !Url().Host().IsEmpty()) {
+    if (window && !Url().Host().IsEmpty()) {
       uint32_t hash = Url().Host().Impl()->GetHash();
       security_context.AddInsecureNavigationUpgrade(hash);
-      document->DidEnforceInsecureNavigationsSet();
+      if (auto* frame = window->GetFrame()) {
+        frame->GetLocalFrameHostRemote().EnforceInsecureNavigationsSet(
+            SecurityContext::SerializeInsecureNavigationSet(
+                GetSecurityContext().InsecureNavigationsToUpgrade()));
+      }
     }
   }
 }
@@ -180,7 +187,7 @@ void ExecutionContextCSPDelegate::PostViolationReport(
   auto* body = MakeGarbageCollected<CSPViolationReportBody>(violation_data);
   Report* observed_report = MakeGarbageCollected<Report>(
       ReportType::kCSPViolation, Url().GetString(), body);
-  ReportingContext::From(document->ToExecutionContext())
+  ReportingContext::From(execution_context_.Get())
       ->QueueReport(observed_report,
                     use_reporting_api ? report_endpoints : Vector<String>());
 
@@ -218,6 +225,11 @@ void ExecutionContextCSPDelegate::AddConsoleMessage(
   execution_context_->AddConsoleMessage(console_message);
 }
 
+void ExecutionContextCSPDelegate::AddInspectorIssue(
+    mojom::blink::InspectorIssueInfoPtr info) {
+  execution_context_->AddInspectorIssue(std::move(info));
+}
+
 void ExecutionContextCSPDelegate::DisableEval(const String& error_message) {
   execution_context_->DisableEval(error_message);
 }
@@ -229,13 +241,30 @@ void ExecutionContextCSPDelegate::ReportBlockedScriptExecutionToInspector(
 
 void ExecutionContextCSPDelegate::DidAddContentSecurityPolicies(
     WTF::Vector<network::mojom::blink::ContentSecurityPolicyPtr> policies) {
-  Document* document = GetDocument();
-  if (!document)
+  auto* window = DynamicTo<LocalDOMWindow>(execution_context_.Get());
+  if (!window)
     return;
 
-  LocalFrame* frame = document->GetFrame();
+  LocalFrame* frame = window->GetFrame();
   if (!frame)
     return;
+
+  // Record what source was used to find main frame CSP.
+  if (frame->IsMainFrame()) {
+    for (const auto& policy : policies) {
+      switch (policy->header->source) {
+        case network::mojom::ContentSecurityPolicySource::kHTTP:
+          Count(WebFeature::kMainFrameCSPViaHTTP);
+          break;
+        case network::mojom::ContentSecurityPolicySource::kMeta:
+          Count(WebFeature::kMainFrameCSPViaMeta);
+          break;
+        case network::mojom::ContentSecurityPolicySource::kOriginPolicy:
+          Count(WebFeature::kMainFrameCSPViaOriginPolicy);
+          break;
+      }
+    }
+  }
 
   frame->GetLocalFrameHostRemote().DidAddContentSecurityPolicies(
       std::move(policies));

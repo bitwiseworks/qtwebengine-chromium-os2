@@ -7,14 +7,14 @@
 #include <algorithm>
 #include <cstdlib>
 #include <limits>
-#include <string>
 #include <utility>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/metrics/bucket_ranges.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_base.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/sample_vector.h"
 #include "base/no_destructor.h"
 #include "base/numerics/safe_conversions.h"
@@ -99,7 +99,8 @@ ResolveContext::ServerStats::~ServerStats() = default;
 ResolveContext::ResolveContext(URLRequestContext* url_request_context,
                                bool enable_caching)
     : url_request_context_(url_request_context),
-      host_cache_(enable_caching ? HostCache::CreateDefaultCache() : nullptr) {
+      host_cache_(enable_caching ? HostCache::CreateDefaultCache() : nullptr),
+      isolation_info_(IsolationInfo::CreateTransient()) {
   max_timeout_ = GetMaxTimeout();
 }
 
@@ -107,7 +108,7 @@ ResolveContext::~ResolveContext() = default;
 
 std::unique_ptr<DnsServerIterator> ResolveContext::GetDohIterator(
     const DnsConfig& config,
-    const DnsConfig::SecureDnsMode& mode,
+    const SecureDnsMode& mode,
     const DnsSession* session) {
   // Make the iterator even if the session differs. The first call to the member
   // functions will catch the out of date session.
@@ -149,9 +150,26 @@ size_t ResolveContext::NumAvailableDohServers(const DnsSession* session) const {
 
 void ResolveContext::RecordServerFailure(size_t server_index,
                                          bool is_doh_server,
+                                         int rv,
                                          const DnsSession* session) {
+  DCHECK(rv != OK && rv != ERR_NAME_NOT_RESOLVED && rv != ERR_IO_PENDING);
+
   if (!IsCurrentSession(session))
     return;
+
+  // "FailureError" metric is only recorded for secure queries.
+  if (is_doh_server) {
+    std::string query_type =
+        GetQueryTypeForUma(server_index, true /* is_doh_server */, session);
+    DCHECK_NE(query_type, "Insecure");
+    std::string provider_id =
+        GetDohProviderIdForUma(server_index, true /* is_doh_server */, session);
+
+    base::UmaHistogramSparse(
+        base::StringPrintf("Net.DNS.DnsTransaction.%s.%s.FailureError",
+                           query_type.c_str(), provider_id.c_str()),
+        std::abs(rv));
+  }
 
   size_t num_available_doh_servers_before = NumAvailableDohServers(session);
 
@@ -199,9 +217,10 @@ void ResolveContext::RecordRtt(size_t server_index,
   if (!IsCurrentSession(session))
     return;
 
-  RecordRttForUma(server_index, is_doh_server, rtt, rv, session);
-
   ServerStats* stats = GetServerStats(server_index, is_doh_server);
+
+  base::TimeDelta base_timeout = NextTimeoutHelper(stats, 0 /* num_backoffs */);
+  RecordRttForUma(server_index, is_doh_server, rtt, rv, base_timeout, session);
 
   // RTT values shouldn't be less than 0, but it shouldn't cause a crash if
   // they are anyway, so clip to 0. See https://crbug.com/753568.
@@ -366,41 +385,69 @@ void ResolveContext::RecordRttForUma(size_t server_index,
                                      bool is_doh_server,
                                      base::TimeDelta rtt,
                                      int rv,
+                                     base::TimeDelta base_timeout,
                                      const DnsSession* session) {
   DCHECK(IsCurrentSession(session));
 
-  std::string query_type;
-  std::string provider_id;
-  if (is_doh_server) {
-    // Secure queries are validated if the DoH server state is available.
-    if (GetDohServerAvailability(server_index, session))
-      query_type = "SecureValidated";
-    else
-      query_type = "SecureNotValidated";
-    provider_id = GetDohProviderIdForHistogramFromDohConfig(
-        current_session_->config().dns_over_https_servers[server_index]);
-  } else {
-    query_type = "Insecure";
-    provider_id = GetDohProviderIdForHistogramFromNameserver(
-        current_session_->config().nameservers[server_index]);
-  }
+  std::string query_type =
+      GetQueryTypeForUma(server_index, is_doh_server, session);
+  std::string provider_id =
+      GetDohProviderIdForUma(server_index, is_doh_server, session);
+
   if (rv == OK || rv == ERR_NAME_NOT_RESOLVED) {
     base::UmaHistogramMediumTimes(
         base::StringPrintf("Net.DNS.DnsTransaction.%s.%s.SuccessTime",
                            query_type.c_str(), provider_id.c_str()),
         rtt);
+    if (query_type == "SecureValidated") {
+      DCHECK(is_doh_server);
+
+      // Only for SecureValidated requests, record the ratio between successful
+      // RTT and the base timeout for the server. Note that RTT could be much
+      // longer than the timeout as previous attempts are often allowed to
+      // continue in parallel with new attempts made by the transaction. Scale
+      // the ratio up by 10 for sub-integer granularity.
+      // TODO(crbug.com/1105138): Remove after determining good timeout logic.
+      int timeout_ratio = base::ClampFloor(rtt / base_timeout * 10);
+      UMA_HISTOGRAM_COUNTS_1000(
+          "Net.DNS.DnsTransaction.SecureValidated.SuccessTimeoutRatio",
+          timeout_ratio);
+    }
   } else {
     base::UmaHistogramMediumTimes(
         base::StringPrintf("Net.DNS.DnsTransaction.%s.%s.FailureTime",
                            query_type.c_str(), provider_id.c_str()),
         rtt);
-    if (is_doh_server) {
-      base::UmaHistogramSparse(
-          base::StringPrintf("Net.DNS.DnsTransaction.%s.%s.FailureError",
-                             query_type.c_str(), provider_id.c_str()),
-          std::abs(rv));
-    }
   }
+}
+
+std::string ResolveContext::GetQueryTypeForUma(size_t server_index,
+                                               bool is_doh_server,
+                                               const DnsSession* session) {
+  DCHECK(IsCurrentSession(session));
+
+  if (!is_doh_server)
+    return "Insecure";
+
+  // Secure queries are validated if the DoH server state is available.
+  if (GetDohServerAvailability(server_index, session))
+    return "SecureValidated";
+
+  return "SecureNotValidated";
+}
+
+std::string ResolveContext::GetDohProviderIdForUma(size_t server_index,
+                                                   bool is_doh_server,
+                                                   const DnsSession* session) {
+  DCHECK(IsCurrentSession(session));
+
+  if (is_doh_server) {
+    return GetDohProviderIdForHistogramFromDohConfig(
+        session->config().dns_over_https_servers[server_index]);
+  }
+
+  return GetDohProviderIdForHistogramFromNameserver(
+      session->config().nameservers[server_index]);
 }
 
 void ResolveContext::NotifyDohStatusObserversOfSessionChanged() {

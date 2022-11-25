@@ -18,22 +18,19 @@ namespace blink {
 class GPURequestAdapterOptions;
 class ScriptPromiseResolver;
 class ScriptState;
-class WebGraphicsContext3DProvider;
 class DawnControlClientHolder;
 
 class GPU final : public ScriptWrappable,
                   public ExecutionContextLifecycleObserver {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(GPU);
 
  public:
   static GPU* Create(ExecutionContext& execution_context);
-  explicit GPU(ExecutionContext& execution_context,
-               std::unique_ptr<WebGraphicsContext3DProvider> context_provider);
+  explicit GPU(ExecutionContext& execution_context);
   ~GPU() override;
 
   // ScriptWrappable overrides
-  void Trace(Visitor* visitor) override;
+  void Trace(Visitor* visitor) const override;
 
   // ExecutionContextLifecycleObserver overrides
   void ContextDestroyed() override;
@@ -44,7 +41,7 @@ class GPU final : public ScriptWrappable,
 
  private:
   void OnRequestAdapterCallback(ScriptPromiseResolver* resolver,
-                                uint32_t adapter_server_id,
+                                int32_t adapter_server_id,
                                 const WGPUDeviceProperties& properties);
 
   scoped_refptr<DawnControlClientHolder> dawn_control_client_;

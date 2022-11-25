@@ -8,6 +8,8 @@
 #include "base/i18n/time_formatting.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "components/autofill/core/browser/autofill_data_util.h"
+#include "components/autofill_assistant/browser/field_formatter.h"
 #include "components/autofill_assistant/browser/script_executor_delegate.h"
 #include "components/autofill_assistant/browser/trigger_context.h"
 #include "components/autofill_assistant/browser/user_model.h"
@@ -35,7 +37,8 @@ bool BooleanAnd(UserModel* user_model,
   for (const auto& value : *values) {
     result &= value.booleans().values(0);
   }
-  user_model->SetValue(result_model_identifier, SimpleValue(result));
+  user_model->SetValue(result_model_identifier,
+                       SimpleValue(result, ContainsClientOnlyValue(*values)));
   return true;
 }
 
@@ -58,7 +61,8 @@ bool BooleanOr(UserModel* user_model,
   for (const auto& value : *values) {
     result |= value.booleans().values(0);
   }
-  user_model->SetValue(result_model_identifier, SimpleValue(result));
+  user_model->SetValue(result_model_identifier,
+                       SimpleValue(result, ContainsClientOnlyValue(*values)));
   return true;
 }
 
@@ -77,8 +81,9 @@ bool BooleanNot(UserModel* user_model,
     return false;
   }
 
-  user_model->SetValue(result_model_identifier,
-                       SimpleValue(!value->booleans().values(0)));
+  user_model->SetValue(
+      result_model_identifier,
+      SimpleValue(!value->booleans().values(0), value->is_client_side_only()));
   return true;
 }
 
@@ -86,67 +91,130 @@ bool ValueToString(UserModel* user_model,
                    const std::string& result_model_identifier,
                    const ToStringProto& proto) {
   auto value = user_model->GetValue(proto.value());
-  std::string result;
-
   if (!value.has_value()) {
     DVLOG(2) << "Error evaluating " << __func__ << ": " << proto.value()
              << " not found in model";
     return false;
   }
-  if (!AreAllValuesOfSize({*value}, 1)) {
-    DVLOG(2) << "Error evaluating " << __func__
-             << ": expected single value, but got a list instead";
+  if (GetValueSize(*value) == 0) {
+    DVLOG(2) << "Error evaluating " << __func__ << ": input value empty";
     return false;
   }
-  if (AreAllValuesOfType({*value}, ValueProto::kUserActions)) {
-    DVLOG(2) << "Error evaluating " << __func__
-             << ": does not support stringifying user actions";
-    return false;
-  }
+
   switch (value->kind_case()) {
-    case ValueProto::kStrings:
-      result = value->strings().values(0);
-      break;
-    case ValueProto::kBooleans:
-      result = value->booleans().values(0) ? "true" : "false";
-      break;
-    case ValueProto::kInts:
-      result = base::NumberToString(value->ints().values(0));
-      break;
     case ValueProto::kUserActions:
-      NOTREACHED();
+    case ValueProto::kLoginOptions:
+    case ValueProto::kCreditCardResponse:
+    case ValueProto::kServerPayload:
+      DVLOG(2) << "Error evaluating " << __func__
+               << ": does not support values of type " << value->kind_case();
       return false;
-    case ValueProto::kDates: {
-      if (proto.date_format().date_format().empty()) {
-        DVLOG(2) << "Error evaluating " << __func__ << ": date_format not set";
-        return false;
-      }
-      auto date = value->dates().values(0);
-      base::Time::Exploded exploded_time = {date.year(),
-                                            date.month(),
-                                            /* day_of_week = */ -1,
-                                            date.day(),
-                                            /* hour = */ 0,
-                                            /* minute = */ 0,
-                                            /* second = */ 0,
-                                            /* millisecond = */ 0};
-      base::Time time;
-      if (!base::Time::FromLocalExploded(exploded_time, &time)) {
-        DVLOG(2) << "Error evaluating " << __func__ << ": invalid date "
-                 << *value;
-        return false;
-      }
-
-      result = base::UTF16ToUTF8(base::TimeFormatWithPattern(
-          time, proto.date_format().date_format().c_str()));
+    default:
       break;
-    }
-    case ValueProto::KIND_NOT_SET:
-      DVLOG(2) << "Error evaluating " << __func__ << ": kind not set";
-      return false;
   }
 
-  user_model->SetValue(result_model_identifier, SimpleValue(result));
+  ValueProto result;
+  result.set_is_client_side_only(value->is_client_side_only());
+  for (int i = 0; i < GetValueSize(*value); ++i) {
+    switch (value->kind_case()) {
+      case ValueProto::kStrings:
+        result.mutable_strings()->add_values(value->strings().values(i));
+        break;
+      case ValueProto::kBooleans:
+        result.mutable_strings()->add_values(
+            value->booleans().values(i) ? "true" : "false");
+        break;
+      case ValueProto::kInts:
+        result.mutable_strings()->add_values(
+            base::NumberToString(value->ints().values(i)));
+        break;
+      case ValueProto::kDates: {
+        if (proto.date_format().date_format().empty()) {
+          DVLOG(2) << "Error evaluating " << __func__
+                   << ": date_format not set";
+          return false;
+        }
+        auto date = value->dates().values(i);
+        base::Time::Exploded exploded_time = {date.year(),
+                                              date.month(),
+                                              /* day_of_week = */ -1,
+                                              date.day(),
+                                              /* hour = */ 0,
+                                              /* minute = */ 0,
+                                              /* second = */ 0,
+                                              /* millisecond = */ 0};
+        base::Time time;
+        if (!base::Time::FromLocalExploded(exploded_time, &time)) {
+          DVLOG(2) << "Error evaluating " << __func__ << ": invalid date "
+                   << *value;
+          return false;
+        }
+
+        result.mutable_strings()->add_values(
+            base::UTF16ToUTF8(base::TimeFormatWithPattern(
+                time, proto.date_format().date_format().c_str())));
+        break;
+      }
+      case ValueProto::kCreditCards: {
+        if (proto.autofill_format().pattern().empty()) {
+          DVLOG(2) << "Error evaluating " << __func__ << ": pattern not set";
+          return false;
+        }
+        auto* credit_card =
+            user_model->GetCreditCard(value->credit_cards().values(i).guid());
+        if (!credit_card) {
+          DVLOG(2) << "Error evaluating " << __func__
+                   << ": credit card not found";
+          return false;
+        }
+        auto formatted_string = field_formatter::FormatString(
+            proto.autofill_format().pattern(),
+            field_formatter::CreateAutofillMappings(
+                *credit_card, proto.autofill_format().locale()));
+        if (!formatted_string.has_value()) {
+          DVLOG(2) << "Error evaluating " << __func__
+                   << ": error formatting pattern '"
+                   << proto.autofill_format().pattern() << "'";
+          return false;
+        }
+        result.mutable_strings()->add_values(*formatted_string);
+        break;
+      }
+      case ValueProto::kProfiles: {
+        if (proto.autofill_format().pattern().empty()) {
+          DVLOG(2) << "Error evaluating " << __func__ << ": pattern not set";
+          return false;
+        }
+        auto* profile =
+            user_model->GetProfile(value->profiles().values(i).guid());
+        if (!profile) {
+          DVLOG(2) << "Error evaluating " << __func__ << ": profile not found";
+          return false;
+        }
+        auto formatted_string = field_formatter::FormatString(
+            proto.autofill_format().pattern(),
+            field_formatter::CreateAutofillMappings(
+                *profile, proto.autofill_format().locale()));
+        if (!formatted_string.has_value()) {
+          DVLOG(2) << "Error evaluating " << __func__
+                   << ": error formatting pattern '"
+                   << proto.autofill_format().pattern() << "'";
+          return false;
+        }
+        result.mutable_strings()->add_values(*formatted_string);
+        break;
+      }
+      case ValueProto::kUserActions:
+      case ValueProto::kLoginOptions:
+      case ValueProto::kCreditCardResponse:
+      case ValueProto::kServerPayload:
+      case ValueProto::KIND_NOT_SET:
+        NOTREACHED();
+        return false;
+    }
+  }
+
+  user_model->SetValue(result_model_identifier, result);
   return true;
 }
 
@@ -171,8 +239,17 @@ bool Compare(UserModel* user_model,
   }
 
   if (proto.mode() == ValueComparisonProto::EQUAL) {
-    user_model->SetValue(result_model_identifier,
-                         SimpleValue(*value_a == *value_b));
+    user_model->SetValue(
+        result_model_identifier,
+        SimpleValue(*value_a == *value_b,
+                    ContainsClientOnlyValue({*value_a, *value_b})));
+    return true;
+  }
+  if (proto.mode() == ValueComparisonProto::NOT_EQUAL) {
+    user_model->SetValue(
+        result_model_identifier,
+        SimpleValue(*value_a != *value_b,
+                    ContainsClientOnlyValue({*value_a, *value_b})));
     return true;
   }
 
@@ -216,11 +293,14 @@ bool Compare(UserModel* user_model,
       result = *value_a > *value_b;
       break;
     case ValueComparisonProto::EQUAL:
+    case ValueComparisonProto::NOT_EQUAL:
     case ValueComparisonProto::UNDEFINED:
       NOTREACHED();
       return false;
   }
-  user_model->SetValue(result_model_identifier, SimpleValue(result));
+  user_model->SetValue(
+      result_model_identifier,
+      SimpleValue(result, ContainsClientOnlyValue({*value_a, *value_b})));
   return true;
 }
 
@@ -246,7 +326,62 @@ bool IntegerSum(UserModel* user_model,
     sum += value.ints().values(0);
   }
 
-  user_model->SetValue(result_model_identifier, SimpleValue(sum));
+  user_model->SetValue(result_model_identifier,
+                       SimpleValue(sum, ContainsClientOnlyValue(*values)));
+  return true;
+}
+
+bool CreateCreditCardResponse(UserModel* user_model,
+                              const std::string& result_model_identifier,
+                              const CreateCreditCardResponseProto& proto) {
+  auto value = user_model->GetValue(proto.value());
+  if (!value.has_value()) {
+    DVLOG(2) << "Failed to find value in user model";
+    return false;
+  }
+
+  if (value->credit_cards().values().size() != 1) {
+    DVLOG(2) << "Error evaluating " << __func__
+             << ": expected single CreditCardProto, but got " << *value;
+    return false;
+  }
+
+  auto* credit_card =
+      user_model->GetCreditCard(value->credit_cards().values(0).guid());
+  if (!credit_card) {
+    DVLOG(2) << "Error evaluating " << __func__ << ": card not found for guid "
+             << value->credit_cards().values(0).guid();
+    return false;
+  }
+
+  // The result is intentionally not client_side_only, irrespective of input.
+  ValueProto result;
+  result.mutable_credit_card_response()->set_network(
+      autofill::data_util::GetPaymentRequestData(credit_card->network())
+          .basic_card_issuer_network);
+  user_model->SetValue(result_model_identifier, result);
+  return true;
+}
+
+bool CreateLoginOptionResponse(UserModel* user_model,
+                               const std::string& result_model_identifier,
+                               const CreateLoginOptionResponseProto& proto) {
+  auto value = user_model->GetValue(proto.value());
+  if (!value.has_value()) {
+    DVLOG(2) << "Failed to find value in user model";
+    return false;
+  }
+
+  if (value->login_options().values().size() != 1) {
+    DVLOG(2) << "Error evaluating " << __func__
+             << ": expected single LoginOptionProto, but got " << *value;
+    return false;
+  }
+
+  // The result is intentionally not client_side_only, irrespective of input.
+  ValueProto result;
+  result.set_server_payload(value->login_options().values(0).payload());
+  user_model->SetValue(result_model_identifier, result);
   return true;
 }
 
@@ -325,6 +460,25 @@ bool BasicInteractions::ComputeValue(const ComputeValueProto& proto) {
       }
       return IntegerSum(delegate_->GetUserModel(),
                         proto.result_model_identifier(), proto.integer_sum());
+    case ComputeValueProto::kCreateCreditCardResponse:
+      if (!proto.create_credit_card_response().has_value()) {
+        DVLOG(2) << "Error computing ComputeValue::CreateCreditCardResponse: "
+                    "no value specified";
+        return false;
+      }
+      return CreateCreditCardResponse(delegate_->GetUserModel(),
+                                      proto.result_model_identifier(),
+                                      proto.create_credit_card_response());
+    case ComputeValueProto::kCreateLoginOptionResponse:
+      if (!proto.create_login_option_response().has_value()) {
+        DVLOG(2) << "Error computing ComputeValue::CreateLoginOptionResponse: "
+                    "no value specified";
+        return false;
+      }
+      return CreateLoginOptionResponse(delegate_->GetUserModel(),
+                                       proto.result_model_identifier(),
+                                       proto.create_login_option_response());
+      break;
     case ComputeValueProto::KIND_NOT_SET:
       DVLOG(2) << "Error computing value: kind not set";
       return false;
@@ -414,26 +568,44 @@ bool BasicInteractions::ToggleUserAction(const ToggleUserActionProto& proto) {
   return true;
 }
 
-bool BasicInteractions::EndAction(bool view_inflation_successful,
-                                  const EndActionProto& proto) {
+bool BasicInteractions::EndAction(const ClientStatus& status) {
   if (!end_action_callback_) {
     DVLOG(2) << "Failed to EndAction: no callback set";
     return false;
   }
-  std::move(end_action_callback_)
-      .Run(view_inflation_successful, proto.status(),
-           delegate_->GetUserModel());
+
+  // It is possible for the action to end before view inflation was finished.
+  // In that case, the action can end directly and does not need to receive this
+  // callback.
+  view_inflation_finished_callback_.Reset();
+  std::move(end_action_callback_).Run(status);
   return true;
 }
 
-void BasicInteractions::ClearEndActionCallback() {
+bool BasicInteractions::NotifyViewInflationFinished(
+    const ClientStatus& status) {
+  if (!view_inflation_finished_callback_) {
+    return false;
+  }
+  std::move(view_inflation_finished_callback_).Run(status);
+  return true;
+}
+
+void BasicInteractions::ClearCallbacks() {
   end_action_callback_.Reset();
+  view_inflation_finished_callback_.Reset();
 }
 
 void BasicInteractions::SetEndActionCallback(
-    base::OnceCallback<void(bool, ProcessedActionStatusProto, const UserModel*)>
-        end_action_callback) {
+    base::OnceCallback<void(const ClientStatus&)> end_action_callback) {
   end_action_callback_ = std::move(end_action_callback);
+}
+
+void BasicInteractions::SetViewInflationFinishedCallback(
+    base::OnceCallback<void(const ClientStatus&)>
+        view_inflation_finished_callback) {
+  view_inflation_finished_callback_ =
+      std::move(view_inflation_finished_callback);
 }
 
 bool BasicInteractions::RunConditionalCallback(
@@ -454,38 +626,6 @@ bool BasicInteractions::RunConditionalCallback(
   }
   if (condition_value->booleans().values(0)) {
     callback.Run();
-  }
-  return true;
-}
-
-bool BasicInteractions::UpdateRadioButtonGroup(
-    const std::vector<std::string>& model_identifiers,
-    const std::string& selected_model_identifier) {
-  auto selected_iterator =
-      std::find(model_identifiers.begin(), model_identifiers.end(),
-                selected_model_identifier);
-  if (selected_iterator == model_identifiers.end()) {
-    return false;
-  }
-
-  auto values = delegate_->GetUserModel()->GetValues(model_identifiers);
-  if (!values.has_value()) {
-    return false;
-  }
-
-  if (!AreAllValuesOfType(*values, ValueProto::kBooleans)) {
-    return false;
-  }
-
-  if (!AreAllValuesOfSize(*values, 1)) {
-    return false;
-  }
-
-  for (const auto& model_identifier : model_identifiers) {
-    if (model_identifier == selected_model_identifier) {
-      continue;
-    }
-    delegate_->GetUserModel()->SetValue(model_identifier, SimpleValue(false));
   }
   return true;
 }

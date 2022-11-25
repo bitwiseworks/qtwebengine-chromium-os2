@@ -4,9 +4,17 @@
 
 #include "weblayer/public/common/switches.h"
 
+namespace weblayer {
 namespace switches {
+
+// Disable auto-reload of error pages.
+const char kDisableAutoReload[] = "disable-auto-reload";
+
+// Enable auto-reload of error pages.
+const char kEnableAutoReload[] = "enable-auto-reload";
 
 // Makes WebLayer Shell use the given path for its data directory.
 const char kWebLayerUserDataDir[] = "weblayer-user-data-dir";
 
 }  // namespace switches
+}  //  namespace weblayer

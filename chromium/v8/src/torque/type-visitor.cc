@@ -247,7 +247,7 @@ const ClassType* TypeVisitor::ComputeType(
   ClassFlags flags = decl->flags;
   bool is_shape = flags & ClassFlag::kIsShape;
   std::string generates = decl->name->value;
-  const Type* super_type = TypeVisitor::ComputeType(*decl->super);
+  const Type* super_type = TypeVisitor::ComputeType(decl->super);
   if (is_shape) {
     if (!(flags & ClassFlag::kExtern)) {
       ReportError("Shapes must be extern, add \"extern\" to the declaration.");
@@ -265,9 +265,6 @@ const ClassType* TypeVisitor::ComputeType(
     // Shapes use their super class in CSA code since they have incomplete
     // support for type-checks on the C++ side.
     generates = super_class->name();
-  }
-  if (!decl->super) {
-    ReportError("Extern class must extend another type.");
   }
   if (super_type != TypeOracle::GetStrongTaggedType()) {
     const ClassType* super_class = ClassType::DynamicCast(super_type);
@@ -313,6 +310,16 @@ const ClassType* TypeVisitor::ComputeType(
     }
     flags = flags | ClassFlag::kGeneratePrint | ClassFlag::kGenerateVerify |
             ClassFlag::kGenerateBodyDescriptor;
+  }
+  if (!(flags & ClassFlag::kExtern) &&
+      (flags & ClassFlag::kHasSameInstanceTypeAsParent)) {
+    Error("non-extern Torque-defined classes must have unique instance types");
+  }
+  if ((flags & ClassFlag::kHasSameInstanceTypeAsParent) &&
+      !(flags & ClassFlag::kDoNotGenerateCast || flags & ClassFlag::kIsShape)) {
+    Error(
+        "classes that inherit their instance type must be annotated with "
+        "@doNotGenerateCast");
   }
 
   return TypeOracle::GetClassType(super_type, decl->name->value, flags,
@@ -455,7 +462,7 @@ void TypeVisitor::VisitStructMethods(
   DeclareMethods(struct_type, struct_declaration->methods);
 }
 
-const StructType* TypeVisitor::ComputeTypeForStructExpression(
+const Type* TypeVisitor::ComputeTypeForStructExpression(
     TypeExpression* type_expression,
     const std::vector<const Type*>& term_argument_types) {
   auto* basic = BasicTypeExpression::DynamicCast(type_expression);
@@ -475,11 +482,11 @@ const StructType* TypeVisitor::ComputeTypeForStructExpression(
   // Compute types of non-generic structs as usual
   if (!(maybe_generic_type && decl)) {
     const Type* type = ComputeType(type_expression);
-    const StructType* struct_type = StructType::DynamicCast(type);
-    if (!struct_type) {
-      ReportError(*type, " is not a struct, but used like one");
+    if (!type->IsStructType() && !type->IsBitFieldStructType()) {
+      ReportError(*type,
+                  " is not a struct or bitfield struct, but used like one");
     }
-    return struct_type;
+    return type;
   }
 
   auto generic_type = *maybe_generic_type;
@@ -493,9 +500,10 @@ const StructType* TypeVisitor::ComputeTypeForStructExpression(
   }
 
   CurrentScope::Scope generic_scope(generic_type->ParentScope());
-  TypeArgumentInference inference(generic_type->generic_parameters(),
-                                  explicit_type_arguments, term_parameters,
-                                  term_argument_types);
+  TypeArgumentInference inference(
+      generic_type->generic_parameters(), explicit_type_arguments,
+      term_parameters,
+      TransformVector<base::Optional<const Type*>>(term_argument_types));
 
   if (inference.HasFailed()) {
     ReportError("failed to infer type arguments for struct ", basic->name,

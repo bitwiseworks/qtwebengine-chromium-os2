@@ -265,6 +265,10 @@ const char *GLenumToString(GLenumGroup enumGroup, unsigned int value)
                     return "GL_MAP_FLUSH_EXPLICIT_BIT";
                 case 0x20:
                     return "GL_MAP_UNSYNCHRONIZED_BIT";
+                case 0x40:
+                    return "GL_MAP_PERSISTENT_BIT_EXT";
+                case 0x80:
+                    return "GL_MAP_COHERENT_BIT_EXT";
                 default:
                     return kUnknownGLenumString;
             }
@@ -652,20 +656,52 @@ const char *GLenumToString(GLenumGroup enumGroup, unsigned int value)
         {
             switch (value)
             {
+                case 0x1:
+                    return "GL_CREATE_SPARSE_BINDING_BIT_ANGLE";
+                case 0x2:
+                    return "GL_CREATE_SPARSE_RESIDENCY_BIT_ANGLE";
+                case 0x4:
+                    return "GL_CREATE_SPARSE_ALIASED_BIT_ANGLE";
+                case 0x8:
+                    return "GL_CREATE_MUTABLE_FORMAT_BIT_ANGLE";
+                case 0x10:
+                    return "GL_CREATE_CUBE_COMPATIBLE_BIT_ANGLE";
                 case 0x16:
                     return "GL_UUID_SIZE_EXT";
+                case 0x20:
+                    return "GL_CREATE_2D_ARRAY_COMPATIBLE_BIT_ANGLE";
+                case 0x40:
+                    return "GL_CREATE_SPLIT_INSTANCE_BIND_REGIONS_BIT_ANGLE";
+                case 0x80:
+                    return "GL_CREATE_BLOCK_TEXEL_VIEW_COMPATIBLE_BIT_ANGLE";
+                case 0x100:
+                    return "GL_CREATE_EXTENDED_USAGE_BIT_ANGLE";
+                case 0x200:
+                    return "GL_CREATE_DISJOINT_BIT_ANGLE";
                 case 0x308:
                     return "GL_SRC_ALPHA_SATURATE_EXT";
+                case 0x400:
+                    return "GL_CREATE_ALIAS_BIT_ANGLE";
                 case 0x503:
                     return "GL_STACK_OVERFLOW_KHR";
                 case 0x504:
                     return "GL_STACK_UNDERFLOW_KHR";
                 case 0x507:
                     return "GL_CONTEXT_LOST";
+                case 0x800:
+                    return "GL_CREATE_PROTECTED_BIT_ANGLE";
+                case 0x1000:
+                    return "GL_CREATE_SAMPLE_LOCATIONS_COMPATIBLE_DEPTH_BIT_ANGLE";
                 case 0x1004:
                     return "GL_TEXTURE_BORDER_COLOR_OES";
+                case 0x1901:
+                    return "GL_STENCIL_INDEX_OES";
+                case 0x2000:
+                    return "GL_CREATE_CORNER_SAMPLED_BIT_ANGLE";
                 case 0x2500:
                     return "GL_TEXTURE_GEN_MODE_OES";
+                case 0x4000:
+                    return "GL_CREATE_SUBSAMPLED_BIT_ANGLE";
                 case 0x8005:
                     return "GL_BLEND_COLOR";
                 case 0x8007:
@@ -726,6 +762,10 @@ const char *GLenumToString(GLenumGroup enumGroup, unsigned int value)
                     return "GL_NUM_EXTENSIONS";
                 case 0x821E:
                     return "GL_CONTEXT_FLAGS";
+                case 0x821F:
+                    return "GL_BUFFER_IMMUTABLE_STORAGE_EXT";
+                case 0x8220:
+                    return "GL_BUFFER_STORAGE_FLAGS_EXT";
                 case 0x8221:
                     return "GL_PRIMITIVE_RESTART_FOR_PATCHES_SUPPORTED";
                 case 0x8228:
@@ -1402,6 +1442,8 @@ const char *GLenumToString(GLenumGroup enumGroup, unsigned int value)
                     return "GL_SIGNED_NORMALIZED";
                 case 0x8FBB:
                     return "GL_GPU_DISJOINT_EXT";
+                case 0x8FBD:
+                    return "GL_SR8_EXT";
                 case 0x900A:
                     return "GL_TEXTURE_BINDING_CUBE_MAP_ARRAY";
                 case 0x900C:
@@ -2662,6 +2704,14 @@ const char *GLenumToString(GLenumGroup enumGroup, unsigned int value)
                     return "GL_MAP_FLUSH_EXPLICIT_BIT";
                 case 0x20:
                     return "GL_MAP_UNSYNCHRONIZED_BIT";
+                case 0x40:
+                    return "GL_MAP_PERSISTENT_BIT_EXT";
+                case 0x80:
+                    return "GL_MAP_COHERENT_BIT_EXT";
+                case 0x100:
+                    return "GL_DYNAMIC_STORAGE_BIT_EXT";
+                case 0x200:
+                    return "GL_CLIENT_STORAGE_BIT_EXT";
                 default:
                     return kUnknownGLenumString;
             }
@@ -2723,6 +2773,8 @@ const char *GLenumToString(GLenumGroup enumGroup, unsigned int value)
                     return "GL_ATOMIC_COUNTER_BARRIER_BIT";
                 case 0x2000:
                     return "GL_SHADER_STORAGE_BARRIER_BIT";
+                case 0x4000:
+                    return "GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT_EXT";
                 case 0xFFFFFFFF:
                     return "GL_ALL_BARRIER_BITS";
                 default:
@@ -4035,6 +4087,11 @@ const char *GLenumToString(GLenumGroup enumGroup, unsigned int value)
 std::string GLbitfieldToString(GLenumGroup enumGroup, unsigned int value)
 {
     std::stringstream st;
+
+    if (value == 0)
+    {
+        return "0";
+    }
 
     const angle::BitSet<32> bitSet(value);
     bool first = true;

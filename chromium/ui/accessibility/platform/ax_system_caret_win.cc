@@ -6,7 +6,8 @@
 
 #include <windows.h>
 
-#include "base/logging.h"
+#include "base/check.h"
+#include "base/notreached.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/platform/ax_platform_node_win.h"
 #include "ui/display/win/screen_win.h"
@@ -46,9 +47,7 @@ AXSystemCaretWin::~AXSystemCaretWin() {
 
 Microsoft::WRL::ComPtr<IAccessible> AXSystemCaretWin::GetCaret() const {
   Microsoft::WRL::ComPtr<IAccessible> caret_accessible;
-  HRESULT hr = caret_->QueryInterface(
-      IID_IAccessible,
-      reinterpret_cast<void**>(caret_accessible.GetAddressOf()));
+  HRESULT hr = caret_->QueryInterface(IID_PPV_ARGS(&caret_accessible));
   DCHECK(SUCCEEDED(hr));
   return caret_accessible;
 }

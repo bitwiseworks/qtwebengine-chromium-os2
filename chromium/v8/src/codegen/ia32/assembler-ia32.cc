@@ -691,6 +691,29 @@ void Assembler::stos() {
   EMIT(0xAB);
 }
 
+void Assembler::xadd(Operand dst, Register src) {
+  EnsureSpace ensure_space(this);
+  EMIT(0x0F);
+  EMIT(0xC1);
+  emit_operand(src, dst);
+}
+
+void Assembler::xadd_b(Operand dst, Register src) {
+  DCHECK(src.is_byte_register());
+  EnsureSpace ensure_space(this);
+  EMIT(0x0F);
+  EMIT(0xC0);
+  emit_operand(src, dst);
+}
+
+void Assembler::xadd_w(Operand dst, Register src) {
+  EnsureSpace ensure_space(this);
+  EMIT(0x66);
+  EMIT(0x0F);
+  EMIT(0xC1);
+  emit_operand(src, dst);
+}
+
 void Assembler::xchg(Register dst, Register src) {
   EnsureSpace ensure_space(this);
   if (src == eax || dst == eax) {  // Single-byte encoding.
@@ -1089,6 +1112,25 @@ void Assembler::rcr(Register dst, uint8_t imm8) {
     EMIT(0xD8 | dst.code());
     EMIT(imm8);
   }
+}
+
+void Assembler::rol(Operand dst, uint8_t imm8) {
+  EnsureSpace ensure_space(this);
+  DCHECK(is_uint5(imm8));  // illegal shift count
+  if (imm8 == 1) {
+    EMIT(0xD1);
+    emit_operand(eax, dst);
+  } else {
+    EMIT(0xC1);
+    emit_operand(eax, dst);
+    EMIT(imm8);
+  }
+}
+
+void Assembler::rol_cl(Operand dst) {
+  EnsureSpace ensure_space(this);
+  EMIT(0xD3);
+  emit_operand(eax, dst);
 }
 
 void Assembler::ror(Operand dst, uint8_t imm8) {
@@ -2227,6 +2269,30 @@ void Assembler::ucomisd(XMMRegister dst, Operand src) {
   emit_sse_operand(dst, src);
 }
 
+void Assembler::roundps(XMMRegister dst, XMMRegister src, RoundingMode mode) {
+  DCHECK(IsEnabled(SSE4_1));
+  EnsureSpace ensure_space(this);
+  EMIT(0x66);
+  EMIT(0x0F);
+  EMIT(0x3A);
+  EMIT(0x08);
+  emit_sse_operand(dst, src);
+  // Mask precision exeption.
+  EMIT(static_cast<byte>(mode) | 0x8);
+}
+
+void Assembler::roundpd(XMMRegister dst, XMMRegister src, RoundingMode mode) {
+  DCHECK(IsEnabled(SSE4_1));
+  EnsureSpace ensure_space(this);
+  EMIT(0x66);
+  EMIT(0x0F);
+  EMIT(0x3A);
+  EMIT(0x09);
+  emit_sse_operand(dst, src);
+  // Mask precision exeption.
+  EMIT(static_cast<byte>(mode) | 0x8);
+}
+
 void Assembler::roundss(XMMRegister dst, XMMRegister src, RoundingMode mode) {
   DCHECK(IsEnabled(SSE4_1));
   EnsureSpace ensure_space(this);
@@ -2263,6 +2329,14 @@ void Assembler::movmskps(Register dst, XMMRegister src) {
   EnsureSpace ensure_space(this);
   EMIT(0x0F);
   EMIT(0x50);
+  emit_sse_operand(dst, src);
+}
+
+void Assembler::pmovmskb(Register dst, XMMRegister src) {
+  EnsureSpace ensure_space(this);
+  EMIT(0x66);
+  EMIT(0x0F);
+  EMIT(0xD7);
   emit_sse_operand(dst, src);
 }
 
@@ -2892,6 +2966,31 @@ void Assembler::vpinsrd(XMMRegister dst, XMMRegister src1, Operand src2,
                         uint8_t offset) {
   vinstr(0x22, dst, src1, src2, k66, k0F3A, kWIG);
   EMIT(offset);
+}
+
+void Assembler::vroundps(XMMRegister dst, XMMRegister src, RoundingMode mode) {
+  vinstr(0x08, dst, xmm0, Operand(src), k66, k0F3A, kWIG);
+  EMIT(static_cast<byte>(mode) | 0x8);  // Mask precision exception.
+}
+void Assembler::vroundpd(XMMRegister dst, XMMRegister src, RoundingMode mode) {
+  vinstr(0x09, dst, xmm0, Operand(src), k66, k0F3A, kWIG);
+  EMIT(static_cast<byte>(mode) | 0x8);  // Mask precision exception.
+}
+
+void Assembler::vmovmskps(Register dst, XMMRegister src) {
+  DCHECK(IsEnabled(AVX));
+  EnsureSpace ensure_space(this);
+  emit_vex_prefix(xmm0, kL128, kNone, k0F, kWIG);
+  EMIT(0x50);
+  emit_sse_operand(dst, src);
+}
+
+void Assembler::vpmovmskb(Register dst, XMMRegister src) {
+  DCHECK(IsEnabled(AVX));
+  EnsureSpace ensure_space(this);
+  emit_vex_prefix(xmm0, kL128, k66, k0F, kWIG);
+  EMIT(0xD7);
+  emit_sse_operand(dst, src);
 }
 
 void Assembler::bmi1(byte op, Register reg, Register vreg, Operand rm) {

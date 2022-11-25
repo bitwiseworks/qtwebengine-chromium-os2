@@ -4,10 +4,13 @@
 
 #include "net/third_party/quiche/src/common/quiche_data_reader.h"
 
+#include <cstring>
+
 #include "net/third_party/quiche/src/common/platform/api/quiche_endian.h"
 #include "net/third_party/quiche/src/common/platform/api/quiche_logging.h"
 #include "net/third_party/quiche/src/common/platform/api/quiche_str_cat.h"
 #include "net/third_party/quiche/src/common/platform/api/quiche_string_piece.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_text_utils.h"
 
 namespace quiche {
 
@@ -85,6 +88,17 @@ bool QuicheDataReader::ReadStringPiece16(quiche::QuicheStringPiece* result) {
   return ReadStringPiece(result, result_len);
 }
 
+bool QuicheDataReader::ReadStringPiece8(quiche::QuicheStringPiece* result) {
+  // Read resultant length.
+  uint8_t result_len;
+  if (!ReadUInt8(&result_len)) {
+    // OnFailure() already called.
+    return false;
+  }
+
+  return ReadStringPiece(result, result_len);
+}
+
 bool QuicheDataReader::ReadStringPiece(quiche::QuicheStringPiece* result,
                                        size_t size) {
   // Make sure that we have enough data to read.
@@ -104,6 +118,15 @@ bool QuicheDataReader::ReadStringPiece(quiche::QuicheStringPiece* result,
 
 bool QuicheDataReader::ReadTag(uint32_t* tag) {
   return ReadBytes(tag, sizeof(*tag));
+}
+
+bool QuicheDataReader::ReadDecimal64(size_t num_digits, uint64_t* result) {
+  quiche::QuicheStringPiece digits;
+  if (!ReadStringPiece(&digits, num_digits)) {
+    return false;
+  }
+
+  return QuicheTextUtils::StringToUint64(digits, result);
 }
 
 quiche::QuicheStringPiece QuicheDataReader::ReadRemainingPayload() {

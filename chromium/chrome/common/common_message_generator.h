@@ -4,13 +4,8 @@
 
 // Multiply-included file, hence no include guard.
 
-#include "chrome/common/instant_mojom_traits.h"
+#include "chrome/common/search/instant_mojom_traits.h"
 #include "services/network/public/cpp/p2p_param_traits.h"
-#undef CHROME_COMMON_PRERENDER_MESSAGES_H_
-#include "chrome/common/prerender_messages.h"
-#ifndef CHROME_COMMON_PRERENDER_MESSAGES_H_
-#error "Failed to include header chrome/common/prerender_messages.h"
-#endif
 #undef CHROME_COMMON_RENDER_MESSAGES_H_
 #include "chrome/common/render_messages.h"
 #ifndef CHROME_COMMON_RENDER_MESSAGES_H_

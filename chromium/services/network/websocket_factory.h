@@ -19,8 +19,10 @@
 class GURL;
 
 namespace net {
+class IsolationInfo;
 class SiteForCookies;
 class SSLInfo;
+struct NetworkTrafficAnnotationTag;
 }  // namespace net
 
 namespace url {
@@ -41,12 +43,13 @@ class WebSocketFactory final {
       const GURL& url,
       const std::vector<std::string>& requested_protocols,
       const net::SiteForCookies& site_for_cookies,
-      const net::NetworkIsolationKey& network_isolation_key,
+      const net::IsolationInfo& isolation_info,
       std::vector<mojom::HttpHeaderPtr> additional_headers,
       int32_t process_id,
       int32_t render_frame_id,
       const url::Origin& origin,
       uint32_t options,
+      net::NetworkTrafficAnnotationTag traffic_annotation,
       mojo::PendingRemote<mojom::WebSocketHandshakeClient> handshake_client,
       mojo::PendingRemote<mojom::AuthenticationHandler> auth_handler,
       mojo::PendingRemote<mojom::TrustedHeaderClient> header_client);

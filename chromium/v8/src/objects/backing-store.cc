@@ -165,7 +165,10 @@ void BackingStore::Clear() {
 BackingStore::~BackingStore() {
   GlobalBackingStoreRegistry::Unregister(this);
 
-  if (buffer_start_ == nullptr) return;  // nothing to deallocate
+  if (buffer_start_ == nullptr) {
+    Clear();
+    return;
+  }
 
   if (is_wasm_memory_) {
     DCHECK(free_on_destruct_);
@@ -272,6 +275,13 @@ std::unique_ptr<BackingStore> BackingStore::Allocate(
   return std::unique_ptr<BackingStore>(result);
 }
 
+// Trying to allocate 4 GiB on a 32-bit platform is guaranteed to fail.
+// We don't lower the official max_mem_pages() limit because that would be
+// observable upon instantiation; this way the effective limit on 32-bit
+// platforms is defined by the allocator.
+constexpr size_t kPlatformMaxPages =
+    std::numeric_limits<size_t>::max() / wasm::kWasmPageSize;
+
 void BackingStore::SetAllocatorFromIsolate(Isolate* isolate) {
   if (auto allocator_shared = isolate->array_buffer_allocator_shared()) {
     holds_shared_ptr_to_allocator_ = true;
@@ -315,8 +325,11 @@ std::unique_ptr<BackingStore> BackingStore::TryAllocateWasmMemory(
 
   // Compute size of reserved memory.
 
-  size_t engine_max_pages = wasm::max_maximum_mem_pages();
+  size_t engine_max_pages = wasm::max_mem_pages();
   maximum_pages = std::min(engine_max_pages, maximum_pages);
+  // If the platform doesn't support so many pages, attempting to allocate
+  // is guaranteed to fail, so we don't even try.
+  if (maximum_pages > kPlatformMaxPages) return {};
   CHECK_LE(maximum_pages,
            std::numeric_limits<size_t>::max() / wasm::kWasmPageSize);
   size_t byte_capacity = maximum_pages * wasm::kWasmPageSize;
@@ -414,21 +427,24 @@ std::unique_ptr<BackingStore> BackingStore::AllocateWasmMemory(
 
   // Enforce engine limitation on the maximum number of pages.
   if (initial_pages > wasm::kV8MaxWasmMemoryPages) return nullptr;
-
-  // Trying to allocate 4 GiB on a 32-bit platform is guaranteed to fail.
-  // We don't lower the official max_maximum_mem_pages() limit because that
-  // would be observable upon instantiation; this way the effective limit
-  // on 32-bit platforms is defined by the allocator.
-  constexpr size_t kPlatformMax =
-      std::numeric_limits<size_t>::max() / wasm::kWasmPageSize;
-  if (initial_pages > kPlatformMax) return nullptr;
+  if (initial_pages > kPlatformMaxPages) return nullptr;
 
   auto backing_store =
       TryAllocateWasmMemory(isolate, initial_pages, maximum_pages, shared);
-  if (!backing_store && maximum_pages > initial_pages) {
-    // If reserving {maximum_pages} failed, try with maximum = initial.
+  if (maximum_pages == initial_pages) {
+    // If initial pages, and maximum are equal, nothing more to do return early.
+    return backing_store;
+  }
+
+  // Retry with smaller maximum pages at each retry.
+  const int kAllocationTries = 3;
+  auto delta = (maximum_pages - initial_pages) / (kAllocationTries + 1);
+  size_t sizes[] = {maximum_pages - delta, maximum_pages - 2 * delta,
+                    maximum_pages - 3 * delta, initial_pages};
+
+  for (size_t i = 0; i < arraysize(sizes) && !backing_store; i++) {
     backing_store =
-        TryAllocateWasmMemory(isolate, initial_pages, initial_pages, shared);
+        TryAllocateWasmMemory(isolate, initial_pages, sizes[i], shared);
   }
   return backing_store;
 }
@@ -459,13 +475,38 @@ std::unique_ptr<BackingStore> BackingStore::CopyWasmMemory(Isolate* isolate,
 }
 
 // Try to grow the size of a wasm memory in place, without realloc + copy.
-bool BackingStore::GrowWasmMemoryInPlace(Isolate* isolate, size_t delta_pages,
-                                         size_t max_pages) {
+base::Optional<size_t> BackingStore::GrowWasmMemoryInPlace(Isolate* isolate,
+                                                           size_t delta_pages,
+                                                           size_t max_pages) {
+  // This function grows wasm memory by
+  // * changing the permissions of additional {delta_pages} pages to kReadWrite;
+  // * increment {byte_length_};
+  //
+  // As this code is executed concurrently, the following steps are executed:
+  // 1) Read the current value of {byte_length_};
+  // 2) Change the permission of all pages from {buffer_start_} to
+  //    {byte_length_} + {delta_pages} * {page_size} to kReadWrite;
+  //    * This operation may be executed racefully. The OS takes care of
+  //      synchronization.
+  // 3) Try to update {byte_length_} with a compare_exchange;
+  // 4) Repeat 1) to 3) until the compare_exchange in 3) succeeds;
+  //
+  // The result of this function is the {byte_length_} before growing in pages.
+  // The result of this function appears like the result of an RMW-update on
+  // {byte_length_}, i.e. two concurrent calls to this function will result in
+  // different return values if {delta_pages} != 0.
+  //
+  // Invariants:
+  // * Permissions are always set incrementally, i.e. for any page {b} with
+  //   kReadWrite permission, all pages between the first page {a} and page {b}
+  //   also have kReadWrite permission.
+  // * {byte_length_} is always lower or equal than the amount of memory with
+  //   permissions set to kReadWrite;
+  //     * This is guaranteed by incrementing {byte_length_} with a
+  //       compare_exchange after changing the permissions.
+  //     * This invariant is the reason why we cannot use a fetch_add.
   DCHECK(is_wasm_memory_);
   max_pages = std::min(max_pages, byte_capacity_ / wasm::kWasmPageSize);
-
-  if (delta_pages == 0) return true;          // degenerate grow.
-  if (delta_pages > max_pages) return false;  // would never work.
 
   // Do a compare-exchange loop, because we also need to adjust page
   // permissions. Note that multiple racing grows both try to set page
@@ -473,19 +514,24 @@ bool BackingStore::GrowWasmMemoryInPlace(Isolate* isolate, size_t delta_pages,
   // should deal with that raciness. We know we succeeded when we can
   // compare/swap the old length with the new length.
   size_t old_length = byte_length_.load(std::memory_order_relaxed);
+
+  if (delta_pages == 0)
+    return {old_length / wasm::kWasmPageSize};  // degenerate grow.
+  if (delta_pages > max_pages) return {};       // would never work.
+
   size_t new_length = 0;
   while (true) {
     size_t current_pages = old_length / wasm::kWasmPageSize;
 
     // Check if we have exceed the supplied maximum.
-    if (current_pages > (max_pages - delta_pages)) return false;
+    if (current_pages > (max_pages - delta_pages)) return {};
 
     new_length = (current_pages + delta_pages) * wasm::kWasmPageSize;
 
     // Try to adjust the permissions on the memory.
     if (!i::SetPermissions(GetPlatformPageAllocator(), buffer_start_,
                            new_length, PageAllocator::kReadWrite)) {
-      return false;
+      return {};
     }
     if (byte_length_.compare_exchange_weak(old_length, new_length,
                                            std::memory_order_acq_rel)) {
@@ -499,7 +545,7 @@ bool BackingStore::GrowWasmMemoryInPlace(Isolate* isolate, size_t delta_pages,
     reinterpret_cast<v8::Isolate*>(isolate)
         ->AdjustAmountOfExternalAllocatedMemory(new_length - old_length);
   }
-  return true;
+  return {old_length / wasm::kWasmPageSize};
 }
 
 void BackingStore::AttachSharedWasmMemoryObject(
@@ -512,10 +558,9 @@ void BackingStore::AttachSharedWasmMemoryObject(
 }
 
 void BackingStore::BroadcastSharedWasmMemoryGrow(
-    Isolate* isolate, std::shared_ptr<BackingStore> backing_store,
-    size_t new_pages) {
-  GlobalBackingStoreRegistry::BroadcastSharedWasmMemoryGrow(
-      isolate, backing_store, new_pages);
+    Isolate* isolate, std::shared_ptr<BackingStore> backing_store) {
+  GlobalBackingStoreRegistry::BroadcastSharedWasmMemoryGrow(isolate,
+                                                            backing_store);
 }
 
 void BackingStore::RemoveSharedWasmMemoryObjects(Isolate* isolate) {
@@ -614,7 +659,7 @@ SharedWasmMemoryData* BackingStore::get_shared_wasm_memory_data() {
 namespace {
 // Implementation details of GlobalBackingStoreRegistry.
 struct GlobalBackingStoreRegistryImpl {
-  GlobalBackingStoreRegistryImpl() {}
+  GlobalBackingStoreRegistryImpl() = default;
   base::Mutex mutex_;
   std::unordered_map<const void*, std::weak_ptr<BackingStore>> map_;
 };
@@ -733,8 +778,7 @@ void GlobalBackingStoreRegistry::AddSharedWasmMemoryObject(
 }
 
 void GlobalBackingStoreRegistry::BroadcastSharedWasmMemoryGrow(
-    Isolate* isolate, std::shared_ptr<BackingStore> backing_store,
-    size_t new_pages) {
+    Isolate* isolate, std::shared_ptr<BackingStore> backing_store) {
   {
     // The global lock protects the list of isolates per backing store.
     base::MutexGuard scope_lock(&impl()->mutex_);

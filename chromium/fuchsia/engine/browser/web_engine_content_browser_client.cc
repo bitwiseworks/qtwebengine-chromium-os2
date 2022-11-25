@@ -9,12 +9,12 @@
 #include <utility>
 
 #include "base/stl_util.h"
+#include "base/strings/string_split.h"
 #include "components/version_info/version_info.h"
-#include "content/public/browser/cors_exempt_headers.h"
 #include "content/public/browser/devtools_manager_delegate.h"
 #include "content/public/browser/network_service_instance.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/common/user_agent.h"
-#include "content/public/common/web_preferences.h"
 #include "fuchsia/base/fuchsia_dir_scheme.h"
 #include "fuchsia/engine/browser/url_request_rewrite_rules_manager.h"
 #include "fuchsia/engine/browser/web_engine_browser_context.h"
@@ -26,6 +26,7 @@
 #include "fuchsia/engine/switches.h"
 #include "media/base/media_switches.h"
 #include "services/network/public/mojom/network_service.mojom.h"
+#include "third_party/blink/public/common/web_preferences/web_preferences.h"
 
 namespace {
 
@@ -54,11 +55,19 @@ class DevToolsManagerDelegate : public content::DevToolsManagerDelegate {
   DISALLOW_COPY_AND_ASSIGN(DevToolsManagerDelegate);
 };
 
+std::vector<std::string> GetCorsExemptHeaders() {
+  return base::SplitString(
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueNative(
+          switches::kCorsExemptHeaders),
+      ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+}
+
 }  // namespace
 
 WebEngineContentBrowserClient::WebEngineContentBrowserClient(
     fidl::InterfaceRequest<fuchsia::web::Context> request)
     : request_(std::move(request)),
+      cors_exempt_headers_(GetCorsExemptHeaders()),
       allow_insecure_content_(base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kAllowRunningInsecureContent)) {}
 
@@ -100,7 +109,7 @@ std::string WebEngineContentBrowserClient::GetUserAgent() {
 
 void WebEngineContentBrowserClient::OverrideWebkitPrefs(
     content::RenderViewHost* rvh,
-    content::WebPreferences* web_prefs) {
+    blink::web_pref::WebPreferences* web_prefs) {
   // Disable WebSQL support since it's being removed from the web platform.
   web_prefs->databases_enabled = false;
 
@@ -109,23 +118,26 @@ void WebEngineContentBrowserClient::OverrideWebkitPrefs(
 
   // Allow media to autoplay.
   // TODO(crbug.com/1067101): Provide a FIDL API to configure AutoplayPolicy.
-  web_prefs->autoplay_policy = content::AutoplayPolicy::kNoUserGestureRequired;
+  web_prefs->autoplay_policy =
+      blink::web_pref::AutoplayPolicy::kNoUserGestureRequired;
 }
 
 void WebEngineContentBrowserClient::RegisterBrowserInterfaceBindersForFrame(
     content::RenderFrameHost* render_frame_host,
-    service_manager::BinderMapWithContext<content::RenderFrameHost*>* map) {
+    mojo::BinderMapWithContext<content::RenderFrameHost*>* map) {
   PopulateFuchsiaFrameBinders(map, &media_resource_provider_service_);
 }
 
 void WebEngineContentBrowserClient::
     RegisterNonNetworkNavigationURLLoaderFactories(
         int frame_tree_node_id,
+        base::UkmSourceId ukm_source_id,
+        NonNetworkURLLoaderFactoryDeprecatedMap* uniquely_owned_factories,
         NonNetworkURLLoaderFactoryMap* factories) {
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kContentDirectories)) {
-    (*factories)[cr_fuchsia::kFuchsiaDirScheme] =
-        std::make_unique<ContentDirectoryLoaderFactory>();
+    factories->emplace(cr_fuchsia::kFuchsiaDirScheme,
+                       ContentDirectoryLoaderFactory::Create());
   }
 }
 
@@ -133,25 +145,38 @@ void WebEngineContentBrowserClient::
     RegisterNonNetworkSubresourceURLLoaderFactories(
         int render_process_id,
         int render_frame_id,
+        NonNetworkURLLoaderFactoryDeprecatedMap* uniquely_owned_factories,
         NonNetworkURLLoaderFactoryMap* factories) {
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kContentDirectories)) {
-    (*factories)[cr_fuchsia::kFuchsiaDirScheme] =
-        std::make_unique<ContentDirectoryLoaderFactory>();
+    factories->emplace(cr_fuchsia::kFuchsiaDirScheme,
+                       ContentDirectoryLoaderFactory::Create());
   }
+}
+
+bool WebEngineContentBrowserClient::ShouldEnableStrictSiteIsolation() {
+  constexpr base::Feature kSitePerProcess{"site-per-process",
+                                          base::FEATURE_ENABLED_BY_DEFAULT};
+  static bool enable_strict_isolation =
+      base::FeatureList::IsEnabled(kSitePerProcess);
+  return enable_strict_isolation;
 }
 
 void WebEngineContentBrowserClient::AppendExtraCommandLineSwitches(
     base::CommandLine* command_line,
     int child_process_id) {
+  // TODO(https://crbug.com/1083520): Pass based on process type.
   constexpr char const* kSwitchesToCopy[] = {
       switches::kContentDirectories,
+      switches::kCorsExemptHeaders,
       switches::kDisableSoftwareVideoDecoders,
-      switches::kEnableFuchsiaAudioConsumer,
+      switches::kEnableCastStreamingReceiver,
       switches::kEnableProtectedVideoBuffers,
       switches::kEnableWidevine,
       switches::kForceProtectedVideoOutputBuffers,
+      switches::kMaxDecodedImageSizeMb,
       switches::kPlayreadyKeySystem,
+      switches::kUseOverlaysForVideo,
   };
 
   command_line->CopySwitchesFrom(*base::CommandLine::ForCurrentProcess(),
@@ -183,23 +208,18 @@ WebEngineContentBrowserClient::CreateURLLoaderThrottles(
   return throttles;
 }
 
-mojo::Remote<network::mojom::NetworkContext>
-WebEngineContentBrowserClient::CreateNetworkContext(
+void WebEngineContentBrowserClient::ConfigureNetworkContextParams(
     content::BrowserContext* context,
     bool in_memory,
-    const base::FilePath& relative_partition_path) {
-  // Same as ContentBrowserClient::CreateNetworkContext().
-  mojo::Remote<network::mojom::NetworkContext> network_context;
-  network::mojom::NetworkContextParamsPtr context_params =
-      network::mojom::NetworkContextParams::New();
-  context_params->user_agent = GetUserAgent();
-  context_params->accept_language = "en-us,en";
+    const base::FilePath& relative_partition_path,
+    network::mojom::NetworkContextParams* network_context_params,
+    network::mojom::CertVerifierCreationParams* cert_verifier_creation_params) {
+  // Same as ContentBrowserClient::ConfigureNetworkContextParams().
+  network_context_params->user_agent = GetUserAgent();
+  network_context_params->accept_language = "en-us,en";
 
-  // Whitelist some headers to be used for CORS requests, e.g. for resource
-  // prefetching.
-  content::UpdateCorsExemptHeader(context_params.get());
-
-  content::GetNetworkService()->CreateNetworkContext(
-      network_context.BindNewPipeAndPassReceiver(), std::move(context_params));
-  return network_context;
+  // Set the list of cors_exempt_headers which may be specified in a URLRequest,
+  // starting with the headers passed in via
+  // |CreateContextParams.cors_exempt_headers|.
+  network_context_params->cors_exempt_header_list = cors_exempt_headers_;
 }

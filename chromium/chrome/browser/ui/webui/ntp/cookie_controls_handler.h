@@ -9,13 +9,14 @@
 
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/cookie_controls/cookie_controls_service.h"
+#include "components/content_settings/core/common/cookie_controls_enforcement.h"
 #include "content/public/browser/web_ui_message_handler.h"
 
 namespace base {
 class ListValue;
 }  // namespace base
 
-// Handles requests for prefs::kCookieControlsMode retrival/update.
+// Communicates with the incognito ntp to show a third-party cookie control.
 class CookieControlsHandler : public content::WebUIMessageHandler,
                               public CookieControlsService::Observer {
  public:
@@ -29,7 +30,7 @@ class CookieControlsHandler : public content::WebUIMessageHandler,
 
   void HandleCookieControlsToggleChanged(const base::ListValue* args);
   void HandleObserveCookieControlsSettingsChanges(const base::ListValue* args);
-  static const char* GetEnforcementIcon(Profile* profile);
+  static const char* GetEnforcementIcon(CookieControlsEnforcement enforcement);
 
   // CookieControlsService::Observer
   void OnThirdPartyCookieBlockingPrefChanged() override;

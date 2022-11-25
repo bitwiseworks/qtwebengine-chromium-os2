@@ -21,7 +21,6 @@
 #include "chrome/renderer/extensions/extension_process_policy.h"
 #include "chrome/renderer/extensions/renderer_permissions_policy_delegate.h"
 #include "chrome/renderer/extensions/resource_request_policy.h"
-#include "chrome/renderer/media/cast_ipc_dispatcher.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/renderer/render_frame.h"
@@ -166,7 +165,6 @@ void ChromeExtensionsRendererClient::RenderThreadStarted() {
 
   thread->AddObserver(extension_dispatcher_.get());
   thread->AddObserver(guest_view_container_dispatcher_.get());
-  thread->AddFilter(new CastIPCDispatcher(thread->GetIOTaskRunner()));
 }
 
 void ChromeExtensionsRendererClient::RenderFrameCreated(
@@ -186,8 +184,8 @@ bool ChromeExtensionsRendererClient::OverrideCreatePlugin(
 
   bool guest_view_api_available = false;
   extension_dispatcher_->script_context_set_iterator()->ForEach(
-      render_frame, base::Bind(&IsGuestViewApiAvailableToScriptContext,
-                               &guest_view_api_available));
+      render_frame, base::BindRepeating(&IsGuestViewApiAvailableToScriptContext,
+                                        &guest_view_api_available));
   return !guest_view_api_available;
 }
 
@@ -212,9 +210,6 @@ bool ChromeExtensionsRendererClient::AllowPopup() {
       return true;
     case extensions::Feature::BLESSED_WEB_PAGE_CONTEXT:
       return !current_context->web_frame()->Parent();
-    default:
-      NOTREACHED();
-      return false;
   }
 }
 
@@ -225,7 +220,7 @@ void ChromeExtensionsRendererClient::WillSendRequest(
     const net::SiteForCookies& site_for_cookies,
     const url::Origin* initiator_origin,
     GURL* new_url,
-    bool* attach_same_site_cookies) {
+    bool* force_ignore_site_for_cookies) {
   std::string extension_id;
   GURL request_url(url);
   if (initiator_origin &&
@@ -258,7 +253,7 @@ void ChromeExtensionsRendererClient::WillSendRequest(
       // to any URLs it has permission for). But for now we make do with just
       // checking the direct initiator of the request.
       // We also want to check same-siteness between the initiator and the
-      // requested URL, because setting |attach_same_site_cookies| to true
+      // requested URL, because setting |force_ignore_site_for_cookies| to true
       // causes Strict cookies to be attached, and having the initiator be
       // same-site to the request URL is a requirement for Strict cookies
       // (see net::cookie_util::ComputeSameSiteContext).
@@ -272,7 +267,7 @@ void ChromeExtensionsRendererClient::WillSendRequest(
                 net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
       }
 
-      *attach_same_site_cookies =
+      *force_ignore_site_for_cookies =
           extension_has_access_to_request_url && initiator_ok;
     } else {
       // If there is no extension installed for the origin, it may be from a
@@ -337,7 +332,7 @@ ChromeExtensionsRendererClient::GetExtensionDispatcherForTest() {
 }
 
 // static
-content::BrowserPluginDelegate*
+guest_view::GuestViewContainer*
 ChromeExtensionsRendererClient::CreateBrowserPluginDelegate(
     content::RenderFrame* render_frame,
     const content::WebPluginInfo& info,

@@ -3,12 +3,16 @@
 // found in the LICENSE file.
 
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "base/bind.h"
+#include "base/check_op.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/optional.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
@@ -21,12 +25,13 @@
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/metrics/subprocess_metrics_provider.h"
 #include "chrome/browser/net/profile_network_context_service.h"
 #include "chrome/browser/net/profile_network_context_service_factory.h"
 #include "chrome/browser/net/profile_network_context_service_test_utils.h"
+#include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/policy/policy_test_utils.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_features.h"
@@ -35,11 +40,16 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/metrics/content/subprocess_metrics_provider.h"
+#include "components/policy/core/common/policy_map.h"
 #include "components/policy/policy_constants.h"
 #include "components/prefs/pref_service.h"
+#include "content/public/browser/network_service_instance.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_features.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/simple_url_loader_test_helper.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/system/data_pipe_utils.h"
 #include "net/base/features.h"
 #include "net/base/load_flags.h"
@@ -49,6 +59,8 @@
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/test/embedded_test_server/request_handler_util.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
+#include "services/cert_verifier/public/mojom/cert_verifier_service_factory.mojom.h"
+#include "services/cert_verifier/test_cert_verifier_service_factory.h"
 #include "services/network/public/cpp/cors/cors.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/mojom/network_context.mojom.h"
@@ -56,18 +68,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/policy/login_policy_test_base.h"
-#include "chrome/browser/chromeos/policy/user_policy_test_helper.h"
-#include "chrome/browser/chromeos/profiles/profile_helper.h"
-#include "components/policy/policy_constants.h"
-#include "net/base/features.h"
-#endif  // defined(OS_CHROMEOS)
-
-#if BUILDFLAG(BUILTIN_CERT_VERIFIER_FEATURE_SUPPORTED)
-#include "chrome/browser/policy/policy_test_utils.h"
-#include "components/policy/core/common/policy_map.h"
-#include "components/policy/policy_constants.h"
-#include "net/base/features.h"
+#include "chromeos/constants/chromeos_features.h"
 #endif
 
 // Most tests for this class are in NetworkContextConfigurationBrowserTest.
@@ -134,10 +135,12 @@ IN_PROC_BROWSER_TEST_F(ProfileNetworkContextServiceBrowsertest,
   ProfileNetworkContextService* profile_network_context_service =
       ProfileNetworkContextServiceFactory::GetForContext(browser()->profile());
   base::FilePath empty_relative_partition_path;
-  network::mojom::NetworkContextParamsPtr network_context_params_ptr =
-      profile_network_context_service->CreateNetworkContextParams(
-          /*in_memory=*/false, empty_relative_partition_path);
-  EXPECT_EQ(0, network_context_params_ptr->http_cache_max_size);
+  network::mojom::NetworkContextParams network_context_params;
+  network::mojom::CertVerifierCreationParams cert_verifier_creation_params;
+  profile_network_context_service->ConfigureNetworkContextParams(
+      /*in_memory=*/false, empty_relative_partition_path,
+      &network_context_params, &cert_verifier_creation_params);
+  EXPECT_EQ(0, network_context_params.http_cache_max_size);
 }
 
 IN_PROC_BROWSER_TEST_F(ProfileNetworkContextServiceBrowsertest, BrotliEnabled) {
@@ -175,7 +178,7 @@ void CheckCacheResetStatus(base::HistogramTester* histograms, bool reset) {
   // has been loaded prior to testing the histograms.
   while (!histograms->GetBucketCount("HttpCache.HardReset", reset)) {
     content::FetchHistogramsFromChildProcesses();
-    SubprocessMetricsProvider::MergeHistogramDeltasForTesting();
+    metrics::SubprocessMetricsProvider::MergeHistogramDeltasForTesting();
     base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(5));
   }
 
@@ -197,8 +200,7 @@ class ProfileNetworkContextServiceCacheSameBrowsertest
   void SetUp() override {
     scoped_feature_list_.InitWithFeatures(
         {}, {net::features::kSplitCacheByNetworkIsolationKey,
-             net::features::kAppendFrameOriginToNetworkIsolationKey,
-             net::features::kUseRegistrableDomainInNetworkIsolationKey});
+             net::features::kAppendFrameOriginToNetworkIsolationKey});
     ProfileNetworkContextServiceBrowsertest::SetUp();
   }
 
@@ -242,8 +244,7 @@ class ProfileNetworkContextServiceCacheChangeBrowsertest
   ProfileNetworkContextServiceCacheChangeBrowsertest() {
     scoped_feature_list_.InitWithFeaturesAndParameters(
         {{net::features::kAppendFrameOriginToNetworkIsolationKey, {}}},
-        {net::features::kSplitCacheByNetworkIsolationKey,
-         net::features::kUseRegistrableDomainInNetworkIsolationKey});
+        {net::features::kSplitCacheByNetworkIsolationKey});
   }
   ~ProfileNetworkContextServiceCacheChangeBrowsertest() override = default;
 
@@ -307,10 +308,14 @@ class AmbientAuthenticationTestWithPolicy
         service->GetInteger(prefs::kAmbientAuthenticationInPrivateModesEnabled);
 
     Profile* regular_profile = browser()->profile();
-    Profile* incognito_profile = regular_profile->GetOffTheRecordProfile();
+    Profile* incognito_profile = regular_profile->GetPrimaryOTRProfile();
+    Profile* non_primary_otr_profile = regular_profile->GetOffTheRecordProfile(
+        Profile::OTRProfileID("Test::AmbientAuthentication"));
 
     EXPECT_TRUE(AmbientAuthenticationTestHelper::IsAmbientAuthAllowedForProfile(
         regular_profile));
+    EXPECT_TRUE(AmbientAuthenticationTestHelper::IsAmbientAuthAllowedForProfile(
+        non_primary_otr_profile));
     EXPECT_EQ(AmbientAuthenticationTestHelper::IsAmbientAuthAllowedForProfile(
                   incognito_profile),
               AmbientAuthenticationTestHelper::IsIncognitoAllowedInFeature(
@@ -332,7 +337,7 @@ class AmbientAuthenticationTestWithPolicy
   void EnablePolicyWithValue(net::AmbientAuthAllowedProfileTypes value) {
     SetPolicy(&policies_,
               policy::key::kAmbientAuthenticationInPrivateModesEnabled,
-              std::make_unique<base::Value>(static_cast<int>(value)));
+              base::Value(static_cast<int>(value)));
     UpdateProviderPolicy(policies_);
   }
 
@@ -442,162 +447,97 @@ IN_PROC_BROWSER_TEST_F(ProfileNetworkContextServiceDiskCacheBrowsertest,
   ProfileNetworkContextService* profile_network_context_service =
       ProfileNetworkContextServiceFactory::GetForContext(browser()->profile());
   base::FilePath empty_relative_partition_path;
-  network::mojom::NetworkContextParamsPtr network_context_params_ptr =
-      profile_network_context_service->CreateNetworkContextParams(
-          /*in_memory=*/false, empty_relative_partition_path);
-  EXPECT_EQ(kCacheSize, network_context_params_ptr->http_cache_max_size);
+  network::mojom::NetworkContextParams network_context_params;
+  network::mojom::CertVerifierCreationParams cert_verifier_creation_params;
+  profile_network_context_service->ConfigureNetworkContextParams(
+      /*in_memory=*/false, empty_relative_partition_path,
+      &network_context_params, &cert_verifier_creation_params);
+  EXPECT_EQ(kCacheSize, network_context_params.http_cache_max_size);
 }
 
-#if defined(OS_CHROMEOS)
-// Base class for verifying which certificate verifier is being used on Chrome
-// OS depending on feature state and policies.
-class ProfileNetworkContextServiceCertVerifierBrowsertestBase
-    : public policy::LoginPolicyTestBase {
- public:
-  ProfileNetworkContextServiceCertVerifierBrowsertestBase() = default;
-  ~ProfileNetworkContextServiceCertVerifierBrowsertestBase() override = default;
-
- protected:
-  void SetPolicyValue(base::StringPiece policy_key, base::Value value) {
-    policy_values_.SetKey(policy_key, std::move(value));
-    user_policy_helper()->SetPolicy(policy_values_,
-                                    base::Value(base::Value::Type::DICTIONARY));
-  }
-
-  bool IsSigninProfileUsingBuiltinCertVerifier() {
-    Profile* const profile = chromeos::ProfileHelper::GetSigninProfile();
-    ProfileNetworkContextService* const service =
-        ProfileNetworkContextServiceFactory::GetForContext(profile);
-    return service->using_builtin_cert_verifier();
-  }
-
-  bool IsActiveProfileUsingBuiltinCertVerifier() {
-    Profile* const profile = GetProfileForActiveUser();
-    ProfileNetworkContextService* const service =
-        ProfileNetworkContextServiceFactory::GetForContext(profile);
-    return service->using_builtin_cert_verifier();
-  }
-
-  base::test::ScopedFeatureList scoped_feature_list_;
-
- private:
-  base::Value policy_values_{base::Value::Type::DICTIONARY};
-
-  DISALLOW_COPY_AND_ASSIGN(
-      ProfileNetworkContextServiceCertVerifierBrowsertestBase);
-};
-
-// When using this class, the built-in certificate verifier has been enabled
-// using the UseBuiltinCertVerifier feature.
-class ProfileNetworkContextServiceCertVerifierBuiltinEnabledBrowsertest
-    : public ProfileNetworkContextServiceCertVerifierBrowsertestBase {
- public:
-  ProfileNetworkContextServiceCertVerifierBuiltinEnabledBrowsertest() = default;
-  ~ProfileNetworkContextServiceCertVerifierBuiltinEnabledBrowsertest()
-      override = default;
-
-  void SetUpInProcessBrowserTestFixture() override {
-    scoped_feature_list_.InitAndEnableFeature(
-        net::features::kCertVerifierBuiltinFeature);
-    ProfileNetworkContextServiceCertVerifierBrowsertestBase::
-        SetUpInProcessBrowserTestFixture();
-  }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(
-      ProfileNetworkContextServiceCertVerifierBuiltinEnabledBrowsertest);
-};
-
-// If the built-in cert verifier is enabled and no policy is present, it should
-// be enabled on the sign-in screen and in the user profile.
-IN_PROC_BROWSER_TEST_F(
-    ProfileNetworkContextServiceCertVerifierBuiltinEnabledBrowsertest,
-    TurnedOnByFeature) {
-  SkipToLoginScreen();
-  EXPECT_TRUE(IsSigninProfileUsingBuiltinCertVerifier());
-
-  LogIn(kAccountId, kAccountPassword, kEmptyServices);
-
-  EXPECT_TRUE(IsActiveProfileUsingBuiltinCertVerifier());
+#if BUILDFLAG(BUILTIN_CERT_VERIFIER_FEATURE_SUPPORTED)
+namespace {
+void UnblockOnProfileCreation(base::RunLoop* run_loop,
+                              Profile* profile,
+                              Profile::CreateStatus status) {
+  if (status == Profile::CREATE_STATUS_INITIALIZED)
+    run_loop->Quit();
 }
+}  // namespace
 
-// If the built-in cert verifier is enabled, but user policy says to disable it,
-// it should be disabled in the user profile.
-IN_PROC_BROWSER_TEST_F(
-    ProfileNetworkContextServiceCertVerifierBuiltinEnabledBrowsertest,
-    TurnedOffByLegacyPolicy) {
-  SkipToLoginScreen();
-
-  SetPolicyValue(policy::key::kBuiltinCertificateVerifierEnabled,
-                 base::Value(false));
-  LogIn(kAccountId, kAccountPassword, kEmptyServices);
-
-  EXPECT_FALSE(IsActiveProfileUsingBuiltinCertVerifier());
-}
-
-// When using this class, the built-in certificate verifier has been disabled
-// using the UseBuiltinCertVerifier feature.
-class ProfileNetworkContextServiceCertVerifierBuiltinDisabledBrowsertest
-    : public ProfileNetworkContextServiceCertVerifierBrowsertestBase {
- public:
-  ProfileNetworkContextServiceCertVerifierBuiltinDisabledBrowsertest() =
-      default;
-  ~ProfileNetworkContextServiceCertVerifierBuiltinDisabledBrowsertest()
-      override = default;
-
-  void SetUpInProcessBrowserTestFixture() override {
-    scoped_feature_list_.InitAndDisableFeature(
-        net::features::kCertVerifierBuiltinFeature);
-    ProfileNetworkContextServiceCertVerifierBrowsertestBase::
-        SetUpInProcessBrowserTestFixture();
-  }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(
-      ProfileNetworkContextServiceCertVerifierBuiltinDisabledBrowsertest);
-};
-
-// If the built-in cert verifier feature is disabled, it should be disabled in
-// user profiles but enabled in the sign-in profile.
-IN_PROC_BROWSER_TEST_F(
-    ProfileNetworkContextServiceCertVerifierBuiltinDisabledBrowsertest,
-    TurnedOffByFeature) {
-  SkipToLoginScreen();
-  EXPECT_TRUE(IsSigninProfileUsingBuiltinCertVerifier());
-
-  LogIn(kAccountId, kAccountPassword, kEmptyServices);
-
-  EXPECT_FALSE(IsActiveProfileUsingBuiltinCertVerifier());
-}
-
-// If the built-in cert verifier feature is disabled, but policy force-enables
-// it for a profile, it should be enabled in the profile.
-IN_PROC_BROWSER_TEST_F(
-    ProfileNetworkContextServiceCertVerifierBuiltinDisabledBrowsertest,
-    TurnedOffByFeatureOverrideByPolicy) {
-  SkipToLoginScreen();
-  EXPECT_TRUE(IsSigninProfileUsingBuiltinCertVerifier());
-
-  SetPolicyValue(policy::key::kBuiltinCertificateVerifierEnabled,
-                 base::Value(true));
-  LogIn(kAccountId, kAccountPassword, kEmptyServices);
-
-  EXPECT_TRUE(IsActiveProfileUsingBuiltinCertVerifier());
-}
-#elif BUILDFLAG(BUILTIN_CERT_VERIFIER_FEATURE_SUPPORTED)
 class ProfileNetworkContextServiceCertVerifierBuiltinFeaturePolicyTest
     : public policy::PolicyTest,
       public testing::WithParamInterface<bool> {
  public:
   void SetUpInProcessBrowserTestFixture() override {
-    scoped_feature_list_.InitWithFeatureState(
-        net::features::kCertVerifierBuiltinFeature,
-        /*enabled=*/GetParam());
+    std::vector<base::Feature> enabled_features, disabled_features;
+    if (use_builtin_cert_verifier()) {
+      enabled_features.push_back(net::features::kCertVerifierBuiltinFeature);
+    } else {
+      disabled_features.push_back(net::features::kCertVerifierBuiltinFeature);
+    }
+    if (enable_cert_verifier_service()) {
+      enabled_features.push_back(network::features::kCertVerifierService);
+      test_cert_verifier_service_factory_.emplace();
+      content::SetCertVerifierServiceFactoryForTesting(
+          &test_cert_verifier_service_factory_.value());
+    } else {
+      disabled_features.push_back(network::features::kCertVerifierService);
+    }
+    scoped_feature_list_.InitWithFeatures(enabled_features, disabled_features);
     policy::PolicyTest::SetUpInProcessBrowserTestFixture();
+  }
+
+  void TearDownInProcessBrowserTestFixture() override {
+    content::SetCertVerifierServiceFactoryForTesting(nullptr);
+  }
+
+  void SetUpOnMainThread() override {
+    if (enable_cert_verifier_service()) {
+      test_cert_verifier_service_factory_->ReleaseAllCertVerifierParams();
+    }
+  }
+
+  void ExpectUseBuiltinCertVerifierCorrectUsingCertVerifierService(
+      network::mojom::CertVerifierCreationParams::CertVerifierImpl
+          use_builtin_cert_verifier) {
+    ASSERT_TRUE(enable_cert_verifier_service());
+    ASSERT_TRUE(test_cert_verifier_service_factory_);
+    EXPECT_EQ(1ul, test_cert_verifier_service_factory_->num_captured_params());
+    EXPECT_EQ(use_builtin_cert_verifier,
+              test_cert_verifier_service_factory_->GetParamsAtIndex(0)
+                  ->creation_params->use_builtin_cert_verifier);
+    // Send it to the actual CertVerifierServiceFactory.
+    test_cert_verifier_service_factory_->ReleaseNextCertVerifierParams();
+  }
+
+  Profile* CreateNewProfile() {
+    ProfileManager* profile_manager = g_browser_process->profile_manager();
+    base::FilePath new_path =
+        profile_manager->GenerateNextProfileDirectoryPath();
+    base::RunLoop run_loop;
+    profile_manager->CreateProfileAsync(
+        new_path, base::BindRepeating(&UnblockOnProfileCreation, &run_loop),
+        base::string16(), std::string());
+    run_loop.Run();
+    return profile_manager->GetProfileByPath(new_path);
+  }
+
+  bool use_builtin_cert_verifier() const { return GetParam(); }
+  bool enable_cert_verifier_service() const {
+    return enable_cert_verifier_service_;
+  }
+  void set_enable_cert_verifier_service(bool enable_cv_service) {
+    enable_cert_verifier_service_ = enable_cv_service;
   }
 
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
+  bool enable_cert_verifier_service_ = false;
+
+  // Used if enable_cert_verifier_service() returns true.
+  base::Optional<cert_verifier::TestCertVerifierServiceFactoryImpl>
+      test_cert_verifier_service_factory_;
 };
 
 IN_PROC_BROWSER_TEST_P(
@@ -606,228 +546,176 @@ IN_PROC_BROWSER_TEST_P(
   ProfileNetworkContextService* profile_network_context_service =
       ProfileNetworkContextServiceFactory::GetForContext(browser()->profile());
   base::FilePath empty_relative_partition_path;
-  network::mojom::NetworkContextParamsPtr network_context_params_ptr =
-      profile_network_context_service->CreateNetworkContextParams(
-          /*in_memory=*/false, empty_relative_partition_path);
-  EXPECT_EQ(
-      GetParam()
-          ? network::mojom::NetworkContextParams::CertVerifierImpl::kBuiltin
-          : network::mojom::NetworkContextParams::CertVerifierImpl::kSystem,
-      network_context_params_ptr->use_builtin_cert_verifier);
+  {
+    network::mojom::NetworkContextParams network_context_params;
+    network::mojom::CertVerifierCreationParams cert_verifier_creation_params;
+    profile_network_context_service->ConfigureNetworkContextParams(
+        /*in_memory=*/false, empty_relative_partition_path,
+        &network_context_params, &cert_verifier_creation_params);
+
+    EXPECT_EQ(use_builtin_cert_verifier()
+                  ? network::mojom::CertVerifierCreationParams::
+                        CertVerifierImpl::kBuiltin
+                  : network::mojom::CertVerifierCreationParams::
+                        CertVerifierImpl::kSystem,
+              cert_verifier_creation_params.use_builtin_cert_verifier);
+  }
 
 #if BUILDFLAG(BUILTIN_CERT_VERIFIER_POLICY_SUPPORTED)
   // If the BuiltinCertificateVerifierEnabled policy is set it should override
   // the feature flag.
   policy::PolicyMap policies;
   SetPolicy(&policies, policy::key::kBuiltinCertificateVerifierEnabled,
-            std::make_unique<base::Value>(true));
+            base::Value(true));
   UpdateProviderPolicy(policies);
 
-  network_context_params_ptr =
-      profile_network_context_service->CreateNetworkContextParams(
-          /*in_memory=*/false, empty_relative_partition_path);
-  EXPECT_EQ(network::mojom::NetworkContextParams::CertVerifierImpl::kBuiltin,
-            network_context_params_ptr->use_builtin_cert_verifier);
+  {
+    network::mojom::NetworkContextParams network_context_params;
+    network::mojom::CertVerifierCreationParams cert_verifier_creation_params;
+    profile_network_context_service->ConfigureNetworkContextParams(
+        /*in_memory=*/false, empty_relative_partition_path,
+        &network_context_params, &cert_verifier_creation_params);
+    EXPECT_EQ(
+        network::mojom::CertVerifierCreationParams::CertVerifierImpl::kBuiltin,
+        cert_verifier_creation_params.use_builtin_cert_verifier);
+  }
 
   SetPolicy(&policies, policy::key::kBuiltinCertificateVerifierEnabled,
-            std::make_unique<base::Value>(false));
+            base::Value(false));
   UpdateProviderPolicy(policies);
 
-  network_context_params_ptr =
-      profile_network_context_service->CreateNetworkContextParams(
-          /*in_memory=*/false, empty_relative_partition_path);
-  EXPECT_EQ(network::mojom::NetworkContextParams::CertVerifierImpl::kSystem,
-            network_context_params_ptr->use_builtin_cert_verifier);
-#endif
+  {
+    network::mojom::NetworkContextParams network_context_params;
+    network::mojom::CertVerifierCreationParams cert_verifier_creation_params;
+    profile_network_context_service->ConfigureNetworkContextParams(
+        /*in_memory=*/false, empty_relative_partition_path,
+        &network_context_params, &cert_verifier_creation_params);
+    EXPECT_EQ(
+        network::mojom::CertVerifierCreationParams::CertVerifierImpl::kSystem,
+        cert_verifier_creation_params.use_builtin_cert_verifier);
+  }
+#endif  // BUILDFLAG(BUILTIN_CERT_VERIFIER_POLICY_SUPPORTED)
 }
 
 INSTANTIATE_TEST_SUITE_P(
     All,
     ProfileNetworkContextServiceCertVerifierBuiltinFeaturePolicyTest,
     ::testing::Bool());
-#endif
 
-enum class CorsTestMode {
-  kWithCorsMitigationListPolicy,
-  kWithoutCorsMitigationListPolicy,
-  kWithHiddenCorsMitigationListPolicy,
+class
+    ProfileNetworkContextServiceCertVerifierBuiltinFeaturePolicyTestWithService
+    : public ProfileNetworkContextServiceCertVerifierBuiltinFeaturePolicyTest {
+ public:
+  ProfileNetworkContextServiceCertVerifierBuiltinFeaturePolicyTestWithService() {
+    set_enable_cert_verifier_service(true);
+  }
+
+  ~ProfileNetworkContextServiceCertVerifierBuiltinFeaturePolicyTestWithService()
+      override = default;
 };
 
-class CorsExtraSafelistedHeaderNamesTest
-    : public policy::PolicyTest,
-      public ::testing::WithParamInterface<CorsTestMode> {
+IN_PROC_BROWSER_TEST_P(
+    ProfileNetworkContextServiceCertVerifierBuiltinFeaturePolicyTestWithService,
+    Test) {
+  {
+    content::BrowserContext::GetDefaultStoragePartition(CreateNewProfile())
+        ->GetNetworkContext();
+
+    ExpectUseBuiltinCertVerifierCorrectUsingCertVerifierService(
+        use_builtin_cert_verifier()
+            ? network::mojom::CertVerifierCreationParams::CertVerifierImpl::
+                  kBuiltin
+            : network::mojom::CertVerifierCreationParams::CertVerifierImpl::
+                  kSystem);
+  }
+
+#if BUILDFLAG(BUILTIN_CERT_VERIFIER_POLICY_SUPPORTED)
+  // If the BuiltinCertificateVerifierEnabled policy is set it should override
+  // the feature flag.
+  policy::PolicyMap policies;
+  SetPolicy(&policies, policy::key::kBuiltinCertificateVerifierEnabled,
+            base::Value(true));
+  UpdateProviderPolicy(policies);
+
+  {
+    content::BrowserContext::GetDefaultStoragePartition(CreateNewProfile())
+        ->GetNetworkContext();
+
+    ExpectUseBuiltinCertVerifierCorrectUsingCertVerifierService(
+        network::mojom::CertVerifierCreationParams::CertVerifierImpl::kBuiltin);
+  }
+
+  SetPolicy(&policies, policy::key::kBuiltinCertificateVerifierEnabled,
+            base::Value(false));
+  UpdateProviderPolicy(policies);
+
+  {
+    content::BrowserContext::GetDefaultStoragePartition(CreateNewProfile())
+        ->GetNetworkContext();
+
+    ExpectUseBuiltinCertVerifierCorrectUsingCertVerifierService(
+        network::mojom::CertVerifierCreationParams::CertVerifierImpl::kSystem);
+  }
+#endif  // BUILDFLAG(BUILTIN_CERT_VERIFIER_POLICY_SUPPORTED)
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    ProfileNetworkContextServiceCertVerifierBuiltinFeaturePolicyTestWithService,
+    ::testing::Bool());
+#endif  // BUILDFLAG(BUILTIN_CERT_VERIFIER_FEATURE_SUPPORTED)
+
+#if defined(OS_CHROMEOS)
+class ProfileNetworkContextServiceMemoryPressureFeatureBrowsertest
+    : public ProfileNetworkContextServiceBrowsertest,
+      public ::testing::WithParamInterface<base::Optional<bool>> {
  public:
-  CorsExtraSafelistedHeaderNamesTest() {
-    switch (GetParam()) {
-      case CorsTestMode::kWithCorsMitigationListPolicy:
-        SetUpPolicy();
-        scoped_feature_list_.InitWithFeaturesAndParameters(
-            {{network::features::kOutOfBlinkCors, {}},
-             {features::kExtraSafelistedRequestHeadersForOutOfBlinkCors,
-              {{"extra-safelisted-request-headers-for-enterprise", "foo"}}}},
-            {{features::kHideCorsMitigationListPolicySupport}, {}});
-        break;
-      case CorsTestMode::kWithoutCorsMitigationListPolicy:
-        scoped_feature_list_.InitWithFeaturesAndParameters(
-            {{network::features::kOutOfBlinkCors, {}},
-             {features::kExtraSafelistedRequestHeadersForOutOfBlinkCors,
-              {{"extra-safelisted-request-headers", "foo,bar"}}}},
-            {});
-        break;
-      case CorsTestMode::kWithHiddenCorsMitigationListPolicy:
-        SetUpPolicy();
-        scoped_feature_list_.InitWithFeaturesAndParameters(
-            {{network::features::kOutOfBlinkCors, {}},
-             {features::kHideCorsMitigationListPolicySupport, {}},
-             {features::kExtraSafelistedRequestHeadersForOutOfBlinkCors,
-              {{"extra-safelisted-request-headers-for-enterprise",
-                "foo,bar"}}}},
-            {});
-        break;
+  ProfileNetworkContextServiceMemoryPressureFeatureBrowsertest() = default;
+  ~ProfileNetworkContextServiceMemoryPressureFeatureBrowsertest() override =
+      default;
+
+  void SetUp() override {
+    if (GetParam().has_value()) {
+      if (GetParam().value()) {
+        scoped_feature_list_.InitWithFeatures(
+            {chromeos::features::kDisableIdleSocketsCloseOnMemoryPressure}, {});
+      } else {
+        scoped_feature_list_.InitWithFeatures(
+            {}, {chromeos::features::kDisableIdleSocketsCloseOnMemoryPressure});
+      }
     }
+    ProfileNetworkContextServiceBrowsertest::SetUp();
   }
-
-  // Override to avoid conflict between the |scoped_feature_list_| and
-  // |command_line| that PolicyTest::SetUpCommandLine will introduce.
-  // TODO(crbug.com/1002483): Remove this workaround.
-  void SetUpCommandLine(base::CommandLine* command_line) override {}
-
-  void SetUpOnMainThread() override {
-    ASSERT_TRUE(embedded_test_server()->Start());
-
-    // This base::Unretained is safe because |this| outlives
-    // |cross_origin_test_server_|.
-    cross_origin_test_server_.RegisterRequestHandler(
-        base::BindRepeating(&CorsExtraSafelistedHeaderNamesTest::HandleRequest,
-                            base::Unretained(this)));
-    ASSERT_TRUE(cross_origin_test_server_.Start());
-
-    PolicyTest::SetUpOnMainThread();
-  }
-
-  void LoadAndWait(const GURL& url) {
-    content::WebContents* web_contents =
-        browser()->tab_strip_model()->GetActiveWebContents();
-    base::string16 expected_title(base::ASCIIToUTF16("OK"));
-    content::TitleWatcher title_watcher(web_contents, expected_title);
-    title_watcher.AlsoWaitForTitle(base::ASCIIToUTF16("FAIL"));
-    ui_test_utils::NavigateToURL(browser(), url);
-    ASSERT_EQ(expected_title, title_watcher.WaitAndGetTitle());
-  }
-
-  uint16_t cross_origin_port() { return cross_origin_test_server_.port(); }
-  size_t options_count() {
-    base::AutoLock lock(lock_);
-    return options_count_;
-  }
-  size_t get_count() {
-    base::AutoLock lock(lock_);
-    return get_count_;
-  }
-
-  const net::EmbeddedTestServer& cross_origin_test_server() const {
-    return cross_origin_test_server_;
-  }
-
-  static constexpr char kTestPath[] =
-      "/cors-extra-safelisted-header-names.html";
 
  private:
-  void SetUpPolicy() {
-    auto list = std::make_unique<base::ListValue>();
-    list->AppendString("bar");
-    policy::PolicyMap policies;
-    policies.Set(policy::key::kCorsMitigationList,
-                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD, std::move(list), nullptr);
-    provider_.UpdateChromePolicy(policies);
-  }
-
-  std::unique_ptr<net::test_server::HttpResponse> HandleRequest(
-      const net::test_server::HttpRequest& request) {
-    std::unique_ptr<net::test_server::BasicHttpResponse> response =
-        std::make_unique<net::test_server::BasicHttpResponse>();
-    response->set_code(net::HTTP_OK);
-    response->AddCustomHeader(
-        network::cors::header_names::kAccessControlAllowOrigin, "*");
-    if (request.method == net::test_server::METHOD_OPTIONS) {
-      response->AddCustomHeader(
-          network::cors::header_names::kAccessControlAllowMethods,
-          "GET, OPTIONS");
-      response->AddCustomHeader(
-          network::cors::header_names::kAccessControlAllowHeaders, "baz");
-      response->AddCustomHeader(
-          network::cors::header_names::kAccessControlMaxAge, "60");
-      base::AutoLock lock(lock_);
-      options_count_++;
-    } else if (request.method == net::test_server::METHOD_GET) {
-      base::AutoLock lock(lock_);
-      get_count_++;
-    }
-    return response;
-  }
-
   base::test::ScopedFeatureList scoped_feature_list_;
-  net::EmbeddedTestServer cross_origin_test_server_;
-  base::Lock lock_;
-
-  size_t options_count_ GUARDED_BY(lock_) = 0;
-  size_t get_count_ GUARDED_BY(lock_) = 0;
 };
 
-constexpr char CorsExtraSafelistedHeaderNamesTest::kTestPath[];
-
-IN_PROC_BROWSER_TEST_P(CorsExtraSafelistedHeaderNamesTest, RequestWithFoo) {
-  GURL url(cross_origin_test_server().GetURL("/hello"));
-  LoadAndWait(embedded_test_server()->GetURL(base::StringPrintf(
-      "%s?url=%s&headers=foo", kTestPath, url.spec().c_str())));
-  EXPECT_EQ(0u, options_count());
-  EXPECT_EQ(1u, get_count());
-}
-
-IN_PROC_BROWSER_TEST_P(CorsExtraSafelistedHeaderNamesTest, RequestWithBar) {
-  GURL url(cross_origin_test_server().GetURL("/hello"));
-  LoadAndWait(embedded_test_server()->GetURL(base::StringPrintf(
-      "%s?url=%s&headers=bar", kTestPath, url.spec().c_str())));
-  EXPECT_EQ(0u, options_count());
-  EXPECT_EQ(1u, get_count());
-}
-
-IN_PROC_BROWSER_TEST_P(CorsExtraSafelistedHeaderNamesTest, RequestWithFooBar) {
-  GURL url(cross_origin_test_server().GetURL("/hello"));
-  LoadAndWait(embedded_test_server()->GetURL(base::StringPrintf(
-      "%s?url=%s&headers=foo,bar", kTestPath, url.spec().c_str())));
-  EXPECT_EQ(0u, options_count());
-  EXPECT_EQ(1u, get_count());
-}
-
-IN_PROC_BROWSER_TEST_P(CorsExtraSafelistedHeaderNamesTest, RequestWithBaz) {
-  GURL url(cross_origin_test_server().GetURL("/hello"));
-  LoadAndWait(embedded_test_server()->GetURL(base::StringPrintf(
-      "%s?url=%s&headers=baz", kTestPath, url.spec().c_str())));
-  EXPECT_EQ(1u, options_count());
-  EXPECT_EQ(1u, get_count());
-}
-
-IN_PROC_BROWSER_TEST_P(CorsExtraSafelistedHeaderNamesTest, RequestWithFooBaz) {
-  GURL url(cross_origin_test_server().GetURL("/hello"));
-  LoadAndWait(embedded_test_server()->GetURL(base::StringPrintf(
-      "%s?url=%s&headers=foo,baz", kTestPath, url.spec().c_str())));
-  EXPECT_EQ(1u, options_count());
-  EXPECT_EQ(1u, get_count());
+// If the feature is enabled (GetParam()==true),
+// NetworkContextParams.disable_idle_sockets_close_on_memory_pressure is
+// expected to be true.
+// If the feature is not set or disabled (GetParam()==false or nullopt),
+// NetworkContextParams.disable_idle_sockets_close_on_memory_pressure is
+// expected to be false
+IN_PROC_BROWSER_TEST_P(
+    ProfileNetworkContextServiceMemoryPressureFeatureBrowsertest,
+    FeaturePropagates) {
+  ProfileNetworkContextService* profile_network_context_service =
+      ProfileNetworkContextServiceFactory::GetForContext(browser()->profile());
+  base::FilePath empty_relative_partition_path;
+  network::mojom::NetworkContextParams network_context_params;
+  network::mojom::CertVerifierCreationParams cert_verifier_creation_params;
+  profile_network_context_service->ConfigureNetworkContextParams(
+      /*in_memory=*/false, empty_relative_partition_path,
+      &network_context_params, &cert_verifier_creation_params);
+  EXPECT_EQ(
+      GetParam().value_or(false),
+      network_context_params.disable_idle_sockets_close_on_memory_pressure);
 }
 
 INSTANTIATE_TEST_SUITE_P(
-    WithCorsMitigationListPolicy,
-    CorsExtraSafelistedHeaderNamesTest,
-    testing::Values(CorsTestMode::kWithCorsMitigationListPolicy));
-
-INSTANTIATE_TEST_SUITE_P(
-    WithoutCorsMitigationListPolicy,
-    CorsExtraSafelistedHeaderNamesTest,
-    testing::Values(CorsTestMode::kWithoutCorsMitigationListPolicy));
-
-INSTANTIATE_TEST_SUITE_P(
-    WithHiddenCorsMitigationListPolicy,
-    CorsExtraSafelistedHeaderNamesTest,
-    testing::Values(CorsTestMode::kWithHiddenCorsMitigationListPolicy));
+    All,
+    ProfileNetworkContextServiceMemoryPressureFeatureBrowsertest,
+    /*disable_idle_sockets_close_on_memory_pressure=*/
+    ::testing::Values(base::nullopt, true, false));
+#endif  // defined(OS_CHROMEOS)

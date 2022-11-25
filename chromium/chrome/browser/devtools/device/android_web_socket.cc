@@ -10,6 +10,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/rand_util.h"
 #include "base/single_thread_task_runner.h"
+#include "base/threading/thread_checker.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/devtools/device/android_device_manager.h"
 #include "content/public/browser/browser_thread.h"
@@ -99,8 +100,8 @@ class AndroidDeviceManager::AndroidWebSocket::WebSocketImpl {
   void Read(scoped_refptr<net::IOBuffer> io_buffer) {
     int result =
         socket_->Read(io_buffer.get(), kBufferSize,
-                      base::Bind(&WebSocketImpl::OnBytesRead,
-                                 weak_factory_.GetWeakPtr(), io_buffer));
+                      base::BindOnce(&WebSocketImpl::OnBytesRead,
+                                     weak_factory_.GetWeakPtr(), io_buffer));
     if (result != net::ERR_IO_PENDING)
       OnBytesRead(io_buffer, result);
   }
@@ -159,8 +160,8 @@ class AndroidDeviceManager::AndroidWebSocket::WebSocketImpl {
     scoped_refptr<net::StringIOBuffer> buffer =
         base::MakeRefCounted<net::StringIOBuffer>(request_buffer_);
     result = socket_->Write(buffer.get(), buffer->size(),
-                            base::Bind(&WebSocketImpl::SendPendingRequests,
-                                       weak_factory_.GetWeakPtr()),
+                            base::BindOnce(&WebSocketImpl::SendPendingRequests,
+                                           weak_factory_.GetWeakPtr()),
                             kAndroidWebSocketTrafficAnnotation);
     if (result != net::ERR_IO_PENDING)
       SendPendingRequests(result);

@@ -55,6 +55,10 @@ bool EventsInOrder(const base::Optional<base::TimeDelta>& first,
   return first && first <= second;
 }
 
+bool IsMainFrame(content::RenderFrameHost* render_frame_host) {
+  return render_frame_host->GetParent() == nullptr;
+}
+
 internal::PageLoadTimingStatus IsValidPageLoadTiming(
     const mojom::PageLoadTiming& timing) {
   if (page_load_metrics::IsEmpty(timing))
@@ -194,6 +198,16 @@ internal::PageLoadTimingStatus IsValidPageLoadTiming(
     return internal::INVALID_NULL_FIRST_INPUT_DELAY;
   }
 
+  if (timing.interactive_timing->first_scroll_delay.has_value() &&
+      !timing.interactive_timing->first_scroll_timestamp.has_value()) {
+    return internal::INVALID_NULL_FIRST_SCROLL_TIMESTAMP;
+  }
+
+  if (!timing.interactive_timing->first_scroll_delay.has_value() &&
+      timing.interactive_timing->first_scroll_timestamp.has_value()) {
+    return internal::INVALID_NULL_FIRST_SCROLL_DELAY;
+  }
+
   if (timing.interactive_timing->longest_input_delay.has_value() &&
       !timing.interactive_timing->longest_input_timestamp.has_value()) {
     return internal::INVALID_NULL_LONGEST_INPUT_TIMESTAMP;
@@ -252,6 +266,9 @@ class PageLoadTimingMerger {
     MergeInteractiveTiming(navigation_start_offset,
                            *new_page_load_timing.interactive_timing,
                            is_main_frame);
+    MergeBackForwardCacheTiming(navigation_start_offset,
+                                new_page_load_timing.back_forward_cache_timings,
+                                is_main_frame);
   }
 
   // Whether we merged a new value.
@@ -327,16 +344,14 @@ class PageLoadTimingMerger {
       target_paint_timing->first_meaningful_paint =
           new_paint_timing.first_meaningful_paint;
 
-      target_paint_timing->largest_image_paint =
-          new_paint_timing.largest_image_paint;
-      target_paint_timing->largest_image_paint_size =
-          new_paint_timing.largest_image_paint_size;
-      target_paint_timing->largest_text_paint =
-          new_paint_timing.largest_text_paint;
-      target_paint_timing->largest_text_paint_size =
-          new_paint_timing.largest_text_paint_size;
+      target_paint_timing->largest_contentful_paint =
+          new_paint_timing.largest_contentful_paint->Clone();
+      target_paint_timing->experimental_largest_contentful_paint =
+          new_paint_timing.experimental_largest_contentful_paint.Clone();
       target_paint_timing->first_input_or_scroll_notified_timestamp =
           new_paint_timing.first_input_or_scroll_notified_timestamp;
+      target_paint_timing->portal_activated_paint =
+          new_paint_timing.portal_activated_paint;
     }
   }
 
@@ -354,6 +369,10 @@ class PageLoadTimingMerger {
       // associated first input delay.
       target_interactive_timing->first_input_delay =
           new_interactive_timing.first_input_delay;
+      if (new_interactive_timing.first_input_processing_time.has_value()) {
+        target_interactive_timing->first_input_processing_time =
+            new_interactive_timing.first_input_processing_time;
+      }
     }
 
     if (new_interactive_timing.longest_input_delay.has_value()) {
@@ -368,6 +387,28 @@ class PageLoadTimingMerger {
         target_interactive_timing->longest_input_timestamp =
             new_longest_input_timestamp;
       }
+    }
+
+    // Update First Scroll Delay.
+    if (MaybeUpdateTimeDelta(&target_interactive_timing->first_scroll_timestamp,
+                             navigation_start_offset,
+                             new_interactive_timing.first_scroll_timestamp)) {
+      target_interactive_timing->first_scroll_delay =
+          new_interactive_timing.first_scroll_delay;
+    }
+  }
+
+  void MergeBackForwardCacheTiming(
+      base::TimeDelta navigation_start_offset,
+      const std::vector<mojo::StructPtr<mojom::BackForwardCacheTiming>>&
+          new_back_forward_cache_timings,
+      bool is_main_frame) {
+    if (is_main_frame) {
+      target_->back_forward_cache_timings.clear();
+      target_->back_forward_cache_timings.reserve(
+          new_back_forward_cache_timings.size());
+      for (const auto& timing : new_back_forward_cache_timings)
+        target_->back_forward_cache_timings.push_back(timing.Clone());
     }
   }
 
@@ -439,7 +480,7 @@ void PageLoadMetricsUpdateDispatcher::UpdateMetrics(
   // Report new deferral info.
   client_->OnNewDeferredResourceCounts(*new_deferred_resource_data);
 
-  bool is_main_frame = render_frame_host->GetParent() == nullptr;
+  bool is_main_frame = IsMainFrame(render_frame_host);
   if (is_main_frame) {
     UpdateMainFrameMetadata(render_frame_host, std::move(new_metadata));
     UpdateMainFrameTiming(std::move(new_timing));
@@ -470,6 +511,17 @@ void PageLoadMetricsUpdateDispatcher::UpdateFeatures(
   client_->UpdateFeaturesUsage(render_frame_host, new_features);
 }
 
+void PageLoadMetricsUpdateDispatcher::SetUpSharedMemoryForSmoothness(
+    content::RenderFrameHost* render_frame_host,
+    base::ReadOnlySharedMemoryRegion shared_memory) {
+  const bool is_main_frame = IsMainFrame(render_frame_host);
+  if (is_main_frame) {
+    client_->SetUpSharedMemoryForSmoothness(std::move(shared_memory));
+  } else {
+    // TODO(1115136): Merge smoothness metrics from OOPIFs with the main-frame.
+  }
+}
+
 void PageLoadMetricsUpdateDispatcher::DidFinishSubFrameNavigation(
     content::NavigationHandle* navigation_handle) {
   if (!navigation_handle->HasCommitted())
@@ -488,6 +540,12 @@ void PageLoadMetricsUpdateDispatcher::DidFinishSubFrameNavigation(
       navigation_handle->NavigationStart() - navigation_start_;
   subframe_navigation_start_offset_.insert(std::make_pair(
       navigation_handle->GetFrameTreeNodeId(), navigation_delta));
+}
+
+void PageLoadMetricsUpdateDispatcher::OnFrameDeleted(
+    content::RenderFrameHost* render_frame_host) {
+  subframe_navigation_start_offset_.erase(
+      render_frame_host->GetFrameTreeNodeId());
 }
 
 void PageLoadMetricsUpdateDispatcher::UpdateSubFrameTiming(
@@ -550,7 +608,7 @@ void PageLoadMetricsUpdateDispatcher::MaybeUpdateFrameIntersection(
   // TODO(crbug/1061091): Document definition of untracked loads in page load
   // metrics.
   const int frame_tree_node_id = render_frame_host->GetFrameTreeNodeId();
-  bool is_main_frame = render_frame_host->GetParent() == nullptr;
+  bool is_main_frame = IsMainFrame(render_frame_host);
   if (!is_main_frame &&
       subframe_navigation_start_offset_.find(frame_tree_node_id) ==
           subframe_navigation_start_offset_.end()) {
@@ -648,6 +706,15 @@ void PageLoadMetricsUpdateDispatcher::UpdatePageInputTiming(
 void PageLoadMetricsUpdateDispatcher::UpdatePageRenderData(
     const mojom::FrameRenderDataUpdate& render_data) {
   page_render_data_.layout_shift_score += render_data.layout_shift_delta;
+
+  page_render_data_.all_layout_block_count +=
+      render_data.all_layout_block_count_delta;
+  page_render_data_.ng_layout_block_count +=
+      render_data.ng_layout_block_count_delta;
+  page_render_data_.all_layout_call_count +=
+      render_data.all_layout_call_count_delta;
+  page_render_data_.ng_layout_call_count +=
+      render_data.ng_layout_call_count_delta;
 }
 
 void PageLoadMetricsUpdateDispatcher::UpdateMainFrameRenderData(
@@ -655,6 +722,15 @@ void PageLoadMetricsUpdateDispatcher::UpdateMainFrameRenderData(
   main_frame_render_data_.layout_shift_score += render_data.layout_shift_delta;
   main_frame_render_data_.layout_shift_score_before_input_or_scroll +=
       render_data.layout_shift_delta_before_input_or_scroll;
+
+  main_frame_render_data_.all_layout_block_count +=
+      render_data.all_layout_block_count_delta;
+  main_frame_render_data_.ng_layout_block_count +=
+      render_data.ng_layout_block_count_delta;
+  main_frame_render_data_.all_layout_call_count +=
+      render_data.all_layout_call_count_delta;
+  main_frame_render_data_.ng_layout_call_count +=
+      render_data.ng_layout_call_count_delta;
 }
 
 void PageLoadMetricsUpdateDispatcher::OnSubFrameRenderDataChanged(

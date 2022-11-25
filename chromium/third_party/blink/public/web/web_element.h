@@ -35,6 +35,7 @@
 
 #include "third_party/blink/public/web/web_node.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "v8/include/v8.h"
 
 namespace gfx {
 class Size;
@@ -51,6 +52,9 @@ class BLINK_EXPORT WebElement : public WebNode {
  public:
   WebElement() : WebNode() {}
   WebElement(const WebElement& e) = default;
+
+  // Returns the empty WebElement if the argument doesn't represent an Element.
+  static WebElement FromV8Value(v8::Local<v8::Value>);
 
   WebElement& operator=(const WebElement& e) {
     WebNode::Assign(e);
@@ -85,6 +89,9 @@ class BLINK_EXPORT WebElement : public WebNode {
   // element has no ShadowRoot or has a UA ShadowRoot.
   WebNode ShadowRoot() const;
 
+  // Returns the open shadow root or the closed shadow root.
+  WebNode OpenOrClosedShadowRoot();
+
   // Returns the bounds of the element in Visual Viewport. The bounds
   // have been adjusted to include any transformations, including page scale.
   // This function will update the layout if required.
@@ -105,6 +112,15 @@ class BLINK_EXPORT WebElement : public WebNode {
   gfx::Size GetImageSize();
 
   void RequestFullscreen();
+
+  // ComputedStyle property values. The following exposure is of CSS property
+  // values are part of the ComputedStyle set which is usually exposed through
+  // the Window object in WebIDL as window.getComputedStyle(element). Exposing
+  // ComputedStyle requires all of CSSComputedStyleDeclaration which is a pretty
+  // large interfaces. For now the we are exposing computed property values as
+  // strings directly to WebElement and enable public component usage through
+  // /public/web interfaces.
+  WebString GetComputedValue(const WebString& property_name);
 
 #if INSIDE_BLINK
   WebElement(Element*);

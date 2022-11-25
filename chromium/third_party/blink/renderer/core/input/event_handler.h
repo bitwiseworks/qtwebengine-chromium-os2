@@ -26,16 +26,15 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_INPUT_EVENT_HANDLER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_INPUT_EVENT_HANDLER_H_
 
-#include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/optional.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/common/input/web_menu_source_type.h"
+#include "third_party/blink/public/common/page/drag_operation.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/web_input_event_result.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/events/text_event_input_type.h"
-#include "third_party/blink/renderer/core/input/fallback_cursor_event_manager.h"
 #include "third_party/blink/renderer/core/input/gesture_manager.h"
 #include "third_party/blink/renderer/core/input/keyboard_event_manager.h"
 #include "third_party/blink/renderer/core/input/mouse_event_manager.h"
@@ -61,6 +60,7 @@ class DataTransfer;
 class PaintLayer;
 class Element;
 class Event;
+class EventHandlerRegistry;
 template <typename EventType>
 class EventWithHitTestResults;
 class HTMLFrameSetElement;
@@ -81,7 +81,9 @@ class WebMouseWheelEvent;
 class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
  public:
   explicit EventHandler(LocalFrame&);
-  void Trace(Visitor*);
+  EventHandler(const EventHandler&) = delete;
+  EventHandler& operator=(const EventHandler&) = delete;
+  void Trace(Visitor*) const;
 
   void Clear();
 
@@ -203,6 +205,11 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
                                            Node*& target_node);
   void CacheTouchAdjustmentResult(uint32_t, FloatPoint);
 
+  // Dispatch a context menu event. If |override_target_element| is provided,
+  // the context menu event will use that, so that the browser-generated context
+  // menu will be filled with options relevant to it, rather than the element
+  // found via hit testing the event's screen point. This is used so that a
+  // context menu generated via the keyboard reliably uses the correct target.
   WebInputEventResult SendContextMenuEvent(
       const WebMouseEvent&,
       Element* override_target_element = nullptr);
@@ -225,7 +232,6 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
   bool HandleAccessKey(const WebKeyboardEvent&);
   WebInputEventResult KeyEvent(const WebKeyboardEvent&);
   void DefaultKeyboardEventHandler(KeyboardEvent*);
-  bool HandleFallbackCursorModeBackEvent();
 
   bool HandleTextInputEvent(const String& text,
                             Event* underlying_event = nullptr,
@@ -262,13 +268,15 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
 
   void MarkHoverStateDirty();
 
-  void SetIsFallbackCursorModeOn(bool is_on);
-
   // Reset the last mouse position so that movement after unlock will be
   // restart from the lock position.
   void ResetMousePositionForPointerUnlock();
 
   bool LongTapShouldInvokeContextMenu();
+
+  void UpdateCursor();
+
+  Element* GetElementUnderMouse();
 
  private:
   WebInputEventResult HandleMouseMoveOrLeaveEvent(
@@ -302,8 +310,6 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
   void HoverTimerFired(TimerBase*);
   void CursorUpdateTimerFired(TimerBase*);
   void ActiveIntervalTimerFired(TimerBase*);
-
-  void UpdateCursor();
 
   ScrollableArea* AssociatedScrollableArea(const PaintLayer*) const;
 
@@ -363,6 +369,9 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
       const HitTestRequest& request,
       const WebMouseEvent& mev);
 
+  IntRect GetFocusedElementRectForNonLocatedContextMenu(
+      Element* focused_element);
+
   // NOTE: If adding a new field to this class please ensure that it is
   // cleared in |EventHandler::clear()|.
 
@@ -404,7 +413,6 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
   Member<KeyboardEventManager> keyboard_event_manager_;
   Member<PointerEventManager> pointer_event_manager_;
   Member<GestureManager> gesture_manager_;
-  Member<FallbackCursorEventManager> fallback_cursor_event_manager_;
 
   double max_mouse_moved_duration_;
 
@@ -458,15 +466,6 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
   FRIEND_TEST_ALL_PREFIXES(EventHandlerTest,
                            CursorForInlineVerticalWritingMode);
   FRIEND_TEST_ALL_PREFIXES(EventHandlerTest, CursorForBlockVerticalWritingMode);
-
-  FRIEND_TEST_ALL_PREFIXES(FallbackCursorEventManagerTest,
-                           MouseMoveCursorLockOnDiv);
-  FRIEND_TEST_ALL_PREFIXES(FallbackCursorEventManagerTest,
-                           MouseMoveCursorLockOnIFrame);
-  FRIEND_TEST_ALL_PREFIXES(FallbackCursorEventManagerTest, KeyBackAndMouseMove);
-  FRIEND_TEST_ALL_PREFIXES(FallbackCursorEventManagerTest, MouseDownOnEditor);
-
-  DISALLOW_COPY_AND_ASSIGN(EventHandler);
 };
 
 }  // namespace blink

@@ -85,6 +85,13 @@ bool WebFormControlElement::UserHasEditedTheField() const {
   return true;
 }
 
+void WebFormControlElement::SetUserHasEditedTheField(bool value) {
+  if (auto* input = DynamicTo<HTMLInputElement>(*private_))
+    input->SetUserHasEditedTheField(value);
+  if (auto* select_element = DynamicTo<HTMLSelectElement>(*private_))
+    select_element->SetUserHasEditedTheField(value);
+}
+
 void WebFormControlElement::SetUserHasEditedTheFieldForTest() {
   if (auto* input = DynamicTo<HTMLInputElement>(*private_))
     input->SetUserHasEditedTheFieldForTest();
@@ -100,6 +107,16 @@ WebString WebFormControlElement::AutofillSection() const {
 
 void WebFormControlElement::SetAutofillSection(const WebString& section) {
   Unwrap<HTMLFormControlElement>()->SetAutofillSection(section);
+}
+
+FormElementPiiType WebFormControlElement::GetFormElementPiiType() const {
+  return ConstUnwrap<HTMLFormControlElement>()->GetFormElementPiiType();
+}
+
+void WebFormControlElement::SetFormElementPiiType(
+    FormElementPiiType form_element_pii_type) {
+  Unwrap<HTMLFormControlElement>()->SetFormElementPiiType(
+      form_element_pii_type);
 }
 
 WebString WebFormControlElement::NameForAutofill() const {

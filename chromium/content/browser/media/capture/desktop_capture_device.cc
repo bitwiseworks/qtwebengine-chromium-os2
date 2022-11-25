@@ -10,21 +10,22 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/check_op.h"
 #include "base/command_line.h"
 #include "base/location.h"
-#include "base/logging.h"
 #include "base/macros.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notreached.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/synchronization/lock.h"
-#include "base/task/post_task.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/tick_clock.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "content/browser/media/capture/desktop_capture_device_uma_types.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -47,6 +48,10 @@
 #include "third_party/webrtc/modules/desktop_capture/fake_desktop_capturer.h"
 #include "third_party/webrtc/modules/desktop_capture/mouse_cursor_monitor.h"
 #include "ui/gfx/icc_profile.h"
+
+#if BUILDFLAG(IS_LACROS)
+#include "content/browser/media/capture/desktop_capturer_lacros.h"
+#endif
 
 namespace content {
 
@@ -477,8 +482,8 @@ void DesktopCaptureDevice::Core::RequestWakeLock() {
   // TODO(https://crbug.com/823869): Fix DesktopCaptureDeviceTest and remove
   // this conditional.
   if (BrowserThread::IsThreadInitialized(BrowserThread::UI)) {
-    base::PostTask(FROM_HERE, {BrowserThread::UI},
-                   base::BindOnce(&BindWakeLockProvider, std::move(receiver)));
+    GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE, base::BindOnce(&BindWakeLockProvider, std::move(receiver)));
   }
 
   wake_lock_provider->GetWakeLockWithoutContext(
@@ -509,8 +514,16 @@ std::unique_ptr<media::VideoCaptureDevice> DesktopCaptureDevice::Create(
 
   switch (source.type) {
     case DesktopMediaID::TYPE_SCREEN: {
+#if BUILDFLAG(IS_LACROS)
+      // TODO(https://crbug.com/1094460): Handle options.
+      std::unique_ptr<webrtc::DesktopCapturer> screen_capturer =
+          std::make_unique<DesktopCapturerLacros>(
+              DesktopCapturerLacros::CaptureType::kScreen,
+              webrtc::DesktopCaptureOptions());
+#else
       std::unique_ptr<webrtc::DesktopCapturer> screen_capturer(
           webrtc::DesktopCapturer::CreateScreenCapturer(options));
+#endif
       if (screen_capturer && screen_capturer->SelectSource(source.id)) {
         capturer.reset(new webrtc::DesktopAndCursorComposer(
             std::move(screen_capturer), options));
@@ -523,8 +536,14 @@ std::unique_ptr<media::VideoCaptureDevice> DesktopCaptureDevice::Create(
     }
 
     case DesktopMediaID::TYPE_WINDOW: {
+#if BUILDFLAG(IS_LACROS)
+      std::unique_ptr<webrtc::DesktopCapturer> window_capturer(
+          new DesktopCapturerLacros(DesktopCapturerLacros::CaptureType::kWindow,
+                                    webrtc::DesktopCaptureOptions()));
+#else
       std::unique_ptr<webrtc::DesktopCapturer> window_capturer =
           webrtc::CroppingWindowCapturer::CreateCapturer(options);
+#endif
       if (window_capturer && window_capturer->SelectSource(source.id)) {
         window_capturer->FocusOnSelectedSource();
         capturer.reset(new webrtc::DesktopAndCursorComposer(
@@ -580,7 +599,7 @@ DesktopCaptureDevice::DesktopCaptureDevice(
     std::unique_ptr<webrtc::DesktopCapturer> capturer,
     DesktopMediaID::Type type)
     : thread_("desktopCaptureThread") {
-#if defined(OS_WIN) || defined(OS_MACOSX)
+#if defined(OS_WIN) || defined(OS_MAC)
   // On Windows/OSX the thread must be a UI thread.
   base::MessagePumpType thread_type = base::MessagePumpType::UI;
 #else

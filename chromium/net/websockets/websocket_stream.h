@@ -15,8 +15,8 @@
 #include "base/optional.h"
 #include "base/time/time.h"
 #include "net/base/completion_once_callback.h"
+#include "net/base/isolation_info.h"
 #include "net/base/net_export.h"
-#include "net/base/network_isolation_key.h"
 #include "net/cookies/site_for_cookies.h"
 #include "net/websockets/websocket_event_interface.h"
 #include "net/websockets/websocket_handshake_request_info.h"
@@ -45,6 +45,7 @@ class URLRequestContext;
 struct WebSocketFrame;
 class WebSocketBasicHandshakeStream;
 class WebSocketHttp2HandshakeStream;
+struct NetworkTrafficAnnotationTag;
 
 // WebSocketStreamRequest is the caller's handle to the process of creation of a
 // WebSocketStream. Deleting the object before the ConnectDelegate OnSuccess or
@@ -80,11 +81,6 @@ class NET_EXPORT_PRIVATE WebSocketStreamRequestAPI
 // be finished synchronously, the function returns ERR_IO_PENDING, and
 // |callback| will be called when the operation is finished. Non-null |callback|
 // must be provided to these functions.
-//
-// Please update the traffic annotations in the websocket_basic_stream.cc and
-// websocket_stream.cc if the class is used for any communication with Google.
-// In such a case, annotation should be passed from the callers to this class
-// and a local annotation can not be used anymore.
 
 class NET_EXPORT_PRIVATE WebSocketStream {
  public:
@@ -154,10 +150,11 @@ class NET_EXPORT_PRIVATE WebSocketStream {
       const std::vector<std::string>& requested_subprotocols,
       const url::Origin& origin,
       const SiteForCookies& site_for_cookies,
-      const net::NetworkIsolationKey& network_isolation_key,
+      const IsolationInfo& isolation_info,
       const HttpRequestHeaders& additional_headers,
       URLRequestContext* url_request_context,
       const NetLogWithSource& net_log,
+      NetworkTrafficAnnotationTag traffic_annotation,
       std::unique_ptr<ConnectDelegate> connect_delegate);
 
   // Alternate version of CreateAndConnectStream() for testing use only. It
@@ -170,10 +167,11 @@ class NET_EXPORT_PRIVATE WebSocketStream {
       const std::vector<std::string>& requested_subprotocols,
       const url::Origin& origin,
       const SiteForCookies& site_for_cookies,
-      const net::NetworkIsolationKey& network_isolation_key,
+      const IsolationInfo& isolation_info,
       const HttpRequestHeaders& additional_headers,
       URLRequestContext* url_request_context,
       const NetLogWithSource& net_log,
+      NetworkTrafficAnnotationTag traffic_annotation,
       std::unique_ptr<ConnectDelegate> connect_delegate,
       std::unique_ptr<base::OneShotTimer> timer,
       std::unique_ptr<WebSocketStreamRequestAPI> api_delegate);

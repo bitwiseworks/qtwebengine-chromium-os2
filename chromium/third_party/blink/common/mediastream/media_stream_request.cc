@@ -4,7 +4,7 @@
 
 #include "third_party/blink/public/common/mediastream/media_stream_request.h"
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "build/build_config.h"
 
 namespace blink {
@@ -68,10 +68,12 @@ MediaStreamDevice::MediaStreamDevice(
     mojom::MediaStreamType type,
     const std::string& id,
     const std::string& name,
+    const media::VideoCaptureControlSupport& control_support,
     media::VideoFacingMode facing,
     const base::Optional<std::string>& group_id)
     : type(type),
       id(id),
+      video_control_support(control_support),
       video_facing(facing),
       group_id(group_id),
       name(name) {}
@@ -93,21 +95,22 @@ MediaStreamDevice::MediaStreamDevice(mojom::MediaStreamType type,
   DCHECK(input.IsValid());
 }
 
-MediaStreamDevice::MediaStreamDevice(const MediaStreamDevice& other) {
-  type = other.type;
-  id = other.id;
-  video_facing = other.video_facing;
-  group_id = other.group_id;
-  matched_output_device_id = other.matched_output_device_id;
-  name = other.name;
-  input = other.input;
-  session_id_ = other.session_id_;
+MediaStreamDevice::MediaStreamDevice(const MediaStreamDevice& other)
+    : type(other.type),
+      id(other.id),
+      video_control_support(other.video_control_support),
+      video_facing(other.video_facing),
+      group_id(other.group_id),
+      matched_output_device_id(other.matched_output_device_id),
+      name(other.name),
+      input(other.input),
+      session_id_(other.session_id_) {
   DCHECK(!session_id_.has_value() || !session_id_->is_empty());
   if (other.display_media_info.has_value())
     display_media_info = other.display_media_info->Clone();
 }
 
-MediaStreamDevice::~MediaStreamDevice() {}
+MediaStreamDevice::~MediaStreamDevice() = default;
 
 MediaStreamDevice& MediaStreamDevice::operator=(
     const MediaStreamDevice& other) {
@@ -115,6 +118,7 @@ MediaStreamDevice& MediaStreamDevice::operator=(
     return *this;
   type = other.type;
   id = other.id;
+  video_control_support = other.video_control_support;
   video_facing = other.video_facing;
   group_id = other.group_id;
   matched_output_device_id = other.matched_output_device_id;

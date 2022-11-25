@@ -32,15 +32,6 @@ bool RemoveStreamDeviceFromArray(const MediaStreamDevice& device,
 
 }  // namespace
 
-struct MediaStreamDeviceObserver::Stream {
-  Stream() {}
-  ~Stream() {}
-  WebMediaStreamDeviceObserver::OnDeviceStoppedCb on_device_stopped_cb;
-  WebMediaStreamDeviceObserver::OnDeviceChangedCb on_device_changed_cb;
-  MediaStreamDevices audio_devices;
-  MediaStreamDevices video_devices;
-};
-
 MediaStreamDeviceObserver::MediaStreamDeviceObserver(LocalFrame* frame) {
   // There is no frame on unit tests.
   if (frame) {
@@ -132,6 +123,7 @@ void MediaStreamDeviceObserver::OnDeviceChanged(
 
 void MediaStreamDeviceObserver::BindMediaStreamDeviceObserverReceiver(
     mojo::PendingReceiver<mojom::blink::MediaStreamDeviceObserver> receiver) {
+  receiver_.reset();
   receiver_.Bind(std::move(receiver));
 }
 

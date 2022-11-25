@@ -219,6 +219,8 @@ class FakeAutofillAgent : public mojom::AutofillAgent {
       const std::vector<std::string>& selectors,
       GetElementFormAndFieldDataCallback callback) override {}
 
+  void SetAssistantActionState(bool running) override {}
+
   mojo::AssociatedReceiverSet<mojom::AutofillAgent> receivers_;
 
   base::OnceClosure quit_closure_;
@@ -280,15 +282,15 @@ class TestContentAutofillDriver : public ContentAutofillDriver {
     return static_cast<MockAutofillManager*>(autofill_manager());
   }
 
-  using ContentAutofillDriver::DidNavigateMainFrame;
+  using ContentAutofillDriver::DidNavigateFrame;
 };
 
 class ContentAutofillDriverTest : public content::RenderViewHostTestHarness {
  public:
   void SetUp() override {
     content::RenderViewHostTestHarness::SetUp();
-    // This needed to keep the WebContentsObserverSanityChecker checks happy for
-    // when AppendChild is called.
+    // This needed to keep the WebContentsObserverConsistencyChecker checks
+    // happy for when AppendChild is called.
     NavigateAndCommit(GURL("about:blank"));
 
     test_autofill_client_.reset(new MockAutofillClient());
@@ -314,7 +316,7 @@ class ContentAutofillDriverTest : public content::RenderViewHostTestHarness {
     content::MockNavigationHandle navigation_handle(GURL(), main_rfh());
     navigation_handle.set_has_committed(true);
     navigation_handle.set_is_same_document(same_document);
-    driver_->DidNavigateMainFrame(&navigation_handle);
+    driver_->DidNavigateFrame(&navigation_handle);
   }
 
  protected:

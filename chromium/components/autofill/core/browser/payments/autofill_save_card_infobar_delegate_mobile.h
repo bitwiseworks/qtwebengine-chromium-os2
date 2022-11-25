@@ -35,10 +35,14 @@ class AutofillSaveCardInfoBarDelegateMobile : public ConfirmInfoBarDelegate {
           upload_save_card_prompt_callback,
       AutofillClient::LocalSaveCardPromptCallback
           local_save_card_prompt_callback,
-      PrefService* pref_service,
-      bool is_off_the_record);
+      PrefService* pref_service);
 
   ~AutofillSaveCardInfoBarDelegateMobile() override;
+
+  // Returns |delegate| as an AutofillSaveCardInfoBarDelegateMobile, or nullptr
+  // if it is of another type.
+  static AutofillSaveCardInfoBarDelegateMobile* FromInfobarDelegate(
+      infobars::InfoBarDelegate* delegate);
 
   bool upload() const { return upload_; }
   int issuer_icon_id() const { return issuer_icon_id_; }
@@ -59,7 +63,7 @@ class AutofillSaveCardInfoBarDelegateMobile : public ConfirmInfoBarDelegate {
   }
 
   // Called when a link in the legal message text was clicked.
-  void OnLegalMessageLinkClicked(GURL url);
+  virtual void OnLegalMessageLinkClicked(GURL url);
 
   // Google Pay branding is enabled with a flag and only for cards upstreamed
   // to Google.
@@ -83,9 +87,9 @@ class AutofillSaveCardInfoBarDelegateMobile : public ConfirmInfoBarDelegate {
   // Updates and then saves the card using |cardholder_name|,
   // |expiration_date_month| and |expiration_date_year|, which were provided
   // as part of the iOS save card Infobar dialog.
-  bool UpdateAndAccept(base::string16 cardholder_name,
-                       base::string16 expiration_date_month,
-                       base::string16 expiration_date_year);
+  virtual bool UpdateAndAccept(base::string16 cardholder_name,
+                               base::string16 expiration_date_month,
+                               base::string16 expiration_date_year);
 #endif  // defined(OS_IOS)
 
  private:
@@ -147,9 +151,6 @@ class AutofillSaveCardInfoBarDelegateMobile : public ConfirmInfoBarDelegate {
 
   // The legal message lines to show in the content of the infobar.
   const LegalMessageLines& legal_message_lines_;
-
-  // Whether the save is offered while off the record
-  bool is_off_the_record_;
 
   DISALLOW_COPY_AND_ASSIGN(AutofillSaveCardInfoBarDelegateMobile);
 };

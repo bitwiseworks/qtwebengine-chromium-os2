@@ -54,7 +54,7 @@ const CommandLinePrefStore::SwitchToPreferenceMapEntry
         {data_reduction_proxy::switches::kDataReductionProxy,
          data_reduction_proxy::prefs::kDataReductionProxy},
 #endif
-        {switches::kAuthServerWhitelist, prefs::kAuthServerWhitelist},
+        {switches::kAuthServerAllowlist, prefs::kAuthServerAllowlist},
         {switches::kSSLVersionMin, prefs::kSSLVersionMin},
         {switches::kSSLVersionMax, prefs::kSSLVersionMax},
 #if defined(OS_ANDROID)

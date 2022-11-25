@@ -425,8 +425,8 @@ ScriptWrappable* V8ScriptValueDeserializer::ReadDOMObject(
       ImageDataStorageFormat storage_format = color_params.GetStorageFormat();
       base::CheckedNumeric<size_t> computed_byte_length = width;
       computed_byte_length *= height;
-      computed_byte_length *= 4;
-      computed_byte_length *= ImageData::StorageFormatDataSize(storage_format);
+      computed_byte_length *=
+          ImageData::StorageFormatBytesPerPixel(storage_format);
       if (!computed_byte_length.IsValid() ||
           computed_byte_length.ValueOrDie() != byte_length)
         return nullptr;
@@ -580,18 +580,30 @@ ScriptWrappable* V8ScriptValueDeserializer::ReadDOMObject(
           index + 1 >= transferred_stream_ports_->size()) {
         return nullptr;
       }
+
+      // https://streams.spec.whatwg.org/#ts-transfer
+      // 1. Let readableRecord be !
+      //    StructuredDeserializeWithTransfer(dataHolder.[[readable]], the
+      //    current Realm).
       ReadableStream* readable = ReadableStream::Deserialize(
           script_state_, (*transferred_stream_ports_)[index].Get(),
           exception_state);
       if (!readable)
         return nullptr;
 
+      // 2. Let writableRecord be !
+      //    StructuredDeserializeWithTransfer(dataHolder.[[writable]], the
+      //    current Realm).
       WritableStream* writable = WritableStream::Deserialize(
           script_state_, (*transferred_stream_ports_)[index + 1].Get(),
           exception_state);
       if (!writable)
         return nullptr;
 
+      // 3. Set value.[[readable]] to readableRecord.[[Deserialized]].
+      // 4. Set value.[[writable]] to writableRecord.[[Deserialized]].
+      // 5. Set value.[[backpressure]], value.[[backpressureChangePromise]], and
+      //    value.[[controller]] to undefined.
       return MakeGarbageCollected<TransformStream>(readable, writable);
     }
     case kDOMExceptionTag: {

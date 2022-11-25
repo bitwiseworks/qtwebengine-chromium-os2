@@ -22,6 +22,7 @@
 #include "src/trace_processor/importers/proto/proto_importer_module.h"
 #include "src/trace_processor/timestamped_trace_piece.h"
 
+#include "protos/perfetto/trace/profiling/deobfuscation.pbzero.h"
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
 
 namespace perfetto {
@@ -40,6 +41,9 @@ class HeapGraphModule : public ProtoImporterModule {
  private:
   void ParseHeapGraph(uint32_t seq_id, int64_t ts, protozero::ConstBytes);
   void ParseDeobfuscationMapping(protozero::ConstBytes);
+  void DeobfuscateClass(base::Optional<StringPool::Id> package_name_id,
+                        StringPool::Id obfuscated_class_id,
+                        const protos::pbzero::ObfuscatedClass::Decoder& cls);
 
   TraceProcessorContext* context_;
 };

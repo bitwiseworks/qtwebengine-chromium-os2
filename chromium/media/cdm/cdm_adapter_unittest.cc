@@ -8,8 +8,8 @@
 #include <memory>
 
 #include "base/bind.h"
+#include "base/check.h"
 #include "base/command_line.h"
-#include "base/logging.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -140,9 +140,8 @@ class CdmAdapterTestBase : public testing::Test,
     std::unique_ptr<StrictMock<MockCdmAuxiliaryHelper>> cdm_helper(
         new StrictMock<MockCdmAuxiliaryHelper>(std::move(allocator)));
     cdm_helper_ = cdm_helper.get();
-    CdmAdapter::Create(GetKeySystemName(),
-                       url::Origin::Create(GURL("http://foo.com")), cdm_config,
-                       GetCreateCdmFunc(), std::move(cdm_helper),
+    CdmAdapter::Create(GetKeySystemName(), cdm_config, GetCreateCdmFunc(),
+                       std::move(cdm_helper),
                        base::Bind(&MockCdmClient::OnSessionMessage,
                                   base::Unretained(&cdm_client_)),
                        base::Bind(&MockCdmClient::OnSessionClosed,
@@ -556,15 +555,6 @@ TEST_P(CdmAdapterTestWithMockCdm, GetDecryptor) {
   auto* cdm_context = cdm_->GetCdmContext();
   ASSERT_TRUE(cdm_context);
   EXPECT_TRUE(cdm_context->GetDecryptor());
-}
-
-TEST_P(CdmAdapterTestWithMockCdm, GetDecryptor_UseHwSecureCodecs) {
-  CdmConfig cdm_config;
-  cdm_config.use_hw_secure_codecs = true;
-  InitializeWithCdmConfig(cdm_config);
-  auto* cdm_context = cdm_->GetCdmContext();
-  ASSERT_TRUE(cdm_context);
-  EXPECT_FALSE(cdm_context->GetDecryptor());
 }
 
 }  // namespace media

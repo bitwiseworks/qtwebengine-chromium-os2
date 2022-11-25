@@ -8,9 +8,12 @@
 #include "third_party/blink/renderer/core/layout/adjust_for_absolute_zoom.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/resize_observer/resize_observation.h"
+#include "third_party/blink/renderer/core/resize_observer/resize_observer_box_options.h"
 #include "third_party/blink/renderer/core/resize_observer/resize_observer_size.h"
+#include "third_party/blink/renderer/core/resize_observer/resize_observer_utilities.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/svg/svg_graphics_element.h"
+#include "third_party/blink/renderer/platform/geometry/float_size.h"
 #include "third_party/blink/renderer/platform/geometry/layout_rect.h"
 #include "third_party/blink/renderer/platform/geometry/layout_size.h"
 #include "third_party/blink/renderer/platform/geometry/layout_unit.h"
@@ -18,34 +21,10 @@
 
 namespace blink {
 
-DOMRectReadOnly* ResizeObserverEntry::ZoomAdjustedLayoutRect(
-    LayoutRect content_rect,
-    const ComputedStyle& style) {
-  content_rect.SetX(
-      AdjustForAbsoluteZoom::AdjustLayoutUnit(content_rect.X(), style));
-  content_rect.SetY(
-      AdjustForAbsoluteZoom::AdjustLayoutUnit(content_rect.Y(), style));
-  content_rect.SetWidth(
-      AdjustForAbsoluteZoom::AdjustLayoutUnit(content_rect.Width(), style));
-  content_rect.SetHeight(
-      AdjustForAbsoluteZoom::AdjustLayoutUnit(content_rect.Height(), style));
-
-  return DOMRectReadOnly::FromFloatRect(FloatRect(
-      FloatPoint(content_rect.Location()), FloatSize(content_rect.Size())));
-}
-
-ResizeObserverSize* ResizeObserverEntry::ZoomAdjustedSize(
-    const LayoutSize box_size,
-    const ComputedStyle& style) {
-  return ResizeObserverSize::Create(
-      AdjustForAbsoluteZoom::AdjustLayoutUnit(box_size.Width(), style),
-      AdjustForAbsoluteZoom::AdjustLayoutUnit(box_size.Height(), style));
-}
-
 ResizeObserverEntry::ResizeObserverEntry(Element* target) : target_(target) {
   if (LayoutObject* layout_object = target->GetLayoutObject()) {
     const ComputedStyle& style = layout_object->StyleRef();
-    // SVG box properties are always based on bounding box
+
     if (auto* svg_graphics_element = DynamicTo<SVGGraphicsElement>(target)) {
       LayoutSize bounding_box_size =
           LayoutSize(svg_graphics_element->GetBBox().Size());
@@ -56,37 +35,44 @@ ResizeObserverEntry::ResizeObserverEntry(Element* target) : target_(target) {
             bounding_box_size.Width(), bounding_box_size.Height());
         content_box_size_.push_back(size);
         border_box_size_.push_back(size);
-        device_pixel_content_box_size_.push_back(size);
+        bounding_box_size.Scale(style.EffectiveZoom());
+        FloatSize snapped_device_pixel_content_box =
+            ResizeObserverUtilities::ComputeSnappedDevicePixelContentBox(
+                bounding_box_size, layout_object, style);
+        ResizeObserverSize* device_pixel_content_box_size =
+            ResizeObserverSize::Create(
+                snapped_device_pixel_content_box.Width(),
+                snapped_device_pixel_content_box.Height());
+        device_pixel_content_box_size_.push_back(device_pixel_content_box_size);
       }
     } else if (layout_object->IsBox()) {
       LayoutBox* layout_box = target->GetLayoutBox();
       LayoutRect content_rect(
           LayoutPoint(layout_box->PaddingLeft(), layout_box->PaddingTop()),
           layout_box->ContentSize());
-      content_rect_ = ZoomAdjustedLayoutRect(content_rect, style);
+      content_rect_ =
+          ResizeObserverUtilities::ZoomAdjustedLayoutRect(content_rect, style);
 
       if (RuntimeEnabledFeatures::ResizeObserverUpdatesEnabled()) {
-        LayoutSize content_box_size =
-            LayoutSize(layout_box->ContentLogicalWidth(),
-                       layout_box->ContentLogicalHeight());
-        LayoutSize border_box_size =
-            LayoutSize(layout_box->LogicalWidth(), layout_box->LogicalHeight());
+        FloatSize content_box = ResizeObserverUtilities::ComputeZoomAdjustedBox(
+            ResizeObserverBoxOptions::ContentBox, layout_object, style);
+        FloatSize border_box = ResizeObserverUtilities::ComputeZoomAdjustedBox(
+            ResizeObserverBoxOptions::BorderBox, layout_object, style);
+        FloatSize device_pixel_content_box =
+            ResizeObserverUtilities::ComputeZoomAdjustedBox(
+                ResizeObserverBoxOptions::DevicePixelContentBox, layout_object,
+                style);
 
-        LayoutSize paint_offset =
-            layout_object->FirstFragment().PaintOffset().ToLayoutSize();
         ResizeObserverSize* device_pixel_content_box_size =
-            ResizeObserverSize::Create(
-                SnapSizeToPixel(layout_box->ContentLogicalWidth(),
-                                style.IsHorizontalWritingMode()
-                                    ? paint_offset.Width()
-                                    : paint_offset.Height()),
-                SnapSizeToPixel(layout_box->ContentLogicalHeight(),
-                                style.IsHorizontalWritingMode()
-                                    ? paint_offset.Height()
-                                    : paint_offset.Width()));
+            ResizeObserverSize::Create(device_pixel_content_box.Width(),
+                                       device_pixel_content_box.Height());
+        ResizeObserverSize* content_box_size = ResizeObserverSize::Create(
+            content_box.Width(), content_box.Height());
+        ResizeObserverSize* border_box_size =
+            ResizeObserverSize::Create(border_box.Width(), border_box.Height());
 
-        content_box_size_.push_back(ZoomAdjustedSize(content_box_size, style));
-        border_box_size_.push_back(ZoomAdjustedSize(border_box_size, style));
+        content_box_size_.push_back(content_box_size);
+        border_box_size_.push_back(border_box_size);
         device_pixel_content_box_size_.push_back(device_pixel_content_box_size);
       }
     }
@@ -106,7 +92,7 @@ ResizeObserverEntry::ResizeObserverEntry(Element* target) : target_(target) {
   }
 }
 
-void ResizeObserverEntry::Trace(Visitor* visitor) {
+void ResizeObserverEntry::Trace(Visitor* visitor) const {
   visitor->Trace(target_);
   visitor->Trace(content_rect_);
   visitor->Trace(content_box_size_);

@@ -4,7 +4,7 @@
 
 #include "ui/gl/gl_share_group.h"
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "build/build_config.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_implementation.h"
@@ -12,7 +12,7 @@
 namespace gl {
 
 GLShareGroup::GLShareGroup()
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
     : renderer_id_(-1)
 #endif
 {
@@ -53,7 +53,7 @@ void GLShareGroup::SetSharedContext(GLContext* context) {
   shared_context_ = context;
 }
 
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
 void GLShareGroup::SetRendererID(int renderer_id) {
   renderer_id_ = renderer_id;
 }

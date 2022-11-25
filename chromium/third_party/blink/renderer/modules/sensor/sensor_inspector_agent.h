@@ -9,14 +9,14 @@
 
 namespace blink {
 
-class Document;
+class LocalDOMWindow;
 class LocalFrame;
 class SensorProviderProxy;
 
 class SensorInspectorAgent : public GarbageCollected<SensorInspectorAgent> {
  public:
-  explicit SensorInspectorAgent(Document* document);
-  virtual void Trace(Visitor*);
+  explicit SensorInspectorAgent(LocalDOMWindow* window);
+  virtual void Trace(Visitor*) const;
 
   void DidCommitLoadForLocalFrame(LocalFrame* frame);
 

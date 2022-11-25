@@ -13,14 +13,27 @@ static const unsigned kMaxIssueCount = 1000;
 
 InspectorIssueStorage::InspectorIssueStorage() = default;
 
-void InspectorIssueStorage::AddInspectorIssue(ExecutionContext* context,
+void InspectorIssueStorage::AddInspectorIssue(CoreProbeSink* sink,
                                               InspectorIssue* issue) {
   DCHECK(issues_.size() <= kMaxIssueCount);
-  probe::InspectorIssueAdded(context, issue);
+  probe::InspectorIssueAdded(sink, issue);
   if (issues_.size() == kMaxIssueCount) {
     issues_.pop_front();
   }
   issues_.push_back(issue);
+}
+
+void InspectorIssueStorage::AddInspectorIssue(
+    CoreProbeSink* sink,
+    mojom::blink::InspectorIssueInfoPtr info) {
+  AddInspectorIssue(sink, InspectorIssue::Create(std::move(info)));
+}
+
+void InspectorIssueStorage::AddInspectorIssue(
+    ExecutionContext* context,
+    mojom::blink::InspectorIssueInfoPtr info) {
+  AddInspectorIssue(probe::ToCoreProbeSink(context),
+                    InspectorIssue::Create(std::move(info)));
 }
 
 void InspectorIssueStorage::Clear() {
@@ -35,7 +48,7 @@ InspectorIssue* InspectorIssueStorage::at(wtf_size_t index) const {
   return issues_[index].Get();
 }
 
-void InspectorIssueStorage::Trace(Visitor* visitor) {
+void InspectorIssueStorage::Trace(Visitor* visitor) const {
   visitor->Trace(issues_);
 }
 

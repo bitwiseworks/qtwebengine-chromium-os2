@@ -13,7 +13,9 @@
 
 #include "base/time/time.h"
 #include "components/autofill/core/common/form_data.h"
+#include "components/autofill/core/common/gaia_id_hash.h"
 #include "components/autofill/core/common/mojom/autofill_types.mojom-shared.h"
+#include "components/autofill/core/common/renderer_id.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -46,11 +48,45 @@ using ValueElementVector = std::vector<ValueElementPair>;
 // The field descriptions in the struct specification below are intended to
 // describe which fields are not strictly required when adding a saved password
 // entry to the database and how they can affect the matching process.
-
+//
+// TODO(crbug.com/1067347): Move complete class to password_manager namespace.
 struct PasswordForm {
-  using Scheme = mojom::PasswordForm_Scheme;
-  using Type = mojom::PasswordForm_Type;
-  using GenerationUploadStatus = mojom::PasswordForm_GenerationUploadStatus;
+  // Enum to differentiate between HTML form based authentication, and dialogs
+  // using basic or digest schemes. Default is kHtml. Only PasswordForms of the
+  // same Scheme will be matched/autofilled against each other.
+  enum class Scheme {
+    kHtml,
+    kBasic,
+    kDigest,
+    kOther,
+    kUsernameOnly,
+    kMinValue = kHtml,
+    kMaxValue = kUsernameOnly,
+  };
+
+  // Enum to differentiate between manually filled forms, forms with auto-
+  // generated passwords, and forms generated from the DOM API.
+  //
+  // Always append new types at the end. This enum is converted to int and
+  // stored in password store backends, so it is important to keep each
+  // value assigned to the same integer.
+  enum class Type {
+    kManual,
+    kGenerated,
+    kApi,
+    kMinValue = kManual,
+    kMaxValue = kApi,
+  };
+
+  // Enum to keep track of what information has been sent to the server about
+  // this form regarding password generation.
+  enum class GenerationUploadStatus {
+    kNoSignalSent,
+    kPositiveSignalSent,
+    kNegativeSignalSent,
+    kMinValue = kNoSignalSent,
+    kMaxValue = kNegativeSignalSent,
+  };
 
   Scheme scheme = Scheme::kHtml;
 
@@ -62,14 +98,13 @@ struct PasswordForm {
   // data from the database, so it must not be empty.
   std::string signon_realm;
 
-  // An origin URL consists of the scheme, host, port and path; the rest is
-  // stripped. This is the primary data used by the PasswordManager to decide
-  // (in longest matching prefix fashion) whether or not a given PasswordForm
-  // result from the database is a good fit for a particular form on a page.
+  // An URL consists of the scheme, host, port and path; the rest is stripped.
+  // This is the primary data used by the PasswordManager to decide (in longest
+  // matching prefix fashion) whether or not a given PasswordForm result from
+  // the database is a good fit for a particular form on a page.
+  //
   // This should not be empty except for Android based credentials.
-  // TODO(melandory): origin should be renamed in order to be consistent with
-  // GURL definition of origin.
-  GURL origin;
+  GURL url;
 
   // The action target of the form; like |origin| URL consists of the scheme,
   // host, port and path; the rest is stripped. This is the primary data used by
@@ -108,36 +143,23 @@ struct PasswordForm {
   // The name of the submit button used. Optional; only used in scoring
   // of PasswordForm results from the database to make matches as tight as
   // possible.
-  //
-  // When parsing an HTML form, this must always be set.
   base::string16 submit_element;
 
-  // True if renderer ids for username and password fields are present. Only set
-  // on form parsing, and not persisted.
-  // TODO(https://crbug.com/831123): Remove this field when old parsing is
-  // removed and filling by renderer ids is by default.
-  bool has_renderer_ids = false;
-
-  // The name of the username input element. Optional (improves scoring).
-  //
-  // When parsing an HTML form, this must always be set.
+  // The name of the username input element.
   base::string16 username_element;
 
   // The renderer id of the username input element. It is set during the new
   // form parsing and not persisted.
-  uint32_t username_element_renderer_id = FormData::kNotSetRendererId;
+  FieldRendererId username_element_renderer_id;
+
+  // True if the server-side classification was successful.
+  bool server_side_classification_successful = false;
 
   // True if the server-side classification believes that the field may be
   // pre-filled with a placeholder in the value attribute. It is set during
   // form parsing and not persisted.
   bool username_may_use_prefilled_placeholder = false;
 
-  // Whether the |username_element| has an autocomplete=username attribute. This
-  // is only used in parsed HTML forms.
-  bool username_marked_by_site = false;
-
-  // The username. Optional.
-  //
   // When parsing an HTML form, this is typically empty unless the site
   // has implemented some form of autofill.
   base::string16 username_value;
@@ -165,7 +187,7 @@ struct PasswordForm {
 
   // The renderer id of the password input element. It is set during the new
   // form parsing and not persisted.
-  uint32_t password_element_renderer_id = FormData::kNotSetRendererId;
+  FieldRendererId password_element_renderer_id;
 
   // The current password. Must be non-empty for PasswordForm instances that are
   // meant to be persisted to the password store.
@@ -173,13 +195,18 @@ struct PasswordForm {
   // When parsing an HTML form, this is typically empty.
   base::string16 password_value;
 
+  // The current encrypted password. Must be non-empty for PasswordForm
+  // instances retrieved from the password store or coming in a
+  // PasswordStoreChange that is not of type REMOVE.
+  std::string encrypted_password;
+
   // If the form was a sign-up or a change password form, the name of the input
   // element corresponding to the new password. Optional, and not persisted.
   base::string16 new_password_element;
 
   // The renderer id of the new password input element. It is set during the new
   // form parsing and not persisted.
-  uint32_t new_password_element_renderer_id = FormData::kNotSetRendererId;
+  FieldRendererId new_password_element_renderer_id;
 
   // The confirmation password element. Optional, only set on form parsing, and
   // not persisted.
@@ -187,15 +214,10 @@ struct PasswordForm {
 
   // The renderer id of the confirmation password input element. It is set
   // during the new form parsing and not persisted.
-  uint32_t confirmation_password_element_renderer_id =
-      FormData::kNotSetRendererId;
+  FieldRendererId confirmation_password_element_renderer_id;
 
   // The new password. Optional, and not persisted.
   base::string16 new_password_value;
-
-  // Whether the |new_password_element| has an autocomplete=new-password
-  // attribute. This is only used in parsed HTML forms.
-  bool new_password_marked_by_site = false;
 
   // When the login was last used by the user to login to the site. Defaults to
   // |date_created|, except for passwords that were migrated from the now
@@ -220,7 +242,7 @@ struct PasswordForm {
   // to false.
   //
   // When parsing an HTML form, this is not used.
-  bool blacklisted_by_user = false;
+  bool blocked_by_user = false;
 
   // The form type.
   Type type = Type::kManual;
@@ -251,10 +273,6 @@ struct PasswordForm {
 
   // The URL of this credential's icon, such as the user's avatar, to display
   // in the UI.
-  // TODO(msramek): This field was previously named |avatar_url|. It is still
-  // named this way in the password store backends (e.g. the avatar_url column
-  // in the SQL DB of LoginDatabase) and for the purposes of syncing
-  // (i.e in PasswordSpecificsData). Rename these occurrences.
   GURL icon_url;
 
   // The origin of identity provider used for federated login.
@@ -292,15 +310,23 @@ struct PasswordForm {
   bool is_new_password_reliable = false;
 
   // Serialized to prefs, so don't change numeric values!
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
   enum class Store {
     // Default value.
     kNotSet = 0,
     // Credential came from the profile (i.e. local) storage.
     kProfileStore = 1,
     // Credential came from the Gaia-account-scoped storage.
-    kAccountStore = 2
+    kAccountStore = 2,
+    kMaxValue = kAccountStore
   };
   Store in_store = Store::kNotSet;
+
+  // Vector of hashes of the gaia id for users who prefer not to move this
+  // password form to their account. This list is used to suppress the move
+  // prompt for those users.
+  std::vector<GaiaIdHash> moving_blocked_for_list;
 
   // Return true if we consider this form to be a change password form.
   // We use only client heuristics, so it could include signup forms.
@@ -352,11 +378,8 @@ struct PasswordForm {
 bool ArePasswordFormUniqueKeysEqual(const PasswordForm& left,
                                     const PasswordForm& right);
 
-// Converts a vector of ValueElementPair to string.
-base::string16 ValueElementVectorToString(
-    const ValueElementVector& value_element_pairs);
-
 // For testing.
+std::ostream& operator<<(std::ostream& os, PasswordForm::Scheme scheme);
 std::ostream& operator<<(std::ostream& os, const PasswordForm& form);
 std::ostream& operator<<(std::ostream& os, PasswordForm* form);
 

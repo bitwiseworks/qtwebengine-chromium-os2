@@ -36,7 +36,6 @@ enum EndOfStreamError {
 };
 
 [
-    ImplementedAs=MediaSourceImpl,
     ActiveScriptWrappable,
     Exposed(Window MediaSourceStable, DedicatedWorker MediaSourceInWorkers)
 ] interface MediaSource : EventTarget {
@@ -59,5 +58,5 @@ enum EndOfStreamError {
     [RaisesException] void setLiveSeekableRange(double start, double end);
     [RaisesException] void clearLiveSeekableRange();
 
-    static boolean isTypeSupported (DOMString type);
+    [CallWith=ExecutionContext] static boolean isTypeSupported (DOMString type);
 };

@@ -50,7 +50,7 @@ PickerIndicatorElement::PickerIndicatorElement(
     : HTMLDivElement(document),
       picker_indicator_owner_(&picker_indicator_owner) {
   SetShadowPseudoId(AtomicString("-webkit-calendar-picker-indicator"));
-  setAttribute(html_names::kIdAttr, shadow_element_names::PickerIndicator());
+  setAttribute(html_names::kIdAttr, shadow_element_names::kIdPickerIndicator);
 }
 
 PickerIndicatorElement::~PickerIndicatorElement() {
@@ -63,6 +63,7 @@ LayoutObject* PickerIndicatorElement::CreateLayoutObject(
   if (features::IsFormControlsRefreshEnabled())
     return HTMLDivElement::CreateLayoutObject(style, legacy);
 
+  UseCounter::Count(GetDocument(), WebFeature::kLegacyLayoutByDetailsMarker);
   return new LayoutDetailsMarker(this);
 }
 
@@ -189,7 +190,7 @@ void PickerIndicatorElement::DidNotifySubtreeInsertionsToDocument() {
           this->picker_indicator_owner_->AriaRoleForPickerIndicator()));
 }
 
-void PickerIndicatorElement::Trace(Visitor* visitor) {
+void PickerIndicatorElement::Trace(Visitor* visitor) const {
   visitor->Trace(picker_indicator_owner_);
   visitor->Trace(chooser_);
   HTMLDivElement::Trace(visitor);

@@ -108,40 +108,10 @@ TlsConnection* TlsConnection::ConnectionFromSsl(const SSL* ssl) {
       ssl, SslIndexSingleton::GetInstance()->ssl_ex_data_index_connection()));
 }
 
-// TODO(nharper): Once
-// https://boringssl-review.googlesource.com/c/boringssl/+/40127 lands and is
-// rolled into google3, remove the BORINGSSL_API_VERSION check.
 const SSL_QUIC_METHOD TlsConnection::kSslQuicMethod{
-#if BORINGSSL_API_VERSION < 10
-  TlsConnection::SetEncryptionSecretCallback,
-#else
-  TlsConnection::SetReadSecretCallback, TlsConnection::SetWriteSecretCallback,
-#endif
-      TlsConnection::WriteMessageCallback, TlsConnection::FlushFlightCallback,
-      TlsConnection::SendAlertCallback
-};
-
-// static
-int TlsConnection::SetEncryptionSecretCallback(
-    SSL* ssl,
-    enum ssl_encryption_level_t level,
-    const uint8_t* read_key,
-    const uint8_t* write_key,
-    size_t key_length) {
-  // TODO(nharper): replace these vectors and memcpys with spans (which
-  // unfortunately doesn't yet exist in quic/platform/api).
-  std::vector<uint8_t> read_secret(key_length), write_secret(key_length);
-  memcpy(read_secret.data(), read_key, key_length);
-  memcpy(write_secret.data(), write_key, key_length);
-  TlsConnection::Delegate* delegate = ConnectionFromSsl(ssl)->delegate_;
-  const SSL_CIPHER* cipher = SSL_get_pending_cipher(ssl);
-  delegate->SetWriteSecret(QuicEncryptionLevel(level), cipher, write_secret);
-  if (!delegate->SetReadSecret(QuicEncryptionLevel(level), cipher,
-                               read_secret)) {
-    return 0;
-  }
-  return 1;
-}
+    TlsConnection::SetReadSecretCallback, TlsConnection::SetWriteSecretCallback,
+    TlsConnection::WriteMessageCallback, TlsConnection::FlushFlightCallback,
+    TlsConnection::SendAlertCallback};
 
 // static
 int TlsConnection::SetReadSecretCallback(SSL* ssl,

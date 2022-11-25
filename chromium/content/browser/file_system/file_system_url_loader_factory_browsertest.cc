@@ -14,13 +14,14 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/i18n/unicodestring.h"
 #include "base/rand_util.h"
-#include "base/task/post_task.h"
 #include "base/task/thread_pool.h"
 #include "base/test/bind_test_util.h"
 #include "build/build_config.h"
 #include "content/browser/file_system/file_system_url_loader_factory.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/test_utils.h"
@@ -169,7 +170,7 @@ class FileSystemURLLoaderFactoryTest
   bool IsIncognito() { return GetParam() == TestMode::kIncognito; }
 
   void SetUpOnMainThread() override {
-    io_task_runner_ = base::CreateSingleThreadTaskRunner({BrowserThread::IO});
+    io_task_runner_ = GetIOThreadTaskRunner({});
     blocking_task_runner_ =
         base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()});
 
@@ -242,9 +243,7 @@ class FileSystemURLLoaderFactoryTest
   void SetUpFileAutoMountContext() {
     const base::FilePath mnt_point = SetUpAutoMountContext();
 
-    ASSERT_EQ(static_cast<int>(sizeof(kTestFileData)) - 1,
-              base::WriteFile(mnt_point.AppendASCII("foo"), kTestFileData,
-                              sizeof(kTestFileData) - 1));
+    ASSERT_TRUE(base::WriteFile(mnt_point.AppendASCII("foo"), kTestFileData));
   }
 
   FileSystemURL CreateURL(const base::FilePath& file_path) {
@@ -283,7 +282,7 @@ class FileSystemURLLoaderFactoryTest
     if (!dir.CreateUniqueTempDir())
       result = base::File::FILE_ERROR_FAILED;
     local_path = dir.GetPath().AppendASCII("tmp");
-    if (buf_size != base::WriteFile(local_path, buf, buf_size))
+    if (!base::WriteFile(local_path, base::StringPiece(buf, buf_size)))
       result = base::File::FILE_ERROR_FAILED;
     EXPECT_EQ(base::File::FILE_OK, result);
 
@@ -465,10 +464,11 @@ class FileSystemURLLoaderFactoryTest
       request.headers.MergeFrom(*extra_headers);
     const std::string storage_domain = url.GetOrigin().host();
 
-    auto factory = content::CreateFileSystemURLLoaderFactory(
-        render_frame_host()->GetProcess()->GetID(),
-        render_frame_host()->GetFrameTreeNodeId(), file_system_context,
-        storage_domain);
+    mojo::Remote<network::mojom::URLLoaderFactory> factory(
+        CreateFileSystemURLLoaderFactory(
+            render_frame_host()->GetProcess()->GetID(),
+            render_frame_host()->GetFrameTreeNodeId(), file_system_context,
+            storage_domain));
 
     auto client = std::make_unique<network::TestURLLoaderClient>();
     loader_.reset();
@@ -605,8 +605,7 @@ IN_PROC_BROWSER_TEST_P(FileSystemURLLoaderFactoryTest,
   base::FilePath mnt_point = SetUpAutoMountContext();
   EXPECT_TRUE(base::CreateDirectory(mnt_point));
   EXPECT_TRUE(base::CreateDirectory(mnt_point.AppendASCII("foo")));
-  EXPECT_EQ(10,
-            base::WriteFile(mnt_point.AppendASCII("bar"), "1234567890", 10));
+  EXPECT_TRUE(base::WriteFile(mnt_point.AppendASCII("bar"), "1234567890"));
 
   auto client =
       TestLoad(GURL("filesystem:http://automount/external/mnt_name/"));

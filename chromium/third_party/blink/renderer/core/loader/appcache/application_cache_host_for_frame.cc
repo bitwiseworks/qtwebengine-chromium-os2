@@ -6,9 +6,9 @@
 
 #include "third_party/blink/public/common/loader/url_loader_factory_bundle.h"
 #include "third_party/blink/public/platform/platform.h"
-#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/events/application_cache_error_event.h"
 #include "third_party/blink/renderer/core/events/progress_event.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
@@ -34,8 +34,8 @@ KURL ClearUrlRef(const KURL& input_url) {
 }
 
 void RestartNavigation(LocalFrame* frame) {
-  Document* document = frame->GetDocument();
-  FrameLoadRequest request(document, ResourceRequest(document->Url()));
+  LocalDOMWindow* window = frame->DomWindow();
+  FrameLoadRequest request(window, ResourceRequest(window->Url()));
   request.SetClientRedirectReason(ClientNavigationReason::kReload);
   frame->Navigate(request, WebFrameLoadType::kReplaceCurrentItem);
 }
@@ -47,7 +47,9 @@ ApplicationCacheHostForFrame::ApplicationCacheHostForFrame(
     const BrowserInterfaceBrokerProxy& interface_broker_proxy,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner,
     const base::UnguessableToken& appcache_host_id)
-    : ApplicationCacheHost(interface_broker_proxy, std::move(task_runner)),
+    : ApplicationCacheHost(interface_broker_proxy,
+                           std::move(task_runner),
+                           document_loader->GetFrame()->DomWindow()),
       local_frame_(document_loader->GetFrame()),
       document_loader_(document_loader) {
   // PlzNavigate: The browser passes the ID to be used.
@@ -207,15 +209,15 @@ void ApplicationCacheHostForFrame::SelectCacheWithoutManifest() {
 void ApplicationCacheHostForFrame::SelectCacheWithManifest(
     const KURL& manifest_url) {
   LocalFrame* frame = document_loader_->GetFrame();
-  Document* document = frame->GetDocument();
-  if (document->IsSandboxed(mojom::blink::WebSandboxFlags::kOrigin)) {
+  LocalDOMWindow* window = frame->DomWindow();
+  if (window->IsSandboxed(network::mojom::blink::WebSandboxFlags::kOrigin)) {
     // Prevent sandboxes from establishing application caches.
     SelectCacheWithoutManifest();
     return;
   }
-  CHECK(document->IsSecureContext());
+  CHECK(window->IsSecureContext());
   Deprecation::CountDeprecation(
-      document, WebFeature::kApplicationCacheManifestSelectSecureOrigin);
+      window, WebFeature::kApplicationCacheManifestSelectSecureOrigin);
 
   if (!backend_host_.is_bound())
     return;
@@ -285,7 +287,7 @@ void ApplicationCacheHostForFrame::DidReceiveResponseForMainResource(
     is_new_master_entry_ = OLD_ENTRY;
 }
 
-void ApplicationCacheHostForFrame::Trace(Visitor* visitor) {
+void ApplicationCacheHostForFrame::Trace(Visitor* visitor) const {
   visitor->Trace(dom_application_cache_);
   visitor->Trace(local_frame_);
   visitor->Trace(document_loader_);

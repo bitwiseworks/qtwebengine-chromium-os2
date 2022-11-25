@@ -44,7 +44,7 @@ struct str_encoder_t
 
   void encode_byte (unsigned char b)
   {
-    if (unlikely (buff.push (b) == &Crap(unsigned char)))
+    if (unlikely (buff.push (b) == &Crap (unsigned char)))
       set_error ();
   }
 
@@ -110,7 +110,11 @@ struct str_encoder_t
   void copy_str (const byte_str_t &str)
   {
     unsigned int  offset = buff.length;
-    buff.resize (offset + str.length);
+    if (unlikely (!buff.resize (offset + str.length)))
+    {
+      set_error ();
+      return;
+    }
     if (unlikely (buff.length < offset + str.length))
     {
       set_error ();
@@ -185,7 +189,7 @@ struct cff_font_dict_op_serializer_t : op_serializer_t
     else
     {
       HBUINT8 *d = c->allocate_size<HBUINT8> (opstr.str.length);
-      if (unlikely (d == nullptr)) return_trace (false);
+      if (unlikely (!d)) return_trace (false);
       memcpy (d, &opstr.str[0], opstr.str.length);
     }
     return_trace (true);
@@ -412,7 +416,8 @@ struct parsed_cs_str_vec_t : hb_vector_t<parsed_cs_str_t>
   void init (unsigned int len_ = 0)
   {
     SUPER::init ();
-    resize (len_);
+    if (unlikely (!resize (len_)))
+      return;
     for (unsigned int i = 0; i < length; i++)
       (*this)[i].init ();
   }
@@ -461,19 +466,19 @@ struct subr_subset_param_t
   template <typename ENV>
   void set_current_str (ENV &env, bool calling)
   {
-    parsed_cs_str_t  *parsed_str = get_parsed_str_for_context (env.context);
-    if (likely (parsed_str != nullptr))
+    parsed_cs_str_t *parsed_str = get_parsed_str_for_context (env.context);
+    if (unlikely (!parsed_str))
     {
-      /* If the called subroutine is parsed partially but not completely yet,
-       * it must be because we are calling it recursively.
-       * Handle it as an error. */
-      if (unlikely (calling && !parsed_str->is_parsed () && (parsed_str->values.length > 0)))
-	env.set_error ();
-      else
-	current_parsed_str = parsed_str;
-    }
-    else
       env.set_error ();
+      return;
+    }
+    /* If the called subroutine is parsed partially but not completely yet,
+     * it must be because we are calling it recursively.
+     * Handle it as an error. */
+    if (unlikely (calling && !parsed_str->is_parsed () && (parsed_str->values.length > 0)))
+      env.set_error ();
+    else
+      current_parsed_str = parsed_str;
   }
 
   parsed_cs_str_t	*current_parsed_str;
@@ -528,9 +533,14 @@ struct subr_remaps_t
 
   void init (unsigned int fdCount)
   {
-    local_remaps.resize (fdCount);
+    if (unlikely (!local_remaps.resize (fdCount))) return;
     for (unsigned int i = 0; i < fdCount; i++)
       local_remaps[i].init ();
+  }
+
+  bool in_error()
+  {
+    return local_remaps.in_error ();
   }
 
   void create (subr_closures_t& closures)
@@ -591,10 +601,19 @@ struct subr_subsetter_t
 
     parsed_charstrings.init (plan->num_output_glyphs ());
     parsed_global_subrs.init (acc.globalSubrs->count);
-    parsed_local_subrs.resize (acc.fdCount);
+
+    if (unlikely (remaps.in_error()
+                  || parsed_charstrings.in_error ()
+                  || parsed_global_subrs.in_error ())) {
+      return false;
+    }
+
+    if (unlikely (!parsed_local_subrs.resize (acc.fdCount))) return false;
+
     for (unsigned int i = 0; i < acc.fdCount; i++)
     {
       parsed_local_subrs[i].init (acc.privateDicts[i].localSubrs->count);
+      if (unlikely (parsed_local_subrs[i].in_error ())) return false;
     }
     if (unlikely (!closures.valid))
       return false;

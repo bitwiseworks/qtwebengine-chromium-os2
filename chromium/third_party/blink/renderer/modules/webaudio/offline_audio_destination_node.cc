@@ -57,7 +57,6 @@ OfflineAudioDestinationHandler::OfflineAudioDestinationHandler(
   DCHECK(main_thread_task_runner_->BelongsToCurrentThread());
 
   channel_count_ = number_of_channels;
-
   SetInternalChannelCountMode(kExplicit);
   SetInternalChannelInterpretation(AudioBus::kSpeakers);
 }
@@ -91,7 +90,11 @@ void OfflineAudioDestinationHandler::Uninitialize() {
   if (!IsInitialized())
     return;
 
-  render_thread_.reset();
+  // See https://crbug.com/1110035 and https://crbug.com/1080821. Resetting the
+  // thread unique pointer multiple times or not-resetting at all causes a
+  // mysterious CHECK failure or a crash.
+  if (render_thread_)
+    render_thread_.reset();
 
   DisablePullingAudioGraph();
   AudioHandler::Uninitialize();
@@ -113,7 +116,7 @@ void OfflineAudioDestinationHandler::StartRendering() {
   // Rendering was not started. Starting now.
   if (!is_rendering_started_) {
     is_rendering_started_ = true;
-    EnablePullingAudioGraph(); 
+    EnablePullingAudioGraph();
     PostCrossThreadTask(
         *render_thread_task_runner_, FROM_HERE,
         CrossThreadBindOnce(
@@ -314,11 +317,11 @@ bool OfflineAudioDestinationHandler::RenderIfNotSuspended(
         // in-place processing was not possible - so copy
         destination_bus->CopyFrom(*rendered_bus);
       }
+
     } else {
       // Not allowed to pull on the graph or couldn't get the lock.
       destination_bus->Zero();
     }
-
   }
 
   // Process nodes which need a little extra help because they are not
@@ -401,7 +404,7 @@ OfflineAudioDestinationNode* OfflineAudioDestinationNode::Create(
       *context, number_of_channels, frames_to_process, sample_rate);
 }
 
-void OfflineAudioDestinationNode::Trace(Visitor* visitor) {
+void OfflineAudioDestinationNode::Trace(Visitor* visitor) const {
   visitor->Trace(destination_buffer_);
   AudioDestinationNode::Trace(visitor);
 }

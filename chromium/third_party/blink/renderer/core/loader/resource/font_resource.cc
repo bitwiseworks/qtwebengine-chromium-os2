@@ -117,8 +117,16 @@ scoped_refptr<FontCustomPlatformData> FontResource::GetCustomFontData() {
     if (Data())
       font_data_ = FontCustomPlatformData::Create(Data(), ots_parsing_message_);
 
-    if (!font_data_)
+    if (!font_data_) {
       SetStatus(ResourceStatus::kDecodeError);
+    } else {
+      // Call observers once and remove them.
+      HeapHashSet<WeakMember<FontResourceClearDataObserver>> observers;
+      observers.swap(clear_data_observers_);
+      for (const auto& observer : observers)
+        observer->FontResourceDataWillBeCleared();
+      ClearData();
+    }
   }
   return font_data_;
 }
@@ -173,11 +181,6 @@ void FontResource::NotifyClientsLongLimitExceeded() {
     client->FontLoadLongLimitExceeded(this);
 }
 
-void FontResource::AllClientsAndObserversRemoved() {
-  font_data_ = nullptr;
-  Resource::AllClientsAndObserversRemoved();
-}
-
 void FontResource::NotifyFinished() {
   font_load_short_limit_.Cancel();
   font_load_long_limit_.Cancel();
@@ -207,6 +210,16 @@ void FontResource::OnMemoryDump(WebMemoryDumpLevelOfDetail level,
   WebMemoryAllocatorDump* dump = memory_dump->CreateMemoryAllocatorDump(name);
   dump->AddScalar("size", "bytes", font_data_->DataSize());
   memory_dump->AddSuballocation(dump->Guid(), "malloc");
+}
+
+void FontResource::AddClearDataObserver(
+    FontResourceClearDataObserver* observer) const {
+  clear_data_observers_.insert(observer);
+}
+
+void FontResource::Trace(Visitor* visitor) const {
+  visitor->Trace(clear_data_observers_);
+  Resource::Trace(visitor);
 }
 
 }  // namespace blink

@@ -24,18 +24,17 @@ namespace {
 const uint16_t kUsbVersion2_1 = 0x0210;
 }  // namespace
 
-UsbDeviceWin::UsbDeviceWin(
-    const base::string16& device_path,
-    const base::string16& hub_path,
-    const std::vector<base::string16>& child_device_paths,
-    uint32_t bus_number,
-    uint32_t port_number,
-    const base::string16& driver_name)
+UsbDeviceWin::UsbDeviceWin(const std::wstring& device_path,
+                           const std::wstring& hub_path,
+                           const base::flat_map<int, FunctionInfo>& functions,
+                           uint32_t bus_number,
+                           uint32_t port_number,
+                           bool is_supported)
     : UsbDevice(bus_number, port_number),
       device_path_(device_path),
       hub_path_(hub_path),
-      child_device_paths_(child_device_paths),
-      driver_name_(driver_name) {}
+      functions_(functions),
+      is_supported_(is_supported) {}
 
 UsbDeviceWin::~UsbDeviceWin() {}
 
@@ -43,14 +42,13 @@ void UsbDeviceWin::Open(OpenCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   scoped_refptr<UsbDeviceHandle> device_handle;
-  if (base::EqualsCaseInsensitiveASCII(driver_name_, L"winusb"))
-    device_handle = new UsbDeviceHandleWin(this, false);
-  // TODO: Support composite devices.
-  // else if (base::EqualsCaseInsensitiveASCII(driver_name_, "usbccgp"))
-  //  device_handle = new UsbDeviceHandleWin(this, true);
+  if (is_supported_) {
+    device_handle = new UsbDeviceHandleWin(this);
+    handles().push_back(device_handle.get());
+  }
 
   base::SequencedTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(std::move(callback), device_handle));
+      FROM_HERE, base::BindOnce(std::move(callback), std::move(device_handle)));
 }
 
 void UsbDeviceWin::ReadDescriptors(base::OnceCallback<void(bool)> callback) {
@@ -71,6 +69,18 @@ void UsbDeviceWin::ReadDescriptors(base::OnceCallback<void(bool)> callback) {
   ReadUsbDescriptors(device_handle,
                      base::BindOnce(&UsbDeviceWin::OnReadDescriptors, this,
                                     std::move(callback), device_handle));
+}
+
+void UsbDeviceWin::UpdateFunction(int interface_number,
+                                  const FunctionInfo& function_info) {
+  functions_.insert({interface_number, function_info});
+
+  for (UsbDeviceHandle* handle : handles()) {
+    // This is safe because only this class only adds instance of
+    // UsbDeviceHandleWin to handles().
+    static_cast<UsbDeviceHandleWin*>(handle)->UpdateFunction(
+        interface_number, function_info.driver, function_info.path);
+  }
 }
 
 void UsbDeviceWin::OnReadDescriptors(
@@ -98,11 +108,11 @@ void UsbDeviceWin::OnReadDescriptors(
 
   auto string_map = std::make_unique<std::map<uint8_t, base::string16>>();
   if (descriptor->i_manufacturer)
-    (*string_map)[descriptor->i_manufacturer] = base::string16();
+    (*string_map)[descriptor->i_manufacturer];
   if (descriptor->i_product)
-    (*string_map)[descriptor->i_product] = base::string16();
+    (*string_map)[descriptor->i_product];
   if (descriptor->i_serial_number)
-    (*string_map)[descriptor->i_serial_number] = base::string16();
+    (*string_map)[descriptor->i_serial_number];
 
   ReadUsbStringDescriptors(
       device_handle, std::move(string_map),

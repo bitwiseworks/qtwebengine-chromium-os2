@@ -6,11 +6,10 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_MEDIA_VALUES_H_
 
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom-shared.h"
-#include "third_party/blink/public/platform/pointer_properties.h"
-#include "third_party/blink/public/platform/shape_properties.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_primitive_value.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "ui/base/pointer/pointer_device.h"
 
 namespace blink {
 
@@ -22,13 +21,14 @@ enum class ColorSpaceGamut;
 enum class PreferredColorScheme;
 enum class ForcedColors;
 enum class NavigationControls;
+enum class ScreenSpanning;
 
 PreferredColorScheme CSSValueIDToPreferredColorScheme(CSSValueID id);
 
 class CORE_EXPORT MediaValues : public GarbageCollected<MediaValues> {
  public:
   virtual ~MediaValues() = default;
-  virtual void Trace(Visitor* visitor) {}
+  virtual void Trace(Visitor* visitor) const {}
 
   static MediaValues* CreateDynamicIfFrameExists(LocalFrame*);
   virtual MediaValues* Copy() const = 0;
@@ -67,9 +67,9 @@ class CORE_EXPORT MediaValues : public GarbageCollected<MediaValues> {
   virtual float DevicePixelRatio() const = 0;
   virtual int ColorBitsPerComponent() const = 0;
   virtual int MonochromeBitsPerComponent() const = 0;
-  virtual PointerType PrimaryPointerType() const = 0;
+  virtual ui::PointerType PrimaryPointerType() const = 0;
   virtual int AvailablePointerTypes() const = 0;
-  virtual HoverType PrimaryHoverType() const = 0;
+  virtual ui::HoverType PrimaryHoverType() const = 0;
   virtual int AvailableHoverTypes() const = 0;
   virtual bool ThreeDEnabled() const = 0;
   virtual bool InImmersiveMode() const = 0;
@@ -80,12 +80,13 @@ class CORE_EXPORT MediaValues : public GarbageCollected<MediaValues> {
   virtual bool HasValues() const = 0;
 
   virtual void OverrideViewportDimensions(double width, double height) = 0;
-  virtual DisplayShape GetDisplayShape() const = 0;
   virtual ColorSpaceGamut ColorGamut() const = 0;
   virtual PreferredColorScheme GetPreferredColorScheme() const = 0;
   virtual bool PrefersReducedMotion() const = 0;
+  virtual bool PrefersReducedData() const = 0;
   virtual ForcedColors GetForcedColors() const = 0;
   virtual NavigationControls GetNavigationControls() const = 0;
+  virtual ScreenSpanning GetScreenSpanning() const = 0;
 
  protected:
   static double CalculateViewportWidth(LocalFrame*);
@@ -101,16 +102,17 @@ class CORE_EXPORT MediaValues : public GarbageCollected<MediaValues> {
   static blink::mojom::DisplayMode CalculateDisplayMode(LocalFrame*);
   static bool CalculateThreeDEnabled(LocalFrame*);
   static bool CalculateInImmersiveMode(LocalFrame*);
-  static PointerType CalculatePrimaryPointerType(LocalFrame*);
+  static ui::PointerType CalculatePrimaryPointerType(LocalFrame*);
   static int CalculateAvailablePointerTypes(LocalFrame*);
-  static HoverType CalculatePrimaryHoverType(LocalFrame*);
+  static ui::HoverType CalculatePrimaryHoverType(LocalFrame*);
   static int CalculateAvailableHoverTypes(LocalFrame*);
-  static DisplayShape CalculateDisplayShape(LocalFrame*);
   static ColorSpaceGamut CalculateColorGamut(LocalFrame*);
   static PreferredColorScheme CalculatePreferredColorScheme(LocalFrame*);
   static bool CalculatePrefersReducedMotion(LocalFrame*);
+  static bool CalculatePrefersReducedData(LocalFrame*);
   static ForcedColors CalculateForcedColors();
   static NavigationControls CalculateNavigationControls(LocalFrame*);
+  static ScreenSpanning CalculateScreenSpanning(LocalFrame*);
 };
 
 }  // namespace blink

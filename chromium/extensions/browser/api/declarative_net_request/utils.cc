@@ -16,14 +16,16 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/task/post_task.h"
 #include "components/url_pattern_index/url_pattern_index.h"
 #include "components/web_cache/browser/web_cache_manager.h"
-#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/browser/api/declarative_net_request/composite_matcher.h"
 #include "extensions/browser/api/declarative_net_request/constants.h"
 #include "extensions/browser/api/declarative_net_request/flat/extension_ruleset_generated.h"
+#include "extensions/browser/api/declarative_net_request/ruleset_matcher.h"
 #include "extensions/browser/api/web_request/web_request_info.h"
+#include "extensions/common/api/declarative_net_request/constants.h"
+#include "extensions/common/api/declarative_net_request/dnr_manifest_data.h"
 #include "third_party/flatbuffers/src/include/flatbuffers/flatbuffers.h"
 
 namespace extensions {
@@ -37,7 +39,7 @@ namespace dnr_api = api::declarative_net_request;
 // url_pattern_index.fbs. Whenever an extension with an indexed ruleset format
 // version different from the one currently used by Chrome is loaded, the
 // extension ruleset will be reindexed.
-constexpr int kIndexedRulesetFormatVersion = 16;
+constexpr int kIndexedRulesetFormatVersion = 18;
 
 // This static assert is meant to catch cases where
 // url_pattern_index::kUrlPatternIndexFormatVersion is incremented without
@@ -47,9 +49,16 @@ static_assert(url_pattern_index::kUrlPatternIndexFormatVersion == 6,
               "also updated kIndexedRulesetFormatVersion above.");
 
 constexpr int kInvalidIndexedRulesetFormatVersion = -1;
-
 int g_indexed_ruleset_format_version_for_testing =
     kInvalidIndexedRulesetFormatVersion;
+
+constexpr int kInvalidOverrideChecksumForTest = -1;
+int g_override_checksum_for_test = kInvalidOverrideChecksumForTest;
+
+constexpr int kInvalidRuleLimit = -1;
+int g_static_rule_limit_for_testing = kInvalidRuleLimit;
+int g_global_static_rule_limit_for_testing = kInvalidRuleLimit;
+int g_regex_rule_limit_for_testing = kInvalidRuleLimit;
 
 int GetIndexedRulesetFormatVersion() {
   return g_indexed_ruleset_format_version_for_testing ==
@@ -63,20 +72,6 @@ int GetIndexedRulesetFormatVersion() {
 std::string GetVersionHeader() {
   return base::StringPrintf("---------Version=%d",
                             GetIndexedRulesetFormatVersion());
-}
-
-// Returns the checksum of the given serialized |data|. |data| must not include
-// the version header.
-int GetChecksum(base::span<const uint8_t> data) {
-  uint32_t hash = base::PersistentHash(data.data(), data.size());
-
-  // Strip off the sign bit since this needs to be persisted in preferences
-  // which don't support unsigned ints.
-  return static_cast<int>(hash & 0x7fffffff);
-}
-
-void ClearRendererCacheOnUI() {
-  web_cache::WebCacheManager::GetInstance()->ClearCacheOnNavigation();
 }
 
 }  // namespace
@@ -95,9 +90,9 @@ int GetIndexedRulesetFormatVersionForTesting() {
   return GetIndexedRulesetFormatVersion();
 }
 
-void SetIndexedRulesetFormatVersionForTesting(int version) {
-  DCHECK_NE(kInvalidIndexedRulesetFormatVersion, version);
-  g_indexed_ruleset_format_version_for_testing = version;
+ScopedIncrementRulesetVersion CreateScopedIncrementRulesetVersionForTesting() {
+  return base::AutoReset<int>(&g_indexed_ruleset_format_version_for_testing,
+                              GetIndexedRulesetFormatVersion() + 1);
 }
 
 bool StripVersionHeaderAndParseVersion(std::string* ruleset_data) {
@@ -112,6 +107,21 @@ bool StripVersionHeaderAndParseVersion(std::string* ruleset_data) {
   // Strip the header from |ruleset_data|.
   ruleset_data->erase(0, version_header.size());
   return true;
+}
+
+int GetChecksum(base::span<const uint8_t> data) {
+  if (g_override_checksum_for_test != kInvalidOverrideChecksumForTest)
+    return g_override_checksum_for_test;
+
+  uint32_t hash = base::PersistentHash(data.data(), data.size());
+
+  // Strip off the sign bit since this needs to be persisted in preferences
+  // which don't support unsigned ints.
+  return static_cast<int>(hash & 0x7fffffff);
+}
+
+void OverrideGetChecksumForTest(int checksum) {
+  g_override_checksum_for_test = checksum;
 }
 
 bool PersistIndexedRuleset(const base::FilePath& path,
@@ -149,14 +159,9 @@ bool PersistIndexedRuleset(const base::FilePath& path,
   return true;
 }
 
-// Helper to clear each renderer's in-memory cache the next time it navigates.
 void ClearRendererCacheOnNavigation() {
-  if (content::BrowserThread::CurrentlyOn(content::BrowserThread::UI)) {
-    ClearRendererCacheOnUI();
-  } else {
-    base::PostTask(FROM_HERE, {content::BrowserThread::UI},
-                   base::BindOnce(&ClearRendererCacheOnUI));
-  }
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  web_cache::WebCacheManager::GetInstance()->ClearCacheOnNavigation();
 }
 
 void LogReadDynamicRulesStatus(ReadJSONRulesResult::Status status) {
@@ -254,8 +259,6 @@ flat::ActionType ConvertToFlatActionType(dnr_api::RuleActionType action_type) {
       return flat::ActionType_allow;
     case dnr_api::RULE_ACTION_TYPE_REDIRECT:
       return flat::ActionType_redirect;
-    case dnr_api::RULE_ACTION_TYPE_REMOVEHEADERS:
-      return flat::ActionType_remove_headers;
     case dnr_api::RULE_ACTION_TYPE_MODIFYHEADERS:
       return flat::ActionType_modify_headers;
     case dnr_api::RULE_ACTION_TYPE_UPGRADESCHEME:
@@ -267,6 +270,73 @@ flat::ActionType ConvertToFlatActionType(dnr_api::RuleActionType action_type) {
   }
   NOTREACHED();
   return flat::ActionType_block;
+}
+
+std::string GetPublicRulesetID(const Extension& extension,
+                               RulesetID ruleset_id) {
+  if (ruleset_id == kDynamicRulesetID)
+    return dnr_api::DYNAMIC_RULESET_ID;
+
+  DCHECK_GE(ruleset_id, kMinValidStaticRulesetID);
+  return DNRManifestData::GetRuleset(extension, ruleset_id).manifest_id;
+}
+
+std::vector<std::string> GetPublicRulesetIDs(const Extension& extension,
+                                             const CompositeMatcher& matcher) {
+  std::vector<std::string> ids;
+  ids.reserve(matcher.matchers().size());
+  for (const std::unique_ptr<RulesetMatcher>& matcher2 : matcher.matchers())
+    ids.push_back(GetPublicRulesetID(extension, matcher2->id()));
+
+  return ids;
+}
+
+int GetStaticRuleLimit() {
+  bool global_rules_enabled =
+      base::FeatureList::IsEnabled(kDeclarativeNetRequestGlobalRules);
+
+  int default_static_rule_constant =
+      global_rules_enabled ? dnr_api::GUARANTEED_MINIMUM_STATIC_RULES
+                           : dnr_api::MAX_NUMBER_OF_RULES;
+
+  int static_rule_limit = g_static_rule_limit_for_testing == kInvalidRuleLimit
+                              ? default_static_rule_constant
+                              : g_static_rule_limit_for_testing;
+
+  if (!global_rules_enabled)
+    return static_rule_limit;
+
+  int global_rule_limit =
+      g_global_static_rule_limit_for_testing == kInvalidRuleLimit
+          ? kMaxStaticRulesPerProfile
+          : g_global_static_rule_limit_for_testing;
+
+  return static_rule_limit + global_rule_limit;
+}
+
+int GetDynamicRuleLimit() {
+  return dnr_api::MAX_NUMBER_OF_DYNAMIC_RULES;
+}
+
+int GetRegexRuleLimit() {
+  return g_regex_rule_limit_for_testing == kInvalidRuleLimit
+             ? dnr_api::MAX_NUMBER_OF_REGEX_RULES
+             : g_regex_rule_limit_for_testing;
+}
+
+ScopedRuleLimitOverride CreateScopedStaticRuleLimitOverrideForTesting(
+    int limit) {
+  return base::AutoReset<int>(&g_static_rule_limit_for_testing, limit);
+}
+
+ScopedRuleLimitOverride CreateScopedGlobalStaticRuleLimitOverrideForTesting(
+    int limit) {
+  return base::AutoReset<int>(&g_global_static_rule_limit_for_testing, limit);
+}
+
+ScopedRuleLimitOverride CreateScopedRegexRuleLimitOverrideForTesting(
+    int limit) {
+  return base::AutoReset<int>(&g_regex_rule_limit_for_testing, limit);
 }
 
 }  // namespace declarative_net_request

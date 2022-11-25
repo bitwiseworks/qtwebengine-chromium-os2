@@ -45,7 +45,7 @@ TEST_F(LayoutBoxModelObjectTest, StickyPositionConstraints) {
   LayoutBoxModelObject* sticky =
       ToLayoutBoxModelObject(GetLayoutObjectByElementId("sticky"));
   sticky->UpdateStickyPositionConstraints();
-  ASSERT_EQ(scroller->Layer(), sticky->Layer()->AncestorOverflowLayer());
+  ASSERT_EQ(scroller->Layer(), sticky->Layer()->AncestorScrollContainerLayer());
 
   const StickyPositionScrollingConstraints& constraints =
       scrollable_area->GetStickyConstraintsMap().at(sticky->Layer());
@@ -88,7 +88,7 @@ TEST_F(LayoutBoxModelObjectTest, StickyPositionVerticalRLConstraints) {
   LayoutBoxModelObject* sticky =
       ToLayoutBoxModelObject(GetLayoutObjectByElementId("sticky"));
   sticky->UpdateStickyPositionConstraints();
-  ASSERT_EQ(scroller->Layer(), sticky->Layer()->AncestorOverflowLayer());
+  ASSERT_EQ(scroller->Layer(), sticky->Layer()->AncestorScrollContainerLayer());
 
   const StickyPositionScrollingConstraints& constraints =
       scrollable_area->GetStickyConstraintsMap().at(sticky->Layer());
@@ -140,7 +140,7 @@ TEST_F(LayoutBoxModelObjectTest, StickyPositionInlineConstraints) {
 
   sticky->UpdateStickyPositionConstraints();
 
-  EXPECT_EQ(scroller->Layer(), sticky->Layer()->AncestorOverflowLayer());
+  EXPECT_EQ(scroller->Layer(), sticky->Layer()->AncestorScrollContainerLayer());
 
   const StickyPositionScrollingConstraints& constraints =
       scrollable_area->GetStickyConstraintsMap().at(sticky->Layer());
@@ -199,7 +199,7 @@ TEST_F(LayoutBoxModelObjectTest, StickyPositionVerticalRLInlineConstraints) {
 
   sticky->UpdateStickyPositionConstraints();
 
-  EXPECT_EQ(scroller->Layer(), sticky->Layer()->AncestorOverflowLayer());
+  EXPECT_EQ(scroller->Layer(), sticky->Layer()->AncestorScrollContainerLayer());
 
   const StickyPositionScrollingConstraints& constraints =
       scrollable_area->GetStickyConstraintsMap().at(sticky->Layer());
@@ -241,7 +241,7 @@ TEST_F(LayoutBoxModelObjectTest, StickyPositionTransforms) {
   LayoutBoxModelObject* sticky =
       ToLayoutBoxModelObject(GetLayoutObjectByElementId("sticky"));
   sticky->UpdateStickyPositionConstraints();
-  ASSERT_EQ(scroller->Layer(), sticky->Layer()->AncestorOverflowLayer());
+  ASSERT_EQ(scroller->Layer(), sticky->Layer()->AncestorScrollContainerLayer());
 
   const StickyPositionScrollingConstraints& constraints =
       scrollable_area->GetStickyConstraintsMap().at(sticky->Layer());
@@ -279,7 +279,7 @@ TEST_F(LayoutBoxModelObjectTest, StickyPositionPercentageStyles) {
   LayoutBoxModelObject* sticky =
       ToLayoutBoxModelObject(GetLayoutObjectByElementId("sticky"));
   sticky->UpdateStickyPositionConstraints();
-  ASSERT_EQ(scroller->Layer(), sticky->Layer()->AncestorOverflowLayer());
+  ASSERT_EQ(scroller->Layer(), sticky->Layer()->AncestorScrollContainerLayer());
 
   const StickyPositionScrollingConstraints& constraints =
       scrollable_area->GetStickyConstraintsMap().at(sticky->Layer());
@@ -314,7 +314,7 @@ TEST_F(LayoutBoxModelObjectTest, StickyPositionContainerIsScroller) {
   LayoutBoxModelObject* sticky =
       ToLayoutBoxModelObject(GetLayoutObjectByElementId("sticky"));
   sticky->UpdateStickyPositionConstraints();
-  ASSERT_EQ(scroller->Layer(), sticky->Layer()->AncestorOverflowLayer());
+  ASSERT_EQ(scroller->Layer(), sticky->Layer()->AncestorScrollContainerLayer());
 
   const StickyPositionScrollingConstraints& constraints =
       scrollable_area->GetStickyConstraintsMap().at(sticky->Layer());
@@ -350,7 +350,7 @@ TEST_F(LayoutBoxModelObjectTest, StickyPositionAnonymousContainer) {
   LayoutBoxModelObject* sticky =
       ToLayoutBoxModelObject(GetLayoutObjectByElementId("sticky"));
   sticky->UpdateStickyPositionConstraints();
-  ASSERT_EQ(scroller->Layer(), sticky->Layer()->AncestorOverflowLayer());
+  ASSERT_EQ(scroller->Layer(), sticky->Layer()->AncestorScrollContainerLayer());
 
   const StickyPositionScrollingConstraints& constraints =
       scrollable_area->GetStickyConstraintsMap().at(sticky->Layer());
@@ -474,7 +474,7 @@ TEST_F(LayoutBoxModelObjectTest,
       GetPaintLayerByElementId("stickyInnerInline");
 
   PaintLayerScrollableArea* scrollable_area =
-      sticky_outer_div->AncestorOverflowLayer()->GetScrollableArea();
+      sticky_outer_div->AncestorScrollContainerLayer()->GetScrollableArea();
   ASSERT_TRUE(scrollable_area);
   StickyConstraintsMap constraints_map =
       scrollable_area->GetStickyConstraintsMap();
@@ -572,7 +572,7 @@ TEST_F(LayoutBoxModelObjectTest,
   PaintLayer* sticky_grandchild = GetPaintLayerByElementId("stickyGrandchild");
 
   PaintLayerScrollableArea* scrollable_area =
-      sticky_parent->AncestorOverflowLayer()->GetScrollableArea();
+      sticky_parent->AncestorScrollContainerLayer()->GetScrollableArea();
   ASSERT_TRUE(scrollable_area);
   StickyConstraintsMap constraints_map =
       scrollable_area->GetStickyConstraintsMap();
@@ -1070,16 +1070,16 @@ TEST_F(LayoutBoxModelObjectTest, InvalidatePaintLayerOnStackedChange) {
   auto* parent = target->Parent();
   auto* original_compositing_container =
       target->Layer()->CompositingContainer();
-  EXPECT_FALSE(target->StyleRef().IsStackingContext());
-  EXPECT_TRUE(target->StyleRef().IsStacked());
-  EXPECT_FALSE(parent->StyleRef().IsStacked());
+  EXPECT_FALSE(target->IsStackingContext());
+  EXPECT_TRUE(target->IsStacked());
+  EXPECT_FALSE(parent->IsStacked());
   EXPECT_NE(parent, original_compositing_container->GetLayoutObject());
 
   target_element->setAttribute(html_names::kClassAttr, "non-stacked");
   GetDocument().View()->UpdateLifecycleToLayoutClean(
       DocumentUpdateReason::kTest);
 
-  EXPECT_FALSE(target->StyleRef().IsStacked());
+  EXPECT_FALSE(target->IsStacked());
   EXPECT_TRUE(target->Layer()->SelfNeedsRepaint());
   EXPECT_TRUE(original_compositing_container->DescendantNeedsRepaint());
   auto* new_compositing_container = target->Layer()->CompositingContainer();
@@ -1090,7 +1090,7 @@ TEST_F(LayoutBoxModelObjectTest, InvalidatePaintLayerOnStackedChange) {
   GetDocument().View()->UpdateLifecycleToLayoutClean(
       DocumentUpdateReason::kTest);
 
-  EXPECT_TRUE(target->StyleRef().IsStacked());
+  EXPECT_TRUE(target->IsStacked());
   EXPECT_TRUE(target->Layer()->SelfNeedsRepaint());
   EXPECT_TRUE(new_compositing_container->DescendantNeedsRepaint());
   EXPECT_EQ(original_compositing_container,
@@ -1116,9 +1116,9 @@ TEST_F(LayoutBoxModelObjectTest, StickyRemovedFromRootScrollableArea) {
   LayoutBoxModelObject* scroller =
       ToLayoutBoxModelObject(GetLayoutObjectByElementId("scroller"));
 
-  // The 'scroller' starts as non-overflow, so the sticky element's ancestor
-  // overflow layer should be the outer scroller.
-  EXPECT_TRUE(sticky->Layer()->AncestorOverflowLayer()->IsRootLayer());
+  // The 'scroller' starts as as a non-scroll container, so the sticky
+  // element's ancestor overflow layer should be the outer scroller.
+  EXPECT_TRUE(sticky->Layer()->AncestorScrollContainerLayer()->IsRootLayer());
 
   // We need the sticky element to not be a PaintLayer child of the scroller,
   // so that it is later reparented under the scroller's PaintLayer
@@ -1173,6 +1173,136 @@ TEST_F(LayoutBoxModelObjectTest, BackfaceVisibilityChange) {
   EXPECT_FALSE(target_layer->SelfNeedsRepaint());
 }
 
+TEST_F(LayoutBoxModelObjectTest, ChangingFilterWithWillChange) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      #target {
+        width: 100px;
+        height: 100px;
+        will-change: filter;
+      }
+    </style>
+    <div id="target"></div>
+  )HTML");
+
+  // Adding a filter should not need to check for paint invalidation because
+  // will-change: filter is present.
+  auto* target = GetDocument().getElementById("target");
+  target->setAttribute(html_names::kStyleAttr, "filter: grayscale(1)");
+  GetDocument().UpdateStyleAndLayoutTree();
+  EXPECT_FALSE(target->GetLayoutObject()->ShouldCheckForPaintInvalidation());
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(target->GetLayoutObject()->ShouldCheckForPaintInvalidation());
+
+  // Removing a filter should not need to check for paint invalidation because
+  // will-change: filter is present.
+  target->removeAttribute(html_names::kStyleAttr);
+  GetDocument().UpdateStyleAndLayoutTree();
+  EXPECT_FALSE(target->GetLayoutObject()->ShouldCheckForPaintInvalidation());
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(target->GetLayoutObject()->ShouldCheckForPaintInvalidation());
+}
+
+TEST_F(LayoutBoxModelObjectTest, ChangingWillChangeFilter) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      .willChange {
+        will-change: filter;
+      }
+      #filter {
+        width: 100px;
+        height: 100px;
+      }
+    </style>
+    <div id="target"></div>
+  )HTML");
+
+  // Adding will-change: filter should check for paint invalidation and create
+  // a PaintLayer.
+  auto* target = GetDocument().getElementById("target");
+  target->classList().Add("willChange");
+  GetDocument().UpdateStyleAndLayoutTree();
+  EXPECT_TRUE(target->GetLayoutObject()->ShouldCheckForPaintInvalidation());
+  EXPECT_TRUE(ToLayoutBoxModelObject(target->GetLayoutObject())->Layer());
+
+  // A lifecycle update should clear dirty bits.
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(target->GetLayoutObject()->ShouldCheckForPaintInvalidation());
+  EXPECT_TRUE(ToLayoutBoxModelObject(target->GetLayoutObject())->Layer());
+
+  // Removing will-change: filter should check for paint invalidation and remove
+  // the PaintLayer.
+  target->classList().Remove("willChange");
+  GetDocument().UpdateStyleAndLayoutTree();
+  EXPECT_TRUE(target->GetLayoutObject()->ShouldCheckForPaintInvalidation());
+  EXPECT_FALSE(ToLayoutBoxModelObject(target->GetLayoutObject())->Layer());
+}
+
+TEST_F(LayoutBoxModelObjectTest, ChangingBackdropFilterWithWillChange) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      #target {
+        width: 100px;
+        height: 100px;
+        will-change: backdrop-filter;
+      }
+    </style>
+    <div id="target"></div>
+  )HTML");
+
+  // Adding a backdrop-filter should not need to check for paint invalidation
+  // because will-change: backdrop-filter is present.
+  auto* target = GetDocument().getElementById("target");
+  target->setAttribute(html_names::kStyleAttr, "backdrop-filter: grayscale(1)");
+  GetDocument().UpdateStyleAndLayoutTree();
+  EXPECT_FALSE(target->GetLayoutObject()->ShouldCheckForPaintInvalidation());
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(target->GetLayoutObject()->ShouldCheckForPaintInvalidation());
+
+  // Removing a backdrop-filter should not need to check for paint invalidation
+  // because will-change: backdrop-filter is present.
+  target->removeAttribute(html_names::kStyleAttr);
+  GetDocument().UpdateStyleAndLayoutTree();
+  EXPECT_FALSE(target->GetLayoutObject()->ShouldCheckForPaintInvalidation());
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(target->GetLayoutObject()->ShouldCheckForPaintInvalidation());
+}
+
+TEST_F(LayoutBoxModelObjectTest, ChangingWillChangeBackdropFilter) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      .willChange {
+        will-change: backdrop-filter;
+      }
+      #filter {
+        width: 100px;
+        height: 100px;
+      }
+    </style>
+    <div id="target"></div>
+  )HTML");
+
+  // Adding will-change: backdrop-filter should check for paint invalidation and
+  // create a PaintLayer.
+  auto* target = GetDocument().getElementById("target");
+  target->classList().Add("willChange");
+  GetDocument().UpdateStyleAndLayoutTree();
+  EXPECT_TRUE(target->GetLayoutObject()->ShouldCheckForPaintInvalidation());
+  EXPECT_TRUE(ToLayoutBoxModelObject(target->GetLayoutObject())->Layer());
+
+  // A lifecycle update should clear dirty bits.
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(target->GetLayoutObject()->ShouldCheckForPaintInvalidation());
+  EXPECT_TRUE(ToLayoutBoxModelObject(target->GetLayoutObject())->Layer());
+
+  // Removing will-change: backdrop-filter should check for paint invalidation
+  // and remove the PaintLayer.
+  target->classList().Remove("willChange");
+  GetDocument().UpdateStyleAndLayoutTree();
+  EXPECT_TRUE(target->GetLayoutObject()->ShouldCheckForPaintInvalidation());
+  EXPECT_FALSE(ToLayoutBoxModelObject(target->GetLayoutObject())->Layer());
+}
+
 TEST_F(LayoutBoxModelObjectTest, UpdateStackingContextForOption) {
   // We do not create LayoutObject for option elements inside multiple selects
   // on platforms where DelegatesMenuListRendering() returns true like Android.
@@ -1197,7 +1327,7 @@ TEST_F(LayoutBoxModelObjectTest, UpdateStackingContextForOption) {
   auto* option_element = GetDocument().getElementById("opt");
   auto* option_layout = option_element->GetLayoutObject();
   ASSERT_TRUE(option_layout);
-  EXPECT_TRUE(option_layout->StyleRef().IsStackingContext());
+  EXPECT_TRUE(option_layout->IsStackingContext());
   EXPECT_TRUE(option_layout->StyleRef().HasCurrentOpacityAnimation());
 }
 

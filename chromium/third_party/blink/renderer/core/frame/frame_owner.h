@@ -26,7 +26,7 @@ class CORE_EXPORT FrameOwner : public GarbageCollectedMixin {
  public:
   virtual ~FrameOwner() = default;
 
-  void Trace(Visitor* visitor) override {}
+  void Trace(Visitor* visitor) const override {}
 
   virtual bool IsLocal() const = 0;
   virtual bool IsRemote() const = 0;
@@ -72,6 +72,7 @@ class CORE_EXPORT FrameOwner : public GarbageCollectedMixin {
   virtual bool AllowFullscreen() const = 0;
   virtual bool AllowPaymentRequest() const = 0;
   virtual bool IsDisplayNone() const = 0;
+  virtual ColorScheme GetColorScheme() const = 0;
   virtual AtomicString RequiredCsp() const = 0;
 
   // Returns whether or not children of the owned frame should be lazily loaded.
@@ -79,6 +80,7 @@ class CORE_EXPORT FrameOwner : public GarbageCollectedMixin {
 
  protected:
   virtual void FrameOwnerPropertiesChanged() {}
+  virtual void CSPAttributeChanged() {}
 
  private:
   virtual void SetIsSwappingFrames(bool) {}
@@ -107,6 +109,7 @@ class FrameSwapScope {
     if (frame_owner_) {
       frame_owner_->SetIsSwappingFrames(false);
       frame_owner_->FrameOwnerPropertiesChanged();
+      frame_owner_->CSPAttributeChanged();
     }
   }
 
@@ -120,10 +123,8 @@ class FrameSwapScope {
 class CORE_EXPORT DummyFrameOwner final
     : public GarbageCollected<DummyFrameOwner>,
       public FrameOwner {
-  USING_GARBAGE_COLLECTED_MIXIN(DummyFrameOwner);
-
  public:
-  void Trace(Visitor* visitor) override { FrameOwner::Trace(visitor); }
+  void Trace(Visitor* visitor) const override { FrameOwner::Trace(visitor); }
 
   // FrameOwner overrides:
   Frame* ContentFrame() const override { return nullptr; }
@@ -150,6 +151,7 @@ class CORE_EXPORT DummyFrameOwner final
   bool AllowFullscreen() const override { return false; }
   bool AllowPaymentRequest() const override { return false; }
   bool IsDisplayNone() const override { return false; }
+  ColorScheme GetColorScheme() const override { return ColorScheme::kLight; }
   AtomicString RequiredCsp() const override { return g_null_atom; }
   bool ShouldLazyLoadChildren() const override { return false; }
 

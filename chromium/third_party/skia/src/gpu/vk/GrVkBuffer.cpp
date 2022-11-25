@@ -37,6 +37,9 @@ const GrVkBuffer::Resource* GrVkBuffer::Create(GrVkGpu* gpu, const Desc& desc) {
         case kIndex_Type:
             bufInfo.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
             break;
+        case kIndirect_Type:
+            bufInfo.usage = VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+            break;
         case kUniform_Type:
             bufInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
             break;
@@ -111,8 +114,17 @@ void GrVkBuffer::Resource::freeGPUData() const {
     GrVkMemory::FreeBufferMemory(fGpu, fType, fAlloc);
 }
 
-void GrVkBuffer::vkRelease() {
+void GrVkBuffer::vkRelease(GrVkGpu* gpu) {
     VALIDATE();
+    if (this->vkIsMapped()) {
+        // Only unmap resources that are not backed by a CPU buffer. Otherwise we may end up
+        // creating a new transfer buffer resources that sends us into a spiral of creating and
+        // destroying resources if we are at our budget limit. Also there really isn't a need to
+        // upload the CPU data if we are deleting this buffer.
+        if (fDesc.fDynamic) {
+            this->vkUnmap(gpu);
+        }
+    }
     fResource->recycle();
     fResource = nullptr;
     if (!fDesc.fDynamic) {
@@ -252,7 +264,8 @@ bool GrVkBuffer::vkUpdateData(GrVkGpu* gpu, const void* src, size_t srcSizeInByt
 }
 
 void GrVkBuffer::validate() const {
-    SkASSERT(!fResource || kVertex_Type == fDesc.fType || kIndex_Type == fDesc.fType
-             || kTexel_Type == fDesc.fType || kCopyRead_Type == fDesc.fType
-             || kCopyWrite_Type == fDesc.fType || kUniform_Type == fDesc.fType);
+    SkASSERT(!fResource || kVertex_Type == fDesc.fType || kIndex_Type == fDesc.fType ||
+             kIndirect_Type == fDesc.fType || kTexel_Type == fDesc.fType ||
+             kCopyRead_Type == fDesc.fType || kCopyWrite_Type == fDesc.fType ||
+             kUniform_Type == fDesc.fType);
 }

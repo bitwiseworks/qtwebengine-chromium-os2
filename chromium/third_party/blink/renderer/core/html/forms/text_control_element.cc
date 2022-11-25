@@ -30,6 +30,7 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
+#include "third_party/blink/renderer/core/dom/focus_params.h"
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/dom/text.h"
@@ -43,6 +44,7 @@
 #include "third_party/blink/renderer/core/editing/selection_template.h"
 #include "third_party/blink/renderer/core/editing/serializers/serialization.h"
 #include "third_party/blink/renderer/core/editing/set_selection_options.h"
+#include "third_party/blink/renderer/core/editing/spellcheck/spell_checker.h"
 #include "third_party/blink/renderer/core/editing/text_affinity.h"
 #include "third_party/blink/renderer/core/editing/visible_position.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -105,7 +107,7 @@ void TextControlElement::DispatchBlurEvent(
 
 void TextControlElement::DefaultEventHandler(Event& event) {
   if (event.type() == event_type_names::kWebkitEditableContentChanged &&
-      GetLayoutObject() && GetLayoutObject()->IsTextControl()) {
+      GetLayoutObject() && GetLayoutObject()->IsTextControlIncludingNG()) {
     last_change_was_user_edit_ = !GetDocument().IsRunningExecCommand();
     user_has_edited_the_field_ |= last_change_was_user_edit_;
 
@@ -175,7 +177,7 @@ HTMLElement* TextControlElement::PlaceholderElement() const {
     return nullptr;
   DCHECK(UserAgentShadowRoot());
   auto* element = UserAgentShadowRoot()->getElementById(
-      shadow_element_names::Placeholder());
+      shadow_element_names::kIdPlaceholder);
   CHECK(!element || IsA<HTMLElement>(element));
   return To<HTMLElement>(element);
 }
@@ -253,6 +255,9 @@ void TextControlElement::SetFocused(bool flag,
 
   if (!flag)
     DispatchFormControlChangeEvent();
+
+  if (auto* inner_editor = InnerEditorElement())
+    inner_editor->FocusChanged();
 }
 
 void TextControlElement::DispatchFormControlChangeEvent() {
@@ -773,6 +778,13 @@ void TextControlElement::ParseAttribute(
              params.name == html_names::kDisabledAttr) {
     DisabledOrReadonlyAttributeChanged(params.name);
     HTMLFormControlElementWithState::ParseAttribute(params);
+    if (params.new_value.IsNull())
+      return;
+
+    if (HTMLElement* inner_editor = InnerEditorElement()) {
+      if (auto* frame = GetDocument().GetFrame())
+        frame->GetSpellChecker().RemoveSpellingAndGrammarMarkers(*inner_editor);
+    }
   } else {
     HTMLFormControlElementWithState::ParseAttribute(params);
   }
@@ -1019,10 +1031,12 @@ void TextControlElement::SetSuggestedValue(const String& value) {
 
   if (suggested_value_.IsEmpty()) {
     // Reset the pseudo-id for placeholders to use the appropriated style
-    placeholder->SetShadowPseudoId(AtomicString("-webkit-input-placeholder"));
+    placeholder->SetShadowPseudoId(
+        shadow_element_names::kPseudoInputPlaceholder);
   } else {
     // Set the pseudo-id for suggested values to use the appropriated style.
-    placeholder->SetShadowPseudoId(AtomicString("-internal-input-suggested"));
+    placeholder->SetShadowPseudoId(
+        shadow_element_names::kPseudoInternalInputSuggested);
   }
 }
 
@@ -1037,7 +1051,7 @@ const String& TextControlElement::SuggestedValue() const {
   return suggested_value_;
 }
 
-void TextControlElement::Trace(Visitor* visitor) {
+void TextControlElement::Trace(Visitor* visitor) const {
   visitor->Trace(inner_editor_);
   HTMLFormControlElementWithState::Trace(visitor);
 }

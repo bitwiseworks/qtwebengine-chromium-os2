@@ -117,14 +117,15 @@ TextAnimator::ResolvedProps TextAnimator::modulateProps(const ResolvedProps& pro
     auto modulated_props = props;
 
     // Transform props compose.
-    modulated_props.position += ValueTraits<VectorValue>::As<SkV3>(fTextProps.position) * amount;
+    modulated_props.position += static_cast<SkV3>(fTextProps.position) * amount;
     modulated_props.rotation += fTextProps.rotation * amount;
     modulated_props.tracking += fTextProps.tracking * amount;
     modulated_props.scale    *= SkV3{1,1,1} +
-            (ValueTraits<VectorValue>::As<SkV3>(fTextProps.scale) * 0.01f - SkV3{1,1,1}) * amount;
+            (static_cast<SkV3>(fTextProps.scale) * 0.01f - SkV3{1,1,1}) * amount;
 
-    // ... as does blur
-    modulated_props.blur += fTextProps.blur * amount;
+    // ... as does blur and line spacing
+    modulated_props.blur         += fTextProps.blur         * amount;
+    modulated_props.line_spacing += fTextProps.line_spacing * amount;
 
     const auto lerp_color = [](SkColor c0, SkColor c1, float t) {
         const auto c0_4f = SkNx_cast<float>(Sk4b::Load(&c0)),
@@ -139,11 +140,11 @@ TextAnimator::ResolvedProps TextAnimator::modulateProps(const ResolvedProps& pro
     // Colors and opacity are overridden, and use a clamped amount value.
     const auto clamped_amount = std::max(amount, 0.0f);
     if (fHasFillColor) {
-        const auto fc = ValueTraits<VectorValue>::As<SkColor>(fTextProps.fill_color);
+        const auto fc = static_cast<SkColor>(fTextProps.fill_color);
         modulated_props.fill_color = lerp_color(props.fill_color, fc, clamped_amount);
     }
     if (fHasStrokeColor) {
-        const auto sc = ValueTraits<VectorValue>::As<SkColor>(fTextProps.stroke_color);
+        const auto sc = static_cast<SkColor>(fTextProps.stroke_color);
         modulated_props.stroke_color = lerp_color(props.stroke_color, sc, clamped_amount);
     }
     modulated_props.opacity *= 1 + (fTextProps.opacity * 0.01f - 1) * clamped_amount; // 100-based
@@ -158,9 +159,10 @@ TextAnimator::TextAnimator(std::vector<sk_sp<RangeSelector>>&& selectors,
     : fSelectors(std::move(selectors))
     , fRequiresAnchorPoint(false) {
 
-    acontainer->bind(*abuilder, jprops["p"], fTextProps.position);
-    acontainer->bind(*abuilder, jprops["o"], fTextProps.opacity );
-    acontainer->bind(*abuilder, jprops["t"], fTextProps.tracking);
+    acontainer->bind(*abuilder, jprops["p" ], fTextProps.position);
+    acontainer->bind(*abuilder, jprops["o" ], fTextProps.opacity );
+    acontainer->bind(*abuilder, jprops["t" ], fTextProps.tracking);
+    acontainer->bind(*abuilder, jprops["ls"], fTextProps.line_spacing);
 
     // Scale and rotation are anchor-point-dependent.
     fRequiresAnchorPoint |= acontainer->bind(*abuilder, jprops["s"], fTextProps.scale);

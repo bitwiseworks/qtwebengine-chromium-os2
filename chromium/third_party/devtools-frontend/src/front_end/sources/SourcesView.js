@@ -2,10 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Persistence from '../persistence/persistence.js';
 import * as Platform from '../platform/platform.js';
 import * as QuickOpen from '../quick_open/quick_open.js';
+import * as Root from '../root/root.js';
 import * as SourceFrame from '../source_frame/source_frame.js';
 import * as UI from '../ui/ui.js';
 import * as Workspace from '../workspace/workspace.js';
@@ -51,7 +55,7 @@ export class SourcesView extends UI.Widget.VBox {
     this._toolbarContainerElement = this.element.createChild('div', 'sources-toolbar');
     if (!Root.Runtime.experiments.isEnabled('sourcesPrettyPrint')) {
       this._toolbarEditorActions = new UI.Toolbar.Toolbar('', this._toolbarContainerElement);
-      self.runtime.allInstances(EditorAction).then(appendButtonsForExtensions.bind(this));
+      Root.Runtime.Runtime.instance().allInstances(EditorAction).then(appendButtonsForExtensions.bind(this));
     }
     /**
      * @param {!Array.<!EditorAction>} actions
@@ -125,7 +129,7 @@ export class SourcesView extends UI.Widget.VBox {
       {actionId: 'sources.add-folder-to-workspace', description: ls`Drop in a folder to add to workspace`}
     ];
 
-    const element = createElementWithClass('div');
+    const element = document.createElement('div');
     const list = element.createChild('div', 'tabbed-pane-placeholder');
     list.addEventListener('keydown', this._placeholderOnKeyDown.bind(this), false);
     UI.ARIAUtils.markAsList(list);
@@ -133,7 +137,7 @@ export class SourcesView extends UI.Widget.VBox {
 
     for (let i = 0; i < shortcuts.length; i++) {
       const shortcut = shortcuts[i];
-      const shortcutKeyText = self.UI.shortcutRegistry.shortcutTitleForAction(shortcut.actionId);
+      const shortcutKeyText = UI.ShortcutRegistry.ShortcutRegistry.instance().shortcutTitleForAction(shortcut.actionId);
       const listItemElement = list.createChild('div');
       UI.ARIAUtils.markAsListitem(listItemElement);
       const row = listItemElement.createChild('div', 'tabbed-pane-placeholder-row');
@@ -145,7 +149,7 @@ export class SourcesView extends UI.Widget.VBox {
       } else {
         row.createChild('div', 'tabbed-pane-no-shortcut').textContent = shortcut.description;
       }
-      const action = self.UI.actionRegistry.action(shortcut.actionId);
+      const action = UI.ActionRegistry.ActionRegistry.instance().action(shortcut.actionId);
       const actionHandler = action.execute.bind(action);
       this._placeholderOptionArray.push({element: row, handler: actionHandler});
     }
@@ -157,7 +161,7 @@ export class SourcesView extends UI.Widget.VBox {
 
     element.appendChild(UI.XLink.XLink.create(
         'https://developers.google.com/web/tools/chrome-devtools/sources?utm_source=devtools&utm_campaign=2018Q1',
-        'Learn more'));
+        'Learn more about Workspaces'));
 
     return element;
   }
@@ -203,7 +207,7 @@ export class SourcesView extends UI.Widget.VBox {
   static defaultUISourceCodeScores() {
     /** @type {!Map.<!Workspace.UISourceCode.UISourceCode, number>} */
     const defaultScores = new Map();
-    const sourcesView = self.UI.context.flavor(SourcesView);
+    const sourcesView = UI.Context.Context.instance().flavor(SourcesView);
     if (sourcesView) {
       const uiSourceCodes = sourcesView._editorContainer.historyUISourceCodes();
       for (let i = 1; i < uiSourceCodes.length; ++i)  // Skip current element
@@ -258,14 +262,14 @@ export class SourcesView extends UI.Widget.VBox {
    */
   wasShown() {
     super.wasShown();
-    self.UI.context.setFlavor(SourcesView, this);
+    UI.Context.Context.instance().setFlavor(SourcesView, this);
   }
 
   /**
    * @override
    */
   willHide() {
-    self.UI.context.setFlavor(SourcesView, null);
+    UI.Context.Context.instance().setFlavor(SourcesView, null);
     this._resetPlaceholderState();
     super.willHide();
   }
@@ -376,10 +380,10 @@ export class SourcesView extends UI.Widget.VBox {
   }
 
   _updateScriptViewToolbarItems() {
-    this._scriptViewToolbar.removeToolbarItems();
     const view = this.visibleView();
     if (view instanceof UI.View.SimpleView) {
       (/** @type {?UI.View.SimpleView} */ (view)).toolbarItems().then(items => {
+        this._scriptViewToolbar.removeToolbarItems();
         items.map(item => this._scriptViewToolbar.appendToolbarItem(item));
       });
     }
@@ -743,7 +747,7 @@ export class SwitchFileActionDelegate {
    * @return {boolean}
    */
   handleAction(context, actionId) {
-    const sourcesView = self.UI.context.flavor(SourcesView);
+    const sourcesView = UI.Context.Context.instance().flavor(SourcesView);
     const currentUISourceCode = sourcesView.currentUISourceCode();
     if (!currentUISourceCode) {
       return false;
@@ -769,7 +773,7 @@ export class ActionDelegate {
    * @return {boolean}
    */
   handleAction(context, actionId) {
-    const sourcesView = self.UI.context.flavor(SourcesView);
+    const sourcesView = UI.Context.Context.instance().flavor(SourcesView);
     if (!sourcesView) {
       return false;
     }

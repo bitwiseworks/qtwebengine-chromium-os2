@@ -21,11 +21,10 @@ class ValidityStateFlags;
 class CORE_EXPORT ElementInternals : public ScriptWrappable,
                                      public ListedElement {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(ElementInternals);
 
  public:
   ElementInternals(HTMLElement& target);
-  void Trace(Visitor* visitor) override;
+  void Trace(Visitor* visitor) const override;
 
   HTMLElement& Target() const { return *target_; }
   void DidUpgrade();
@@ -55,6 +54,8 @@ class CORE_EXPORT ElementInternals : public ScriptWrappable,
 
   bool HasState(const AtomicString& state) const;
 
+  ShadowRoot* shadowRoot() const;
+
   // We need these functions because we are reflecting ARIA attributes.
   // See dom/aria_attributes.idl.
   const AtomicString& FastGetAttribute(const QualifiedName&) const;
@@ -67,13 +68,6 @@ class CORE_EXPORT ElementInternals : public ScriptWrappable,
   void SetElementArrayAttribute(
       const QualifiedName& name,
       const base::Optional<HeapVector<Member<Element>>>& elements);
-  // TODO(crbug.com/1060971): Remove |is_null| version.
-  HeapVector<Member<Element>> GetElementArrayAttribute(
-      const QualifiedName& name,
-      bool is_null);  // DEPRECATED
-  void SetElementArrayAttribute(const QualifiedName&,
-                                HeapVector<Member<Element>>,
-                                bool is_null);  // DEPRECATED
   bool HasAttribute(const QualifiedName& attribute) const;
   const HashMap<QualifiedName, AtomicString>& GetAttributes() const;
 

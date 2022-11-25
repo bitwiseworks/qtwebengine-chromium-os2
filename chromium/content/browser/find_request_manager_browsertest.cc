@@ -13,6 +13,7 @@
 #include "content/public/browser/browser_message_filter.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -23,6 +24,8 @@
 #include "content/test/content_browser_test_utils_internal.h"
 #include "net/dns/mock_host_resolver.h"
 #include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/common/web_preferences/web_preferences.h"
+#include "third_party/blink/public/mojom/page/widget.mojom-test-utils.h"
 
 namespace content {
 
@@ -83,10 +86,7 @@ class FindRequestManagerTest : public ContentBrowserTest,
     GURL url(embedded_test_server()->GetURL(
         "b.com", child->current_url().path()));
 
-    TestNavigationObserver observer(shell()->web_contents());
-    NavigateFrameToURL(child, url);
-    EXPECT_EQ(url, observer.last_navigation_url());
-    EXPECT_TRUE(observer.last_navigation_succeeded());
+    EXPECT_TRUE(NavigateFrameToURL(child, url));
   }
 
   void Find(const std::string& search_text,
@@ -174,7 +174,7 @@ IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, MAYBE(Basic)) {
   EXPECT_EQ(19, results.number_of_matches);
   EXPECT_EQ(1, results.active_match_ordinal);
 
-  options->find_next = true;
+  options->new_session = false;
   for (int i = 2; i <= 10; ++i) {
     Find("result", options->Clone());
     delegate()->WaitForFinalReply();
@@ -195,6 +195,29 @@ IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, MAYBE(Basic)) {
     EXPECT_EQ(19, results.number_of_matches);
     EXPECT_EQ(i, results.active_match_ordinal);
   }
+}
+
+IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, FindInPage_Issue615291) {
+  LoadAndWait("/find_in_simple_page.html");
+
+  auto options = blink::mojom::FindOptions::New();
+  options->run_synchronously_for_testing = true;
+  options->find_match = false;
+  Find("result", options->Clone());
+  delegate()->WaitForFinalReply();
+
+  FindResults results = delegate()->GetFindResults();
+  EXPECT_EQ(5, results.number_of_matches);
+  EXPECT_EQ(0, results.active_match_ordinal);
+
+  options->new_session = false;
+  Find("result", options->Clone());
+  // With the issue being tested, this would loop forever and cause the
+  // test to timeout.
+  delegate()->WaitForFinalReply();
+  results = delegate()->GetFindResults();
+  EXPECT_EQ(5, results.number_of_matches);
+  EXPECT_EQ(0, results.active_match_ordinal);
 }
 
 bool ExecuteScriptAndExtractRect(FrameTreeNode* frame,
@@ -229,10 +252,10 @@ bool ExecuteScriptAndExtractRect(FrameTreeNode* frame,
 IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, ScrollAndZoomIntoView) {
   WebContentsImpl* web_contents =
       static_cast<WebContentsImpl*>(shell()->web_contents());
-  WebPreferences prefs =
-      web_contents->GetRenderViewHost()->GetWebkitPreferences();
+  blink::web_pref::WebPreferences prefs =
+      web_contents->GetOrCreateWebPreferences();
   prefs.smooth_scroll_for_find_enabled = false;
-  web_contents->GetRenderViewHost()->UpdateWebkitPreferences(prefs);
+  web_contents->SetWebPreferences(prefs);
 
   LoadAndWait("/find_in_page_desktop.html");
   // Note: for now, don't run this test on Android in OOPIF mode.
@@ -344,7 +367,7 @@ IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, DISABLED_RapidFire) {
   options->run_synchronously_for_testing = true;
   Find("result", options.Clone());
 
-  options->find_next = true;
+  options->new_session = false;
   for (int i = 2; i <= 1000; ++i)
     Find("result", options.Clone());
   delegate()->WaitForFinalReply();
@@ -365,7 +388,7 @@ IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, DISABLED_RemoveFrame) {
   options->run_synchronously_for_testing = true;
   Find("result", options->Clone());
   delegate()->WaitForFinalReply();
-  options->find_next = true;
+  options->new_session = false;
   options->forward = false;
   Find("result", options->Clone());
   Find("result", options->Clone());
@@ -397,7 +420,7 @@ IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, RemoveMainFrame) {
   options->run_synchronously_for_testing = true;
   Find("result", options->Clone());
   delegate()->WaitForFinalReply();
-  options->find_next = true;
+  options->new_session = false;
   options->forward = false;
   Find("result", options->Clone());
   Find("result", options->Clone());
@@ -417,7 +440,7 @@ IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, DISABLED_AddFrame) {
   auto options = blink::mojom::FindOptions::New();
   options->run_synchronously_for_testing = true;
   Find("result", options.Clone());
-  options->find_next = true;
+  options->new_session = false;
   Find("result", options.Clone());
   Find("result", options.Clone());
   Find("result", options.Clone());
@@ -490,7 +513,7 @@ IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, MAYBE(NavigateFrame)) {
   auto options = blink::mojom::FindOptions::New();
   options->run_synchronously_for_testing = true;
   Find("result", options.Clone());
-  options->find_next = true;
+  options->new_session = false;
   options->forward = false;
   Find("result", options.Clone());
   Find("result", options.Clone());
@@ -554,7 +577,7 @@ IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, MAYBE(FindNewMatches)) {
   auto options = blink::mojom::FindOptions::New();
   options->run_synchronously_for_testing = true;
   Find("result", options.Clone());
-  options->find_next = true;
+  options->new_session = false;
   Find("result", options.Clone());
   Find("result", options.Clone());
   delegate()->WaitForFinalReply();
@@ -600,7 +623,7 @@ IN_PROC_BROWSER_TEST_F(FindRequestManagerTest, MAYBE_FindInPage_Issue627799) {
   EXPECT_EQ(1, results.active_match_ordinal);
 
   delegate()->StartReplyRecord();
-  options->find_next = true;
+  options->new_session = false;
   options->forward = false;
   Find("42", options.Clone());
   delegate()->WaitForFinalReply();
@@ -760,18 +783,17 @@ IN_PROC_BROWSER_TEST_F(FindRequestManagerTest, MAYBE(FindMatchRects)) {
 
 namespace {
 
-class ZoomToFindInPageRectMessageFilter : public content::BrowserMessageFilter {
+class ZoomToFindInPageRectMessageFilter
+    : public blink::mojom::FrameWidgetHostInterceptorForTesting {
  public:
-  ZoomToFindInPageRectMessageFilter()
-      : content::BrowserMessageFilter(WidgetMsgStart),
+  ZoomToFindInPageRectMessageFilter(RenderWidgetHostImpl* rwhi)
+      : impl_(rwhi->frame_widget_host_receiver_for_testing().SwapImplForTesting(
+            this)),
         widget_message_seen_(false) {}
+  ~ZoomToFindInPageRectMessageFilter() override {}
 
-  bool OnMessageReceived(const IPC::Message& message) override {
-    IPC_BEGIN_MESSAGE_MAP(ZoomToFindInPageRectMessageFilter, message)
-      IPC_MESSAGE_HANDLER(WidgetHostMsg_ZoomToFindInPageRectInMainFrame,
-                          OnWidgetHostMessage)
-    IPC_END_MESSAGE_MAP()
-    return false;
+  blink::mojom::FrameWidgetHost* GetForwardingInterface() override {
+    return impl_;
   }
 
   void Reset() {
@@ -791,15 +813,14 @@ class ZoomToFindInPageRectMessageFilter : public content::BrowserMessageFilter {
   gfx::Rect& widget_message_rect() { return widget_rect_seen_; }
 
  private:
-  ~ZoomToFindInPageRectMessageFilter() override {}
-
-  void OnWidgetHostMessage(const gfx::Rect& rect_to_zoom) {
+  void ZoomToFindInPageRectInMainFrame(const gfx::Rect& rect_to_zoom) override {
     widget_rect_seen_ = rect_to_zoom;
     widget_message_seen_ = true;
     if (!quit_closure_.is_null())
       std::move(quit_closure_).Run();
   }
 
+  blink::mojom::FrameWidgetHost* impl_;
   gfx::Rect widget_rect_seen_;
   bool widget_message_seen_;
   base::OnceClosure quit_closure_;
@@ -816,16 +837,14 @@ IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, ActivateNearestFindMatch) {
   if (test_with_oopif)
     MakeChildFrameCrossProcess();
 
-  scoped_refptr<ZoomToFindInPageRectMessageFilter> message_filter_root =
-      new ZoomToFindInPageRectMessageFilter();
-  scoped_refptr<ZoomToFindInPageRectMessageFilter> message_filter_child =
-      new ZoomToFindInPageRectMessageFilter();
+  std::unique_ptr<ZoomToFindInPageRectMessageFilter> message_interceptor_child;
 
   if (test_with_oopif) {
     FrameTreeNode* root = contents()->GetFrameTree()->root();
     FrameTreeNode* child = root->child_at(0);
-    child->current_frame_host()->GetProcess()->AddFilter(
-        message_filter_child.get());
+    message_interceptor_child =
+        std::make_unique<ZoomToFindInPageRectMessageFilter>(
+            child->current_frame_host()->GetRenderWidgetHost());
   }
 
   auto default_options = blink::mojom::FindOptions::New();
@@ -855,10 +874,10 @@ IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, ActivateNearestFindMatch) {
     bool is_match_in_oopif = order[i] > 1 && test_with_oopif;
     // Check widget message rect to make sure it matches.
     if (is_match_in_oopif) {
-      message_filter_child->WaitForWidgetHostMessage();
+      message_interceptor_child->WaitForWidgetHostMessage();
       EXPECT_EQ(find_request_manager->GetSelectionRectForTesting(),
-                message_filter_child->widget_message_rect());
-      message_filter_child->Reset();
+                message_interceptor_child->widget_message_rect());
+      message_interceptor_child->Reset();
     }
 
     EXPECT_EQ(order[i] + 1, delegate()->GetFindResults().active_match_ordinal);
@@ -869,7 +888,8 @@ IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, ActivateNearestFindMatch) {
 // Test basic find-in-page functionality after going back and forth to the same
 // page. In particular, find-in-page should continue to work after going back to
 // a page using the back-forward cache.
-IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, HistoryBackAndForth) {
+// Flaky everywhere: https://crbug.com/1115102
+IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, DISABLED_HistoryBackAndForth) {
   GURL url_a = embedded_test_server()->GetURL("a.com", "/find_in_page.html");
   GURL url_b = embedded_test_server()->GetURL("b.com", "/find_in_page.html");
 
@@ -890,7 +910,7 @@ IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, HistoryBackAndForth) {
     // Iterate forward/backward over a few elements.
     int match_index = results.active_match_ordinal;
     for (int delta : {-1, -1, +1, +1, +1, +1, -1, +1, +1}) {
-      options->find_next = true;
+      options->new_session = false;
       options->forward = delta > 0;
       // |active_match_ordinal| uses 1-based index. It belongs to [1, 19].
       match_index += delta;

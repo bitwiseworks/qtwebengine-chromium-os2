@@ -7,15 +7,22 @@ import("//extensions/buildflags/buildflags.gni")
 import("//testing/libfuzzer/fuzzer_test.gni")
 import("//testing/test.gni")
 
+# This file depends on the legacy global sources assignment filter. It should
+# be converted to check target platform before assigning source files to the
+# sources variable. Remove this import and set_sources_assignment_filter call
+# when the file has been converted. See https://crbug.com/1018739 for details.
+import("//build/config/deprecated_default_sources_assignment_filter.gni")
+set_sources_assignment_filter(deprecated_default_sources_assignment_filter)
+
 static_library("router") {
   deps = [
     "//base",
     "//chrome:strings",
     "//chrome/common:constants",
     "//components/cast_channel",
-    "//components/cast_channel",
     "//components/keyed_service/content",
     "//components/keyed_service/core",
+    "//components/openscreen_platform:openscreen_platform_network_service",
     "//content/public/browser",
     "//content/public/common",
     "//crypto",
@@ -27,47 +34,15 @@ static_library("router") {
     "//url",
   ]
   public_deps = [
-    "//chrome/common/media_router:router",
-    "//chrome/common/media_router/mojom:media_router",
+    "//components/media_router/browser",
+    "//components/media_router/common",
+    "//components/media_router/common/mojom:media_router",
   ]
   sources = [
-    "issue_manager.cc",
-    "issue_manager.h",
-    "issues_observer.cc",
-    "issues_observer.h",
-    "media_router.h",
-    "media_router_base.cc",
-    "media_router_base.h",
-    "media_router_dialog_controller.cc",
-    "media_router_dialog_controller.h",
-    "media_router_factory.cc",
-    "media_router_factory.h",
-    "media_router_metrics.cc",
-    "media_router_metrics.h",
-    "media_routes_observer.cc",
-    "media_routes_observer.h",
-    "media_sinks_observer.cc",
-    "media_sinks_observer.h",
-    "presentation/browser_presentation_connection_proxy.cc",
-    "presentation/browser_presentation_connection_proxy.h",
-    "presentation/local_presentation_manager.cc",
-    "presentation/local_presentation_manager.h",
-    "presentation/local_presentation_manager_factory.cc",
-    "presentation/local_presentation_manager_factory.h",
-    "presentation/presentation_media_sinks_observer.cc",
-    "presentation/presentation_media_sinks_observer.h",
-    "presentation/presentation_service_delegate_impl.cc",
-    "presentation/presentation_service_delegate_impl.h",
-    "presentation/presentation_service_delegate_observers.cc",
-    "presentation/presentation_service_delegate_observers.h",
-    "presentation/receiver_presentation_service_delegate_impl.cc",
-    "presentation/receiver_presentation_service_delegate_impl.h",
-    "presentation/web_contents_presentation_manager.cc",
-    "presentation/web_contents_presentation_manager.h",
-    "route_message_observer.cc",
-    "route_message_observer.h",
-    "route_message_util.cc",
-    "route_message_util.h",
+    "chrome_media_router_factory.cc",
+    "chrome_media_router_factory.h",
+    "presentation/chrome_local_presentation_manager_factory.cc",
+    "presentation/chrome_local_presentation_manager_factory.h",
   ]
 
   if (enable_extensions) {
@@ -84,9 +59,14 @@ static_library("router") {
       "//components/paint_preview/buildflags",
       "//components/signin/public/base:signin_buildflags",
       "//components/translate/content/common",
+      "//extensions/browser",
+      "//extensions/buildflags",
+      "//extensions/common",
       "//mojo/public/cpp/bindings",
       "//ui/base:buildflags",
     ]
+
+    public_deps += [ "//components/media_router/common/mojom:logger" ]
 
     sources += [
       "data_decoder_util.cc",
@@ -105,14 +85,12 @@ static_library("router") {
       "mojo/media_router_mojo_metrics.h",
       "mojo/media_sink_service_status.cc",
       "mojo/media_sink_service_status.h",
-      "presentation/presentation_navigation_policy.cc",
-      "presentation/presentation_navigation_policy.h",
-      "providers/cast/activity_record.cc",
-      "providers/cast/activity_record.h",
+      "providers/cast/app_activity.cc",
+      "providers/cast/app_activity.h",
+      "providers/cast/cast_activity.cc",
+      "providers/cast/cast_activity.h",
       "providers/cast/cast_activity_manager.cc",
       "providers/cast/cast_activity_manager.h",
-      "providers/cast/cast_activity_record.cc",
-      "providers/cast/cast_activity_record.h",
       "providers/cast/cast_app_availability_tracker.cc",
       "providers/cast/cast_app_availability_tracker.h",
       "providers/cast/cast_app_discovery_service.cc",
@@ -127,14 +105,16 @@ static_library("router") {
       "providers/cast/cast_media_route_provider_metrics.h",
       "providers/cast/cast_session_client.cc",
       "providers/cast/cast_session_client.h",
+      "providers/cast/cast_session_client_impl.cc",
+      "providers/cast/cast_session_client_impl.h",
       "providers/cast/cast_session_tracker.cc",
       "providers/cast/cast_session_tracker.h",
       "providers/cast/chrome_cast_message_handler.cc",
       "providers/cast/chrome_cast_message_handler.h",
       "providers/cast/dual_media_sink_service.cc",
       "providers/cast/dual_media_sink_service.h",
-      "providers/cast/mirroring_activity_record.cc",
-      "providers/cast/mirroring_activity_record.h",
+      "providers/cast/mirroring_activity.cc",
+      "providers/cast/mirroring_activity.h",
       "providers/common/buffered_message_sender.cc",
       "providers/common/buffered_message_sender.h",
       "providers/dial/dial_activity_manager.cc",
@@ -165,7 +145,6 @@ static_library("router") {
       ]
 
       deps += [
-        "//components/openscreen_platform:openscreen_platform_network_service",
         "//third_party/openscreen/src/osp/public",
         "//third_party/openscreen/src/platform",
         "//third_party/openscreen/src/util",
@@ -174,41 +153,32 @@ static_library("router") {
   }
 }
 
-static_library("test_support") {
-  testonly = true
-  deps = [
-    "//testing/gmock",
-  ]
-  public_deps = [
-    ":router",
-  ]
-  sources = [
-    "test/mock_media_router.cc",
-    "test/mock_media_router.h",
-    "test/mock_screen_availability_listener.cc",
-    "test/mock_screen_availability_listener.h",
-    "test/test_helper.cc",
-    "test/test_helper.h",
-  ]
-
-  if (enable_extensions) {
-    deps += [
+if (!is_android && enable_extensions) {
+  static_library("test_support") {
+    testonly = true
+    deps = [
       "discovery",
-      "//chrome/common/media_router/mojom:media_router",
-      "//chrome/common/media_router/mojom:media_router_test_interfaces",
       "//chrome/test:test_support",
+      "//components/media_router/common/mojom:media_router",
+      "//components/media_router/common/mojom:media_router_test_interfaces",
       "//extensions/browser",
       "//extensions/common",
+      "//testing/gmock",
     ]
-    sources += [
+    public_deps = [ ":router" ]
+    sources = [
       "test/media_router_mojo_test.cc",
       "test/media_router_mojo_test.h",
       "test/mock_dns_sd_registry.cc",
       "test/mock_dns_sd_registry.h",
+      "test/mock_logger.cc",
+      "test/mock_logger.h",
       "test/mock_mojo_media_router.cc",
       "test/mock_mojo_media_router.h",
       "test/noop_dual_media_sink_service.cc",
       "test/noop_dual_media_sink_service.h",
+      "test/provider_test_helpers.cc",
+      "test/provider_test_helpers.h",
     ]
   }
 }
@@ -217,20 +187,21 @@ source_set("unittests") {
   testonly = true
 
   sources = [
-    "issue_manager_unittest.cc",
-    "media_router_base_unittest.cc",
-    "media_router_dialog_controller_unittest.cc",
-    "media_router_factory_unittest.cc",
-    "media_router_metrics_unittest.cc",
-    "media_sinks_observer_unittest.cc",
-    "presentation/browser_presentation_connection_proxy_unittest.cc",
-    "presentation/local_presentation_manager_factory_unittest.cc",
-    "presentation/local_presentation_manager_unittest.cc",
-    "presentation/presentation_media_sinks_observer_unittest.cc",
-    "presentation/presentation_service_delegate_impl_unittest.cc",
+    "chrome_media_router_factory_unittest.cc",
+    "presentation/chrome_local_presentation_manager_factory_unittest.cc",
   ]
 
-  if (!is_android) {
+  deps = [
+    ":router",
+    "//base",
+    "//base/test:test_support",
+    "//components/media_router/browser:test_support",
+    "//components/media_router/common:test_support",
+    "//testing/gmock",
+    "//testing/gtest",
+  ]
+
+  if (!is_android && enable_extensions) {
     sources += [
       # In-browser discovery is not used by Android for now.
       "discovery/dial/device_description_fetcher_unittest.cc",
@@ -256,8 +227,10 @@ source_set("unittests") {
       "mojo/media_router_mojo_impl_unittest.cc",
       "mojo/media_router_mojo_metrics_unittest.cc",
       "mojo/media_sink_service_status_unittest.cc",
+      "providers/cast/app_activity_unittest.cc",
       "providers/cast/cast_activity_manager_unittest.cc",
-      "providers/cast/cast_activity_record_unittest.cc",
+      "providers/cast/cast_activity_test_base.cc",
+      "providers/cast/cast_activity_test_base.h",
       "providers/cast/cast_app_availability_tracker_unittest.cc",
       "providers/cast/cast_app_discovery_service_unittest.cc",
       "providers/cast/cast_internal_message_util_unittest.cc",
@@ -267,9 +240,9 @@ source_set("unittests") {
       "providers/cast/cast_session_client_unittest.cc",
       "providers/cast/cast_session_tracker_unittest.cc",
       "providers/cast/dual_media_sink_service_unittest.cc",
-      "providers/cast/mirroring_activity_record_unittest.cc",
-      "providers/cast/mock_cast_activity_record.cc",
-      "providers/cast/mock_cast_activity_record.h",
+      "providers/cast/mirroring_activity_unittest.cc",
+      "providers/cast/mock_app_activity.cc",
+      "providers/cast/mock_app_activity.h",
       "providers/cast/test_util.cc",
       "providers/cast/test_util.h",
       "providers/dial/dial_activity_manager_unittest.cc",
@@ -278,9 +251,8 @@ source_set("unittests") {
       "providers/extension/extension_media_route_provider_proxy_unittest.cc",
       "providers/wired_display/wired_display_media_route_provider_unittest.cc",
     ]
+    deps += [ ":test_support" ]
   }
-
-  deps = []
 
   if (enable_openscreen) {
     include_dirs = [ "//third_party/openscreen/src" ]
@@ -290,20 +262,12 @@ source_set("unittests") {
       "providers/openscreen/network_service_quic_packet_writer_unittest.cc",
     ]
   }
-
-  deps += [
-    ":router",
-    ":test_support",
-    "//base",
-    "//base/test:test_support",
-    "//testing/gmock",
-    "//testing/gtest",
-  ]
 }
 
 if (enable_openscreen) {
   test("openscreen_unittests") {
     deps = [
+      "//base/test:run_all_unittests",
       "//base/test:test_support",
       "//chrome/browser",
       "//chrome/test:test_support",
@@ -316,9 +280,7 @@ if (enable_openscreen) {
 }
 
 fuzzer_test("dial_internal_message_fuzzer") {
-  sources = [
-    "providers/dial/dial_internal_message_fuzzer.cc",
-  ]
+  sources = [ "providers/dial/dial_internal_message_fuzzer.cc" ]
   deps = [
     ":router",
     "//base",

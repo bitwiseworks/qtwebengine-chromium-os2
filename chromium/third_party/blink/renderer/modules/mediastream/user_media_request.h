@@ -41,7 +41,7 @@
 
 namespace blink {
 
-class Document;
+class LocalDOMWindow;
 class MediaErrorState;
 class MediaStreamConstraints;
 class MediaStreamDescriptor;
@@ -50,8 +50,6 @@ class UserMediaController;
 class MODULES_EXPORT UserMediaRequest final
     : public GarbageCollected<UserMediaRequest>,
       public ExecutionContextLifecycleObserver {
-  USING_GARBAGE_COLLECTED_MIXIN(UserMediaRequest);
-
  public:
   enum class Error {
     kNotSupported,
@@ -83,7 +81,7 @@ class MODULES_EXPORT UserMediaRequest final
     virtual void OnError(ScriptWrappable* callback_this_value,
                          DOMExceptionOrOverconstrainedError) = 0;
 
-    virtual void Trace(Visitor*) {}
+    virtual void Trace(Visitor*) const {}
 
    protected:
     Callbacks() = default;
@@ -114,11 +112,12 @@ class MODULES_EXPORT UserMediaRequest final
                    Callbacks*);
   virtual ~UserMediaRequest();
 
-  Document* OwnerDocument();
+  LocalDOMWindow* GetWindow();
 
   void Start();
 
   void Succeed(MediaStreamDescriptor*);
+  void OnMediaStreamInitialized(MediaStream* stream);
   void FailConstraint(const String& constraint_name, const String& message);
   void Fail(Error name, const String& message);
 
@@ -149,7 +148,7 @@ class MODULES_EXPORT UserMediaRequest final
     return has_transient_user_activation_;
   }
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   MediaType media_type_;

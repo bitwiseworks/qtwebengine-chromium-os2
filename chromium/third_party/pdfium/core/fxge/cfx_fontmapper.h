@@ -13,6 +13,7 @@
 
 #include "core/fxcrt/fx_memory_wrappers.h"
 #include "core/fxcrt/fx_string.h"
+#include "core/fxcrt/unowned_ptr.h"
 #include "core/fxge/cfx_face.h"
 #include "third_party/base/optional.h"
 
@@ -22,7 +23,7 @@ class SystemFontInfoIface;
 
 class CFX_FontMapper {
  public:
-  enum StandardFont {
+  enum StandardFont : uint8_t {
     kCourier = 0,
     kCourierBold,
     kCourierBoldOblique,
@@ -76,8 +77,8 @@ class CFX_FontMapper {
   std::vector<std::pair<ByteString, ByteString>> m_LocalizedTTFonts;
 
  private:
-  static const size_t MM_FACE_COUNT = 2;
-  static const size_t FOXIT_FACE_COUNT = 14;
+  static constexpr size_t MM_FACE_COUNT = 2;
+  static constexpr size_t FOXIT_FACE_COUNT = 14;
 
   uint32_t GetChecksumFromTT(void* hFont);
   ByteString GetPSNameFromTT(void* hFont);

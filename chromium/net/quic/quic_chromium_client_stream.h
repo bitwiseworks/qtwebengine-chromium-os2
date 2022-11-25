@@ -9,10 +9,10 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <vector>
 
 #include "base/callback_forward.h"
-#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/ip_endpoint.h"
@@ -253,6 +253,7 @@ class NET_EXPORT_PRIVATE QuicChromiumClientStream
   // Clears |handle_| from this stream.
   void ClearHandle();
 
+  // Notifies the stream handle of error, but doesn't close the stream.
   void OnError(int error);
 
   // Reads at most |buf_len| bytes into |buf|. Returns the number of bytes read.

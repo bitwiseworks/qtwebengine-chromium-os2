@@ -12,7 +12,6 @@
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "content/browser/renderer_host/pepper/browser_ppapi_host_impl.h"
 #include "content/browser/renderer_host/pepper/pepper_socket_utils.h"
@@ -26,7 +25,6 @@
 #include "content/public/common/process_type.h"
 #include "content/public/common/socket_permission_request.h"
 #include "ipc/ipc_message_macros.h"
-#include "mojo/public/cpp/bindings/interface_request.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/log/net_log_source.h"
@@ -128,8 +126,8 @@ void PepperUDPSocketMessageFilter::OnFilterDestroyed() {
   // that future messages will be ignored, so the mojo pipes won't be
   // re-created, so after Close() runs, |this| can be safely deleted on the IO
   // thread.
-  base::PostTask(FROM_HERE, {BrowserThread::UI},
-                 base::BindOnce(&PepperUDPSocketMessageFilter::Close, this));
+  GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindOnce(&PepperUDPSocketMessageFilter::Close, this));
 }
 
 scoped_refptr<base::SequencedTaskRunner>
@@ -143,7 +141,7 @@ PepperUDPSocketMessageFilter::OverrideTaskRunnerForMessage(
     case PpapiHostMsg_UDPSocket_SendTo::ID:
     case PpapiHostMsg_UDPSocket_JoinGroup::ID:
     case PpapiHostMsg_UDPSocket_LeaveGroup::ID:
-      return base::CreateSingleThreadTaskRunner({BrowserThread::UI});
+      return GetUIThreadTaskRunner({});
   }
   return nullptr;
 }
@@ -573,10 +571,10 @@ void PepperUDPSocketMessageFilter::DoBindCallback(
 #if defined(OS_CHROMEOS)
   pepper_socket_utils::OpenUDPFirewallHole(
       *local_addr_out,
-      base::BindRepeating(&PepperUDPSocketMessageFilter::OnFirewallHoleOpened,
-                          firewall_hole_weak_ptr_factory_.GetWeakPtr(),
-                          base::Passed(std::move(listener_receiver)), context,
-                          net_address));
+      base::BindOnce(&PepperUDPSocketMessageFilter::OnFirewallHoleOpened,
+                     firewall_hole_weak_ptr_factory_.GetWeakPtr(),
+                     base::Passed(std::move(listener_receiver)), context,
+                     net_address));
 #else   // !defined(OS_CHROMEOS)
   OnBindComplete(std::move(listener_receiver), context, net_address);
 #endif  // !defined(OS_CHROMEOS)
@@ -714,8 +712,8 @@ void PepperUDPSocketMessageFilter::SendRecvFromResult(
     const PP_NetAddress_Private& addr) {
   // Unlike SendReply, which is safe to call on any thread, SendUnsolicitedReply
   // calls are only safe to make on the IO thread.
-  base::PostTask(
-      FROM_HERE, {BrowserThread::IO},
+  GetIOThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce(
           &PepperUDPSocketMessageFilter::SendRecvFromResultOnIOThread, this,
           result, data, addr));

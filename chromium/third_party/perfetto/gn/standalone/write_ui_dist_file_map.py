@@ -30,7 +30,6 @@ from __future__ import print_function
 import argparse
 import base64
 import hashlib
-import multiprocessing
 import os
 import sys
 
@@ -60,21 +59,21 @@ def main():
   parser.add_argument('file_list', nargs=argparse.REMAINDER)
   args = parser.parse_args()
 
-  # Compute the hash of each file (in parallel).
-  pool = multiprocessing.Pool(multiprocessing.cpu_count() * 2)
-  digests = dict(pool.map(hash_file, args.file_list))
+  # Compute the hash of each file.
+  digests = dict(map(hash_file, args.file_list))
 
   contents = '// __generated_by %s\n' % __file__
   contents += 'export const UI_DIST_MAP = {\n'
   contents += '  files: {\n'
   strip = args.strip + ('' if args.strip[-1] == os.path.sep else os.path.sep)
-  for fname, digest in digests.iteritems():
+  for fname, digest in digests.items():
     if not fname.startswith(strip):
       raise Exception('%s must start with %s (--strip arg)' % (fname, strip))
     fname = fname[len(strip):]
     # We use b64 instead of hexdigest() because it's handy for handling fetch()
     # subresource integrity.
-    contents += '    \'%s\': \'sha256-%s\',\n' % (fname, b64encode(digest))
+    contents += '    \'%s\': \'sha256-%s\',\n' % (
+        fname, b64encode(digest).decode("ascii"))
   contents += '  },\n'
 
   # Compute the hash of the all resources' hashes.

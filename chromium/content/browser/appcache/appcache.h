@@ -141,8 +141,7 @@ class CONTENT_EXPORT AppCache
 
   // Initializes the cache with information in the manifest.
   // Do not use the manifest after this call.
-  void InitializeWithManifest(AppCacheManifest* manifest,
-                              base::Time token_expires);
+  void InitializeWithManifest(AppCacheManifest* manifest);
 
   // Initializes the cache with the information in the database records.
   void InitializeWithDatabaseRecords(
@@ -150,7 +149,7 @@ class CONTENT_EXPORT AppCache
       const std::vector<AppCacheDatabase::EntryRecord>& entries,
       const std::vector<AppCacheDatabase::NamespaceRecord>& intercepts,
       const std::vector<AppCacheDatabase::NamespaceRecord>& fallbacks,
-      const std::vector<AppCacheDatabase::OnlineWhiteListRecord>& whitelists);
+      const std::vector<AppCacheDatabase::OnlineSafeListRecord>& safelists);
 
   // Returns the database records to be stored in the AppCacheDatabase
   // to represent this cache.
@@ -160,7 +159,7 @@ class CONTENT_EXPORT AppCache
       std::vector<AppCacheDatabase::EntryRecord>* entries,
       std::vector<AppCacheDatabase::NamespaceRecord>* intercepts,
       std::vector<AppCacheDatabase::NamespaceRecord>* fallbacks,
-      std::vector<AppCacheDatabase::OnlineWhiteListRecord>* whitelists);
+      std::vector<AppCacheDatabase::OnlineSafeListRecord>* safelists);
 
   bool FindResponseForRequest(const GURL& url,
       AppCacheEntry* found_entry, GURL* found_intercept_namespace,
@@ -196,7 +195,7 @@ class CONTENT_EXPORT AppCache
     return FindNamespace(fallback_namespaces_, url);
   }
   bool IsInNetworkNamespace(const GURL& url) {
-    return FindNamespace(online_whitelist_namespaces_, url) != nullptr;
+    return FindNamespace(online_safelist_namespaces_, url) != nullptr;
   }
 
   GURL GetNamespaceEntryUrl(const std::vector<AppCacheNamespace>& namespaces,
@@ -216,8 +215,8 @@ class CONTENT_EXPORT AppCache
 
   std::vector<AppCacheNamespace> intercept_namespaces_;
   std::vector<AppCacheNamespace> fallback_namespaces_;
-  std::vector<AppCacheNamespace> online_whitelist_namespaces_;
-  bool online_whitelist_all_;
+  std::vector<AppCacheNamespace> online_safelist_namespaces_;
+  bool online_safelist_all_;
 
   bool is_complete_;
 

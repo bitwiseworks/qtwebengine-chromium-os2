@@ -4,9 +4,7 @@
 
 #include "third_party/blink/renderer/core/fetch/fetch_response_data.h"
 
-#include "services/network/public/cpp/content_security_policy/content_security_policy.h"
-#include "services/network/public/cpp/features.h"
-#include "services/network/public/mojom/content_security_policy.mojom-blink.h"
+#include "storage/common/quota/padding_key.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_response.mojom-blink.h"
 #include "third_party/blink/renderer/core/fetch/fetch_header_list.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer.h"
@@ -15,75 +13,12 @@
 #include "third_party/blink/renderer/platform/loader/cors/cors.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_utils.h"
 #include "third_party/blink/renderer/platform/network/http_names.h"
+#include "third_party/blink/renderer/platform/network/http_parsers.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
-#include "third_party/blink/renderer/platform/wtf/text/string_utf8_adaptor.h"
-#include "url/gurl.h"
 
 using Type = network::mojom::FetchResponseType;
 using ResponseSource = network::mojom::FetchResponseSource;
-
-// TODO(lfg): Stop converting from/to blink type. Instead use mojo to
-// automagically convert this.
-namespace network {
-namespace mojom {
-
-blink::CSPSourcePtr ConvertToBlink(CSPSourcePtr source) {
-  return blink::CSPSource::New(
-      String::FromUTF8(source->scheme), String::FromUTF8(source->host),
-      source->port, String::FromUTF8(source->path), source->is_host_wildcard,
-      source->is_port_wildcard);
-}
-
-blink::CSPSourceListPtr ConvertToBlink(CSPSourceListPtr source_list) {
-  WTF::Vector<blink::CSPSourcePtr> sources;
-  for (auto& it : source_list->sources)
-    sources.push_back(ConvertToBlink(std::move(it)));
-
-  return blink::CSPSourceList::New(std::move(sources), source_list->allow_self,
-                                   source_list->allow_star,
-                                   source_list->allow_response_redirects);
-}
-
-blink::CSPDirectiveName ConvertToBlink(CSPDirectiveName name) {
-  return static_cast<blink::CSPDirectiveName>(name);
-}
-
-blink::ContentSecurityPolicyHeaderPtr ConvertToBlink(
-    ContentSecurityPolicyHeaderPtr header) {
-  return blink::ContentSecurityPolicyHeader::New(
-      String::FromUTF8(header->header_value), header->type, header->source);
-}
-
-blink::ContentSecurityPolicyPtr ConvertToBlink(
-    ContentSecurityPolicyPtr policy_in) {
-  auto policy = blink::ContentSecurityPolicy::New();
-
-  policy->header = ConvertToBlink(std::move(policy_in->header));
-  policy->use_reporting_api = policy_in->use_reporting_api;
-
-  for (auto& directive : policy_in->directives) {
-    policy->directives.insert(ConvertToBlink(directive.first),
-                              ConvertToBlink(std::move(directive.second)));
-  }
-
-  for (auto& endpoint : policy_in->report_endpoints)
-    policy->report_endpoints.push_back(String::FromUTF8(endpoint));
-
-  return policy;
-}
-
-WTF::Vector<blink::ContentSecurityPolicyPtr> ConvertToBlink(
-    std::vector<ContentSecurityPolicyPtr> policies) {
-  WTF::Vector<blink::ContentSecurityPolicyPtr> blink_policies;
-  for (auto& policy : policies)
-    blink_policies.push_back(ConvertToBlink(std::move(policy)));
-
-  return blink_policies;
-}
-
-}  // namespace mojom
-}  // namespace network
 
 namespace blink {
 
@@ -207,6 +142,13 @@ const KURL* FetchResponseData::Url() const {
   return &url_list_.back();
 }
 
+uint16_t FetchResponseData::InternalStatus() const {
+  if (internal_response_) {
+    return internal_response_->Status();
+  }
+  return Status();
+}
+
 FetchHeaderList* FetchResponseData::InternalHeaderList() const {
   if (internal_response_) {
     return internal_response_->HeaderList();
@@ -247,6 +189,7 @@ FetchResponseData* FetchResponseData::Clone(ScriptState* script_state,
                                             ExceptionState& exception_state) {
   FetchResponseData* new_response = Create();
   new_response->type_ = type_;
+  new_response->padding_ = padding_;
   new_response->response_source_ = response_source_;
   if (termination_reason_) {
     new_response->termination_reason_ = std::make_unique<TerminationReason>();
@@ -257,9 +200,14 @@ FetchResponseData* FetchResponseData::Clone(ScriptState* script_state,
   new_response->status_message_ = status_message_;
   new_response->header_list_ = header_list_->Clone();
   new_response->mime_type_ = mime_type_;
+  new_response->request_method_ = request_method_;
   new_response->response_time_ = response_time_;
   new_response->cache_storage_cache_name_ = cache_storage_cache_name_;
   new_response->cors_exposed_header_names_ = cors_exposed_header_names_;
+  new_response->connection_info_ = connection_info_;
+  new_response->alpn_negotiated_protocol_ = alpn_negotiated_protocol_;
+  new_response->was_fetched_via_spdy_ = was_fetched_via_spdy_;
+  new_response->has_range_requested_ = has_range_requested_;
 
   switch (type_) {
     case Type::kBasic:
@@ -322,39 +270,95 @@ mojom::blink::FetchAPIResponsePtr FetchResponseData::PopulateFetchAPIResponse(
   response->status_code = status_;
   response->status_text = status_message_;
   response->response_type = type_;
+  response->padding = padding_;
   response->response_source = response_source_;
+  response->mime_type = mime_type_;
+  response->request_method = request_method_;
   response->response_time = response_time_;
   response->cache_storage_cache_name = cache_storage_cache_name_;
   response->cors_exposed_header_names =
       HeaderSetToVector(cors_exposed_header_names_);
-  response->loaded_with_credentials = loaded_with_credentials_;
+  response->connection_info = connection_info_;
+  response->alpn_negotiated_protocol = alpn_negotiated_protocol_;
+  response->was_fetched_via_spdy = was_fetched_via_spdy_;
+  response->has_range_requested = has_range_requested_;
   for (const auto& header : HeaderList()->List())
     response->headers.insert(header.first, header.second);
-
-  // Check if there's a Content-Security-Policy header and parse it if
-  // necessary.
-  // TODO(lfg). What about report only header?
-  if (base::FeatureList::IsEnabled(
-          network::features::kOutOfBlinkFrameAncestors)) {
-    String content_security_policy_header;
-    std::vector<network::mojom::ContentSecurityPolicyPtr> policies;
-    if (HeaderList()->Get("content-security-policy",
-                          content_security_policy_header)) {
-      network::AddContentSecurityPolicyFromHeaders(
-          StringUTF8Adaptor(content_security_policy_header).AsStringPiece(),
-          network::mojom::ContentSecurityPolicyType::kEnforce, request_url,
-          &policies);
-    }
-    if (HeaderList()->Get("content-security-policy-report-only",
-                          content_security_policy_header)) {
-      network::AddContentSecurityPolicyFromHeaders(
-          StringUTF8Adaptor(content_security_policy_header).AsStringPiece(),
-          network::mojom::ContentSecurityPolicyType::kReport, request_url,
-          &policies);
-    }
-    response->content_security_policy = ConvertToBlink(std::move(policies));
-  }
+  response->parsed_headers = ParseHeaders(
+      HeaderList()->GetAsRawString(status_, status_message_), request_url);
   return response;
+}
+
+void FetchResponseData::InitFromResourceResponse(
+    ExecutionContext* context,
+    network::mojom::FetchResponseType response_type,
+    const Vector<KURL>& request_url_list,
+    const AtomicString& request_method,
+    network::mojom::CredentialsMode request_credentials,
+    FetchRequestData::Tainting tainting,
+    const ResourceResponse& response) {
+  SetStatus(response.HttpStatusCode());
+  if (response.CurrentRequestUrl().ProtocolIsAbout() ||
+      response.CurrentRequestUrl().ProtocolIsData() ||
+      response.CurrentRequestUrl().ProtocolIs("blob")) {
+    SetStatusMessage("OK");
+  } else {
+    SetStatusMessage(response.HttpStatusText());
+  }
+
+  for (auto& it : response.HttpHeaderFields())
+    HeaderList()->Append(it.key, it.value);
+
+  // Corresponds to https://fetch.spec.whatwg.org/#main-fetch step:
+  // "If |internalResponse|’s URL list is empty, then set it to a clone of
+  // |request|’s URL list."
+  if (response.UrlListViaServiceWorker().IsEmpty()) {
+    // Note: |UrlListViaServiceWorker()| is empty, unless the response came from
+    // a service worker, in which case it will only be empty if it was created
+    // through new Response().
+    SetURLList(request_url_list);
+  } else {
+    DCHECK(response.WasFetchedViaServiceWorker());
+    SetURLList(response.UrlListViaServiceWorker());
+  }
+
+  SetMimeType(response.MimeType());
+  SetRequestMethod(request_method);
+  SetResponseTime(response.ResponseTime());
+
+  if (response.WasCached()) {
+    SetResponseSource(network::mojom::FetchResponseSource::kHttpCache);
+  } else if (!response.WasFetchedViaServiceWorker()) {
+    SetResponseSource(network::mojom::FetchResponseSource::kNetwork);
+  }
+
+  SetConnectionInfo(response.ConnectionInfo());
+
+  // Some non-http responses, like data: url responses, will have a null
+  // |alpn_negotiated_protocol|.  In these cases we leave the default
+  // value of "unknown".
+  if (!response.AlpnNegotiatedProtocol().IsNull())
+    SetAlpnNegotiatedProtocol(response.AlpnNegotiatedProtocol());
+
+  SetWasFetchedViaSpdy(response.WasFetchedViaSPDY());
+
+  SetHasRangeRequested(response.HasRangeRequested());
+
+  // Use the explicit padding in the response provided by a service worker
+  // or compute a new padding if necessary.
+  if (response.GetPadding()) {
+    SetPadding(response.GetPadding());
+  } else {
+    if (storage::ShouldPadResponseType(response_type)) {
+      int64_t padding = response.WasCached()
+                            ? storage::ComputeStableResponsePadding(
+                                  context->GetSecurityOrigin()->ToUrlOrigin(),
+                                  Url()->GetString().Utf8(), ResponseTime(),
+                                  request_method.Utf8())
+                            : storage::ComputeRandomResponsePadding();
+      SetPadding(padding);
+    }
+  }
 }
 
 FetchResponseData::FetchResponseData(Type type,
@@ -362,12 +366,16 @@ FetchResponseData::FetchResponseData(Type type,
                                      uint16_t status,
                                      AtomicString status_message)
     : type_(type),
+      padding_(0),
       response_source_(source),
       status_(status),
       status_message_(status_message),
       header_list_(MakeGarbageCollected<FetchHeaderList>()),
       response_time_(base::Time::Now()),
-      loaded_with_credentials_(false) {}
+      connection_info_(net::HttpResponseInfo::CONNECTION_INFO_UNKNOWN),
+      alpn_negotiated_protocol_("unknown"),
+      was_fetched_via_spdy_(false),
+      has_range_requested_(false) {}
 
 void FetchResponseData::ReplaceBodyStreamBuffer(BodyStreamBuffer* buffer) {
   if (type_ == Type::kBasic || type_ == Type::kCors) {
@@ -380,7 +388,7 @@ void FetchResponseData::ReplaceBodyStreamBuffer(BodyStreamBuffer* buffer) {
   }
 }
 
-void FetchResponseData::Trace(Visitor* visitor) {
+void FetchResponseData::Trace(Visitor* visitor) const {
   visitor->Trace(header_list_);
   visitor->Trace(internal_response_);
   visitor->Trace(buffer_);

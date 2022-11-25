@@ -6,8 +6,6 @@
 
 #include "core/fpdfapi/font/cpdf_type1font.h"
 
-#include <algorithm>
-
 #include "build/build_config.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
 #include "core/fxge/cfx_fontmapper.h"
@@ -15,7 +13,7 @@
 #include "core/fxge/fx_font.h"
 #include "core/fxge/fx_freetype.h"
 
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
 #include "core/fxge/apple/fx_mac_impl.h"
 #endif
 
@@ -26,7 +24,7 @@
 
 namespace {
 
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
 struct GlyphNameMap {
   const char* m_pStrAdobe;    // Raw, POD struct.
   const char* m_pStrUnicode;  // Raw, POD struct.
@@ -46,7 +44,7 @@ const char* GlyphNameRemap(const char* pStrAdobe) {
   return nullptr;
 }
 
-#endif  // defined(OS_MACOSX)
+#endif  // defined(OS_APPLE)
 
 bool FT_UseType1Charmap(FXFT_FaceRec* face) {
   if (FXFT_Get_Face_CharmapCount(face) == 0) {
@@ -71,7 +69,7 @@ bool FT_UseType1Charmap(FXFT_FaceRec* face) {
 CPDF_Type1Font::CPDF_Type1Font(CPDF_Document* pDocument,
                                CPDF_Dictionary* pFontDict)
     : CPDF_SimpleFont(pDocument, pFontDict) {
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
   memset(m_ExtGID, 0xff, sizeof(m_ExtGID));
 #endif
 }
@@ -116,7 +114,7 @@ bool CPDF_Type1Font::Load() {
   return LoadCommon();
 }
 
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
 int CPDF_Type1Font::GlyphFromCharCodeExt(uint32_t charcode) {
   if (charcode > 0xff)
     return -1;
@@ -130,7 +128,7 @@ void CPDF_Type1Font::LoadGlyphMap() {
   if (!m_Font.GetFaceRec())
     return;
 
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
   bool bCoreText = true;
   CQuartz2D& quartz2d =
       static_cast<CApplePlatform*>(CFX_GEModule::Get()->GetPlatform())
@@ -154,7 +152,7 @@ void CPDF_Type1Font::LoadGlyphMap() {
           uint16_t unicode = prefix[j] * 256 + charcode;
           m_GlyphIndex[charcode] =
               FT_Get_Char_Index(m_Font.GetFaceRec(), unicode);
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
           CalcExtGID(charcode);
 #endif
           if (m_GlyphIndex[charcode]) {
@@ -164,7 +162,7 @@ void CPDF_Type1Font::LoadGlyphMap() {
         }
       }
       if (bGotOne) {
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
         if (!bCoreText)
           memcpy(m_ExtGID, m_GlyphIndex, 256);
 #endif
@@ -184,25 +182,25 @@ void CPDF_Type1Font::LoadGlyphMap() {
       m_Encoding.SetUnicode(charcode, PDF_UnicodeFromAdobeName(name));
       m_GlyphIndex[charcode] = FT_Get_Char_Index(
           m_Font.GetFaceRec(), m_Encoding.UnicodeFromCharCode(charcode));
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
       CalcExtGID(charcode);
 #endif
       if (m_GlyphIndex[charcode] == 0 && strcmp(name, ".notdef") == 0) {
         m_Encoding.SetUnicode(charcode, 0x20);
         m_GlyphIndex[charcode] = FT_Get_Char_Index(m_Font.GetFaceRec(), 0x20);
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
         CalcExtGID(charcode);
 #endif
       }
     }
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
     if (!bCoreText)
       memcpy(m_ExtGID, m_GlyphIndex, 256);
 #endif
     return;
   }
   FT_UseType1Charmap(m_Font.GetFaceRec());
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
   if (bCoreText) {
     if (FontStyleIsSymbolic(m_Flags)) {
       for (uint32_t charcode = 0; charcode < 256; charcode++) {
@@ -268,7 +266,7 @@ void CPDF_Type1Font::LoadGlyphMap() {
     }
     return;
   }
-#endif  // defined(OS_MACOSX)
+#endif  // defined(OS_APPLE)
   if (FontStyleIsSymbolic(m_Flags)) {
     for (int charcode = 0; charcode < 256; charcode++) {
       const char* name =
@@ -295,7 +293,7 @@ void CPDF_Type1Font::LoadGlyphMap() {
         }
       }
     }
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
     if (!bCoreText)
       memcpy(m_ExtGID, m_GlyphIndex, 256);
 
@@ -324,7 +322,7 @@ void CPDF_Type1Font::LoadGlyphMap() {
       m_GlyphIndex[charcode] = 0xffff;
     }
   }
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
   if (!bCoreText)
     memcpy(m_ExtGID, m_GlyphIndex, 256);
 #endif
@@ -340,7 +338,7 @@ bool CPDF_Type1Font::IsFixedFont() const {
          CFX_FontMapper::IsFixedFont(m_Base14Font.value());
 }
 
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
 void CPDF_Type1Font::SetExtGID(const char* name, uint32_t charcode) {
   CFStringRef name_ct = CFStringCreateWithCStringNoCopy(
       kCFAllocatorDefault, name, kCFStringEncodingASCII, kCFAllocatorNull);
@@ -357,4 +355,4 @@ void CPDF_Type1Font::CalcExtGID(uint32_t charcode) {
   name_glyph[255] = 0;
   SetExtGID(name_glyph, charcode);
 }
-#endif  // defined(OS_MACOSX)
+#endif  // defined(OS_APPLE)

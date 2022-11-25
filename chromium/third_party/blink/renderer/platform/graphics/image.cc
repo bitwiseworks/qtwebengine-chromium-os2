@@ -40,6 +40,8 @@
 #include "third_party/blink/renderer/platform/geometry/float_size.h"
 #include "third_party/blink/renderer/platform/geometry/length.h"
 #include "third_party/blink/renderer/platform/graphics/bitmap_image.h"
+#include "third_party/blink/renderer/platform/graphics/dark_mode_image_cache.h"
+#include "third_party/blink/renderer/platform/graphics/dark_mode_image_classifier.h"
 #include "third_party/blink/renderer/platform/graphics/deferred_image_decoder.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_image.h"
@@ -149,7 +151,7 @@ PaintImage Image::ResizeAndOrientImage(
 
   SkCanvas* canvas = surface->getCanvas();
   canvas->concat(AffineTransformToSkMatrix(transform));
-  canvas->drawImage(image.GetSkImage(), 0, 0, &paint);
+  canvas->drawImage(image.GetSwSkImage(), 0, 0, &paint);
 
   return PaintImageBuilder::WithProperties(std::move(image))
       .set_image(surface->makeImageSnapshot(), PaintImage::GetNextContentId())
@@ -181,22 +183,30 @@ sk_sp<PaintShader> CreatePatternShader(const PaintImage& image,
                                        bool should_antialias,
                                        const FloatSize& spacing,
                                        SkTileMode tmx,
-                                       SkTileMode tmy) {
-  if (spacing.IsZero()) {
+                                       SkTileMode tmy,
+                                       const IntRect& subset_rect) {
+  if (spacing.IsZero() &&
+      subset_rect == IntRect(0, 0, image.width(), image.height())) {
     return PaintShader::MakeImage(image, tmx, tmy, &shader_matrix);
   }
 
   // Arbitrary tiling is currently only supported for SkPictureShader, so we use
   // that instead of a plain bitmap shader to implement spacing.
-  const SkRect tile_rect = SkRect::MakeWH(image.width() + spacing.Width(),
-                                          image.height() + spacing.Height());
+  const SkRect tile_rect =
+      SkRect::MakeWH(subset_rect.Width() + spacing.Width(),
+                     subset_rect.Height() + spacing.Height());
 
   PaintRecorder recorder;
   cc::PaintCanvas* canvas = recorder.beginRecording(tile_rect);
   PaintFlags flags;
   flags.setAntiAlias(should_antialias);
   flags.setFilterQuality(quality_to_use);
-  canvas->drawImage(image, 0, 0, &flags);
+  canvas->drawImageRect(
+      image,
+      SkRect::MakeXYWH(subset_rect.X(), subset_rect.Y(), subset_rect.Width(),
+                       subset_rect.Height()),
+      SkRect::MakeWH(subset_rect.Width(), subset_rect.Height()), &flags,
+      SkCanvas::kStrict_SrcRectConstraint);
 
   return PaintShader::MakePaintRecord(recorder.finishRecordingAsPicture(),
                                       tile_rect, tmx, tmy, &shader_matrix);
@@ -248,17 +258,12 @@ void Image::DrawPattern(GraphicsContext& context,
   local_matrix.preScale(scale_src_to_dest.Width(), scale_src_to_dest.Height());
 
   // Fetch this now as subsetting may swap the image.
-  auto image_id = image.GetSkImage()->uniqueID();
-
-  image = PaintImageBuilder::WithCopy(std::move(image))
-              .make_subset(subset_rect)
-              .TakePaintImage();
-  if (!image)
-    return;
+  auto image_id = image.stable_id();
 
   const FloatSize tile_size(
-      image.width() * scale_src_to_dest.Width() + repeat_spacing.Width(),
-      image.height() * scale_src_to_dest.Height() + repeat_spacing.Height());
+      subset_rect.Width() * scale_src_to_dest.Width() + repeat_spacing.Width(),
+      subset_rect.Height() * scale_src_to_dest.Height() +
+          repeat_spacing.Height());
   const auto tmx = ComputeTileMode(dest_rect.X(), dest_rect.MaxX(), adjusted_x,
                                    adjusted_x + tile_size.Width());
   const auto tmy = ComputeTileMode(dest_rect.Y(), dest_rect.MaxY(), adjusted_y,
@@ -270,7 +275,7 @@ void Image::DrawPattern(GraphicsContext& context,
       image, local_matrix, quality_to_use, context.ShouldAntialias(),
       FloatSize(repeat_spacing.Width() / scale_src_to_dest.Width(),
                 repeat_spacing.Height() / scale_src_to_dest.Height()),
-      tmx, tmy);
+      tmx, tmy, subset_rect);
 
   PaintFlags flags = context.FillFlags();
   // If the shader could not be instantiated (e.g. non-invertible matrix),
@@ -347,7 +352,7 @@ SkBitmap Image::AsSkBitmapForCurrentFrame(
       return {};
   }
 
-  sk_sp<SkImage> sk_image = paint_image.GetSkImage();
+  sk_sp<SkImage> sk_image = paint_image.GetSwSkImage();
   if (!sk_image)
     return {};
 
@@ -356,27 +361,11 @@ SkBitmap Image::AsSkBitmapForCurrentFrame(
   return bitmap;
 }
 
-bool Image::GetBitmap(const FloatRect& src_rect, SkBitmap* bitmap) {
-  if (!src_rect.Width() || !src_rect.Height())
-    return false;
+DarkModeImageCache* Image::GetDarkModeImageCache() {
+  if (!dark_mode_image_cache_)
+    dark_mode_image_cache_ = std::make_unique<DarkModeImageCache>();
 
-  SkScalar sx = SkFloatToScalar(src_rect.X());
-  SkScalar sy = SkFloatToScalar(src_rect.Y());
-  SkScalar sw = SkFloatToScalar(src_rect.Width());
-  SkScalar sh = SkFloatToScalar(src_rect.Height());
-  SkRect src = {sx, sy, sx + sw, sy + sh};
-  SkRect dest = {0, 0, sw, sh};
-
-  if (!bitmap || !bitmap->tryAllocPixels(SkImageInfo::MakeN32(
-                     static_cast<int>(src_rect.Width()),
-                     static_cast<int>(src_rect.Height()), kPremul_SkAlphaType)))
-    return false;
-
-  SkCanvas canvas(*bitmap);
-  canvas.clear(SK_ColorTRANSPARENT);
-  canvas.drawImageRect(PaintImageForCurrentFrame().GetSkImage(), src, dest,
-                       nullptr);
-  return true;
+  return dark_mode_image_cache_.get();
 }
 
 FloatRect Image::CorrectSrcRectForImageOrientation(FloatSize image_size,
@@ -386,29 +375,6 @@ FloatRect Image::CorrectSrcRectForImageOrientation(FloatSize image_size,
   AffineTransform forward_map = orientation.TransformFromDefault(image_size);
   AffineTransform inverse_map = forward_map.Inverse();
   return inverse_map.MapRect(src_rect);
-}
-
-DarkModeClassification Image::GetDarkModeClassification(
-    const FloatRect& src_rect) {
-  // Assuming that multiple uses of the same sprite region all have the same
-  // size, only the top left corner coordinates of the src_rect are used to
-  // generate the key for caching and retrieving the classification.
-  ClassificationKey key(src_rect.X(), src_rect.Y());
-  auto result = dark_mode_classifications_.find(key);
-  if (result == dark_mode_classifications_.end())
-    return DarkModeClassification::kNotClassified;
-
-  return result->value;
-}
-
-void Image::AddDarkModeClassification(
-    const FloatRect& src_rect,
-    DarkModeClassification dark_mode_classification) {
-  // Add the classification in the map only if the image is not classified yet.
-  DCHECK(GetDarkModeClassification(src_rect) ==
-         DarkModeClassification::kNotClassified);
-  ClassificationKey key(src_rect.X(), src_rect.Y());
-  dark_mode_classifications_.insert(key, dark_mode_classification);
 }
 
 }  // namespace blink

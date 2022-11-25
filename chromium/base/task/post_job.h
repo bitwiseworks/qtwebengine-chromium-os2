@@ -5,10 +5,12 @@
 #ifndef BASE_TASK_POST_JOB_H_
 #define BASE_TASK_POST_JOB_H_
 
+#include <limits>
+
 #include "base/base_export.h"
 #include "base/callback.h"
+#include "base/check_op.h"
 #include "base/location.h"
-#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/task/task_traits.h"
@@ -21,7 +23,8 @@ class PooledTaskRunnerDelegate;
 }
 
 // Delegate that's passed to Job's worker task, providing an entry point to
-// communicate with the scheduler.
+// communicate with the scheduler. To prevent deadlocks, JobDelegate methods
+// should never be called while holding a user lock.
 class BASE_EXPORT JobDelegate {
  public:
   // A JobDelegate is instantiated for each worker task that is run.
@@ -49,21 +52,25 @@ class BASE_EXPORT JobDelegate {
   // of worker should be adjusted accordingly. See PostJob() for more details.
   void NotifyConcurrencyIncrease();
 
+  // Returns a task_id unique among threads currently running this job, such
+  // that GetTaskId() < worker count. To achieve this, the same task_id may be
+  // reused by a different thread after a worker_task returns.
+  uint8_t GetTaskId();
+
+  // Returns true if the current task is called from the thread currently
+  // running JobHandle::Join().
+  bool IsJoiningThread() const {
+    return pooled_task_runner_delegate_ == nullptr;
+  }
+
  private:
-  // Verifies that either max concurrency is lower or equal to
-  // |expected_max_concurrency|, or there is an increase version update
-  // triggered by NotifyConcurrencyIncrease().
-  void AssertExpectedConcurrency(size_t expected_max_concurrency);
+  static constexpr uint8_t kInvalidTaskId = std::numeric_limits<uint8_t>::max();
 
   internal::JobTaskSource* const task_source_;
   internal::PooledTaskRunnerDelegate* const pooled_task_runner_delegate_;
+  uint8_t task_id_ = kInvalidTaskId;
 
 #if DCHECK_IS_ON()
-  // Used in AssertExpectedConcurrency(), see that method's impl for details.
-  // Value of max concurrency recorded before running the worker task.
-  size_t recorded_max_concurrency_;
-  // Value of the increase version recorded before running the worker task.
-  size_t recorded_increase_version_;
   // Value returned by the last call to ShouldYield().
   bool last_should_yield_ = false;
 #endif
@@ -72,7 +79,8 @@ class BASE_EXPORT JobDelegate {
 };
 
 // Handle returned when posting a Job. Provides methods to control execution of
-// the posted Job.
+// the posted Job. To prevent deadlocks, JobHandle methods should never be
+// called while holding a user lock.
 class BASE_EXPORT JobHandle {
  public:
   JobHandle();
@@ -85,6 +93,9 @@ class BASE_EXPORT JobHandle {
 
   // Returns true if associated with a Job.
   explicit operator bool() const { return task_source_ != nullptr; }
+
+  // Returns true if there's no work pending and no worker running.
+  bool IsCompleted() const;
 
   // Update this Job's priority.
   void UpdatePriority(TaskPriority new_priority);
@@ -120,10 +131,28 @@ class BASE_EXPORT JobHandle {
   DISALLOW_COPY_AND_ASSIGN(JobHandle);
 };
 
+// Callback used in PostJob() to control the maximum number of threads calling
+// the worker task concurrently.
+
+// Returns the maximum number of threads which may call a job's worker task
+// concurrently. |worker_count| is the number of threads currently assigned to
+// this job which some callers may need to determine their return value.
+using MaxConcurrencyCallback =
+    RepeatingCallback<size_t(size_t /*worker_count*/)>;
+
 // Posts a repeating |worker_task| with specific |traits| to run in parallel on
 // base::ThreadPool.
 // Returns a JobHandle associated with the Job, which can be joined, canceled or
 // detached.
+// ThreadPool APIs, including PostJob() and methods of the returned JobHandle,
+// must never be called while holding a lock that could be acquired by
+// |worker_task| or |max_concurrency_callback| -- that could result in a
+// deadlock. This is because [1] |max_concurrency_callback| may be invoked while
+// holding internal ThreadPool lock (A), hence |max_concurrency_callback| can
+// only use a lock (B) if that lock is *never* held while calling back into a
+// ThreadPool entry point from any thread (A=>B/B=>A deadlock) and [2]
+// |worker_task| or |max_concurrency_callback| is invoked synchronously from
+// JobHandle::Join() (A=>JobHandle::Join()=>A deadlock).
 // To avoid scheduling overhead, |worker_task| should do as much work as
 // possible in a loop when invoked, and JobDelegate::ShouldYield() should be
 // periodically invoked to conditionally exit and let the scheduler prioritize
@@ -156,11 +185,10 @@ class BASE_EXPORT JobHandle {
 // |traits| requirements:
 // - base::ThreadPolicy must be specified if the priority of the task runner
 //   will ever be increased from BEST_EFFORT.
-JobHandle BASE_EXPORT
-PostJob(const Location& from_here,
-        const TaskTraits& traits,
-        RepeatingCallback<void(JobDelegate*)> worker_task,
-        RepeatingCallback<size_t()> max_concurrency_callback);
+JobHandle BASE_EXPORT PostJob(const Location& from_here,
+                              const TaskTraits& traits,
+                              RepeatingCallback<void(JobDelegate*)> worker_task,
+                              MaxConcurrencyCallback max_concurrency_callback);
 
 }  // namespace base
 

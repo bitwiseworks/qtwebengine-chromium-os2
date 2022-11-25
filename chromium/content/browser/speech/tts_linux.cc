@@ -12,9 +12,8 @@
 #include "base/command_line.h"
 #include "base/debug/leak_annotations.h"
 #include "base/macros.h"
-#include "base/memory/singleton.h"
+#include "base/no_destructor.h"
 #include "base/synchronization/lock.h"
-#include "base/task/post_task.h"
 #include "base/task/thread_pool.h"
 #include "content/browser/speech/tts_platform_impl.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -38,6 +37,9 @@ struct SPDChromeVoice {
 
 class TtsPlatformImplLinux : public TtsPlatformImpl {
  public:
+  TtsPlatformImplLinux(const TtsPlatformImplLinux&) = delete;
+  TtsPlatformImplLinux& operator=(const TtsPlatformImplLinux&) = delete;
+
   bool PlatformImplAvailable() override;
   void Speak(int utterance_id,
              const std::string& utterance,
@@ -57,8 +59,8 @@ class TtsPlatformImplLinux : public TtsPlatformImpl {
   static TtsPlatformImplLinux* GetInstance();
 
  private:
+  friend base::NoDestructor<TtsPlatformImplLinux>;
   TtsPlatformImplLinux();
-  ~TtsPlatformImplLinux() override;
 
   // Initiate the connection with the speech dispatcher.
   void Initialize();
@@ -90,23 +92,17 @@ class TtsPlatformImplLinux : public TtsPlatformImpl {
 
   // These apply to the current utterance only.
   std::string utterance_;
-  int utterance_id_;
+  int utterance_id_ = 0;
 
   // Map a string composed of a voicename and module to the voicename. Used to
   // uniquely identify a voice across all available modules.
   std::unique_ptr<std::map<std::string, SPDChromeVoice>> all_native_voices_;
-
-  friend struct base::DefaultSingletonTraits<TtsPlatformImplLinux>;
-
-  base::WeakPtrFactory<TtsPlatformImplLinux> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(TtsPlatformImplLinux);
 };
 
 // static
 SPDNotificationType TtsPlatformImplLinux::current_notification_ = SPD_EVENT_END;
 
-TtsPlatformImplLinux::TtsPlatformImplLinux() : utterance_id_(0) {
+TtsPlatformImplLinux::TtsPlatformImplLinux() {
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
   if (!command_line.HasSwitch(switches::kEnableSpeechDispatcher))
@@ -128,7 +124,7 @@ void TtsPlatformImplLinux::Initialize() {
     // spd_open has memory leaks which are hard to suppress.
     // http://crbug.com/317360
     ANNOTATE_SCOPED_MEMORY_LEAK;
-    conn_ = libspeechd_loader_.spd_open("chrome", "extension_api", NULL,
+    conn_ = libspeechd_loader_.spd_open("chrome", "extension_api", nullptr,
                                         SPD_MODE_THREADED);
   }
   if (!conn_)
@@ -147,26 +143,18 @@ void TtsPlatformImplLinux::Initialize() {
   libspeechd_loader_.spd_set_notification_on(conn_, SPD_RESUME);
 }
 
-TtsPlatformImplLinux::~TtsPlatformImplLinux() {
-  base::AutoLock lock(initialization_lock_);
-  if (conn_) {
-    libspeechd_loader_.spd_close(conn_);
-    conn_ = NULL;
-  }
-}
-
 void TtsPlatformImplLinux::Reset() {
   base::AutoLock lock(initialization_lock_);
   if (conn_)
     libspeechd_loader_.spd_close(conn_);
-  conn_ = libspeechd_loader_.spd_open("chrome", "extension_api", NULL,
+  conn_ = libspeechd_loader_.spd_open("chrome", "extension_api", nullptr,
                                       SPD_MODE_THREADED);
 }
 
 bool TtsPlatformImplLinux::PlatformImplAvailable() {
   if (!initialization_lock_.Try())
     return false;
-  bool result = libspeechd_loader_.loaded() && (conn_ != NULL);
+  bool result = libspeechd_loader_.loaded() && (conn_ != nullptr);
   initialization_lock_.Release();
   return result;
 }
@@ -187,7 +175,7 @@ void TtsPlatformImplLinux::Speak(
   // Parse SSML and process speech.
   TtsController::GetInstance()->StripSSML(
       utterance, base::BindOnce(&TtsPlatformImplLinux::ProcessSpeech,
-                                weak_factory_.GetWeakPtr(), utterance_id, lang,
+                                base::Unretained(this), utterance_id, lang,
                                 voice, params, std::move(on_speak_finished)));
 }
 
@@ -306,7 +294,6 @@ void TtsPlatformImplLinux::GetVoices(std::vector<VoiceData>* out_voices) {
 }
 
 void TtsPlatformImplLinux::OnSpeechEvent(SPDNotificationType type) {
-  // hummmmmm
   TtsController* controller = TtsController::GetInstance();
   switch (type) {
     case SPD_EVENT_BEGIN:
@@ -345,8 +332,8 @@ void TtsPlatformImplLinux::NotificationCallback(size_t msg_id,
   // be in a separate thread.
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
     current_notification_ = type;
-    base::PostTask(
-        FROM_HERE, {BrowserThread::UI},
+    GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE,
         base::BindOnce(&TtsPlatformImplLinux::OnSpeechEvent,
                        base::Unretained(TtsPlatformImplLinux::GetInstance()),
                        type));
@@ -365,8 +352,8 @@ void TtsPlatformImplLinux::IndexMarkCallback(size_t msg_id,
   // be in a separate thread.
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
     current_notification_ = state;
-    base::PostTask(
-        FROM_HERE, {BrowserThread::UI},
+    GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE,
         base::BindOnce(&TtsPlatformImplLinux::OnSpeechEvent,
                        base::Unretained(TtsPlatformImplLinux::GetInstance()),
                        state));
@@ -375,9 +362,8 @@ void TtsPlatformImplLinux::IndexMarkCallback(size_t msg_id,
 
 // static
 TtsPlatformImplLinux* TtsPlatformImplLinux::GetInstance() {
-  return base::Singleton<
-      TtsPlatformImplLinux,
-      base::LeakySingletonTraits<TtsPlatformImplLinux>>::get();
+  static base::NoDestructor<TtsPlatformImplLinux> tts_platform;
+  return tts_platform.get();
 }
 
 // static

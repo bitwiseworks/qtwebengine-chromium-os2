@@ -20,19 +20,23 @@ namespace features {
 
 // All features in alphabetical order.
 extern const base::Feature kAutofillAlwaysReturnCloudTokenizedCard;
+extern const base::Feature kAutofillCacheServerCardInfo;
 extern const base::Feature kAutofillCreditCardAblationExperiment;
 extern const base::Feature kAutofillCreditCardAuthentication;
 extern const base::Feature kAutofillCreditCardUploadFeedback;
-extern const base::Feature kAutofillEnableLocalCardMigrationForNonSyncUser;
+extern const base::Feature kAutofillDownstreamCvcPromptUseGooglePayLogo;
+extern const base::Feature kAutofillEnableCardNicknameManagement;
+extern const base::Feature kAutofillEnableCardNicknameUpstream;
+extern const base::Feature kAutofillEnableFixedPaymentsBubbleLogging;
+extern const base::Feature kAutofillEnableGoogleIssuedCard;
+extern const base::Feature kAutofillEnableOffersInDownstream;
+extern const base::Feature kAutofillEnableStickyPaymentsBubble;
 extern const base::Feature kAutofillEnableToolbarStatusChip;
 extern const base::Feature kAutofillEnableVirtualCard;
-extern const base::Feature kAutofillNoLocalSaveOnUnmaskSuccess;
-extern const base::Feature kAutofillNoLocalSaveOnUploadSuccess;
 extern const base::Feature kAutofillSaveCardDismissOnNavigation;
 extern const base::Feature kAutofillSaveCardInfobarEditSupport;
 extern const base::Feature kAutofillUpstream;
 extern const base::Feature kAutofillUpstreamAllowAllEmailDomains;
-extern const base::Feature kAutofillUpstreamEditableExpirationDate;
 
 // Return whether a [No thanks] button and new messaging is shown in the save
 // card bubbles. This will be called only on desktop platforms.

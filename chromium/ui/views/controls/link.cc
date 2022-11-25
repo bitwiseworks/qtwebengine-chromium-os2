@@ -6,7 +6,7 @@
 
 #include "build/build_config.h"
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
@@ -22,9 +22,6 @@
 
 namespace views {
 
-// static
-constexpr gfx::Insets Link::kFocusBorderPadding;
-
 Link::Link(const base::string16& title, int text_context, int text_style)
     : Label(title, text_context, text_style) {
   RecalculateFont();
@@ -38,12 +35,6 @@ Link::Link(const base::string16& title, int text_context, int text_style)
 }
 
 Link::~Link() = default;
-
-Link::FocusStyle Link::GetFocusStyle() const {
-  // Use an underline to indicate focus unless the link is always drawn with an
-  // underline.
-  return underline_ ? FocusStyle::kRing : FocusStyle::kUnderline;
-}
 
 SkColor Link::GetColor() const {
   // TODO(tapted): Use style::GetColor().
@@ -60,23 +51,12 @@ SkColor Link::GetColor() const {
                : ui::NativeTheme::kColorId_LinkEnabled);
 }
 
-void Link::PaintFocusRing(gfx::Canvas* canvas) const {
-  if (GetFocusStyle() == FocusStyle::kRing) {
-    gfx::Rect focus_ring_bounds = GetTextBounds();
-    focus_ring_bounds.Inset(-kFocusBorderPadding);
-    focus_ring_bounds.Intersect(GetLocalBounds());
-    canvas->DrawFocusRect(focus_ring_bounds);
-  }
-}
+void Link::SetForceUnderline(bool force_underline) {
+  if (force_underline_ == force_underline)
+    return;
 
-gfx::Insets Link::GetInsets() const {
-  gfx::Insets insets = Label::GetInsets();
-  if (GetFocusStyle() == FocusStyle::kRing &&
-      GetFocusBehavior() != FocusBehavior::NEVER) {
-    DCHECK(!GetText().empty());
-    insets += kFocusBorderPadding;
-  }
-  return insets;
+  force_underline_ = force_underline;
+  RecalculateFont();
 }
 
 gfx::NativeCursor Link::GetCursor(const ui::MouseEvent& event) {
@@ -85,10 +65,10 @@ gfx::NativeCursor Link::GetCursor(const ui::MouseEvent& event) {
   return GetNativeHandCursor();
 }
 
-bool Link::CanProcessEventsWithinSubtree() const {
+bool Link::GetCanProcessEventsWithinSubtree() const {
   // Links need to be able to accept events (e.g., clicking) even though
   // in general Labels do not.
-  return View::CanProcessEventsWithinSubtree();
+  return View::GetCanProcessEventsWithinSubtree();
 }
 
 bool Link::OnMousePressed(const ui::MouseEvent& event) {
@@ -112,13 +92,8 @@ void Link::OnMouseReleased(const ui::MouseEvent& event) {
   OnMouseCaptureLost();
   if (GetEnabled() &&
       (event.IsLeftMouseButton() || event.IsMiddleMouseButton()) &&
-      HitTestPoint(event.location())) {
-    // Focus the link on click.
-    RequestFocus();
-
-    if (!callback_.is_null())
-      callback_.Run(this, event.flags());
-  }
+      HitTestPoint(event.location()))
+    OnClick(event);
 }
 
 void Link::OnMouseCaptureLost() {
@@ -134,13 +109,7 @@ bool Link::OnKeyPressed(const ui::KeyEvent& event) {
     return false;
 
   SetPressed(false);
-
-  // Focus the link on key pressed.
-  RequestFocus();
-
-  if (!callback_.is_null())
-    callback_.Run(this, event.flags());
-
+  OnClick(event);
   return true;
 }
 
@@ -151,9 +120,7 @@ void Link::OnGestureEvent(ui::GestureEvent* event) {
   if (event->type() == ui::ET_GESTURE_TAP_DOWN) {
     SetPressed(true);
   } else if (event->type() == ui::ET_GESTURE_TAP) {
-    RequestFocus();
-    if (!callback_.is_null())
-      callback_.Run(this, event->flags());
+    OnClick(*event);
   } else {
     SetPressed(false);
     return;
@@ -214,18 +181,6 @@ bool Link::IsSelectionSupported() const {
   return false;
 }
 
-bool Link::GetUnderline() const {
-  return underline_;
-}
-
-void Link::SetUnderline(bool underline) {
-  if (underline_ == underline)
-    return;
-  underline_ = underline;
-  RecalculateFont();
-  OnPropertyChanged(&underline_, kPropertyEffectsPreferredSizeChanged);
-}
-
 void Link::SetPressed(bool pressed) {
   if (pressed_ != pressed) {
     pressed_ = pressed;
@@ -235,13 +190,15 @@ void Link::SetPressed(bool pressed) {
   }
 }
 
+void Link::OnClick(const ui::Event& event) {
+  RequestFocus();
+  if (callback_)
+    callback_.Run(event);
+}
+
 void Link::RecalculateFont() {
-  // Underline the link if it is enabled and |underline_| is true. Also
-  // underline to indicate focus when that's the style.
   const int style = font_list().GetFontStyle();
-  const bool underline =
-      underline_ || (HasFocus() && GetFocusStyle() == FocusStyle::kUnderline);
-  const int intended_style = (GetEnabled() && underline)
+  const int intended_style = ((GetEnabled() && HasFocus()) || force_underline_)
                                  ? (style | gfx::Font::UNDERLINE)
                                  : (style & ~gfx::Font::UNDERLINE);
 
@@ -254,7 +211,7 @@ void Link::ConfigureFocus() {
   if (GetText().empty()) {
     SetFocusBehavior(FocusBehavior::NEVER);
   } else {
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
     SetFocusBehavior(FocusBehavior::ACCESSIBLE_ONLY);
 #else
     SetFocusBehavior(FocusBehavior::ALWAYS);
@@ -262,15 +219,8 @@ void Link::ConfigureFocus() {
   }
 }
 
-DEFINE_ENUM_CONVERTERS(Link::FocusStyle,
-                       {Link::FocusStyle::kUnderline,
-                        base::ASCIIToUTF16("UNDERLINE")},
-                       {Link::FocusStyle::kRing, base::ASCIIToUTF16("RING")})
-BEGIN_METADATA(Link)
-METADATA_PARENT_CLASS(Label)
-ADD_READONLY_PROPERTY_METADATA(Link, SkColor, Color)
-ADD_READONLY_PROPERTY_METADATA(Link, Link::FocusStyle, FocusStyle)
-ADD_PROPERTY_METADATA(Link, bool, Underline)
-END_METADATA()
+BEGIN_METADATA(Link, Label)
+ADD_READONLY_PROPERTY_METADATA(SkColor, Color)
+END_METADATA
 
 }  // namespace views

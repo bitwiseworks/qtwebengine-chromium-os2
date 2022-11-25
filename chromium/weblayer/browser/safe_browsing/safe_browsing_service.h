@@ -24,35 +24,46 @@ class URLLoaderThrottle;
 }
 
 namespace network {
+namespace mojom {
+class NetworkContext;
+}
 class SharedURLLoaderFactory;
 }
 
 namespace safe_browsing {
 class UrlCheckerDelegate;
+class RealTimeUrlLookupServiceBase;
 class RemoteSafeBrowsingDatabaseManager;
 class SafeBrowsingApiHandler;
 class SafeBrowsingNetworkContext;
 }  // namespace safe_browsing
 
 namespace weblayer {
+class UrlCheckerDelegateImpl;
 
 // Class for managing safebrowsing related functionality. In particular this
 // class owns both the safebrowsing database and UI managers and provides
 // support for initialization and construction of these objects.
 class SafeBrowsingService {
  public:
-  SafeBrowsingService(const std::string& user_agent);
+  explicit SafeBrowsingService(const std::string& user_agent);
   ~SafeBrowsingService();
 
   // Executed on UI thread
   void Initialize();
   std::unique_ptr<blink::URLLoaderThrottle> CreateURLLoaderThrottle(
       const base::RepeatingCallback<content::WebContents*()>& wc_getter,
-      int frame_tree_node_id);
+      int frame_tree_node_id,
+      safe_browsing::RealTimeUrlLookupServiceBase* url_lookup_service);
   std::unique_ptr<content::NavigationThrottle>
   CreateSafeBrowsingNavigationThrottle(content::NavigationHandle* handle);
   void AddInterface(service_manager::BinderRegistry* registry,
                     content::RenderProcessHost* render_process_host);
+  void StopDBManager();
+
+  network::mojom::NetworkContext* GetNetworkContext();
+
+  scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory();
 
  private:
   SafeBrowsingUIManager* GetSafeBrowsingUIManager();
@@ -68,6 +79,7 @@ class SafeBrowsingService {
   GetURLLoaderFactoryOnIOThread();
   void CreateURLLoaderFactoryForIO(
       mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver);
+  void StopDBManagerOnIOThread();
 
   // The UI manager handles showing interstitials. Accessed on both UI and IO
   // thread.
@@ -86,8 +98,7 @@ class SafeBrowsingService {
   scoped_refptr<network::WeakWrapperSharedURLLoaderFactory>
       shared_url_loader_factory_on_io_;
 
-  scoped_refptr<safe_browsing::UrlCheckerDelegate>
-      safe_browsing_url_checker_delegate_;
+  scoped_refptr<UrlCheckerDelegateImpl> safe_browsing_url_checker_delegate_;
 
   std::unique_ptr<safe_browsing::SafeBrowsingApiHandler>
       safe_browsing_api_handler_;

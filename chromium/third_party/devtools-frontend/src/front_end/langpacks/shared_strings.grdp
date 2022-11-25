@@ -19,17 +19,20 @@
   <message name="IDS_DEVTOOLS_07ba8a9247a0f91e025d8036a28c3b56" desc="A tag of Application Panel that can be searched in the command menu">
     pwa
   </message>
+  <message name="IDS_DEVTOOLS_0945359809dad1fbf3dea1c95a0da951" desc="Name of a network resource type">
+    Document
+  </message>
   <message name="IDS_DEVTOOLS_0b484cfcf50c8fabff48c0aad426f544" desc="Text to dock the DevTools to the left of the browser tab">
     Dock to left
+  </message>
+  <message name="IDS_DEVTOOLS_0be7b7d0111a248185e7b1bebaf8595b" desc="Text to enable blocking of network requests">
+    Enable network request blocking
   </message>
   <message name="IDS_DEVTOOLS_0ca08f8f4a8a19f7f1ae87c119494327" desc="Title as part of a tool to override existing configurations">
     Overrides
   </message>
   <message name="IDS_DEVTOOLS_0eaadb4fcb48a0a0ed7bc9868be9fbaa" desc="Text to indicate an item is a warning">
     Warning
-  </message>
-  <message name="IDS_DEVTOOLS_0f44e9e39cbe2f22bd1bd7b6070cf13d" desc="Text to enable blocking of network requests">
-    Enable request blocking
   </message>
   <message name="IDS_DEVTOOLS_105078d294d30c978ca2badf7f376934" desc="The action to scroll">
     Scroll
@@ -54,6 +57,9 @@
   </message>
   <message name="IDS_DEVTOOLS_1583d36995134f9120fac115c08e0174" desc="Text when something is loading">
     Loading…
+  </message>
+  <message name="IDS_DEVTOOLS_15c2d85f1fae22a3c3a0594510a1f611" desc="Text in Protocol Monitor of the Protocol Monitor tab">
+    Request
   </message>
   <message name="IDS_DEVTOOLS_16f78b9465f03f7ec5a03c24918fbde3" desc="Status code of an event">
     Status Code
@@ -81,6 +87,9 @@
   </message>
   <message name="IDS_DEVTOOLS_2310408a63388fe57e3a4177168a8798" desc="Text for the desktop platform, as opposed to mobile">
     Desktop
+  </message>
+  <message name="IDS_DEVTOOLS_231afe47f3f37d3808096b36c28b4ded" desc="Label for the column in the element list in the CSS Overview report">
+    Element
   </message>
   <message name="IDS_DEVTOOLS_26ae7bdd1d6fb8c4886e6fde8d12601c" desc="Text for the latency of a task">
     Latency
@@ -121,6 +130,9 @@
   <message name="IDS_DEVTOOLS_2f04f3e6eee339eeb0ddb6c39606424d" desc="Text for searching with regular expressinn">
     Use Regular Expression
   </message>
+  <message name="IDS_DEVTOOLS_2fae32629d4ef4fc6341f1751b405e45" desc="Title of the 'Security' tool">
+    Security
+  </message>
   <message name="IDS_DEVTOOLS_31fde7b05ac8952dacf4af8a704074ec" desc="Text for previewing items">
     Preview
   </message>
@@ -145,6 +157,9 @@
   <message name="IDS_DEVTOOLS_3b563524fdb17b4a86590470d40bef74" desc="Text that appears on a button for the media resource type filter.">
     Media
   </message>
+  <message name="IDS_DEVTOOLS_3b98e2dffc6cb06a89dcb0d5c60a0206" desc="Label aa text content in Contrast Details of the Color Picker">
+    AA
+  </message>
   <message name="IDS_DEVTOOLS_3bb3e8c8a24891ba0f7608bcc96f8b0a" desc="Text for a rendering frame">
     Frame
   </message>
@@ -166,6 +181,9 @@
   <message name="IDS_DEVTOOLS_4059b0251f66a18cb56f544728796875" desc="Sdk console message message level info of level Labels in Console View of the Console panel">
     Info
   </message>
+  <message name="IDS_DEVTOOLS_41de6d6cfb8953c021bbe4ba0701c8a1" desc="Text in Network Item View of the Network panel">
+    Messages
+  </message>
   <message name="IDS_DEVTOOLS_41fdb410354e76ef7674f98e1cc84c8f" desc="Text for throttling the network">
     Throttling
   </message>
@@ -180,9 +198,6 @@
   </message>
   <message name="IDS_DEVTOOLS_47bda3033cb8fe0e76c45c293db011b5" desc="Text to indicate there are no breakpoints">
     No breakpoints
-  </message>
-  <message name="IDS_DEVTOOLS_4909c5e867e2322253bef625307a85a8" desc="Text in Headers View of the Network panel">
-    Only choose this option if an arbitrary website including this resource does not impose a security risk.
   </message>
   <message name="IDS_DEVTOOLS_49ee3087348e8d44e1feda1917443987" desc="Text for the name of something">
     Name
@@ -219,6 +234,9 @@
   </message>
   <message name="IDS_DEVTOOLS_51360304ea03557e79bdf5ff9cd2e234" desc="Text for the issuer of an item">
     Issuer
+  </message>
+  <message name="IDS_DEVTOOLS_5174d1309f275ba6f275db3af9eb3e18" desc="Title of a section on CSS Grid tooling">
+    Grid
   </message>
   <message name="IDS_DEVTOOLS_529a032eab49b8ddc6f49f8bcc086607" desc="Prev button title in Film Strip View of the Performance panel">
     Previous frame
@@ -265,6 +283,9 @@
   <message name="IDS_DEVTOOLS_5fb63579fc981698f97d55bfecb213ea" desc="Text for copying">
     Copy
   </message>
+  <message name="IDS_DEVTOOLS_61326117ed4a9ddf3f754e71e119e5b3" desc="The kind of resolution for a mixed content issue">
+    blocked
+  </message>
   <message name="IDS_DEVTOOLS_63041e09c8660107e507c9c27c08199c" desc="Text to expand something recursively">
     Expand recursively
   </message>
@@ -301,6 +322,15 @@
   <message name="IDS_DEVTOOLS_6f6cb72d544962fa333e2e34ce64f719" desc="Text for the size of something">
     Size
   </message>
+  <message name="IDS_DEVTOOLS_6feab1a8f70b4209f82a628b7395ede3" desc="Message to display if a setting change requires a reload of DevTools">
+    One or more settings have changed which requires a reload to take effect.
+  </message>
+  <message name="IDS_DEVTOOLS_72507d307327a430052f9fcd914dfaee" desc="Title of an action that reloads the DevTools">
+    Reload DevTools
+  </message>
+  <message name="IDS_DEVTOOLS_74421a69b1bc40c166be4de5caf0b036" desc="Text of a DOM element in Contrast Details of the Color Picker">
+    Contrast ratio
+  </message>
   <message name="IDS_DEVTOOLS_74540c79e377bea903e1023a46df5574" desc="Text to open a file">
     Open file
   </message>
@@ -312,6 +342,9 @@
   </message>
   <message name="IDS_DEVTOOLS_787ae37366b7a8c53f381abfd315c647" desc="Text that refers to the Elements Panel">
     Elements Panel
+  </message>
+  <message name="IDS_DEVTOOLS_7a1920d61156abc05a60135aefe8bc67" desc="A context menu item in the Console View of the Console panel">
+    Default
   </message>
   <message name="IDS_DEVTOOLS_7a2ccf251ecb20b2b84ce0e3c3f72a29" desc="Text to show something is secure">
     Secure
@@ -330,6 +363,9 @@
   </message>
   <message name="IDS_DEVTOOLS_81aa2078d1eceede831b2976dbf32e62" desc="Text to clear everything">
     Clear all
+  </message>
+  <message name="IDS_DEVTOOLS_832e506a71f4a57ed15ecbcd771f9247" desc="Text in Coverage List View of the Coverage tab">
+    Total Bytes
   </message>
   <message name="IDS_DEVTOOLS_84d0c431d1472a0609d69b39dcb3a287" desc="Text for the index of something">
     (index)
@@ -352,8 +388,14 @@
   <message name="IDS_DEVTOOLS_884680dd63eae99eab1a407133df66b7" desc="Text to view a security certificate">
     View certificate
   </message>
+  <message name="IDS_DEVTOOLS_886f598a8a9e6a4bfe0c09fcf7779611" desc="Title of a Rendering setting that can be invoked through the Command Menu">
+    Emulate a focused page
+  </message>
   <message name="IDS_DEVTOOLS_888a77f5ac0748b6c8001822417df8b6" desc="Text for security or network protocol">
     Protocol
+  </message>
+  <message name="IDS_DEVTOOLS_89345110b204ed302eddff2ddbd0f4d9" desc="Text in the Shortcuts page to explain a keyboard shortcut (enable toggle breakpoint shortcut in debugger)">
+    Toggle breakpoint enabled
   </message>
   <message name="IDS_DEVTOOLS_8d9da4bc0e49a50e09ac9f7e56789d39" desc="Text to indicate the network connectivity is offline">
     Offline
@@ -363,6 +405,12 @@
   </message>
   <message name="IDS_DEVTOOLS_902b0d55fddef6f8d651fe1035b7d4bd" desc="Text for errors">
     Error
+  </message>
+  <message name="IDS_DEVTOOLS_90589c47f06eb971d548591f23c285af" desc="Text in Network Throttling Selector of the Network panel">
+    Custom
+  </message>
+  <message name="IDS_DEVTOOLS_9066c4d254b4c8ab67e107a1b59e925d" desc="Accessible text for a file size of 1 byte">
+    1 byte
   </message>
   <message name="IDS_DEVTOOLS_90da6f38945a1c7e7ba11e3adcbe6919" desc="Text for pausing the debugger on exceptions">
     Pause on exceptions
@@ -378,6 +426,9 @@
   </message>
   <message name="IDS_DEVTOOLS_939aaa05e0943b39eab3a34fd609384d" desc="Text to scroll the displayed content into view">
     Scroll into view
+  </message>
+  <message name="IDS_DEVTOOLS_93cba07454f06a4a960172bbd6e2a435" desc="Text in Timeline indicating that input has happened recently">
+    Yes
   </message>
   <message name="IDS_DEVTOOLS_9446a98ad14416153cc4d45ab8b531bf" desc="Text for the performance of something">
     Performance
@@ -463,6 +514,9 @@
   <message name="IDS_DEVTOOLS_ad91a1da588ce256d30b1af38f78f84e" desc="Text exposed to screen readers on unchecked items.">
     unchecked
   </message>
+  <message name="IDS_DEVTOOLS_ad921d60486366258809553a3db49a4a" desc="Text in Object Properties Section">
+    unknown
+  </message>
   <message name="IDS_DEVTOOLS_af4bb376939e77df0e7c2332b837a866" desc="Text that refers to closure as a programming term">
     Closure
   </message>
@@ -505,6 +559,9 @@
   <message name="IDS_DEVTOOLS_ba5b676ccf658f863ef2e3df082ee262" desc="Text for the event that an animation frame is fired">
     Animation Frame Fired
   </message>
+  <message name="IDS_DEVTOOLS_bafd7322c6e97d25b6299b5d6fe8920b" desc="Text in Timeline indicating that input has not happened recently">
+    No
+  </message>
   <message name="IDS_DEVTOOLS_bc28aa52ba5b534ad9d198157c375d67" desc="Text to clear storage of the web page">
     Clear storage
   </message>
@@ -520,6 +577,9 @@
   <message name="IDS_DEVTOOLS_be8545ae7ab0276e15898aae7acfbd7a" desc="Text that refers to the resources of the web page">
     Resource
   </message>
+  <message name="IDS_DEVTOOLS_bec25a46972e4fa86df9413508add5c2" desc="Text that refers to disabling local fonts">
+    Disable local fonts
+  </message>
   <message name="IDS_DEVTOOLS_c2cc7082a89c1ad6631a2f66af5f00c0" desc="Text that refers to the network connection">
     Connection
   </message>
@@ -531,9 +591,6 @@
   </message>
   <message name="IDS_DEVTOOLS_c7892ebbb139886662c6f2fc8c450710" desc="Text that refers to the subject of a security certificate">
     Subject
-  </message>
-  <message name="IDS_DEVTOOLS_c823a983a972cfb5ee4b8bf1918080d3" desc="Text in Headers View of the Network panel">
-    Choose this option if the resource and the document are served from the same site.
   </message>
   <message name="IDS_DEVTOOLS_c949475bc69a57c419ac976fe8870652" desc="Text to search by matching case of the input">
     Match Case
@@ -547,8 +604,8 @@
   <message name="IDS_DEVTOOLS_ce5bf551379459c1c61d2a204061c455" desc="Title for a group of cities">
     Location
   </message>
-  <message name="IDS_DEVTOOLS_cb835af5f855f79e8611dd3f8fec6aac" desc="Title of an action in the inspector main tool to reload">
-    Reload page
+  <message name="IDS_DEVTOOLS_ce7668534c7b08cd0b81dfa574d681f8" desc="Toolip shown for the issues count in several places of the UI">
+    Issues pertaining to <ph name="ISSUES">$1s<ex>13</ex></ph> operations detected.
   </message>
   <message name="IDS_DEVTOOLS_ce82e07fa1f0521f5cee30e368fe2e73" desc="Text that starts with a colon and includes a placeholder">
     : <ph name="AA_NUMBER">$1s<ex>3.0</ex></ph>
@@ -595,6 +652,12 @@
   <message name="IDS_DEVTOOLS_e0e4fc6213e8b3593495a7260c3a4c2e" desc="Text for accessibility of the web page">
     Accessibility
   </message>
+  <message name="IDS_DEVTOOLS_e199c6bb662785b037c5f330f58878ce" desc="Show all text content in Show More Data Grid Node of a data grid">
+    Show all <ph name="TOTALSIZE">$1d<ex>50</ex></ph>
+  </message>
+  <message name="IDS_DEVTOOLS_e1faffb3e614e6c2fba74296962386b7" desc="Label aaa text content in Contrast Details of the Color Picker">
+    AAA
+  </message>
   <message name="IDS_DEVTOOLS_e402c138065e7eece783dc30c6079192" desc="Text that appears on a button for the xhr resource type filter.">
     XHR
   </message>
@@ -625,14 +688,23 @@
   <message name="IDS_DEVTOOLS_eb902cf204f3e4dfffeb56d92a9b5c26" desc="Text to show since when an item is valid">
     Valid from
   </message>
+  <message name="IDS_DEVTOOLS_ebd9bec4d70abc789d439c1f136b0538" desc="Text in Timeline UIUtils of the Performance panel">
+    Layout
+  </message>
   <message name="IDS_DEVTOOLS_ec211f7c20af43e742bf2570c3cb84f9" desc="Text to add something">
     Add
+  </message>
+  <message name="IDS_DEVTOOLS_ec21eddec143497cea80ab45444a5dab" desc="Related node label in Timeline UIUtils of the Performance panel">
+    Owner Element
   </message>
   <message name="IDS_DEVTOOLS_ec53a8c4f07baed5d8825072c89799be" desc="Text for the status of something">
     Status
   </message>
   <message name="IDS_DEVTOOLS_edd24cce7afedea5a1b2f90675880687" desc="Text to preserve the log after refreshing">
     Preserve log
+  </message>
+  <message name="IDS_DEVTOOLS_ee1cab1975e28575b1631ee8fc4ea749" desc="Title of an action in the emulation tool to capture node screenshot">
+    Capture node screenshot
   </message>
   <message name="IDS_DEVTOOLS_ee33e909372d935d190f4fcb2a92d542" desc="The milisecond unit">
     ms
@@ -675,6 +747,9 @@
   </message>
   <message name="IDS_DEVTOOLS_fa7c73b6eb5f3c3b77e47d8a4557af3e" desc="Tooltip text that appears when hovering over the largeicon load button">
     Load profile…
+  </message>
+  <message name="IDS_DEVTOOLS_faa6cbbf56829034b2653e796abdd062" desc="Toolip shown for the issues count in several places of the UI">
+    Issues pertaining to <ph name="ISSUES">$1s<ex>1</ex></ph> operation detected.
   </message>
   <message name="IDS_DEVTOOLS_fb61758d0f0fda4ba867c3d5a46c16a7" desc="Name of the Sources panel">
     Sources

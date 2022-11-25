@@ -64,7 +64,6 @@ shared_library("jni_sample_lib") {
 android_apk("sample_jni_apk") {
   apk_name = "SampleJni"
   android_manifest = "AndroidManifest.xml"
-  target_sdk_version = 24
   deps = [
     ":jni_sample_java",
     "//base:base_java",
@@ -80,12 +79,6 @@ group("jni_generator_tests") {
     ":jni_annotation_sample_java",
     ":sample_jni_apk",
   ]
-}
-
-java_cpp_template("processor_args_java") {
-  package_path = "org/chromium/jni_generator"
-  sources = [ "ProcessorArgs.template" ]
-  defines = [ "HASH_JNI_NAMES_VALUE=$use_hashed_jni_names" ]
 }
 
 java_annotation_processor("jni_processor") {
@@ -110,6 +103,4 @@ java_annotation_processor("jni_processor") {
     "//third_party/android_deps:com_squareup_javapoet_java",
     "//third_party/android_deps:javax_annotation_jsr250_api_java",
   ]
-
-  srcjar_deps = [ ":processor_args_java" ]
 }

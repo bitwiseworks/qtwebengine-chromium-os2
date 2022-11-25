@@ -39,8 +39,9 @@ const LayoutBox* LayoutMultiColumnFlowThread::style_changed_box_;
 bool LayoutMultiColumnFlowThread::could_contain_spanners_;
 bool LayoutMultiColumnFlowThread::toggle_spanners_if_needed_;
 
-LayoutMultiColumnFlowThread::LayoutMultiColumnFlowThread()
-    : last_set_worked_on_(nullptr),
+LayoutMultiColumnFlowThread::LayoutMultiColumnFlowThread(bool needs_paint_layer)
+    : LayoutFlowThread(needs_paint_layer),
+      last_set_worked_on_(nullptr),
       column_count_(1),
       column_heights_changed_(false),
       is_being_evacuated_(false) {
@@ -51,9 +52,10 @@ LayoutMultiColumnFlowThread::~LayoutMultiColumnFlowThread() = default;
 
 LayoutMultiColumnFlowThread* LayoutMultiColumnFlowThread::CreateAnonymous(
     Document& document,
-    const ComputedStyle& parent_style) {
+    const ComputedStyle& parent_style,
+    bool needs_paint_layer) {
   LayoutMultiColumnFlowThread* layout_object =
-      new LayoutMultiColumnFlowThread();
+      new LayoutMultiColumnFlowThread(needs_paint_layer);
   layout_object->SetDocumentForAnonymous(&document);
   layout_object->SetStyle(ComputedStyle::CreateAnonymousStyleWithDisplay(
       parent_style, EDisplay::kBlock));
@@ -61,6 +63,7 @@ LayoutMultiColumnFlowThread* LayoutMultiColumnFlowThread::CreateAnonymous(
 }
 
 LayoutMultiColumnSet* LayoutMultiColumnFlowThread::FirstMultiColumnSet() const {
+  NOT_DESTROYED();
   for (LayoutObject* sibling = NextSibling(); sibling;
        sibling = sibling->NextSibling()) {
     if (sibling->IsLayoutMultiColumnSet())
@@ -70,6 +73,7 @@ LayoutMultiColumnSet* LayoutMultiColumnFlowThread::FirstMultiColumnSet() const {
 }
 
 LayoutMultiColumnSet* LayoutMultiColumnFlowThread::LastMultiColumnSet() const {
+  NOT_DESTROYED();
   for (LayoutObject* sibling = MultiColumnBlockFlow()->LastChild(); sibling;
        sibling = sibling->PreviousSibling()) {
     if (sibling->IsLayoutMultiColumnSet())
@@ -100,14 +104,16 @@ static inline bool IsMultiColumnContainer(const LayoutObject& object) {
 // for everything inside it, which conflicts with a spanners's need to have the
 // multicol container as its direct containing block. We may also not put
 // spanners inside objects that don't support fragmentation.
-static inline bool CanContainSpannerInParentFragmentationContext(
-    const LayoutObject& object) {
+bool LayoutMultiColumnFlowThread::CanContainSpannerInParentFragmentationContext(
+    const LayoutObject& object) const {
+  NOT_DESTROYED();
   const auto* block_flow = DynamicTo<LayoutBlockFlow>(object);
   if (!block_flow)
     return false;
   return !block_flow->CreatesNewFormattingContext() &&
-         !block_flow->StyleRef().CanContainFixedPositionObjects(false) &&
-         block_flow->GetPaginationBreakability() != LayoutBox::kForbidBreaks &&
+         !block_flow->CanContainFixedPositionObjects() &&
+         block_flow->GetPaginationBreakability(fragmentation_engine_) !=
+             LayoutBox::kForbidBreaks &&
          !IsMultiColumnContainer(*block_flow);
 }
 
@@ -229,6 +235,7 @@ static LayoutObject* LastLayoutObjectInSet(LayoutMultiColumnSet* multicol_set) {
 
 LayoutMultiColumnSet* LayoutMultiColumnFlowThread::MapDescendantToColumnSet(
     LayoutObject* layout_object) const {
+  NOT_DESTROYED();
   // Should not be used for spanners or content inside them.
   DCHECK(!ContainingColumnSpannerPlaceholder(layout_object));
   DCHECK_NE(layout_object, this);
@@ -268,6 +275,7 @@ LayoutMultiColumnSet* LayoutMultiColumnFlowThread::MapDescendantToColumnSet(
 LayoutMultiColumnSpannerPlaceholder*
 LayoutMultiColumnFlowThread::ContainingColumnSpannerPlaceholder(
     const LayoutObject* descendant) const {
+  NOT_DESTROYED();
   DCHECK(descendant->IsDescendantOf(this));
 
   if (!HasAnyColumnSpanners(*this))
@@ -285,6 +293,7 @@ LayoutMultiColumnFlowThread::ContainingColumnSpannerPlaceholder(
 }
 
 void LayoutMultiColumnFlowThread::Populate() {
+  NOT_DESTROYED();
   LayoutBlockFlow* multicol_container = MultiColumnBlockFlow();
   DCHECK(!NextSibling());
   // Reparent children preceding the flow thread into the flow thread. It's
@@ -297,6 +306,7 @@ void LayoutMultiColumnFlowThread::Populate() {
 }
 
 void LayoutMultiColumnFlowThread::EvacuateAndDestroy() {
+  NOT_DESTROYED();
   LayoutBlockFlow* multicol_container = MultiColumnBlockFlow();
   is_being_evacuated_ = true;
 
@@ -324,6 +334,7 @@ void LayoutMultiColumnFlowThread::EvacuateAndDestroy() {
 }
 
 LayoutUnit LayoutMultiColumnFlowThread::MaxColumnLogicalHeight() const {
+  NOT_DESTROYED();
   if (column_height_available_) {
     // If height is non-auto, it's already constrained against max-height as
     // well. Just return it.
@@ -344,6 +355,7 @@ LayoutUnit LayoutMultiColumnFlowThread::MaxColumnLogicalHeight() const {
 
 LayoutUnit LayoutMultiColumnFlowThread::TallestUnbreakableLogicalHeight(
     LayoutUnit offset_in_flow_thread) const {
+  NOT_DESTROYED();
   if (LayoutMultiColumnSet* multicol_set = ColumnSetAtBlockOffset(
           offset_in_flow_thread, kAssociateWithLatterPage))
     return multicol_set->TallestUnbreakableLogicalHeight();
@@ -352,11 +364,13 @@ LayoutUnit LayoutMultiColumnFlowThread::TallestUnbreakableLogicalHeight(
 
 LayoutSize LayoutMultiColumnFlowThread::ColumnOffset(
     const LayoutPoint& point) const {
+  NOT_DESTROYED();
   return FlowThreadTranslationAtPoint(point,
                                       CoordinateSpaceConversion::kContaining);
 }
 
 bool LayoutMultiColumnFlowThread::NeedsNewWidth() const {
+  NOT_DESTROYED();
   LayoutUnit new_width;
   unsigned dummy_column_count;  // We only care if used column-width changes.
   CalculateColumnCountAndWidth(new_width, dummy_column_count);
@@ -364,10 +378,12 @@ bool LayoutMultiColumnFlowThread::NeedsNewWidth() const {
 }
 
 bool LayoutMultiColumnFlowThread::IsPageLogicalHeightKnown() const {
+  NOT_DESTROYED();
   return all_columns_have_known_height_;
 }
 
 bool LayoutMultiColumnFlowThread::MayHaveNonUniformPageLogicalHeight() const {
+  NOT_DESTROYED();
   const LayoutMultiColumnSet* column_set = FirstMultiColumnSet();
   if (!column_set)
     return false;
@@ -380,6 +396,7 @@ LayoutSize LayoutMultiColumnFlowThread::FlowThreadTranslationAtOffset(
     LayoutUnit offset_in_flow_thread,
     PageBoundaryRule rule,
     CoordinateSpaceConversion mode) const {
+  NOT_DESTROYED();
   if (!HasValidColumnSetInfo())
     return LayoutSize(0, 0);
   LayoutMultiColumnSet* column_set =
@@ -393,6 +410,7 @@ LayoutSize LayoutMultiColumnFlowThread::FlowThreadTranslationAtOffset(
 LayoutSize LayoutMultiColumnFlowThread::FlowThreadTranslationAtPoint(
     const LayoutPoint& flow_thread_point,
     CoordinateSpaceConversion mode) const {
+  NOT_DESTROYED();
   LayoutPoint flipped_point = DeprecatedFlipForWritingMode(flow_thread_point);
   LayoutUnit block_offset =
       IsHorizontalWritingMode() ? flipped_point.Y() : flipped_point.X();
@@ -408,6 +426,7 @@ LayoutSize LayoutMultiColumnFlowThread::FlowThreadTranslationAtPoint(
 
 LayoutPoint LayoutMultiColumnFlowThread::FlowThreadPointToVisualPoint(
     const LayoutPoint& flow_thread_point) const {
+  NOT_DESTROYED();
   return flow_thread_point +
          FlowThreadTranslationAtPoint(flow_thread_point,
                                       CoordinateSpaceConversion::kVisual);
@@ -415,6 +434,7 @@ LayoutPoint LayoutMultiColumnFlowThread::FlowThreadPointToVisualPoint(
 
 LayoutPoint LayoutMultiColumnFlowThread::VisualPointToFlowThreadPoint(
     const LayoutPoint& visual_point) const {
+  NOT_DESTROYED();
   LayoutUnit block_offset =
       IsHorizontalWritingMode() ? visual_point.Y() : visual_point.X();
   const LayoutMultiColumnSet* column_set = nullptr;
@@ -431,6 +451,7 @@ LayoutPoint LayoutMultiColumnFlowThread::VisualPointToFlowThreadPoint(
 
 LayoutUnit LayoutMultiColumnFlowThread::InlineBlockBaseline(
     LineDirectionMode line_direction) const {
+  NOT_DESTROYED();
   LayoutUnit baseline_in_flow_thread =
       LayoutFlowThread::InlineBlockBaseline(line_direction);
   LayoutMultiColumnSet* column_set =
@@ -446,6 +467,7 @@ LayoutUnit LayoutMultiColumnFlowThread::InlineBlockBaseline(
 LayoutMultiColumnSet* LayoutMultiColumnFlowThread::ColumnSetAtBlockOffset(
     LayoutUnit offset,
     PageBoundaryRule page_boundary_rule) const {
+  NOT_DESTROYED();
   LayoutMultiColumnSet* column_set = last_set_worked_on_;
   if (column_set) {
     // Layout in progress. We are calculating the set heights as we speak, so
@@ -519,6 +541,7 @@ LayoutMultiColumnSet* LayoutMultiColumnFlowThread::ColumnSetAtBlockOffset(
 
 void LayoutMultiColumnFlowThread::LayoutColumns(
     SubtreeLayoutScope& layout_scope) {
+  NOT_DESTROYED();
   // Since we ended up here, it means that the multicol container (our parent)
   // needed layout. Since contents of the multicol container are diverted to the
   // flow thread, the flow thread needs layout as well.
@@ -590,6 +613,7 @@ void LayoutMultiColumnFlowThread::LayoutColumns(
 }
 
 void LayoutMultiColumnFlowThread::ColumnRuleStyleDidChange() {
+  NOT_DESTROYED();
   for (LayoutMultiColumnSet* column_set = FirstMultiColumnSet(); column_set;
        column_set = column_set->NextSiblingMultiColumnSet()) {
     column_set->SetShouldDoFullPaintInvalidation(
@@ -599,6 +623,7 @@ void LayoutMultiColumnFlowThread::ColumnRuleStyleDidChange() {
 
 bool LayoutMultiColumnFlowThread::RemoveSpannerPlaceholderIfNoLongerValid(
     LayoutBox* spanner_object_in_flow_thread) {
+  NOT_DESTROYED();
   DCHECK(spanner_object_in_flow_thread->SpannerPlaceholder());
   if (DescendantIsValidColumnSpanner(spanner_object_in_flow_thread))
     return false;  // Still a valid spanner.
@@ -623,6 +648,7 @@ bool LayoutMultiColumnFlowThread::RemoveSpannerPlaceholderIfNoLongerValid(
 
 LayoutMultiColumnFlowThread* LayoutMultiColumnFlowThread::EnclosingFlowThread(
     AncestorSearchConstraint constraint) const {
+  NOT_DESTROYED();
   if (!MultiColumnBlockFlow()->IsInsideFlowThread())
     return nullptr;
   return ToLayoutMultiColumnFlowThread(
@@ -632,12 +658,14 @@ LayoutMultiColumnFlowThread* LayoutMultiColumnFlowThread::EnclosingFlowThread(
 FragmentationContext*
 LayoutMultiColumnFlowThread::EnclosingFragmentationContext(
     AncestorSearchConstraint constraint) const {
+  NOT_DESTROYED();
   // If this multicol container is strictly unbreakable (due to having
   // scrollbars, for instance), it's also strictly unbreakable in any outer
   // fragmentation context. As such, what kind of fragmentation that goes on
   // inside this multicol container is completely opaque to the ancestors.
   if (constraint == kIsolateUnbreakableContainers &&
-      MultiColumnBlockFlow()->GetPaginationBreakability() == kForbidBreaks)
+      MultiColumnBlockFlow()->GetPaginationBreakability(
+          fragmentation_engine_) == kForbidBreaks)
     return nullptr;
   if (auto* enclosing_flow_thread = EnclosingFlowThread(constraint))
     return enclosing_flow_thread;
@@ -647,6 +675,7 @@ LayoutMultiColumnFlowThread::EnclosingFragmentationContext(
 void LayoutMultiColumnFlowThread::AppendNewFragmentainerGroupIfNeeded(
     LayoutUnit offset_in_flow_thread,
     PageBoundaryRule page_boundary_rule) {
+  NOT_DESTROYED();
   LayoutMultiColumnSet* column_set =
       ColumnSetAtBlockOffset(offset_in_flow_thread, page_boundary_rule);
   if (!column_set->NewFragmentainerGroupsAllowed())
@@ -689,6 +718,7 @@ void LayoutMultiColumnFlowThread::AppendNewFragmentainerGroupIfNeeded(
 }
 
 void LayoutMultiColumnFlowThread::UpdateFromNG() {
+  NOT_DESTROYED();
   all_columns_have_known_height_ = true;
   for (LayoutBox* column_box = FirstMultiColumnBox(); column_box;
        column_box = column_box->NextSiblingMultiColumnBox()) {
@@ -700,23 +730,27 @@ void LayoutMultiColumnFlowThread::UpdateFromNG() {
 }
 
 bool LayoutMultiColumnFlowThread::IsFragmentainerLogicalHeightKnown() {
+  NOT_DESTROYED();
   return IsPageLogicalHeightKnown();
 }
 
 LayoutUnit LayoutMultiColumnFlowThread::FragmentainerLogicalHeightAt(
     LayoutUnit block_offset) {
+  NOT_DESTROYED();
   DCHECK(IsPageLogicalHeightKnown());
   return PageLogicalHeightForOffset(block_offset);
 }
 
 LayoutUnit LayoutMultiColumnFlowThread::RemainingLogicalHeightAt(
     LayoutUnit block_offset) {
+  NOT_DESTROYED();
   DCHECK(IsPageLogicalHeightKnown());
   return PageRemainingLogicalHeightForOffset(block_offset,
                                              kAssociateWithLatterPage);
 }
 
 void LayoutMultiColumnFlowThread::CalculateColumnHeightAvailable() {
+  NOT_DESTROYED();
   // Calculate the non-auto content box height, or set it to 0 if it's auto. We
   // need to know this before layout, so that we can figure out where to insert
   // column breaks. We also treat LayoutView (which may be paginated, which uses
@@ -735,7 +769,7 @@ void LayoutMultiColumnFlowThread::CalculateColumnHeightAvailable() {
                                     computed_values);
     column_height = computed_values.extent_ -
                     container->BorderAndPaddingLogicalHeight() -
-                    container->ScrollbarLogicalHeight();
+                    container->ComputeLogicalScrollbars().BlockSum();
   }
   SetColumnHeightAvailable(std::max(column_height, LayoutUnit()));
 }
@@ -743,6 +777,7 @@ void LayoutMultiColumnFlowThread::CalculateColumnHeightAvailable() {
 void LayoutMultiColumnFlowThread::CalculateColumnCountAndWidth(
     LayoutUnit& width,
     unsigned& count) const {
+  NOT_DESTROYED();
   LayoutBlock* column_block = MultiColumnBlockFlow();
   const ComputedStyle* column_style = column_block->Style();
   LayoutUnit available_width = column_block->ContentLogicalWidth();
@@ -776,15 +811,16 @@ void LayoutMultiColumnFlowThread::CalculateColumnCountAndWidth(
 
 LayoutUnit LayoutMultiColumnFlowThread::ColumnGap(const ComputedStyle& style,
                                                   LayoutUnit available_width) {
-  if (style.ColumnGap().IsNormal()) {
-    // "1em" is recommended as the normal gap setting. Matches <p> margins.
-    return LayoutUnit(style.GetFontDescription().ComputedSize());
-  }
-  return ValueForLength(style.ColumnGap().GetLength(), available_width);
+  if (const base::Optional<Length>& column_gap = style.ColumnGap())
+    return ValueForLength(*column_gap, available_width);
+
+  // "1em" is recommended as the normal gap setting. Matches <p> margins.
+  return LayoutUnit(style.GetFontDescription().ComputedSize());
 }
 
 void LayoutMultiColumnFlowThread::CreateAndInsertMultiColumnSet(
     LayoutBox* insert_before) {
+  NOT_DESTROYED();
   LayoutBlockFlow* multicol_container = MultiColumnBlockFlow();
   LayoutMultiColumnSet* new_set = LayoutMultiColumnSet::CreateAnonymous(
       *this, multicol_container->StyleRef());
@@ -802,6 +838,7 @@ void LayoutMultiColumnFlowThread::CreateAndInsertMultiColumnSet(
 void LayoutMultiColumnFlowThread::CreateAndInsertSpannerPlaceholder(
     LayoutBox* spanner_object_in_flow_thread,
     LayoutObject* inserted_before_in_flow_thread) {
+  NOT_DESTROYED();
   LayoutBox* insert_before_column_box = nullptr;
   LayoutMultiColumnSet* set_to_split = nullptr;
   if (inserted_before_in_flow_thread) {
@@ -859,6 +896,7 @@ void LayoutMultiColumnFlowThread::CreateAndInsertSpannerPlaceholder(
 
 void LayoutMultiColumnFlowThread::DestroySpannerPlaceholder(
     LayoutMultiColumnSpannerPlaceholder* placeholder) {
+  NOT_DESTROYED();
   if (LayoutBox* next_column_box = placeholder->NextSiblingMultiColumnBox()) {
     LayoutBox* previous_column_box =
         placeholder->PreviousSiblingMultiColumnBox();
@@ -874,6 +912,7 @@ void LayoutMultiColumnFlowThread::DestroySpannerPlaceholder(
 
 bool LayoutMultiColumnFlowThread::DescendantIsValidColumnSpanner(
     LayoutObject* descendant) const {
+  NOT_DESTROYED();
   // This method needs to behave correctly in the following situations:
   // - When the descendant doesn't have a spanner placeholder but should have
   //   one (return true).
@@ -918,6 +957,7 @@ bool LayoutMultiColumnFlowThread::DescendantIsValidColumnSpanner(
 
 void LayoutMultiColumnFlowThread::AddColumnSetToThread(
     LayoutMultiColumnSet* column_set) {
+  NOT_DESTROYED();
   if (LayoutMultiColumnSet* next_set =
           column_set->NextSiblingMultiColumnSet()) {
     LayoutMultiColumnSetList::iterator it =
@@ -929,7 +969,17 @@ void LayoutMultiColumnFlowThread::AddColumnSetToThread(
   }
 }
 
+void LayoutMultiColumnFlowThread::InsertedIntoTree() {
+  NOT_DESTROYED();
+  LayoutFlowThread::InsertedIntoTree();
+  if (MultiColumnBlockFlow()->IsLayoutNGObject())
+    fragmentation_engine_ = kNGFragmentationEngine;
+  else
+    fragmentation_engine_ = kLegacyFragmentationEngine;
+}
+
 void LayoutMultiColumnFlowThread::WillBeRemovedFromTree() {
+  NOT_DESTROYED();
   // Detach all column sets from the flow thread. Cannot destroy them at this
   // point, since they are siblings of this object, and there may be pointers to
   // this object's sibling somewhere further up on the call stack.
@@ -943,6 +993,7 @@ void LayoutMultiColumnFlowThread::WillBeRemovedFromTree() {
 void LayoutMultiColumnFlowThread::SkipColumnSpanner(
     LayoutBox* layout_object,
     LayoutUnit logical_top_in_flow_thread) {
+  NOT_DESTROYED();
   DCHECK(layout_object->IsColumnSpanAll());
   LayoutMultiColumnSpannerPlaceholder* placeholder =
       layout_object->SpannerPlaceholder();
@@ -975,6 +1026,7 @@ void LayoutMultiColumnFlowThread::SkipColumnSpanner(
 }
 
 bool LayoutMultiColumnFlowThread::FinishLayout() {
+  NOT_DESTROYED();
   all_columns_have_known_height_ = true;
   for (const auto* column_set = FirstMultiColumnSet(); column_set;
        column_set = column_set->NextSiblingMultiColumnSet()) {
@@ -1018,6 +1070,7 @@ static bool ShouldSkipInsertedOrRemovedChild(
 
 void LayoutMultiColumnFlowThread::FlowThreadDescendantWasInserted(
     LayoutObject* descendant) {
+  NOT_DESTROYED();
   DCHECK(!is_being_evacuated_);
   // This method ensures that the list of column sets and spanner placeholders
   // reflects the multicol content after having inserted a descendant (or
@@ -1077,6 +1130,7 @@ void LayoutMultiColumnFlowThread::FlowThreadDescendantWasInserted(
 
 void LayoutMultiColumnFlowThread::FlowThreadDescendantWillBeRemoved(
     LayoutObject* descendant) {
+  NOT_DESTROYED();
   // This method ensures that the list of column sets and spanner placeholders
   // reflects the multicol content that we'll be left with after removal of a
   // descendant (or descendant subtree). See the header file for more
@@ -1163,6 +1217,7 @@ void LayoutMultiColumnFlowThread::FlowThreadDescendantWillBeRemoved(
 }
 
 static inline bool NeedsToReinsertIntoFlowThread(
+    const LayoutBox& box,
     const ComputedStyle& old_style,
     const ComputedStyle& new_style) {
   // If we've become (or are about to become) a container for absolutely
@@ -1170,16 +1225,14 @@ static inline bool NeedsToReinsertIntoFlowThread(
   // re-evaluate the need for column sets. There may be out-of-flow descendants
   // further down that become part of the flow thread, or cease to be part of
   // the flow thread, because of this change.
-  if (old_style.CanContainFixedPositionObjects(false) !=
-      new_style.CanContainFixedPositionObjects(false))
+  if (box.ComputeIsFixedContainer(&old_style) !=
+      box.ComputeIsFixedContainer(&new_style))
     return true;
-  return (old_style.HasInFlowPosition() &&
-          new_style.GetPosition() == EPosition::kStatic) ||
-         (new_style.HasInFlowPosition() &&
-          old_style.GetPosition() == EPosition::kStatic);
+  return old_style.GetPosition() != new_style.GetPosition();
 }
 
-static inline bool NeedsToRemoveFromFlowThread(const ComputedStyle& old_style,
+static inline bool NeedsToRemoveFromFlowThread(const LayoutBox& box,
+                                               const ComputedStyle& old_style,
                                                const ComputedStyle& new_style) {
   // This function is called BEFORE computed style update. If an in-flow
   // descendant goes out-of-flow, we may have to remove column sets and spanner
@@ -1193,7 +1246,7 @@ static inline bool NeedsToRemoveFromFlowThread(const ComputedStyle& old_style,
   // been updated.
   return (new_style.HasOutOfFlowPosition() &&
           !old_style.HasOutOfFlowPosition()) ||
-         NeedsToReinsertIntoFlowThread(old_style, new_style);
+         NeedsToReinsertIntoFlowThread(box, old_style, new_style);
 }
 
 static inline bool NeedsToInsertIntoFlowThread(
@@ -1219,15 +1272,17 @@ static inline bool NeedsToInsertIntoFlowThread(
     if (containing_flow_thread == flow_thread)
       return true;
   }
-  return NeedsToReinsertIntoFlowThread(old_style, new_style);
+  return NeedsToReinsertIntoFlowThread(*flow_thread, old_style, new_style);
 }
 
 void LayoutMultiColumnFlowThread::FlowThreadDescendantStyleWillChange(
     LayoutBox* descendant,
     StyleDifference diff,
     const ComputedStyle& new_style) {
+  NOT_DESTROYED();
   toggle_spanners_if_needed_ = false;
-  if (NeedsToRemoveFromFlowThread(descendant->StyleRef(), new_style)) {
+  if (NeedsToRemoveFromFlowThread(*descendant, descendant->StyleRef(),
+                                  new_style)) {
     FlowThreadDescendantWillBeRemoved(descendant);
     return;
   }
@@ -1247,6 +1302,7 @@ void LayoutMultiColumnFlowThread::FlowThreadDescendantStyleDidChange(
     LayoutBox* descendant,
     StyleDifference diff,
     const ComputedStyle& old_style) {
+  NOT_DESTROYED();
   bool toggle_spanners_if_needed = toggle_spanners_if_needed_;
   toggle_spanners_if_needed_ = false;
 
@@ -1287,6 +1343,7 @@ void LayoutMultiColumnFlowThread::FlowThreadDescendantStyleDidChange(
 
 void LayoutMultiColumnFlowThread::ToggleSpannersInSubtree(
     LayoutBox* descendant) {
+  NOT_DESTROYED();
   DCHECK_NE(could_contain_spanners_,
             CanContainSpannerInParentFragmentationContext(*descendant));
 
@@ -1333,6 +1390,7 @@ void LayoutMultiColumnFlowThread::ToggleSpannersInSubtree(
 }
 
 MinMaxSizes LayoutMultiColumnFlowThread::PreferredLogicalWidths() const {
+  NOT_DESTROYED();
   // The min/max intrinsic widths calculated really tell how much space elements
   // need when laid out inside the columns. In order to eventually end up with
   // the desired column width, we need to convert them to values pertaining to
@@ -1375,18 +1433,21 @@ void LayoutMultiColumnFlowThread::ComputeLogicalHeight(
     LayoutUnit logical_height,
     LayoutUnit logical_top,
     LogicalExtentComputedValues& computed_values) const {
+  NOT_DESTROYED();
   // We simply remain at our intrinsic height.
   computed_values.extent_ = logical_height;
   computed_values.position_ = logical_top;
 }
 
 void LayoutMultiColumnFlowThread::UpdateLogicalWidth() {
+  NOT_DESTROYED();
   LayoutUnit column_width;
   CalculateColumnCountAndWidth(column_width, column_count_);
   SetLogicalWidth(column_width);
 }
 
 void LayoutMultiColumnFlowThread::UpdateLayout() {
+  NOT_DESTROYED();
   DCHECK(!last_set_worked_on_);
   last_set_worked_on_ = FirstMultiColumnSet();
   if (last_set_worked_on_)
@@ -1415,6 +1476,7 @@ void LayoutMultiColumnFlowThread::UpdateLayout() {
 
 void LayoutMultiColumnFlowThread::ContentWasLaidOut(
     LayoutUnit logical_bottom_in_flow_thread_after_pagination) {
+  NOT_DESTROYED();
   // Check if we need another fragmentainer group. If we've run out of columns
   // in the last fragmentainer group (column row), we need to insert another
   // fragmentainer group to hold more columns.
@@ -1436,6 +1498,7 @@ void LayoutMultiColumnFlowThread::ContentWasLaidOut(
 }
 
 bool LayoutMultiColumnFlowThread::CanSkipLayout(const LayoutBox& root) const {
+  NOT_DESTROYED();
   // Objects containing spanners is all we need to worry about, so if there are
   // no spanners at all in this multicol container, we can just return the good
   // news right away.
@@ -1461,11 +1524,13 @@ bool LayoutMultiColumnFlowThread::CanSkipLayout(const LayoutBox& root) const {
 
 MultiColumnLayoutState LayoutMultiColumnFlowThread::GetMultiColumnLayoutState()
     const {
+  NOT_DESTROYED();
   return MultiColumnLayoutState(last_set_worked_on_);
 }
 
 void LayoutMultiColumnFlowThread::RestoreMultiColumnLayoutState(
     const MultiColumnLayoutState& state) {
+  NOT_DESTROYED();
   last_set_worked_on_ = state.ColumnSet();
 }
 

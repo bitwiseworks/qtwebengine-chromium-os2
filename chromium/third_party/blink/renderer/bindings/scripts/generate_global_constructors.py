@@ -83,12 +83,12 @@ def record_global_constructors(idl_filename):
     interface_name = get_first_interface_name_from_idl(idl_file_contents)
 
     # An interface property is produced for every non-callback interface
-    # that does not have [NoInterfaceObject].
+    # that does not have [LegacyNoInterfaceObject].
     # http://heycam.github.io/webidl/#es-interfaces
     if (not should_generate_impl_file_from_idl(idl_file_contents)
             or is_non_legacy_callback_interface_from_idl(idl_file_contents)
             or is_interface_mixin_from_idl(idl_file_contents)
-            or 'NoInterfaceObject' in extended_attributes):
+            or 'LegacyNoInterfaceObject' in extended_attributes):
         return
 
     exposed_arguments = get_interface_exposed_arguments(idl_file_contents)
@@ -105,9 +105,9 @@ def record_global_constructors(idl_filename):
                 interface_name, attributes)
             global_name_to_constructors[argument['exposed']].extend(
                 new_constructors_list)
-    else:
+    elif 'Exposed' in extended_attributes:
         # Exposed=env or Exposed=(env1,...) case
-        exposed_value = extended_attributes.get('Exposed', 'Window')
+        exposed_value = extended_attributes.get('Exposed')
         exposed_global_names = map(str.strip,
                                    exposed_value.strip('()').split(','))
         new_constructors_list = generate_global_constructors_list(
@@ -123,10 +123,13 @@ def generate_global_constructors_list(interface_name, extended_attributes):
         for name in ['RuntimeEnabled', 'ContextEnabled', 'SecureContext']
         if name in extended_attributes
     ]
-    if extended_attributes_list:
-        extended_string = '[%s] ' % ', '.join(extended_attributes_list)
-    else:
-        extended_string = ''
+
+    # Getters for these Constructors are auto-generated and considered
+    # side-effect free w.r.t to V8. That is, executing the getter has no
+    # JavaScript observable effect.
+    extended_attributes_list.append('Affects=Nothing')
+
+    extended_string = '[%s] ' % ', '.join(extended_attributes_list)
 
     attribute_string = 'attribute {interface_name}Constructor {interface_name}'.format(
         interface_name=interface_name)

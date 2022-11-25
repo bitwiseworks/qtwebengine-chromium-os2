@@ -8,7 +8,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
-#include "third_party/blink/public/platform/web_media_stream_track.h"
+#include "third_party/blink/public/platform/modules/mediastream/web_media_stream_track.h"
 #include "third_party/blink/public/web/modules/mediastream/media_stream_video_sink.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/webrtc/api/media_stream_interface.h"
@@ -34,7 +34,7 @@ class WebRtcVideoTrackSource;
 class MODULES_EXPORT MediaStreamVideoWebRtcSink : public MediaStreamVideoSink {
  public:
   MediaStreamVideoWebRtcSink(
-      const WebMediaStreamTrack& track,
+      MediaStreamComponent* component,
       PeerConnectionDependencyFactory* factory,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner);
   ~MediaStreamVideoWebRtcSink() override;

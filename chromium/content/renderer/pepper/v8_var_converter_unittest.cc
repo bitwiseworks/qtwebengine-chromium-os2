@@ -12,8 +12,9 @@
 #include <unordered_map>
 
 #include "base/bind.h"
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/memory/ref_counted.h"
+#include "base/notreached.h"
 #include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/task_environment.h"
@@ -427,10 +428,8 @@ TEST_F(V8VarConverterTest, StrangeDictionaryKeyTest) {
         "})();";
 
     v8::Local<v8::Script> script(
-        v8::Script::Compile(context,
-                            v8::String::NewFromUtf8(isolate_, source,
-                                                    v8::NewStringType::kNormal)
-                                .ToLocalChecked())
+        v8::Script::Compile(
+            context, v8::String::NewFromUtf8(isolate_, source).ToLocalChecked())
             .ToLocalChecked());
     v8::Local<v8::Object> object =
         script->Run(context).ToLocalChecked().As<v8::Object>();

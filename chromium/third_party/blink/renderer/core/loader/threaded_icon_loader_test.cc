@@ -9,6 +9,7 @@
 #include "third_party/blink/public/platform/web_size.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/platform/web_url_loader_mock_factory.h"
+#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/platform/testing/histogram_tester.h"
@@ -35,7 +36,7 @@ class ThreadedIconLoaderTest : public PageTestBase {
   }
 
   void TearDown() override {
-    platform_->GetURLLoaderMockFactory()
+    WebURLLoaderMockFactory::GetSingletonInstance()
         ->UnregisterAllURLsAndClearMemoryCache();
   }
 
@@ -60,11 +61,13 @@ class ThreadedIconLoaderTest : public PageTestBase {
     double resize_scale;
     base::RunLoop run_loop;
     icon_loader->Start(
-        GetDocument().ToExecutionContext(), resource_request, resize_dimensions,
+        GetDocument().GetExecutionContext(), resource_request,
+        resize_dimensions,
         WTF::Bind(&ThreadedIconLoaderTest::DidGetIcon, WTF::Unretained(this),
                   run_loop.QuitClosure(), WTF::Unretained(&icon),
                   WTF::Unretained(&resize_scale)));
-    platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
+    WebURLLoaderMockFactory::GetSingletonInstance()
+        ->ServeAsynchronousRequests();
     run_loop.Run();
 
     return {icon, resize_scale};

@@ -41,10 +41,6 @@ class SessionSyncServiceImpl : public SessionSyncService {
   base::WeakPtr<syncer::ModelTypeControllerDelegate> GetControllerDelegate()
       override;
 
-  // For ProfileSyncService to initialize the controller for FAVICON_IMAGES and
-  // FAVICON_TRACKING.
-  FaviconCache* GetFaviconCache() override;
-
   // Intended to be used by ProxyDataTypeController: influences whether
   // GetOpenTabsUIDelegate() returns null or not.
   void ProxyTabsStateChanged(syncer::DataTypeController::State state) override;
@@ -55,6 +51,10 @@ class SessionSyncServiceImpl : public SessionSyncService {
   // Returns OpenTabsUIDelegate regardless of sync being enabled or disabled,
   // useful for tests.
   OpenTabsUIDelegate* GetUnderlyingOpenTabsUIDelegateForTest();
+
+  SyncSessionsClient* GetSessionsClientForTest() {
+    return sessions_client_.get();
+  }
 
  private:
   void NotifyForeignSessionUpdated();

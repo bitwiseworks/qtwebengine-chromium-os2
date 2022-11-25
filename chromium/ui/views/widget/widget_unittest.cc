@@ -52,7 +52,7 @@
 #include "ui/views/win/hwnd_util.h"
 #endif
 
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
 #include "base/mac/mac_util.h"
 #endif
 
@@ -203,6 +203,19 @@ TEST_F(WidgetTest, NativeWindowProperty) {
   EXPECT_EQ(nullptr, widget->GetNativeWindowProperty(key));
 }
 
+TEST_F(WidgetTest, GetParent) {
+  // Create a hierarchy of native widgets.
+  WidgetAutoclosePtr toplevel(CreateTopLevelPlatformWidget());
+  Widget* child = CreateChildPlatformWidget(toplevel->GetNativeView());
+  Widget* grandchild = CreateChildPlatformWidget(child->GetNativeView());
+
+  EXPECT_EQ(nullptr, toplevel->parent());
+  EXPECT_EQ(child, grandchild->parent());
+  EXPECT_EQ(toplevel.get(), child->parent());
+
+  // children should be automatically destroyed with |toplevel|.
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Widget::GetTopLevelWidget tests.
 
@@ -241,6 +254,12 @@ TEST_F(WidgetTest, ChangeActivation) {
 
 // Tests visibility of child widgets.
 TEST_F(WidgetTest, Visibility) {
+#if defined(OS_MAC)
+  if (base::mac::IsAtLeastOS11()) {
+    GTEST_SKIP() << "Window visibility notifications aren't delivered on "
+                    "macOS 11. See https://crbug.com/1114243.";
+  }
+#endif
   WidgetAutoclosePtr toplevel(CreateTopLevelPlatformWidget());
   gfx::NativeView parent = toplevel->GetNativeView();
   Widget* child = CreateChildPlatformWidget(parent);
@@ -343,79 +362,6 @@ class OwnershipTestWidget : public Widget {
 
 // TODO(sky): add coverage of ownership for the desktop variants.
 
-// Widget owns its NativeWidget, part 1: NativeWidget is a platform-native
-// widget.
-TEST_F(WidgetOwnershipTest, Ownership_WidgetOwnsPlatformNativeWidget) {
-  OwnershipTestState state;
-
-  auto widget = std::make_unique<OwnershipTestWidget>(&state);
-  Widget::InitParams params = CreateParamsForTestWidget();
-  params.native_widget = CreatePlatformNativeWidgetImpl(
-      params, widget.get(), kStubCapture, &state.native_widget_deleted);
-  widget->Init(std::move(params));
-
-  // Now delete the Widget, which should delete the NativeWidget.
-  widget.reset();
-
-  EXPECT_TRUE(state.widget_deleted);
-  EXPECT_TRUE(state.native_widget_deleted);
-
-  // TODO(beng): write test for this ownership scenario and the NativeWidget
-  //             being deleted out from under the Widget.
-}
-
-// Widget owns its NativeWidget, part 2: NativeWidget is a NativeWidget.
-TEST_F(WidgetOwnershipTest, Ownership_WidgetOwnsViewsNativeWidget) {
-  OwnershipTestState state;
-
-  auto widget = std::make_unique<OwnershipTestWidget>(&state);
-  Widget::InitParams params = CreateParamsForTestWidget();
-  params.native_widget = CreatePlatformNativeWidgetImpl(
-      params, widget.get(), kStubCapture, &state.native_widget_deleted);
-  widget->Init(std::move(params));
-
-  // Now delete the Widget, which should delete the NativeWidget.
-  widget.reset();
-
-  EXPECT_TRUE(state.widget_deleted);
-  EXPECT_TRUE(state.native_widget_deleted);
-
-  // TODO(beng): write test for this ownership scenario and the NativeWidget
-  //             being deleted out from under the Widget.
-}
-
-// Widget owns its NativeWidget, part 3: NativeWidget is a NativeWidget,
-// destroy the parent view.
-TEST_F(WidgetOwnershipTest,
-       Ownership_WidgetOwnsViewsNativeWidget_DestroyParentView) {
-  OwnershipTestState state;
-
-  Widget* toplevel = CreateTopLevelPlatformWidget();
-
-  auto widget = std::make_unique<OwnershipTestWidget>(&state);
-  Widget::InitParams params = CreateParamsForTestWidget();
-  params.parent = toplevel->GetNativeView();
-  params.native_widget = CreatePlatformNativeWidgetImpl(
-      params, widget.get(), kStubCapture, &state.native_widget_deleted);
-  widget->Init(std::move(params));
-
-  // Now close the toplevel, which deletes the view hierarchy.
-  toplevel->CloseNow();
-
-  RunPendingMessages();
-
-  // This shouldn't delete the widget because it shouldn't be deleted
-  // from the native side.
-  EXPECT_FALSE(state.widget_deleted);
-  EXPECT_FALSE(state.native_widget_deleted);
-
-  // Now delete it explicitly.
-  widget.reset();
-
-  EXPECT_TRUE(state.widget_deleted);
-  EXPECT_TRUE(state.native_widget_deleted);
-}
-
 // NativeWidget owns its Widget, part 1: NativeWidget is a platform-native
 // widget.
 TEST_F(WidgetOwnershipTest, Ownership_PlatformNativeWidgetOwnsWidget) {
@@ -424,7 +370,7 @@ TEST_F(WidgetOwnershipTest, Ownership_PlatformNativeWidgetOwnsWidget) {
   Widget* widget = new OwnershipTestWidget(&state);
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_POPUP);
   params.native_widget = CreatePlatformNativeWidgetImpl(
-      params, widget, kStubCapture, &state.native_widget_deleted);
+      widget, kStubCapture, &state.native_widget_deleted);
   widget->Init(std::move(params));
 
   // Now destroy the native widget.
@@ -444,7 +390,7 @@ TEST_F(WidgetOwnershipTest, Ownership_ViewsNativeWidgetOwnsWidget) {
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_POPUP);
   params.parent = toplevel->GetNativeView();
   params.native_widget = CreatePlatformNativeWidgetImpl(
-      params, widget, kStubCapture, &state.native_widget_deleted);
+      widget, kStubCapture, &state.native_widget_deleted);
   widget->Init(std::move(params));
 
   // Now destroy the native widget. This is achieved by closing the toplevel.
@@ -467,7 +413,7 @@ TEST_F(WidgetOwnershipTest,
   Widget* widget = new OwnershipTestWidget(&state);
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_POPUP);
   params.native_widget = CreatePlatformNativeWidgetImpl(
-      params, widget, kStubCapture, &state.native_widget_deleted);
+      widget, kStubCapture, &state.native_widget_deleted);
   widget->Init(std::move(params));
 
   // Now simulate a destroy of the platform native widget from the OS:
@@ -489,7 +435,7 @@ TEST_F(WidgetOwnershipTest,
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_POPUP);
   params.parent = toplevel->GetNativeView();
   params.native_widget = CreatePlatformNativeWidgetImpl(
-      params, widget, kStubCapture, &state.native_widget_deleted);
+      widget, kStubCapture, &state.native_widget_deleted);
   widget->Init(std::move(params));
 
   // Destroy the widget (achieved by closing the toplevel).
@@ -514,7 +460,7 @@ TEST_F(WidgetOwnershipTest, Ownership_ViewsNativeWidgetOwnsWidget_Close) {
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_POPUP);
   params.parent = toplevel->GetNativeView();
   params.native_widget = CreatePlatformNativeWidgetImpl(
-      params, widget, kStubCapture, &state.native_widget_deleted);
+      widget, kStubCapture, &state.native_widget_deleted);
   widget->Init(std::move(params));
 
   // Destroy the widget.
@@ -529,26 +475,72 @@ TEST_F(WidgetOwnershipTest, Ownership_ViewsNativeWidgetOwnsWidget_Close) {
   EXPECT_TRUE(state.native_widget_deleted);
 }
 
-// Widget owns its NativeWidget and has a WidgetDelegateView as its contents.
-TEST_F(WidgetOwnershipTest,
-       Ownership_WidgetOwnsNativeWidgetWithWithWidgetDelegateView) {
-  OwnershipTestState state;
+class WidgetOwnsNativeWidgetTest : public WidgetOwnershipTest {
+ public:
+  WidgetOwnsNativeWidgetTest() = default;
+  ~WidgetOwnsNativeWidgetTest() override = default;
 
-  WidgetDelegateView* delegate_view = new WidgetDelegateView;
+  void TearDown() override {
+    EXPECT_TRUE(state_.widget_deleted);
+    EXPECT_TRUE(state_.native_widget_deleted);
 
-  auto widget = std::make_unique<OwnershipTestWidget>(&state);
+    WidgetOwnershipTest::TearDown();
+  }
+
+  OwnershipTestState* state() { return &state_; }
+
+ private:
+  OwnershipTestState state_;
+};
+
+// Widget owns its NativeWidget, part 1.
+TEST_F(WidgetOwnsNativeWidgetTest, Ownership) {
+  auto widget = std::make_unique<OwnershipTestWidget>(state());
   Widget::InitParams params = CreateParamsForTestWidget();
   params.native_widget = CreatePlatformNativeWidgetImpl(
-      params, widget.get(), kStubCapture, &state.native_widget_deleted);
-  params.delegate = delegate_view;
+      widget.get(), kStubCapture, &state()->native_widget_deleted);
   widget->Init(std::move(params));
-  widget->SetContentsView(delegate_view);
 
-  // Now delete the Widget. There should be no crash or use-after-free.
+  // Now delete the Widget, which should delete the NativeWidget.
   widget.reset();
 
-  EXPECT_TRUE(state.widget_deleted);
-  EXPECT_TRUE(state.native_widget_deleted);
+  // TODO(beng): write test for this ownership scenario and the NativeWidget
+  //             being deleted out from under the Widget.
+}
+
+// Widget owns its NativeWidget, part 2: destroy the parent view.
+TEST_F(WidgetOwnsNativeWidgetTest, DestroyParentView) {
+  Widget* toplevel = CreateTopLevelPlatformWidget();
+
+  auto widget = std::make_unique<OwnershipTestWidget>(state());
+  Widget::InitParams params = CreateParamsForTestWidget();
+  params.parent = toplevel->GetNativeView();
+  params.native_widget = CreatePlatformNativeWidgetImpl(
+      widget.get(), kStubCapture, &state()->native_widget_deleted);
+  widget->Init(std::move(params));
+
+  // Now close the toplevel, which deletes the view hierarchy.
+  toplevel->CloseNow();
+
+  RunPendingMessages();
+
+  // This shouldn't delete the widget because it shouldn't be deleted
+  // from the native side.
+  EXPECT_FALSE(state()->widget_deleted);
+  EXPECT_FALSE(state()->native_widget_deleted);
+}
+
+// Widget owns its NativeWidget, part 3: has a WidgetDelegateView as contents.
+TEST_F(WidgetOwnsNativeWidgetTest, WidgetDelegateView) {
+  auto widget = std::make_unique<OwnershipTestWidget>(state());
+  Widget::InitParams params = CreateParamsForTestWidget();
+  params.native_widget = CreatePlatformNativeWidgetImpl(
+      widget.get(), kStubCapture, &state()->native_widget_deleted);
+  params.delegate = new WidgetDelegateView();
+  widget->Init(std::move(params));
+
+  // Allow the Widget to go out of scope. There should be no crash or
+  // use-after-free.
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -702,7 +694,7 @@ class WidgetObserverTest : public WidgetTest, public WidgetObserver {
 };
 
 // This test appears to be flaky on Mac.
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
 #define MAYBE_ActivationChange DISABLED_ActivationChange
 #else
 #define MAYBE_ActivationChange ActivationChange
@@ -991,6 +983,12 @@ TEST_F(DesktopWidgetObserverTest, OnWidgetMovedWhenOriginChangesNative) {
 // Test correct behavior when widgets close themselves in response to visibility
 // changes.
 TEST_F(WidgetObserverTest, ClosingOnHiddenParent) {
+#if defined(OS_MAC)
+  if (base::mac::IsAtLeastOS11()) {
+    GTEST_SKIP() << "Window visibility notifications aren't delivered on "
+                    "macOS 11. See https://crbug.com/1114243.";
+  }
+#endif
   WidgetAutoclosePtr parent(NewWidget());
   Widget* child = CreateChildPlatformWidget(parent->GetNativeView());
 
@@ -1024,9 +1022,13 @@ TEST_F(WidgetTest, GetWindowPlacement) {
 #else
 TEST_F(DesktopWidgetTest, GetWindowPlacement) {
 #endif
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
   if (base::mac::IsOS10_10())
     return;  // Fails when swarmed. http://crbug.com/660582
+#endif
+#if defined(USE_X11)
+  if (features::IsUsingOzonePlatform())
+    return;  // TODO(https://crbug.com/1109112): Will be enabled later.
 #endif
 
   WidgetAutoclosePtr widget;
@@ -1045,7 +1047,7 @@ TEST_F(DesktopWidgetTest, GetWindowPlacement) {
 
   native_widget->GetWindowPlacement(&restored_bounds, &show_state);
   EXPECT_EQ(expected_bounds, restored_bounds);
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
   // Non-desktop/Ash widgets start off in "default" until a Restore().
   EXPECT_EQ(ui::SHOW_STATE_DEFAULT, show_state);
   widget->Restore();
@@ -1212,7 +1214,7 @@ TEST_F(DesktopWidgetTest, MAYBE_GetRestoredBounds) {
 
   toplevel->Maximize();
   RunPendingMessages();
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
   // Current expectation on Mac is to do nothing on Maximize.
   EXPECT_EQ(toplevel->GetWindowBoundsInScreen(), toplevel->GetRestoredBounds());
 #else
@@ -1259,37 +1261,6 @@ TEST_F(WidgetTest, KeyboardInputEvent) {
   EXPECT_FALSE(backspace_r.handled());
 }
 
-// Verifies bubbles result in a focus lost when shown.
-// TODO(msw): this tests relies on focus, it needs to be in
-// interactive_ui_tests.
-TEST_F(DesktopWidgetTest, DISABLED_FocusChangesOnBubble) {
-  // Create a widget, show and activate it and focus the contents view.
-  View* contents_view = new View;
-  contents_view->SetFocusBehavior(View::FocusBehavior::ALWAYS);
-  std::unique_ptr<Widget> widget = CreateTestWidget();
-  widget->SetContentsView(contents_view);
-  widget->Show();
-  widget->Activate();
-  contents_view->RequestFocus();
-  EXPECT_TRUE(contents_view->HasFocus());
-
-  // Show a bubble.
-  BubbleDialogDelegateView* bubble_delegate_view =
-      new TestBubbleDialogDelegateView(contents_view);
-  bubble_delegate_view->SetFocusBehavior(View::FocusBehavior::ALWAYS);
-  BubbleDialogDelegateView::CreateBubble(bubble_delegate_view)->Show();
-  bubble_delegate_view->RequestFocus();
-
-  // |contents_view_| should no longer have focus.
-  EXPECT_FALSE(contents_view->HasFocus());
-  EXPECT_TRUE(bubble_delegate_view->HasFocus());
-
-  bubble_delegate_view->GetWidget()->CloseNow();
-
-  // Closing the bubble should result in focus going back to the contents view.
-  EXPECT_TRUE(contents_view->HasFocus());
-}
-
 TEST_F(WidgetTest, BubbleControlsResetOnInit) {
   WidgetAutoclosePtr anchor(CreateTopLevelPlatformWidget());
   anchor->Show();
@@ -1315,14 +1286,14 @@ TEST_F(DesktopWidgetTest, TestViewWidthAfterMinimizingWidget) {
   std::unique_ptr<Widget> widget =
       CreateTestWidget(Widget::InitParams::TYPE_WINDOW);
   NonClientView* non_client_view = widget->non_client_view();
-  NonClientFrameView* frame_view = new MinimumSizeFrameView(widget.get());
-  non_client_view->SetFrameView(frame_view);
+  non_client_view->SetFrameView(
+      std::make_unique<MinimumSizeFrameView>(widget.get()));
   // Setting the frame view doesn't do a layout, so force one.
   non_client_view->Layout();
   widget->Show();
-  EXPECT_NE(0, frame_view->width());
+  EXPECT_NE(0, non_client_view->frame_view()->width());
   widget->Minimize();
-  EXPECT_EQ(0, frame_view->width());
+  EXPECT_EQ(0, non_client_view->frame_view()->width());
 }
 #endif
 
@@ -1332,8 +1303,10 @@ TEST_F(DesktopWidgetTest, TestViewWidthAfterMinimizingWidget) {
 // paints are expected.
 class DesktopAuraTestValidPaintWidget : public Widget, public WidgetObserver {
  public:
-  DesktopAuraTestValidPaintWidget() { observer_.Add(this); }
-
+  explicit DesktopAuraTestValidPaintWidget(Widget::InitParams init_params)
+      : Widget(std::move(init_params)) {
+    observer_.Add(this);
+  }
   ~DesktopAuraTestValidPaintWidget() override = default;
 
   bool ReadReceivedPaintAndReset() {
@@ -1385,14 +1358,12 @@ class DesktopAuraPaintWidgetTest : public DesktopWidgetTest {
   std::unique_ptr<views::Widget> CreateTestWidget(
       views::Widget::InitParams::Type type =
           views::Widget::InitParams::TYPE_WINDOW_FRAMELESS) override {
-    Widget::InitParams params = CreateParamsForTestWidget(type);
-    auto widget = std::make_unique<DesktopAuraTestValidPaintWidget>();
+    auto widget = std::make_unique<DesktopAuraTestValidPaintWidget>(
+        CreateParamsForTestWidget(type));
     paint_widget_ = widget.get();
-    widget->Init(std::move(params));
 
-    View* contents_view = new View;
+    View* contents_view = widget->SetContentsView(std::make_unique<View>());
     contents_view->SetFocusBehavior(View::FocusBehavior::ALWAYS);
-    widget->SetContentsView(contents_view);
 
     widget->Show();
     widget->Activate();
@@ -1436,8 +1407,8 @@ TEST_F(DesktopWidgetTest, TestWindowVisibilityAfterHide) {
   std::unique_ptr<Widget> widget =
       CreateTestWidget(Widget::InitParams::TYPE_WINDOW);
   NonClientView* non_client_view = widget->non_client_view();
-  NonClientFrameView* frame_view = new MinimumSizeFrameView(widget.get());
-  non_client_view->SetFrameView(frame_view);
+  non_client_view->SetFrameView(
+      std::make_unique<MinimumSizeFrameView>(widget.get()));
 
   widget->Show();
   EXPECT_TRUE(IsNativeWindowVisible(widget->GetNativeWindow()));
@@ -1530,10 +1501,9 @@ TEST_F(WidgetTest, EventHandlersOnRootView) {
   WidgetAutoclosePtr widget(CreateTopLevelNativeWidget());
   View* root_view = widget->GetRootView();
 
-  std::unique_ptr<EventCountView> view(new EventCountView());
-  view->set_owned_by_client();
+  EventCountView* view =
+      root_view->AddChildView(std::make_unique<EventCountView>());
   view->SetBounds(0, 0, 20, 20);
-  root_view->AddChildView(view.get());
 
   EventCountHandler h1;
   root_view->AddPreTargetHandler(&h1);
@@ -1683,7 +1653,7 @@ class MousePressEventConsumer : public ui::EventHandler {
 }  // namespace
 
 // No touch on desktop Mac. Tracked in http://crbug.com/445520.
-#if !defined(OS_MACOSX) || defined(USE_AURA)
+#if !defined(OS_APPLE) || defined(USE_AURA)
 
 // Test that mouse presses and mouse releases are dispatched normally when a
 // touch is down.
@@ -1710,7 +1680,7 @@ TEST_F(WidgetTest, MouseEventDispatchWhileTouchIsDown) {
   widget->CloseNow();
 }
 
-#endif  // !defined(OS_MACOSX) || defined(USE_AURA)
+#endif  // !defined(OS_APPLE) || defined(USE_AURA)
 
 // Tests that when there is no active capture, that a mouse press causes capture
 // to be set.
@@ -2019,8 +1989,8 @@ class WidgetWindowTitleTest : public DesktopWidgetTest {
         CreateParams(Widget::InitParams::TYPE_WINDOW);
 
     if (!desktop_native_widget) {
-      init_params.native_widget = CreatePlatformNativeWidgetImpl(
-          init_params, widget.get(), kStubCapture, nullptr);
+      init_params.native_widget =
+          CreatePlatformNativeWidgetImpl(widget.get(), kStubCapture, nullptr);
     }
     widget->Init(std::move(init_params));
 
@@ -2066,7 +2036,8 @@ TEST_F(WidgetTest, WidgetDeleted_InOnMousePressed) {
       CreateParams(views::Widget::InitParams::TYPE_POPUP);
   widget->Init(std::move(params));
 
-  widget->SetContentsView(new CloseWidgetView(ui::ET_MOUSE_PRESSED));
+  widget->SetContentsView(
+      std::make_unique<CloseWidgetView>(ui::ET_MOUSE_PRESSED));
 
   widget->SetSize(gfx::Size(100, 100));
   widget->Show();
@@ -2083,7 +2054,7 @@ TEST_F(WidgetTest, WidgetDeleted_InOnMousePressed) {
 }
 
 // No touch on desktop Mac. Tracked in http://crbug.com/445520.
-#if !defined(OS_MACOSX) || defined(USE_AURA)
+#if !defined(OS_APPLE) || defined(USE_AURA)
 
 TEST_F(WidgetTest, WidgetDeleted_InDispatchGestureEvent) {
   Widget* widget = new Widget;
@@ -2091,7 +2062,8 @@ TEST_F(WidgetTest, WidgetDeleted_InDispatchGestureEvent) {
       CreateParams(views::Widget::InitParams::TYPE_POPUP);
   widget->Init(std::move(params));
 
-  widget->SetContentsView(new CloseWidgetView(ui::ET_GESTURE_TAP_DOWN));
+  widget->SetContentsView(
+      std::make_unique<CloseWidgetView>(ui::ET_GESTURE_TAP_DOWN));
 
   widget->SetSize(gfx::Size(100, 100));
   widget->Show();
@@ -2105,7 +2077,7 @@ TEST_F(WidgetTest, WidgetDeleted_InDispatchGestureEvent) {
   // Yay we did not crash!
 }
 
-#endif  // !defined(OS_MACOSX) || defined(USE_AURA)
+#endif  // !defined(OS_APPLE) || defined(USE_AURA)
 
 // See description of RunGetNativeThemeFromDestructor() for details.
 class GetNativeThemeFromDestructorView : public WidgetDelegateView {
@@ -2131,8 +2103,8 @@ bool RunGetNativeThemeFromDestructor(Widget::InitParams params,
   // Deletes itself when the Widget is destroyed.
   params.delegate = new GetNativeThemeFromDestructorView;
   if (!is_first_run) {
-    params.native_widget = CreatePlatformNativeWidgetImpl(
-        params, widget.get(), kStubCapture, nullptr);
+    params.native_widget =
+        CreatePlatformNativeWidgetImpl(widget.get(), kStubCapture, nullptr);
     needs_second_run = true;
   }
   widget->Init(std::move(params));
@@ -2262,7 +2234,7 @@ TEST_F(WidgetTest, CloseWidgetWhileAnimating) {
 // Test Widget::CloseAllSecondaryWidgets works as expected across platforms.
 // ChromeOS doesn't implement or need CloseAllSecondaryWidgets() since
 // everything is under a single root window.
-#if BUILDFLAG(ENABLE_DESKTOP_AURA) || defined(OS_MACOSX)
+#if BUILDFLAG(ENABLE_DESKTOP_AURA) || defined(OS_APPLE)
 TEST_F(DesktopWidgetTest, CloseAllSecondaryWidgets) {
   Widget* widget1 = CreateTopLevelNativeWidget();
   Widget* widget2 = CreateTopLevelNativeWidget();
@@ -2326,7 +2298,7 @@ TEST_F(WidgetTest, NoCrashOnWidgetDeleteWithPendingEvents) {
   generator.MoveMouseTo(10, 10);
 
 // No touch on desktop Mac. Tracked in http://crbug.com/445520.
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
   generator.ClickLeftButton();
 #else
   generator.PressTouch();
@@ -3041,8 +3013,8 @@ class WidgetChildDestructionTest : public DesktopWidgetTest {
     Widget::InitParams params =
         CreateParams(views::Widget::InitParams::TYPE_WINDOW);
     if (!top_level_has_desktop_native_widget_aura) {
-      params.native_widget = CreatePlatformNativeWidgetImpl(
-          params, top_level, kStubCapture, nullptr);
+      params.native_widget =
+          CreatePlatformNativeWidgetImpl(top_level, kStubCapture, nullptr);
     }
     top_level->Init(std::move(params));
     top_level->GetRootView()->AddChildView(
@@ -3054,8 +3026,8 @@ class WidgetChildDestructionTest : public DesktopWidgetTest {
         CreateParams(views::Widget::InitParams::TYPE_POPUP);
     child_params.parent = top_level->GetNativeView();
     if (!child_has_desktop_native_widget_aura) {
-      child_params.native_widget = CreatePlatformNativeWidgetImpl(
-          child_params, child, kStubCapture, nullptr);
+      child_params.native_widget =
+          CreatePlatformNativeWidgetImpl(child, kStubCapture, nullptr);
     }
     child->Init(std::move(child_params));
     child->GetRootView()->AddChildView(
@@ -3112,6 +3084,41 @@ TEST_F(DesktopWidgetTest, FullscreenStatePropagated_DesktopWidget) {
             IsNativeWindowVisible(top_level_widget->GetNativeWindow()));
 }
 
+// Used to delete the widget when the supplied bounds changes.
+class DestroyingWidgetBoundsObserver : public WidgetObserver {
+ public:
+  explicit DestroyingWidgetBoundsObserver(std::unique_ptr<Widget> widget)
+      : widget_(std::move(widget)) {
+    widget_->AddObserver(this);
+  }
+
+  // There are no assertions here as not all platforms call
+  // OnWidgetBoundsChanged() when going fullscreen.
+  ~DestroyingWidgetBoundsObserver() override = default;
+
+  // WidgetObserver:
+  void OnWidgetBoundsChanged(Widget* widget,
+                             const gfx::Rect& new_bounds) override {
+    widget_->RemoveObserver(this);
+    widget_.reset();
+  }
+
+ private:
+  std::unique_ptr<Widget> widget_;
+};
+
+// Deletes a Widget when the bounds change as part of toggling fullscreen.
+// This is a regression test for https://crbug.com/1197436 .
+TEST_F(DesktopWidgetTest, DeleteInSetFullscreen) {
+  std::unique_ptr<Widget> widget = std::make_unique<Widget>();
+  Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
+  params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  widget->Init(std::move(params));
+  Widget* w = widget.get();
+  DestroyingWidgetBoundsObserver destroyer(std::move(widget));
+  w->SetFullscreen(true);
+}
+
 namespace {
 
 class FullscreenAwareFrame : public views::NonClientFrameView {
@@ -3154,8 +3161,9 @@ class FullscreenAwareFrame : public views::NonClientFrameView {
 // changing its size or title.
 TEST_F(WidgetTest, FullscreenFrameLayout) {
   WidgetAutoclosePtr widget(CreateTopLevelPlatformWidget());
-  FullscreenAwareFrame* frame = new FullscreenAwareFrame(widget.get());
-  widget->non_client_view()->SetFrameView(frame);  // Owns |frame|.
+  auto frame_view = std::make_unique<FullscreenAwareFrame>(widget.get());
+  FullscreenAwareFrame* frame = frame_view.get();
+  widget->non_client_view()->SetFrameView(std::move(frame_view));
 
   widget->Maximize();
   RunPendingMessages();
@@ -3740,7 +3748,7 @@ class WidgetShadowTest : public WidgetTest {
   bool force_child_ = false;
 
  private:
-#if BUILDFLAG(ENABLE_DESKTOP_AURA) || defined(OS_MACOSX)
+#if BUILDFLAG(ENABLE_DESKTOP_AURA) || defined(OS_APPLE)
   void InitControllers() {}
 #else
   class TestFocusRules : public wm::BaseFocusRules {
@@ -3764,13 +3772,13 @@ class WidgetShadowTest : public WidgetTest {
 
   std::unique_ptr<wm::FocusController> focus_controller_;
   std::unique_ptr<wm::ShadowController> shadow_controller_;
-#endif  // !BUILDFLAG(ENABLE_DESKTOP_AURA) && !defined(OS_MACOSX)
+#endif  // !BUILDFLAG(ENABLE_DESKTOP_AURA) && !defined(OS_APPLE)
 
   DISALLOW_COPY_AND_ASSIGN(WidgetShadowTest);
 };
 
 // Disabled on Mac: All drop shadows are managed out of process for now.
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
 #define MAYBE_ShadowsInRootWindow DISABLED_ShadowsInRootWindow
 #else
 #define MAYBE_ShadowsInRootWindow ShadowsInRootWindow
@@ -3850,72 +3858,37 @@ TEST_F(WidgetShadowTest, MAYBE_ShadowsInRootWindow) {
 
 #if defined(OS_WIN)
 
-namespace {
-
-// Provides functionality to create a window modal dialog.
-class ModalDialogDelegate : public DialogDelegateView {
- public:
-  explicit ModalDialogDelegate(ui::ModalType type) : type_(type) {}
-  ~ModalDialogDelegate() override = default;
-
-  // WidgetDelegate overrides.
-  ui::ModalType GetModalType() const override { return type_; }
-
- private:
-  const ui::ModalType type_;
-
-  DISALLOW_COPY_AND_ASSIGN(ModalDialogDelegate);
-};
-
-}  // namespace
-
 // Tests the case where an intervening owner popup window is destroyed out from
 // under the currently active modal top-level window. In this instance, the
 // remaining top-level windows should be re-enabled.
 TEST_F(DesktopWidgetTest, WindowModalOwnerDestroyedEnabledTest) {
   // top_level_widget owns owner_dialog_widget which owns owned_dialog_widget.
-
-  // Create the top level widget.
   std::unique_ptr<Widget> top_level_widget = CreateTestWidget();
   top_level_widget->Show();
 
   // Create the owner modal dialog.
-  // owner_dialog_delegate instance will be destroyed when the dialog
-  // is destroyed.
-  ModalDialogDelegate* owner_dialog_delegate =
-      new ModalDialogDelegate(ui::MODAL_TYPE_WINDOW);
-
-  Widget owner_dialog_widget;
-  Widget::InitParams init_params =
-      CreateParamsForTestWidget(Widget::InitParams::TYPE_WINDOW);
-  init_params.delegate = owner_dialog_delegate;
-  init_params.parent = top_level_widget->GetNativeView();
-  init_params.native_widget =
-      new test::TestPlatformNativeWidget<DesktopNativeWidgetAura>(
-          &owner_dialog_widget, false, nullptr);
-  owner_dialog_widget.Init(std::move(init_params));
-
+  const auto create_params = [this](Widget* widget, gfx::NativeView parent) {
+    Widget::InitParams init_params =
+        CreateParamsForTestWidget(Widget::InitParams::TYPE_WINDOW);
+    init_params.delegate = new WidgetDelegate();
+    init_params.delegate->SetModalType(ui::MODAL_TYPE_WINDOW);
+    init_params.parent = parent;
+    init_params.native_widget =
+        new test::TestPlatformNativeWidget<DesktopNativeWidgetAura>(
+            widget, false, nullptr);
+    return init_params;
+  };
+  Widget owner_dialog_widget(
+      create_params(&owner_dialog_widget, top_level_widget->GetNativeView()));
+  owner_dialog_widget.Show();
   HWND owner_hwnd = HWNDForWidget(&owner_dialog_widget);
 
-  owner_dialog_widget.Show();
-
   // Create the owned modal dialog.
-  // As above, the owned_dialog_instance instance will be destroyed
-  // when the dialog is destroyed.
-  ModalDialogDelegate* owned_dialog_delegate =
-      new ModalDialogDelegate(ui::MODAL_TYPE_WINDOW);
-
-  Widget owned_dialog_widget;
-  init_params.delegate = owned_dialog_delegate;
-  init_params.parent = owner_dialog_widget.GetNativeView();
-  init_params.native_widget =
-      new test::TestPlatformNativeWidget<DesktopNativeWidgetAura>(
-          &owned_dialog_widget, false, nullptr);
-  owned_dialog_widget.Init(std::move(init_params));
-
+  Widget owned_dialog_widget(
+      create_params(&owned_dialog_widget, owner_dialog_widget.GetNativeView()));
+  owned_dialog_widget.Show();
   HWND owned_hwnd = HWNDForWidget(&owned_dialog_widget);
 
-  owned_dialog_widget.Show();
   RunPendingMessages();
 
   HWND top_hwnd = HWNDForWidget(top_level_widget.get());
@@ -3936,7 +3909,7 @@ TEST_F(DesktopWidgetTest, WindowModalOwnerDestroyedEnabledTest) {
 
 #endif  // defined(OS_WIN)
 
-#if BUILDFLAG(ENABLE_DESKTOP_AURA) || defined(OS_MACOSX)
+#if BUILDFLAG(ENABLE_DESKTOP_AURA) || defined(OS_APPLE)
 
 namespace {
 
@@ -3963,7 +3936,7 @@ class CompositingWidgetTest : public DesktopWidgetTest {
       const Widget::InitParams::WindowOpacity opacity) {
     opacity_ = opacity;
     for (const auto& widget_type : widget_types_) {
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
       // Tooltips are native on Mac. See NativeWidgetNSWindowBridge::Init.
       if (widget_type == Widget::InitParams::TYPE_TOOLTIP)
         continue;
@@ -3980,7 +3953,7 @@ class CompositingWidgetTest : public DesktopWidgetTest {
           widget_type == Widget::InitParams::TYPE_CONTROL)
         continue;
 
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
       // Mac always always has a compositing window manager, but doesn't have
       // transparent titlebars which is what ShouldWindowContentsBeTransparent()
       // is currently used for. Asking for transparency should get it. Note that
@@ -3996,6 +3969,8 @@ class CompositingWidgetTest : public DesktopWidgetTest {
                 should_be_transparent);
 
 #if defined(USE_X11)
+      if (features::IsUsingOzonePlatform())
+        return;
       if (HasCompositingManager() &&
           (widget_type == Widget::InitParams::TYPE_DRAG ||
            widget_type == Widget::InitParams::TYPE_WINDOW)) {
@@ -4030,7 +4005,7 @@ TEST_F(CompositingWidgetTest, Transparency_DesktopWidgetTranslucent) {
   CheckAllWidgetsForOpacity(Widget::InitParams::WindowOpacity::kTranslucent);
 }
 
-#endif  // BUILDFLAG(ENABLE_DESKTOP_AURA) || defined(OS_MACOSX)
+#endif  // BUILDFLAG(ENABLE_DESKTOP_AURA) || defined(OS_APPLE)
 
 }  // namespace test
 }  // namespace views

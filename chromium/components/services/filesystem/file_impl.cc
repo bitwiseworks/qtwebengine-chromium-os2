@@ -12,9 +12,10 @@
 #include <utility>
 #include <vector>
 
+#include "base/check_op.h"
+#include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_file.h"
-#include "base/logging.h"
 #include "build/build_config.h"
 #include "components/services/filesystem/lock_table.h"
 #include "components/services/filesystem/shared_temp_dir.h"
@@ -66,7 +67,7 @@ bool FileImpl::IsValid() const {
 
 #if !defined(OS_FUCHSIA)
 base::File::Error FileImpl::RawLockFile() {
-  return file_.Lock();
+  return file_.Lock(base::File::LockMode::kExclusive);
 }
 
 base::File::Error FileImpl::RawUnlockFile() {

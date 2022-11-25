@@ -63,10 +63,10 @@ SharedImageRepresentationGLOzone::Create(
   gles2::Texture* texture = new gles2::Texture(gl_texture_service_id);
   texture->SetLightweightRef();
   texture->SetTarget(GL_TEXTURE_2D, 1 /*max_levels=*/);
-  texture->sampler_state_.min_filter = GL_LINEAR;
-  texture->sampler_state_.mag_filter = GL_LINEAR;
-  texture->sampler_state_.wrap_t = GL_CLAMP_TO_EDGE;
-  texture->sampler_state_.wrap_s = GL_CLAMP_TO_EDGE;
+  texture->set_min_filter(GL_LINEAR);
+  texture->set_mag_filter(GL_LINEAR);
+  texture->set_wrap_t(GL_CLAMP_TO_EDGE);
+  texture->set_wrap_s(GL_CLAMP_TO_EDGE);
 
   GLenum gl_format = viz::GLDataFormat(format);
   GLenum gl_type = viz::GLDataType(format);
@@ -100,7 +100,10 @@ gles2::Texture* SharedImageRepresentationGLOzone::GetTexture() {
 bool SharedImageRepresentationGLOzone::BeginAccess(GLenum mode) {
   // TODO(hob): Synchronize access to the dma-buf by waiting on all semaphores
   // tracked by SharedImageBackingOzone.
-  return true;
+
+  // We must call VaapiWrapper::SyncSurface() to ensure all VA-API work is done
+  // prior to using the buffer in a graphics API.
+  return ozone_backing()->VaSync();
 }
 
 void SharedImageRepresentationGLOzone::EndAccess() {

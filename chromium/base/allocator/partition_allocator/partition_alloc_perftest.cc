@@ -2,10 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <algorithm>
 #include <atomic>
+#include <limits>
+#include <memory>
 #include <vector>
 
 #include "base/allocator/partition_allocator/partition_alloc.h"
+#include "base/allocator/partition_allocator/partition_alloc_check.h"
+#include "base/bind.h"
+#include "base/callback.h"
+#include "base/logging.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
@@ -14,13 +21,19 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/perf/perf_result_reporter.h"
 
+#if defined(OS_ANDROID) || defined(ARCH_CPU_32_BITS)
+// Some tests allocate many GB of memory, which can cause issues on Android and
+// address-space exhaustion for any 32-bit process.
+#define MEMORY_CONSTRAINED
+#endif
+
 namespace base {
 namespace {
 
 // Change kTimeLimit to something higher if you need more time to capture a
 // trace.
 constexpr base::TimeDelta kTimeLimit = base::TimeDelta::FromSeconds(2);
-constexpr int kWarmupRuns = 5;
+constexpr int kWarmupRuns = 10000;
 constexpr int kTimeCheckInterval = 100000;
 
 // Size constants are mostly arbitrary, but try to simulate something like CSS
@@ -48,7 +61,6 @@ class Allocator {
  public:
   Allocator() = default;
   virtual ~Allocator() = default;
-  virtual void Init() {}
   virtual void* Alloc(size_t size) = 0;
   virtual void Free(void* data) = 0;
 };
@@ -63,23 +75,24 @@ class SystemAllocator : public Allocator {
 
 class PartitionAllocator : public Allocator {
  public:
-  PartitionAllocator()
-      : alloc_(std::make_unique<PartitionAllocatorGeneric>()) {}
+  PartitionAllocator() = default;
   ~PartitionAllocator() override = default;
 
-  void Init() override { alloc_->init(); }
-  void* Alloc(size_t size) override { return alloc_->root()->Alloc(size, ""); }
-  void Free(void* data) override { return alloc_->root()->Free(data); }
+  void* Alloc(size_t size) override {
+    return alloc_.AllocFlagsNoHooks(0, size);
+  }
+  void Free(void* data) override { ThreadSafePartitionRoot::FreeNoHooks(data); }
 
  private:
-  std::unique_ptr<PartitionAllocatorGeneric> alloc_;
+  ThreadSafePartitionRoot alloc_{{PartitionOptions::Alignment::kRegular,
+                                  PartitionOptions::ThreadCache::kDisabled}};
 };
 
 class TestLoopThread : public PlatformThread::Delegate {
  public:
   explicit TestLoopThread(OnceCallback<float()> test_fn)
       : test_fn_(std::move(test_fn)) {
-    CHECK(PlatformThread::Create(0, this, &thread_handle_));
+    PA_CHECK(PlatformThread::Create(0, this, &thread_handle_));
   }
 
   float Run() {
@@ -119,7 +132,7 @@ class MemoryAllocationPerfNode {
   MemoryAllocationPerfNode* next_ = nullptr;
 };
 
-#if !defined(OS_ANDROID)
+#if !defined(MEMORY_CONSTRAINED)
 float SingleBucket(Allocator* allocator) {
   auto* first =
       reinterpret_cast<MemoryAllocationPerfNode*>(allocator->Alloc(40));
@@ -142,7 +155,7 @@ float SingleBucket(Allocator* allocator) {
   MemoryAllocationPerfNode::FreeAll(first, allocator);
   return timer.LapsPerSecond();
 }
-#endif  // defined(OS_ANDROID)
+#endif  // defined(MEMORY_CONSTRAINED)
 
 float SingleBucketWithFree(Allocator* allocator) {
   // Allocate an initial element to make sure the bucket stays set up.
@@ -160,7 +173,7 @@ float SingleBucketWithFree(Allocator* allocator) {
   return timer.LapsPerSecond();
 }
 
-#if !defined(OS_ANDROID)
+#if !defined(MEMORY_CONSTRAINED)
 float MultiBucket(Allocator* allocator) {
   auto* first =
       reinterpret_cast<MemoryAllocationPerfNode*>(allocator->Alloc(40));
@@ -183,7 +196,7 @@ float MultiBucket(Allocator* allocator) {
 
   return timer.LapsPerSecond() * kMultiBucketRounds;
 }
-#endif  // defined(OS_ANDROID)
+#endif  // defined(MEMORY_CONSTRAINED)
 
 float MultiBucketWithFree(Allocator* allocator) {
   std::vector<void*> elems;
@@ -208,11 +221,11 @@ float MultiBucketWithFree(Allocator* allocator) {
     timer.NextLap();
   } while (!timer.HasTimeLimitExpired());
 
-    for (void* ptr : elems) {
-      allocator->Free(ptr);
-    }
+  for (void* ptr : elems) {
+    allocator->Free(ptr);
+  }
 
-    return timer.LapsPerSecond() * kMultiBucketRounds;
+  return timer.LapsPerSecond() * kMultiBucketRounds;
 }
 
 std::unique_ptr<Allocator> CreateAllocator(AllocatorType type) {
@@ -221,12 +234,20 @@ std::unique_ptr<Allocator> CreateAllocator(AllocatorType type) {
   return std::make_unique<PartitionAllocator>();
 }
 
+void LogResults(int thread_count,
+                AllocatorType alloc_type,
+                uint64_t total_laps_per_second,
+                uint64_t min_laps_per_second) {
+  LOG(INFO) << "RESULTSCSV: " << thread_count << ","
+            << static_cast<int>(alloc_type) << "," << total_laps_per_second
+            << "," << min_laps_per_second;
+}
+
 void RunTest(int thread_count,
              AllocatorType alloc_type,
              float (*test_fn)(Allocator*),
              const char* story_base_name) {
   auto alloc = CreateAllocator(alloc_type);
-  alloc->Init();
 
   std::vector<std::unique_ptr<TestLoopThread>> threads;
   for (int i = 0; i < thread_count; ++i) {
@@ -249,6 +270,8 @@ void RunTest(int thread_count,
 
   DisplayResults(name + "_total", total_laps_per_second);
   DisplayResults(name + "_worst", min_laps_per_second);
+  LogResults(thread_count, alloc_type, total_laps_per_second,
+             min_laps_per_second);
 }
 
 class MemoryAllocationPerfTest
@@ -263,13 +286,13 @@ INSTANTIATE_TEST_SUITE_P(
 
 // This test (and the other one below) allocates a large amount of memory, which
 // can cause issues on Android.
-#if !defined(OS_ANDROID)
+#if !defined(MEMORY_CONSTRAINED)
 TEST_P(MemoryAllocationPerfTest, SingleBucket) {
   auto params = GetParam();
   RunTest(std::get<0>(params), std::get<1>(params), SingleBucket,
           "SingleBucket");
 }
-#endif
+#endif  // defined(MEMORY_CONSTRAINED)
 
 TEST_P(MemoryAllocationPerfTest, SingleBucketWithFree) {
   auto params = GetParam();
@@ -277,12 +300,12 @@ TEST_P(MemoryAllocationPerfTest, SingleBucketWithFree) {
           "SingleBucketWithFree");
 }
 
-#if !defined(OS_ANDROID)
+#if !defined(MEMORY_CONSTRAINED)
 TEST_P(MemoryAllocationPerfTest, MultiBucket) {
   auto params = GetParam();
   RunTest(std::get<0>(params), std::get<1>(params), MultiBucket, "MultiBucket");
 }
-#endif
+#endif  // defined(MEMORY_CONSTRAINED)
 
 TEST_P(MemoryAllocationPerfTest, MultiBucketWithFree) {
   auto params = GetParam();

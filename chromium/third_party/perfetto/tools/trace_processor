@@ -28,14 +28,18 @@ import hashlib
 import os
 import sys
 import tempfile
-import urllib
+import subprocess
 
 TRACE_PROCESSOR_SHELL_SHAS = {
-    'linux': '7532ce79b260993018fdd515fdf99d3151ce48d4',
-    'mac': 'ed29b0eefe4f209504c18400b844cb00b4bc323b',
+    'linux': '343f620e85617d52711f6df863e915c12d16a4d2',
+    'mac': '96e05af06499ee1f6b3f8ef2806cd8bdc944d7bc',
 }
 TRACE_PROCESSOR_SHELL_PATH = tempfile.gettempdir()
 TRACE_PROCESSOR_SHELL_BASE_URL = ('https://storage.googleapis.com/perfetto/')
+
+
+def DownloadURL(url, out_file):
+  subprocess.check_call(['curl', '-L', '-#', '-o', out_file, url])
 
 
 def check_hash(file_name, sha_value):
@@ -56,7 +60,7 @@ def load_trace_processor_shell(platform):
       return local_file
 
   url = TRACE_PROCESSOR_SHELL_BASE_URL + file_name
-  urllib.urlretrieve(url, local_file)
+  DownloadURL(url, local_file)
   if not check_hash(local_file, sha_value):
     os.remove(local_file)
     raise ValueError("Invalid signature.")

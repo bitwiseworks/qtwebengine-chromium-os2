@@ -9,22 +9,21 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "base/component_export.h"
 #include "base/macros.h"
+#include "build/build_config.h"
 #include "device/vr/public/mojom/vr_service.mojom.h"
 #include "device/vr/vr_device.h"
-#include "device/vr/vr_export.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
-#include "ui/display/display.h"
 
 namespace device {
 
 // Represents one of the platform's VR devices. Owned by the respective
 // VRDeviceProvider.
-// TODO(mthiesse, crbug.com/769373): Remove DEVICE_VR_EXPORT.
-class DEVICE_VR_EXPORT VRDeviceBase : public mojom::XRRuntime {
+class COMPONENT_EXPORT(DEVICE_VR_BASE) VRDeviceBase : public mojom::XRRuntime {
  public:
   explicit VRDeviceBase(mojom::XRDeviceId id);
   ~VRDeviceBase() override;
@@ -33,10 +32,10 @@ class DEVICE_VR_EXPORT VRDeviceBase : public mojom::XRRuntime {
   void ListenToDeviceChanges(
       mojo::PendingAssociatedRemote<mojom::XRRuntimeEventListener> listener,
       mojom::XRRuntime::ListenToDeviceChangesCallback callback) final;
-  void SetInlinePosesEnabled(bool enable) override;
   void ShutdownSession(mojom::XRRuntime::ShutdownSessionCallback) override;
 
   device::mojom::XRDeviceId GetId() const;
+  device::mojom::XRDeviceDataPtr GetDeviceData() const;
 
   bool HasExclusiveSession();
 
@@ -63,10 +62,11 @@ class DEVICE_VR_EXPORT VRDeviceBase : public mojom::XRRuntime {
   bool IsPresenting() { return presenting_; }  // Exposed for test.
   void SetVRDisplayInfo(mojom::VRDisplayInfoPtr display_info);
   void OnVisibilityStateChanged(mojom::XRVisibilityState visibility_state);
+#if defined(OS_WIN)
+  void SetLuid(const LUID& luid);
+#endif
 
   mojom::VRDisplayInfoPtr display_info_;
-
-  bool inline_poses_enabled_ = true;
 
  private:
   mojo::AssociatedRemote<mojom::XRRuntimeEventListener> listener_;
@@ -74,6 +74,8 @@ class DEVICE_VR_EXPORT VRDeviceBase : public mojom::XRRuntime {
   bool presenting_ = false;
 
   device::mojom::XRDeviceId id_;
+
+  device::mojom::XRDeviceData device_data_;
 
   mojo::Receiver<mojom::XRRuntime> runtime_receiver_{this};
 

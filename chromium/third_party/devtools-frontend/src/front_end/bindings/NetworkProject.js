@@ -27,6 +27,8 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
 
 import * as Common from '../common/common.js';
 import * as SDK from '../sdk/sdk.js';
@@ -141,6 +143,9 @@ export class NetworkProject {
     }
     const attributionInfo = frameAttribution.get(frameId);
     console.assert(attributionInfo, 'Failed to remove frame attribution for url: ' + uiSourceCode.url());
+    if (!attributionInfo) {
+      return;
+    }
     attributionInfo.count -= 1;
     if (attributionInfo.count > 0) {
       return;
@@ -164,6 +169,14 @@ export class NetworkProject {
    */
   static setTargetForProject(project, target) {
     project[_targetSymbol] = target;
+  }
+
+  /**
+   * @param {!Workspace.Workspace.Project} project
+   * @return {?SDK.SDKModel.Target}
+   */
+  static getTargetForProject(project) {
+    return project[_targetSymbol] || null;
   }
 
   /**

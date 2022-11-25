@@ -43,6 +43,7 @@ std::unique_ptr<WebNavigationParams> WebNavigationParams::CreateFromInfo(
       info.initiator_origin_trial_features;
   result->ip_address_space = info.initiator_address_space;
   result->frame_policy = info.frame_policy;
+  result->had_transient_activation = info.url_request.HasUserGesture();
   return result;
 }
 
@@ -129,11 +130,12 @@ WebNavigationParams::PrefetchedSignedExchange::PrefetchedSignedExchange(
     const WebString& header_integrity,
     const WebURL& inner_url,
     const WebURLResponse& inner_response,
-    mojo::ScopedMessagePipeHandle loader_factory_handle)
+    CrossVariantMojoRemote<network::mojom::URLLoaderFactoryInterfaceBase>
+        loader_factory)
     : outer_url(outer_url),
       header_integrity(header_integrity),
       inner_url(inner_url),
       inner_response(inner_response),
-      loader_factory_handle(std::move(loader_factory_handle)) {}
+      loader_factory(std::move(loader_factory)) {}
 
 }  // namespace blink

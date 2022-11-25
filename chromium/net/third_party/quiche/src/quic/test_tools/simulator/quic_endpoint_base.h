@@ -87,8 +87,9 @@ class QuicEndpointBase : public Endpoint,
         const QuicSocketAddress& peer_address) const override;
     bool SupportsReleaseTime() const override;
     bool IsBatchMode() const override;
-    char* GetNextWriteLocation(const QuicIpAddress& self_address,
-                               const QuicSocketAddress& peer_address) override;
+    QuicPacketBuffer GetNextWriteLocation(
+        const QuicIpAddress& self_address,
+        const QuicSocketAddress& peer_address) override;
     WriteResult Flush() override;
 
    private:
@@ -149,7 +150,7 @@ class QuicEndpointMultiplexer : public Endpoint,
   void Act() override {}
 
  private:
-  QuicUnorderedMap<std::string, QuicEndpointBase*> mapping_;
+  QuicHashMap<std::string, QuicEndpointBase*> mapping_;
 };
 
 }  // namespace simulator

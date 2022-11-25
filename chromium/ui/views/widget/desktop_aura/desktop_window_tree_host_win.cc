@@ -12,6 +12,7 @@
 #include "base/containers/flat_set.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/trace_event/trace_event.h"
 #include "base/win/win_util.h"
 #include "base/win/windows_version.h"
 #include "third_party/skia/include/core/SkPath.h"
@@ -24,6 +25,7 @@
 #include "ui/base/cursor/cursor_loader_win.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ui_base_features.h"
+#include "ui/base/win/event_creation_utils.h"
 #include "ui/base/win/shell.h"
 #include "ui/compositor/paint_context.h"
 #include "ui/display/win/dpi.h"
@@ -31,6 +33,7 @@
 #include "ui/events/keyboard_hook.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/dom/dom_keyboard_layout_map.h"
+#include "ui/events/platform/platform_event_source.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/gfx/native_widget_types.h"
@@ -117,6 +120,10 @@ aura::Window* DesktopWindowTreeHostWin::GetContentWindowForHWND(HWND hwnd) {
   return host ? host->window()->GetProperty(kContentWindowForRootWindow) : NULL;
 }
 
+void DesktopWindowTreeHostWin::SetInTouchDrag(bool in_touch_drag) {
+  in_touch_drag_ = in_touch_drag;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // DesktopWindowTreeHostWin, DesktopWindowTreeHost implementation:
 
@@ -184,7 +191,7 @@ std::unique_ptr<corewm::Tooltip> DesktopWindowTreeHostWin::CreateTooltip() {
 std::unique_ptr<aura::client::DragDropClient>
 DesktopWindowTreeHostWin::CreateDragDropClient(
     DesktopNativeCursorManager* cursor_manager) {
-  drag_drop_client_ = new DesktopDragDropClientWin(window(), GetHWND());
+  drag_drop_client_ = new DesktopDragDropClientWin(window(), GetHWND(), this);
   return base::WrapUnique(drag_drop_client_);
 }
 
@@ -430,10 +437,11 @@ void DesktopWindowTreeHostWin::SetVisibilityChangedAnimationsEnabled(
   content_window()->SetProperty(aura::client::kAnimationsDisabledKey, !value);
 }
 
-NonClientFrameView* DesktopWindowTreeHostWin::CreateNonClientFrameView() {
-  return ShouldUseNativeFrame()
-             ? new NativeFrameView(native_widget_delegate_->AsWidget())
-             : nullptr;
+std::unique_ptr<NonClientFrameView>
+DesktopWindowTreeHostWin::CreateNonClientFrameView() {
+  return ShouldUseNativeFrame() ? std::make_unique<NativeFrameView>(
+                                      native_widget_delegate_->AsWidget())
+                                : nullptr;
 }
 
 bool DesktopWindowTreeHostWin::ShouldUseNativeFrame() const {
@@ -455,7 +463,10 @@ void DesktopWindowTreeHostWin::FrameTypeChanged() {
 }
 
 void DesktopWindowTreeHostWin::SetFullscreen(bool fullscreen) {
+  auto weak_ptr = GetWeakPtr();
   message_handler_->SetFullscreen(fullscreen);
+  if (!weak_ptr)
+    return;
   // TODO(sky): workaround for ScopedFullscreenVisibility showing window
   // directly. Instead of this should listen for visibility changes and then
   // update window.
@@ -622,6 +633,8 @@ DesktopWindowTreeHostWin::GetKeyboardLayoutMap() {
 }
 
 void DesktopWindowTreeHostWin::SetCursorNative(gfx::NativeCursor cursor) {
+  TRACE_EVENT1("ui,input", "DesktopWindowTreeHostWin::SetCursorNative",
+               "cursor", cursor.type());
   ui::CursorLoaderWin cursor_loader;
   cursor_loader.SetPlatformCursor(&cursor);
 
@@ -725,10 +738,6 @@ bool DesktopWindowTreeHostWin::IsModal() const {
 
 int DesktopWindowTreeHostWin::GetInitialShowState() const {
   return CanActivate() ? SW_SHOWNORMAL : SW_SHOWNOACTIVATE;
-}
-
-bool DesktopWindowTreeHostWin::WillProcessWorkAreaChange() const {
-  return GetWidget()->widget_delegate()->WillProcessWorkAreaChange();
 }
 
 int DesktopWindowTreeHostWin::GetNonClientComponent(
@@ -917,13 +926,28 @@ void DesktopWindowTreeHostWin::HandleNativeBlur(HWND focused_window) {
 }
 
 bool DesktopWindowTreeHostWin::HandleMouseEvent(ui::MouseEvent* event) {
+  // Ignore native platform events for test purposes
+  if (ui::PlatformEventSource::ShouldIgnoreNativePlatformEvents())
+    return true;
   // Mouse events in occluded windows should be very rare. If this stat isn't
   // very close to 0, that would indicate that windows are incorrectly getting
   // marked occluded, or getting stuck in the occluded state. Event can cause
   // this object to be deleted so check occlusion state before we do anything
   // with the event.
-  if (GetNativeWindowOcclusionState() == aura::Window::OcclusionState::OCCLUDED)
-    UMA_HISTOGRAM_BOOLEAN("OccludedWindowMouseEvents", true);
+  // This stat tries to detect the user moving the mouse over a window falsely
+  // determined to be occluded, so ignore mouse events that have the same
+  // location as the first event, and exit events.
+  if (GetNativeWindowOcclusionState() ==
+      aura::Window::OcclusionState::OCCLUDED) {
+    if (occluded_window_mouse_event_loc_ != gfx::Point() &&
+        event->location() != occluded_window_mouse_event_loc_ &&
+        event->type() != ui::ET_MOUSE_EXITED) {
+      UMA_HISTOGRAM_BOOLEAN("OccludedWindowMouseEvents", true);
+    }
+    occluded_window_mouse_event_loc_ = event->location();
+  } else {
+    occluded_window_mouse_event_loc_ = gfx::Point();
+  }
 
   SendEventToSink(event);
   return event->handled();
@@ -952,6 +976,21 @@ void DesktopWindowTreeHostWin::HandleTouchEvent(ui::TouchEvent* event) {
   if (!GetWidget()->GetNativeView())
     return;
 
+  if (in_touch_drag_) {
+    POINT event_point;
+    event_point.x = event->location().x();
+    event_point.y = event->location().y();
+    ::ClientToScreen(GetHWND(), &event_point);
+    gfx::Point screen_point(event_point);
+    // Send equivalent mouse events, because Ole32 drag drop doesn't seem to
+    // handle pointer events.
+    if (event->type() == ui::ET_TOUCH_MOVED) {
+      ui::SendMouseEvent(screen_point, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE);
+    } else if (event->type() == ui::ET_TOUCH_RELEASED) {
+      ui::SendMouseEvent(screen_point,
+                         MOUSEEVENTF_RIGHTUP | MOUSEEVENTF_ABSOLUTE);
+    }
+  }
   // Currently we assume the window that has capture gets touch events too.
   aura::WindowTreeHost* host =
       aura::WindowTreeHost::GetForAcceleratedWidget(GetCapture());
@@ -1066,7 +1105,7 @@ void DesktopWindowTreeHostWin::HandleWindowScaleFactorChanged(
   if (compositor()) {
     compositor()->SetScaleAndSize(
         window_scale_factor, message_handler_->GetClientAreaBounds().size(),
-        window()->GetLocalSurfaceIdAllocation());
+        window()->GetLocalSurfaceId());
   }
 }
 

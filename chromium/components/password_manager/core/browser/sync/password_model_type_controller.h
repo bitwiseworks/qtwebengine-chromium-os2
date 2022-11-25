@@ -9,7 +9,8 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "components/password_manager/core/browser/password_account_storage_opt_in_watcher.h"
+#include "base/memory/weak_ptr.h"
+#include "components/password_manager/core/browser/password_account_storage_settings_watcher.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/sync/driver/model_type_controller.h"
 #include "components/sync/driver/sync_service_observer.h"
@@ -23,6 +24,8 @@ class SyncService;
 
 namespace password_manager {
 
+class PasswordStore;
+
 // A class that manages the startup and shutdown of password sync.
 class PasswordModelTypeController : public syncer::ModelTypeController,
                                     public syncer::SyncServiceObserver,
@@ -33,6 +36,7 @@ class PasswordModelTypeController : public syncer::ModelTypeController,
           delegate_for_full_sync_mode,
       std::unique_ptr<syncer::ModelTypeControllerDelegate>
           delegate_for_transport_mode,
+      scoped_refptr<PasswordStore> account_password_store_for_cleanup,
       PrefService* pref_service,
       signin::IdentityManager* identity_manager,
       syncer::SyncService* sync_service,
@@ -50,20 +54,30 @@ class PasswordModelTypeController : public syncer::ModelTypeController,
   void OnStateChanged(syncer::SyncService* sync) override;
 
   // IdentityManager::Observer overrides.
+  void OnAccountsInCookieUpdated(
+      const signin::AccountsInCookieJarInfo& accounts_in_cookie_jar_info,
+      const GoogleServiceAuthError& error) override;
   void OnAccountsCookieDeletedByUserAction() override;
+  void OnPrimaryAccountCleared(
+      const CoreAccountInfo& previous_primary_account_info) override;
 
  private:
   void OnOptInStateMaybeChanged();
+
+  void MaybeClearStore(
+      scoped_refptr<PasswordStore> account_password_store_for_cleanup);
 
   PrefService* const pref_service_;
   signin::IdentityManager* const identity_manager_;
   syncer::SyncService* const sync_service_;
   const base::RepeatingClosure state_changed_callback_;
 
-  PasswordAccountStorageOptInWatcher account_storage_opt_in_watcher_;
+  PasswordAccountStorageSettingsWatcher account_storage_settings_watcher_;
 
   // Passed in to LoadModels(), and cached here for later use in Stop().
   syncer::SyncMode sync_mode_ = syncer::SyncMode::kFull;
+
+  base::WeakPtrFactory<PasswordModelTypeController> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PasswordModelTypeController);
 };

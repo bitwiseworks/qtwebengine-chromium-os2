@@ -12,9 +12,9 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "base/check_op.h"
 #include "base/compiler_specific.h"
 #include "base/containers/flat_map.h"
-#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/numerics/checked_math.h"
@@ -115,9 +115,12 @@ class LevelDBScope {
   struct EmptyRangeLessThan {
     // This constructor is needed to satisfy the constraints of having default
     // construction of the |empty_ranges_| flat_map below.
-    EmptyRangeLessThan();
-    EmptyRangeLessThan(const leveldb::Comparator* comparator);
-    EmptyRangeLessThan& operator=(const EmptyRangeLessThan& other);
+    EmptyRangeLessThan() noexcept;
+    EmptyRangeLessThan(const leveldb::Comparator* comparator) noexcept;
+    EmptyRangeLessThan(const EmptyRangeLessThan& other) noexcept;
+    EmptyRangeLessThan(EmptyRangeLessThan&& other) noexcept;
+    EmptyRangeLessThan& operator=(const EmptyRangeLessThan& other) noexcept;
+    EmptyRangeLessThan& operator=(EmptyRangeLessThan&& other) noexcept;
 
     // The ranges are expected to be disjoint.
     bool operator()(const EmptyRange& lhs, const EmptyRange& rhs) const;

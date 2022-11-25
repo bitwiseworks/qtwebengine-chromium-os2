@@ -9,6 +9,7 @@
 #include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
 #include "storage/browser/quota/quota_client.h"
+#include "storage/browser/quota/quota_client_type.h"
 #include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 #include "url/origin.h"
 
@@ -26,24 +27,23 @@ class CONTENT_EXPORT CacheStorageQuotaClient : public storage::QuotaClient {
                           CacheStorageOwner owner);
 
   // QuotaClient.
-  ID id() const override;
   void OnQuotaManagerDestroyed() override;
   void GetOriginUsage(const url::Origin& origin,
                       blink::mojom::StorageType type,
-                      GetUsageCallback callback) override;
+                      GetOriginUsageCallback callback) override;
   void GetOriginsForType(blink::mojom::StorageType type,
-                         GetOriginsCallback callback) override;
+                         GetOriginsForTypeCallback callback) override;
   void GetOriginsForHost(blink::mojom::StorageType type,
                          const std::string& host,
-                         GetOriginsCallback callback) override;
+                         GetOriginsForHostCallback callback) override;
   void DeleteOriginData(const url::Origin& origin,
                         blink::mojom::StorageType type,
-                        DeletionCallback callback) override;
+                        DeleteOriginDataCallback callback) override;
   void PerformStorageCleanup(blink::mojom::StorageType type,
-                             base::OnceClosure callback) override;
-  bool DoesSupport(blink::mojom::StorageType type) const override;
+                             PerformStorageCleanupCallback callback) override;
 
-  static ID GetIDFromOwner(CacheStorageOwner owner);
+  static storage::QuotaClientType GetClientTypeFromOwner(
+      CacheStorageOwner owner);
 
  private:
   ~CacheStorageQuotaClient() override;

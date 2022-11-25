@@ -7,17 +7,17 @@
 #include <string>
 
 #include "base/bind.h"
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/memory/ptr_util.h"
 #include "base/optional.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/time/time.h"
-#include "content/renderer/loader/navigation_response_override_parameters.h"
 #include "content/renderer/loader/sync_load_response.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "net/url_request/redirect_info.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
+#include "third_party/blink/public/common/client_hints/client_hints.h"
 #include "third_party/blink/public/common/loader/url_loader_throttle.h"
 
 namespace content {
@@ -100,16 +100,17 @@ void SyncLoadContext::StartAsyncWithWaitableEvent(
     base::WaitableEvent* redirect_or_response_event,
     base::WaitableEvent* abort_event,
     base::TimeDelta timeout,
-    mojo::PendingRemote<blink::mojom::BlobRegistry> download_to_blob_registry) {
-  auto* context = new SyncLoadContext(
-      request.get(), std::move(pending_url_loader_factory), response,
-      redirect_or_response_event, abort_event, timeout,
-      std::move(download_to_blob_registry), loading_task_runner);
+    mojo::PendingRemote<blink::mojom::BlobRegistry> download_to_blob_registry,
+    const std::vector<std::string>& cors_exempt_header_list) {
+  auto* context =
+      new SyncLoadContext(request.get(), std::move(pending_url_loader_factory),
+                          response, redirect_or_response_event, abort_event,
+                          timeout, std::move(download_to_blob_registry),
+                          loading_task_runner, cors_exempt_header_list);
   context->request_id_ = context->resource_dispatcher_->StartAsync(
       std::move(request), routing_id, std::move(loading_task_runner),
       traffic_annotation, loader_options, base::WrapUnique(context),
-      context->url_loader_factory_, std::move(throttles),
-      nullptr /* navigation_response_override_params */);
+      context->url_loader_factory_, std::move(throttles));
 }
 
 SyncLoadContext::SyncLoadContext(
@@ -120,7 +121,8 @@ SyncLoadContext::SyncLoadContext(
     base::WaitableEvent* abort_event,
     base::TimeDelta timeout,
     mojo::PendingRemote<blink::mojom::BlobRegistry> download_to_blob_registry,
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+    const std::vector<std::string>& cors_exempt_header_list)
     : response_(response),
       body_watcher_(FROM_HERE, mojo::SimpleWatcher::ArmingPolicy::MANUAL),
       download_to_blob_registry_(std::move(download_to_blob_registry)),
@@ -137,6 +139,7 @@ SyncLoadContext::SyncLoadContext(
 
   // Constructs a new ResourceDispatcher specifically for this request.
   resource_dispatcher_ = std::make_unique<ResourceDispatcher>();
+  resource_dispatcher_->SetCorsExemptHeaderList(cors_exempt_header_list);
 
   // Initialize the final URL with the original request URL. It will be
   // overwritten on redirects.
@@ -149,8 +152,16 @@ void SyncLoadContext::OnUploadProgress(uint64_t position, uint64_t size) {}
 
 bool SyncLoadContext::OnReceivedRedirect(
     const net::RedirectInfo& redirect_info,
-    network::mojom::URLResponseHeadPtr head) {
+    network::mojom::URLResponseHeadPtr head,
+    std::vector<std::string>* removed_headers) {
   DCHECK(!Completed());
+  if (removed_headers) {
+    // TODO(yoav): Get the actual FeaturePolicy here to support selective
+    // removal for sync XHR.
+    blink::FindClientHintsToRemove(nullptr /* feature_policy */,
+                                   redirect_info.new_url, removed_headers);
+  }
+
   response_->url = redirect_info.new_url;
   response_->head = std::move(head);
   response_->redirect_info = redirect_info;

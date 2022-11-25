@@ -19,6 +19,15 @@ import {toNs} from '../common/time';
 import {globals} from './globals';
 import {scrollToTrackAndTs} from './scroll_helper';
 
+function setToPrevious(current: number) {
+  globals.frontendLocalState.setSearchIndex(Math.max(current - 1, 0));
+}
+
+function setToNext(current: number) {
+  globals.frontendLocalState.setSearchIndex(
+      Math.min(current + 1, globals.currentSearchResults.totalResults - 1));
+}
+
 export function executeSearch(reverse = false) {
   const state = globals.frontendLocalState;
   const index = state.searchIndex;
@@ -32,19 +41,22 @@ export function executeSearch(reverse = false) {
     if (reverse) {
       const [smaller,] =
         searchSegment(globals.currentSearchResults.tsStarts, endNs);
-      globals.frontendLocalState.setSearchIndex(smaller);
+      // If there is no item in the viewport just go to the previous.
+      smaller === -1 ? setToPrevious(index) :
+                       globals.frontendLocalState.setSearchIndex(smaller);
     } else {
       const [, larger] =
           searchSegment(globals.currentSearchResults.tsStarts, startNs);
-      globals.frontendLocalState.setSearchIndex(larger);
+      // If there is no item in the viewport just go to the next.
+      larger === -1 ? setToNext(index) :
+                      globals.frontendLocalState.setSearchIndex(larger);
     }
   } else {
     // If the currentTs is in the viewport, increment the index.
     if (reverse) {
-      globals.frontendLocalState.setSearchIndex(Math.max(index - 1, 0));
+      setToPrevious(index);
     } else {
-      globals.frontendLocalState.setSearchIndex(Math.min(
-          index + 1, globals.currentSearchResults.sliceIds.length - 1));
+      setToNext(index);
     }
   }
   selectCurrentSearchResult();
@@ -79,6 +91,9 @@ function selectCurrentSearchResult() {
   if (source === 'cpu') {
     globals.dispatch(Actions.selectSlice({id: currentId, trackId}));
   } else {
-    globals.dispatch(Actions.selectChromeSlice({id: currentId, trackId}));
+    // Search results only include slices from the slice table for now.
+    // When we include annotations we need to pass the correct table.
+    globals.dispatch(
+        Actions.selectChromeSlice({id: currentId, trackId, table: 'slice'}));
   }
 }

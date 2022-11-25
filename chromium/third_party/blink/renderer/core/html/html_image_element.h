@@ -43,9 +43,10 @@
 
 namespace blink {
 
+class ExceptionState;
 class HTMLFormElement;
 class ImageCandidate;
-class ExceptionState;
+class LayoutSize;
 class ShadowRoot;
 
 class CORE_EXPORT HTMLImageElement final
@@ -54,7 +55,6 @@ class CORE_EXPORT HTMLImageElement final
       public ActiveScriptWrappable<HTMLImageElement>,
       public FormAssociated {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(HTMLImageElement);
 
  public:
   class ViewportChangeListener;
@@ -81,7 +81,7 @@ class CORE_EXPORT HTMLImageElement final
   HTMLImageElement(Document&, const CreateElementFlags);
   explicit HTMLImageElement(Document&, bool created_by_parser = false);
   ~HTMLImageElement() override;
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   unsigned width();
   unsigned height();

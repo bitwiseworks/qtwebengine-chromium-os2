@@ -12,7 +12,7 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/singleton.h"
+#include "base/no_destructor.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/utf_string_conversions.h"
@@ -34,6 +34,9 @@ const wchar_t kLanguageValue[] = L"Language";
 
 class TtsPlatformImplWin : public TtsPlatformImpl {
  public:
+  TtsPlatformImplWin(const TtsPlatformImplWin&) = delete;
+  TtsPlatformImplWin& operator=(const TtsPlatformImplWin&) = delete;
+
   bool PlatformImplAvailable() override { return true; }
 
   void Speak(int utterance_id,
@@ -59,8 +62,8 @@ class TtsPlatformImplWin : public TtsPlatformImpl {
   static void __stdcall SpeechEventCallback(WPARAM w_param, LPARAM l_param);
 
  private:
+  friend base::NoDestructor<TtsPlatformImplWin>;
   TtsPlatformImplWin();
-  ~TtsPlatformImplWin() override {}
 
   void OnSpeechEvent();
 
@@ -77,19 +80,13 @@ class TtsPlatformImplWin : public TtsPlatformImpl {
 
   // These apply to the current utterance only.
   std::wstring utterance_;
-  int utterance_id_;
-  int prefix_len_;
-  ULONG stream_number_;
-  int char_position_;
-  int char_length_;
-  bool paused_;
+  int utterance_id_ = 0;
+  int prefix_len_ = 0;
+  ULONG stream_number_ = 0u;
+  int char_position_ = 0;
+  int char_length_ = 0;
+  bool paused_ = false;
   std::string last_voice_name_;
-
-  friend struct base::DefaultSingletonTraits<TtsPlatformImplWin>;
-
-  base::WeakPtrFactory<TtsPlatformImplWin> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(TtsPlatformImplWin);
 };
 
 // static
@@ -107,7 +104,7 @@ void TtsPlatformImplWin::Speak(
   // Parse SSML and process speech.
   TtsController::GetInstance()->StripSSML(
       utterance, base::BindOnce(&TtsPlatformImplWin::ProcessSpeech,
-                                weak_factory_.GetWeakPtr(), utterance_id, lang,
+                                base::Unretained(this), utterance_id, lang,
                                 voice, params, std::move(on_speak_finished)));
 }
 
@@ -224,8 +221,7 @@ bool TtsPlatformImplWin::IsSpeaking() {
 void TtsPlatformImplWin::GetVoices(std::vector<VoiceData>* out_voices) {
   Microsoft::WRL::ComPtr<IEnumSpObjectTokens> voice_tokens;
   unsigned long voice_count;
-  if (S_OK !=
-      SpEnumTokens(SPCAT_VOICES, NULL, NULL, voice_tokens.GetAddressOf()))
+  if (S_OK != SpEnumTokens(SPCAT_VOICES, NULL, NULL, &voice_tokens))
     return;
   if (S_OK != voice_tokens->GetCount(&voice_count))
     return;
@@ -234,7 +230,7 @@ void TtsPlatformImplWin::GetVoices(std::vector<VoiceData>* out_voices) {
     VoiceData voice;
 
     Microsoft::WRL::ComPtr<ISpObjectToken> voice_token;
-    if (S_OK != voice_tokens->Next(1, voice_token.GetAddressOf(), NULL))
+    if (S_OK != voice_tokens->Next(1, &voice_token, NULL))
       return;
 
     base::win::ScopedCoMem<WCHAR> description;
@@ -243,7 +239,7 @@ void TtsPlatformImplWin::GetVoices(std::vector<VoiceData>* out_voices) {
     voice.name = base::WideToUTF8(description.get());
 
     Microsoft::WRL::ComPtr<ISpDataKey> attributes;
-    if (S_OK != voice_token->OpenKey(kAttributesKey, attributes.GetAddressOf()))
+    if (S_OK != voice_token->OpenKey(kAttributesKey, &attributes))
       continue;
 
     base::win::ScopedCoMem<WCHAR> language;
@@ -314,15 +310,14 @@ void TtsPlatformImplWin::SetVoiceFromName(const std::string& name) {
 
   Microsoft::WRL::ComPtr<IEnumSpObjectTokens> voice_tokens;
   unsigned long voice_count;
-  if (S_OK !=
-      SpEnumTokens(SPCAT_VOICES, NULL, NULL, voice_tokens.GetAddressOf()))
+  if (S_OK != SpEnumTokens(SPCAT_VOICES, NULL, NULL, &voice_tokens))
     return;
   if (S_OK != voice_tokens->GetCount(&voice_count))
     return;
 
   for (unsigned i = 0; i < voice_count; i++) {
     Microsoft::WRL::ComPtr<ISpObjectToken> voice_token;
-    if (S_OK != voice_tokens->Next(1, voice_token.GetAddressOf(), NULL))
+    if (S_OK != voice_tokens->Next(1, &voice_token, NULL))
       return;
 
     base::win::ScopedCoMem<WCHAR> description;
@@ -335,12 +330,7 @@ void TtsPlatformImplWin::SetVoiceFromName(const std::string& name) {
   }
 }
 
-TtsPlatformImplWin::TtsPlatformImplWin()
-    : utterance_id_(0),
-      prefix_len_(0),
-      stream_number_(0),
-      char_position_(0),
-      paused_(false) {
+TtsPlatformImplWin::TtsPlatformImplWin() {
   ::CoCreateInstance(CLSID_SpVoice, nullptr, CLSCTX_ALL,
                      IID_PPV_ARGS(&speech_synthesizer_));
   if (speech_synthesizer_.Get()) {
@@ -356,8 +346,8 @@ TtsPlatformImplWin::TtsPlatformImplWin()
 
 // static
 TtsPlatformImplWin* TtsPlatformImplWin::GetInstance() {
-  return base::Singleton<TtsPlatformImplWin,
-                         base::LeakySingletonTraits<TtsPlatformImplWin>>::get();
+  static base::NoDestructor<TtsPlatformImplWin> tts_platform;
+  return tts_platform.get();
 }
 
 // static

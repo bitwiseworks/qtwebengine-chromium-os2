@@ -144,7 +144,7 @@ class CORE_EXPORT ContainerNode : public Node {
   void RemoveChildren(
       SubtreeModificationAction = kDispatchSubtreeModifiedEvent);
 
-  void CloneChildNodesFrom(const ContainerNode&);
+  void CloneChildNodesFrom(const ContainerNode&, CloneChildrenFlag);
 
   void AttachLayoutTree(AttachContext&) override;
   void DetachLayoutTree(bool performing_reattach = false) override;
@@ -385,7 +385,12 @@ class CORE_EXPORT ContainerNode : public Node {
 
   virtual bool ChildrenCanHaveStyle() const { return true; }
 
-  void Trace(Visitor*) override;
+  // This is similar to GetLayoutBox(), but returns nullptr if it's not
+  // scrollable. Some elements override this to delegate scroll operations to
+  // a descendant LayoutBox.
+  virtual LayoutBox* GetLayoutBoxForScrolling() const;
+
+  void Trace(Visitor*) const override;
 
  protected:
   ContainerNode(TreeScope*, ConstructionType = kCreateContainer);

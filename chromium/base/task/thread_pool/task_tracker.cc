@@ -12,12 +12,13 @@
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
-#include "base/debug/alias.h"
 #include "base/json/json_writer.h"
+#include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/optional.h"
 #include "base/sequence_token.h"
+#include "base/strings/string_util.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/task/scoped_set_task_priority_for_current_thread.h"
 #include "base/task/task_executor.h"
@@ -26,7 +27,7 @@
 #include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
-#include "base/trace_event/trace_event.h"
+#include "base/trace_event/base_tracing.h"
 #include "base/values.h"
 #include "build/build_config.h"
 
@@ -760,21 +761,15 @@ void TaskTracker::CallFlushCallbackForTesting() {
 }
 
 NOINLINE void TaskTracker::RunContinueOnShutdown(Task* task) {
-  const int line_number = __LINE__;
   task_annotator_.RunTask("ThreadPool_RunTask_ContinueOnShutdown", task);
-  base::debug::Alias(&line_number);
 }
 
 NOINLINE void TaskTracker::RunSkipOnShutdown(Task* task) {
-  const int line_number = __LINE__;
   task_annotator_.RunTask("ThreadPool_RunTask_SkipOnShutdown", task);
-  base::debug::Alias(&line_number);
 }
 
 NOINLINE void TaskTracker::RunBlockShutdown(Task* task) {
-  const int line_number = __LINE__;
   task_annotator_.RunTask("ThreadPool_RunTask_BlockShutdown", task);
-  base::debug::Alias(&line_number);
 }
 
 void TaskTracker::RunTaskWithShutdownBehavior(

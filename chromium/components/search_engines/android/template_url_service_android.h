@@ -40,20 +40,21 @@ class TemplateUrlServiceAndroid : public TemplateURLServiceObserver {
   jboolean IsSearchResultsPageFromDefaultSearchProvider(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
-      const base::android::JavaParamRef<jstring>& jurl);
+      const base::android::JavaParamRef<jobject>& jurl);
   base::android::ScopedJavaLocalRef<jstring> GetUrlForSearchQuery(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
-      const base::android::JavaParamRef<jstring>& jquery);
+      const base::android::JavaParamRef<jstring>& jquery,
+      const base::android::JavaParamRef<jobjectArray>& jsearch_params);
   base::android::ScopedJavaLocalRef<jstring> GetSearchQueryForUrl(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
-      const base::android::JavaParamRef<jstring>& jurl);
-  base::android::ScopedJavaLocalRef<jstring> GetUrlForVoiceSearchQuery(
+      const base::android::JavaParamRef<jobject>& jurl);
+  base::android::ScopedJavaLocalRef<jobject> GetUrlForVoiceSearchQuery(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jstring>& jquery);
-  base::android::ScopedJavaLocalRef<jstring> GetUrlForContextualSearchQuery(
+  base::android::ScopedJavaLocalRef<jobject> GetUrlForContextualSearchQuery(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jstring>& jquery,

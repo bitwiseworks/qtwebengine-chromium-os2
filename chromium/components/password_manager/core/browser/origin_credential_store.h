@@ -10,12 +10,9 @@
 #include "base/containers/span.h"
 #include "base/strings/string16.h"
 #include "base/util/type_safety/strong_alias.h"
+#include "components/password_manager/core/browser/password_form_forward.h"
 #include "url/gurl.h"
 #include "url/origin.h"
-
-namespace autofill {
-struct PasswordForm;
-}
 
 namespace password_manager {
 
@@ -33,8 +30,7 @@ class UiCredential {
                url::Origin origin,
                IsPublicSuffixMatch is_public_suffix_match,
                IsAffiliationBasedMatch is_affiliation_based_match);
-  UiCredential(const autofill::PasswordForm& form,
-               const url::Origin& affiliated_origin);
+  UiCredential(const PasswordForm& form, const url::Origin& affiliated_origin);
   UiCredential(UiCredential&&);
   UiCredential(const UiCredential&);
   UiCredential& operator=(UiCredential&&);
@@ -93,13 +89,12 @@ class OriginCredentialStore {
   // Returns references to the held credentials (or an empty set if aren't any).
   base::span<const UiCredential> GetCredentials() const;
 
-  // Initializes the blacklisted status with either |kNeverBlacklisted|
-  // or |kIsBlacklisted|.
-  void InitializeBlacklistedStatus(bool is_blacklisted);
-
-  // Updates the blacklsited status as a result of a use action. The status
-  // can only change from |kWasBlacklsited| to |kIsBlacklisted| or vice-versa.
-  void UpdateBlacklistedStatus(bool is_blacklisted);
+  // Sets the blacklisted status. The possible transitions are:
+  // (*, is_blacklisted = true) -> kIsBlacklisted
+  // ((kIsBlacklisted|kWasBlacklisted), is_blacklisted = false)
+  //      -> kWasBlacklisted
+  // (kNeverBlacklisted, is_blacklisted = false) -> kNeverBlacklisted
+  void SetBlacklistedStatus(bool is_blacklisted);
 
   // Returns the blacklsited status for |origin_|.
   BlacklistedStatus GetBlacklistedStatus() const;

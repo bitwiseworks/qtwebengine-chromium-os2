@@ -11,6 +11,7 @@
 #include "net/third_party/quiche/src/quic/core/congestion_control/loss_detection_interface.h"
 #include "net/third_party/quiche/src/quic/core/quic_packets.h"
 #include "net/third_party/quiche/src/quic/core/quic_time.h"
+#include "net/third_party/quiche/src/quic/core/quic_types.h"
 #include "net/third_party/quiche/src/quic/core/quic_unacked_packet_map.h"
 #include "net/third_party/quiche/src/quic/platform/api/quic_export.h"
 
@@ -21,21 +22,21 @@ namespace quic {
 // Also implements TCP's early retransmit(RFC5827).
 class QUIC_EXPORT_PRIVATE GeneralLossAlgorithm : public LossDetectionInterface {
  public:
-  // TCP retransmits after 3 nacks.
-  static const QuicPacketCount kNumberOfNacksBeforeRetransmission = 3;
-
-  GeneralLossAlgorithm();
+  GeneralLossAlgorithm() = default;
   GeneralLossAlgorithm(const GeneralLossAlgorithm&) = delete;
   GeneralLossAlgorithm& operator=(const GeneralLossAlgorithm&) = delete;
   ~GeneralLossAlgorithm() override {}
 
+  void SetFromConfig(const QuicConfig& /*config*/,
+                     Perspective /*perspective*/) override {}
+
   // Uses |largest_acked| and time to decide when packets are lost.
-  void DetectLosses(const QuicUnackedPacketMap& unacked_packets,
-                    QuicTime time,
-                    const RttStats& rtt_stats,
-                    QuicPacketNumber largest_newly_acked,
-                    const AckedPacketVector& packets_acked,
-                    LostPacketVector* packets_lost) override;
+  DetectionStats DetectLosses(const QuicUnackedPacketMap& unacked_packets,
+                              QuicTime time,
+                              const RttStats& rtt_stats,
+                              QuicPacketNumber largest_newly_acked,
+                              const AckedPacketVector& packets_acked,
+                              LostPacketVector* packets_lost) override;
 
   // Returns a non-zero value when the early retransmit timer is active.
   QuicTime GetLossTimeout() const override;
@@ -57,14 +58,27 @@ class QUIC_EXPORT_PRIVATE GeneralLossAlgorithm : public LossDetectionInterface {
         << "Unexpected call to GeneralLossAlgorithm::OnMinRttAvailable";
   }
 
+  void OnUserAgentIdKnown() override {
+    DCHECK(false)
+        << "Unexpected call to GeneralLossAlgorithm::OnUserAgentIdKnown";
+  }
+
   void OnConnectionClosed() override {
     DCHECK(false)
         << "Unexpected call to GeneralLossAlgorithm::OnConnectionClosed";
   }
 
-  void SetPacketNumberSpace(PacketNumberSpace packet_number_space);
+  void OnReorderingDetected() override {
+    DCHECK(false)
+        << "Unexpected call to GeneralLossAlgorithm::OnReorderingDetected";
+  }
+
+  void Initialize(PacketNumberSpace packet_number_space,
+                  LossDetectionInterface* parent);
 
   void Reset();
+
+  QuicPacketCount reordering_threshold() const { return reordering_threshold_; }
 
   int reordering_shift() const { return reordering_shift_; }
 
@@ -99,23 +113,24 @@ class QUIC_EXPORT_PRIVATE GeneralLossAlgorithm : public LossDetectionInterface {
   }
 
  private:
-  QuicTime loss_detection_timeout_;
+  LossDetectionInterface* parent_ = nullptr;
+  QuicTime loss_detection_timeout_ = QuicTime::Zero();
   // Fraction of a max(SRTT, latest_rtt) to permit reordering before declaring
   // loss.  Fraction calculated by shifting max(SRTT, latest_rtt) to the right
   // by reordering_shift.
-  int reordering_shift_;
+  int reordering_shift_ = kDefaultLossDelayShift;
   // Reordering threshold for loss detection.
-  QuicPacketCount reordering_threshold_;
+  QuicPacketCount reordering_threshold_ = kDefaultPacketReorderingThreshold;
   // If true, uses adaptive reordering threshold for loss detection.
-  bool use_adaptive_reordering_threshold_;
+  bool use_adaptive_reordering_threshold_ = true;
   // If true, uses adaptive time threshold for time based loss detection.
-  bool use_adaptive_time_threshold_;
+  bool use_adaptive_time_threshold_ = false;
   // If true, uses packet threshold when largest acked is a runt packet.
-  bool use_packet_threshold_for_runt_packets_;
+  bool use_packet_threshold_for_runt_packets_ = true;
   // The least in flight packet. Loss detection should start from this. Please
   // note, least_in_flight_ could be largest packet ever sent + 1.
-  QuicPacketNumber least_in_flight_;
-  PacketNumberSpace packet_number_space_;
+  QuicPacketNumber least_in_flight_{1};
+  PacketNumberSpace packet_number_space_ = NUM_PACKET_NUMBER_SPACES;
 };
 
 }  // namespace quic

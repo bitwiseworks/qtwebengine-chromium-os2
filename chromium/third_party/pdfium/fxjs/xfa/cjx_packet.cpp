@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "core/fxcrt/xml/cfx_xmldocument.h"
+#include "core/fxcrt/xml/cfx_xmlelement.h"
 #include "core/fxcrt/xml/cfx_xmltext.h"
 #include "fxjs/cfx_v8.h"
 #include "fxjs/js_resources.h"
@@ -27,7 +28,7 @@ CJX_Packet::CJX_Packet(CXFA_Packet* packet) : CJX_Node(packet) {
   DefineMethods(MethodSpecs);
 }
 
-CJX_Packet::~CJX_Packet() {}
+CJX_Packet::~CJX_Packet() = default;
 
 bool CJX_Packet::DynamicTypeIs(TypeTag eType) const {
   return eType == static_type__ || ParentType__::DynamicTypeIs(eType);
@@ -87,7 +88,7 @@ void CJX_Packet::content(CFXJSE_Value* pValue,
           GetXFANode()
               ->GetDocument()
               ->GetNotify()
-              ->GetHDOC()
+              ->GetFFDoc()
               ->GetXMLDocument()
               ->CreateNode<CFX_XMLText>(pValue->ToWideString()));
     }

@@ -19,7 +19,7 @@
 #include "base/rand_util.h"
 #include "build/build_config.h"
 
-#if defined(OS_MACOSX) || defined(OS_ANDROID)
+#if defined(OS_APPLE) || defined(OS_ANDROID)
 #include <pthread.h>
 #endif
 
@@ -29,7 +29,7 @@ using allocator::AllocatorDispatch;
 
 namespace {
 
-#if defined(OS_MACOSX) || defined(OS_ANDROID)
+#if defined(OS_APPLE) || defined(OS_ANDROID)
 
 // The macOS implementation of libmalloc sometimes calls malloc recursively,
 // delegating allocations between zones. That causes our hooks being called
@@ -135,6 +135,19 @@ std::atomic_bool g_hooks_installed;
 void* AllocFn(const AllocatorDispatch* self, size_t size, void* context) {
   ReentryGuard guard;
   void* address = self->next->alloc_function(self->next, size, context);
+  if (LIKELY(guard)) {
+    PoissonAllocationSampler::RecordAlloc(
+        address, size, PoissonAllocationSampler::kMalloc, nullptr);
+  }
+  return address;
+}
+
+void* AllocUncheckedFn(const AllocatorDispatch* self,
+                       size_t size,
+                       void* context) {
+  ReentryGuard guard;
+  void* address =
+      self->next->alloc_unchecked_function(self->next, size, context);
   if (LIKELY(guard)) {
     PoissonAllocationSampler::RecordAlloc(
         address, size, PoissonAllocationSampler::kMalloc, nullptr);
@@ -275,6 +288,7 @@ static void AlignedFreeFn(const AllocatorDispatch* self,
 }
 
 AllocatorDispatch g_allocator_dispatch = {&AllocFn,
+                                          &AllocUncheckedFn,
                                           &AllocZeroInitializedFn,
                                           &AllocAlignedFn,
                                           &ReallocFn,

@@ -12,6 +12,9 @@
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -80,6 +83,8 @@ static RE2::ErrorCode RegexpErrorToRE2(re2::RegexpStatusCode code) {
       return RE2::ErrorMissingBracket;
     case re2::kRegexpMissingParen:
       return RE2::ErrorMissingParen;
+    case re2::kRegexpUnexpectedParen:
+      return RE2::ErrorUnexpectedParen;
     case re2::kRegexpTrailingBackslash:
       return RE2::ErrorTrailingBackslash;
     case re2::kRegexpRepeatArgument:
@@ -285,28 +290,54 @@ int RE2::ReverseProgramSize() const {
   return prog->size();
 }
 
-static int Fanout(Prog* prog, std::map<int, int>* histogram) {
-  SparseArray<int> fanout(prog->size());
-  prog->Fanout(&fanout);
-  histogram->clear();
-  for (SparseArray<int>::iterator i = fanout.begin(); i != fanout.end(); ++i) {
-    // TODO(junyer): Optimise this?
-    int bucket = 0;
-    while (1 << bucket < i->value()) {
-      bucket++;
+// Finds the most significant non-zero bit in n.
+static int FindMSBSet(uint32_t n) {
+  DCHECK_NE(n, 0);
+#if defined(__GNUC__)
+  return 31 ^ __builtin_clz(n);
+#elif defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+  unsigned long c;
+  _BitScanReverse(&c, n);
+  return static_cast<int>(c);
+#else
+  int c = 0;
+  for (int shift = 1 << 4; shift != 0; shift >>= 1) {
+    uint32_t word = n >> shift;
+    if (word != 0) {
+      n = word;
+      c += shift;
     }
-    (*histogram)[bucket]++;
   }
-  return histogram->rbegin()->first;
+  return c;
+#endif
 }
 
-int RE2::ProgramFanout(std::map<int, int>* histogram) const {
+static int Fanout(Prog* prog, std::vector<int>* histogram) {
+  SparseArray<int> fanout(prog->size());
+  prog->Fanout(&fanout);
+  int data[32] = {};
+  int size = 0;
+  for (SparseArray<int>::iterator i = fanout.begin(); i != fanout.end(); ++i) {
+    if (i->value() == 0)
+      continue;
+    uint32_t value = i->value();
+    int bucket = FindMSBSet(value);
+    bucket += value & (value-1) ? 1 : 0;
+    ++data[bucket];
+    size = std::max(size, bucket+1);
+  }
+  if (histogram != NULL)
+    histogram->assign(data, data+size);
+  return size-1;
+}
+
+int RE2::ProgramFanout(std::vector<int>* histogram) const {
   if (prog_ == NULL)
     return -1;
   return Fanout(prog_, histogram);
 }
 
-int RE2::ReverseProgramFanout(std::map<int, int>* histogram) const {
+int RE2::ReverseProgramFanout(std::vector<int>* histogram) const {
   if (prog_ == NULL)
     return -1;
   Prog* prog = ReverseProg();
@@ -376,6 +407,8 @@ bool RE2::Replace(std::string* str,
                   const StringPiece& rewrite) {
   StringPiece vec[kVecSize];
   int nvec = 1 + MaxSubmatch(rewrite);
+  if (nvec > 1 + re.NumberOfCapturingGroups())
+    return false;
   if (nvec > static_cast<int>(arraysize(vec)))
     return false;
   if (!re.Match(*str, 0, str->size(), UNANCHORED, vec, nvec))
@@ -396,6 +429,8 @@ int RE2::GlobalReplace(std::string* str,
                        const StringPiece& rewrite) {
   StringPiece vec[kVecSize];
   int nvec = 1 + MaxSubmatch(rewrite);
+  if (nvec > 1 + re.NumberOfCapturingGroups())
+    return false;
   if (nvec > static_cast<int>(arraysize(vec)))
     return false;
 
@@ -468,9 +503,10 @@ bool RE2::Extract(const StringPiece& text,
                   std::string* out) {
   StringPiece vec[kVecSize];
   int nvec = 1 + MaxSubmatch(rewrite);
+  if (nvec > 1 + re.NumberOfCapturingGroups())
+    return false;
   if (nvec > static_cast<int>(arraysize(vec)))
     return false;
-
   if (!re.Match(text, 0, text.size(), UNANCHORED, vec, nvec))
     return false;
 
@@ -689,9 +725,11 @@ bool RE2::Match(const StringPiece& text,
                              Prog::kLongestMatch, matchp, &dfa_failed, NULL)) {
           if (dfa_failed) {
             if (options_.log_errors())
-              LOG(ERROR) << "DFA out of memory: size " << prog->size() << ", "
-                         << "bytemap range " << prog->bytemap_range() << ", "
-                         << "list count " << prog->list_count();
+              LOG(ERROR) << "DFA out of memory: "
+                         << "pattern length " << pattern_.size() << ", "
+                         << "program size " << prog->size() << ", "
+                         << "list count " << prog->list_count() << ", "
+                         << "bytemap range " << prog->bytemap_range();
             // Fall back to NFA below.
             skipped_test = true;
             break;
@@ -707,9 +745,11 @@ bool RE2::Match(const StringPiece& text,
                             matchp, &dfa_failed, NULL)) {
         if (dfa_failed) {
           if (options_.log_errors())
-            LOG(ERROR) << "DFA out of memory: size " << prog_->size() << ", "
-                       << "bytemap range " << prog_->bytemap_range() << ", "
-                       << "list count " << prog_->list_count();
+            LOG(ERROR) << "DFA out of memory: "
+                       << "pattern length " << pattern_.size() << ", "
+                       << "program size " << prog_->size() << ", "
+                       << "list count " << prog_->list_count() << ", "
+                       << "bytemap range " << prog_->bytemap_range();
           // Fall back to NFA below.
           skipped_test = true;
           break;
@@ -731,9 +771,11 @@ bool RE2::Match(const StringPiece& text,
                            Prog::kLongestMatch, &match, &dfa_failed, NULL)) {
         if (dfa_failed) {
           if (options_.log_errors())
-            LOG(ERROR) << "DFA out of memory: size " << prog->size() << ", "
-                       << "bytemap range " << prog->bytemap_range() << ", "
-                       << "list count " << prog->list_count();
+            LOG(ERROR) << "DFA out of memory: "
+                       << "pattern length " << pattern_.size() << ", "
+                       << "program size " << prog->size() << ", "
+                       << "list count " << prog->list_count() << ", "
+                       << "bytemap range " << prog->bytemap_range();
           // Fall back to NFA below.
           skipped_test = true;
           break;
@@ -771,9 +813,11 @@ bool RE2::Match(const StringPiece& text,
                             &match, &dfa_failed, NULL)) {
         if (dfa_failed) {
           if (options_.log_errors())
-            LOG(ERROR) << "DFA out of memory: size " << prog_->size() << ", "
-                       << "bytemap range " << prog_->bytemap_range() << ", "
-                       << "list count " << prog_->list_count();
+            LOG(ERROR) << "DFA out of memory: "
+                       << "pattern length " << pattern_.size() << ", "
+                       << "program size " << prog_->size() << ", "
+                       << "list count " << prog_->list_count() << ", "
+                       << "bytemap range " << prog_->bytemap_range();
           // Fall back to NFA below.
           skipped_test = true;
           break;
@@ -975,8 +1019,8 @@ bool RE2::Rewrite(std::string* out,
       int n = (c - '0');
       if (n >= veclen) {
         if (options_.log_errors()) {
-          LOG(ERROR) << "requested group " << n
-                     << " in regexp " << rewrite.data();
+          LOG(ERROR) << "invalid substitution \\" << n
+                     << " from " << veclen << " groups";
         }
         return false;
       }

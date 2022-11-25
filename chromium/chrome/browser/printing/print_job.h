@@ -45,11 +45,14 @@ class PrintJob : public base::RefCountedThreadSafe<PrintJob>,
                  public content::NotificationObserver {
  public:
 #if defined(OS_CHROMEOS)
-  // An enumeration of components where print jobs can come from.
+  // An enumeration of components where print jobs can come from. The order of
+  // these enums must match that of
+  // chrome/browser/chromeos/printing/history/print_job_info.proto.
   enum class Source {
     PRINT_PREVIEW,
     ARC,
     EXTENSION,
+    PRINT_PREVIEW_INCOGNITO,
   };
 #endif  // defined(OS_CHROMEOS)
 
@@ -64,7 +67,7 @@ class PrintJob : public base::RefCountedThreadSafe<PrintJob>,
   // the settings.
   virtual void Initialize(std::unique_ptr<PrinterQuery> query,
                           const base::string16& name,
-                          int page_count);
+                          uint32_t page_count);
 
 #if defined(OS_WIN) && !defined(TOOLKIT_QT)
   void StartConversionToNativeFormat(
@@ -185,14 +188,15 @@ class PrintJob : public base::RefCountedThreadSafe<PrintJob>,
       scoped_refptr<base::RefCountedMemory> bytes,
       const gfx::Size& page_size);
 
-  void OnPdfConversionStarted(int page_count);
-  void OnPdfPageConverted(int page_number,
+  void OnPdfConversionStarted(uint32_t page_count);
+  void OnPdfPageConverted(uint32_t page_number,
                           float scale_factor,
                           std::unique_ptr<MetafilePlayer> metafile);
 
   // Helper method to do the work for ResetPageMapping(). Split for unit tests.
-  static std::vector<int> GetFullPageMapping(const std::vector<int>& pages,
-                                             int total_page_count);
+  static std::vector<uint32_t> GetFullPageMapping(
+      const std::vector<uint32_t>& pages,
+      uint32_t total_page_count);
 #endif  // defined(OS_WIN)
 
   content::NotificationRegistrar registrar_;
@@ -215,7 +219,7 @@ class PrintJob : public base::RefCountedThreadSafe<PrintJob>,
 #if defined(OS_WIN) && !defined(TOOLKIT_QT)
   class PdfConversionState;
   std::unique_ptr<PdfConversionState> pdf_conversion_state_;
-  std::vector<int> pdf_page_mapping_;
+  std::vector<uint32_t> pdf_page_mapping_;
 #endif  // defined(OS_WIN) && !defined(TOOLKIT_QT)
 
 #if defined(OS_CHROMEOS)

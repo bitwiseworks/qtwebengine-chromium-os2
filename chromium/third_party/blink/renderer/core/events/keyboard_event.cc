@@ -42,13 +42,13 @@ namespace {
 
 const AtomicString& EventTypeForKeyboardEventType(WebInputEvent::Type type) {
   switch (type) {
-    case WebInputEvent::kKeyUp:
+    case WebInputEvent::Type::kKeyUp:
       return event_type_names::kKeyup;
-    case WebInputEvent::kRawKeyDown:
+    case WebInputEvent::Type::kRawKeyDown:
       return event_type_names::kKeydown;
-    case WebInputEvent::kChar:
+    case WebInputEvent::Type::kChar:
       return event_type_names::kKeypress;
-    case WebInputEvent::kKeyDown:
+    case WebInputEvent::Type::kKeyDown:
       // The caller should disambiguate the combined event into RawKeyDown or
       // Char events.
       break;
@@ -219,7 +219,7 @@ void KeyboardEvent::InitLocationModifiers(unsigned location) {
   }
 }
 
-void KeyboardEvent::Trace(Visitor* visitor) {
+void KeyboardEvent::Trace(Visitor* visitor) const {
   UIEventWithKeyState::Trace(visitor);
 }
 

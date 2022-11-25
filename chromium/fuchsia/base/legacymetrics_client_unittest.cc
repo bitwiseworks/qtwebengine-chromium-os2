@@ -14,6 +14,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "fuchsia/base/legacymetrics_client.h"
 #include "fuchsia/base/legacymetrics_histogram_flattener.h"
+#include "fuchsia/base/result_receiver.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace cr_fuchsia {
@@ -45,10 +46,21 @@ class TestMetricsRecorder
     ack_callback_ = base::nullopt;
   }
 
+  void set_expect_ack_dropped(bool expect_dropped) {
+    expect_ack_dropped_ = expect_dropped;
+  }
+
   // fuchsia::legacymetrics::MetricsRecorder implementation.
   void Record(std::vector<fuchsia::legacymetrics::Event> events,
               RecordCallback callback) override {
-    recorded_events_ = std::move(events);
+    std::move(events.begin(), events.end(),
+              std::back_inserter(recorded_events_));
+
+    // Received a call to Record() before the previous one was acknowledged,
+    // which can happen in some cases (e.g. flushing).
+    if (ack_callback_)
+      EXPECT_TRUE(expect_ack_dropped_);
+
     ack_callback_ = std::move(callback);
 
     if (on_record_cb_)
@@ -61,6 +73,7 @@ class TestMetricsRecorder
   std::vector<fuchsia::legacymetrics::Event> recorded_events_;
   base::OnceClosure on_record_cb_;
   base::Optional<RecordCallback> ack_callback_;
+  bool expect_ack_dropped_ = false;
 };
 
 class LegacyMetricsClientTest : public testing::Test {
@@ -71,9 +84,10 @@ class LegacyMetricsClientTest : public testing::Test {
   ~LegacyMetricsClientTest() override = default;
 
   void SetUp() override {
-    service_binding_ = std::make_unique<base::fuchsia::ScopedServiceBinding<
-        fuchsia::legacymetrics::MetricsRecorder>>(
-        test_context_.additional_services(), &test_recorder_);
+    service_binding_ =
+        std::make_unique<base::fuchsia::ScopedSingleClientServiceBinding<
+            fuchsia::legacymetrics::MetricsRecorder>>(
+            test_context_.additional_services(), &test_recorder_);
     base::SetRecordActionTaskRunner(base::ThreadTaskRunnerHandle::Get());
 
     // Flush any dirty histograms from previous test runs in this process.
@@ -84,7 +98,7 @@ class LegacyMetricsClientTest : public testing::Test {
   base::test::TaskEnvironment task_environment_;
   base::TestComponentContextForProcess test_context_;
   TestMetricsRecorder test_recorder_;
-  std::unique_ptr<base::fuchsia::ScopedServiceBinding<
+  std::unique_ptr<base::fuchsia::ScopedSingleClientServiceBinding<
       fuchsia::legacymetrics::MetricsRecorder>>
       service_binding_;
   LegacyMetricsClient client_;
@@ -102,14 +116,17 @@ TEST_F(LegacyMetricsClientTest, ReportIntervalBoundary) {
 }
 
 void PopulateAdditionalEvents(
-    std::vector<fuchsia::legacymetrics::Event>* events) {
+    base::OnceCallback<void(std::vector<fuchsia::legacymetrics::Event>)>
+        callback) {
   fuchsia::legacymetrics::ImplementationDefinedEvent impl_event;
   impl_event.set_name("baz");
 
   fuchsia::legacymetrics::Event event;
   event.set_impl_defined_event(std::move(impl_event));
 
-  events->emplace_back(std::move(event));
+  std::vector<fuchsia::legacymetrics::Event> events;
+  events.push_back(std::move(event));
+  std::move(callback).Run(std::move(events));
 }
 
 TEST_F(LegacyMetricsClientTest, AllTypes) {
@@ -182,6 +199,122 @@ TEST_F(LegacyMetricsClientTest, MetricsChannelDisconnected) {
   client_.Start(kReportInterval);
   service_binding_.reset();
   task_environment_.FastForwardBy(kReportInterval);
+}
+
+TEST_F(LegacyMetricsClientTest, Batching) {
+  client_.Start(kReportInterval);
+
+  // Log enough actions that the list will be split across multiple batches.
+  // Batches are read out in reverse order, so even though it is being logged
+  // first, it will be emitted in the final batch.
+  base::RecordComputedAction("batch2");
+
+  for (size_t i = 0; i < LegacyMetricsClient::kMaxBatchSize; ++i)
+    base::RecordComputedAction("batch1");
+
+  task_environment_.FastForwardBy(kReportInterval);
+  EXPECT_TRUE(test_recorder_.IsRecordInFlight());
+
+  // First batch.
+  auto events = test_recorder_.WaitForEvents();
+  EXPECT_EQ(LegacyMetricsClient::kMaxBatchSize, events.size());
+  for (const auto& event : events)
+    EXPECT_EQ(event.user_action_event().name(), "batch1");
+  test_recorder_.SendAck();
+
+  // Second batch (remainder).
+  events = test_recorder_.WaitForEvents();
+  EXPECT_EQ(1u, events.size());
+  for (const auto& event : events)
+    EXPECT_EQ(event.user_action_event().name(), "batch2");
+  test_recorder_.SendAck();
+}
+
+TEST_F(LegacyMetricsClientTest, FlushWithPending) {
+  client_.Start(kReportInterval);
+  base::RunLoop().RunUntilIdle();
+
+  UMA_HISTOGRAM_COUNTS_1M("foo", 20);
+
+  EXPECT_FALSE(test_recorder_.IsRecordInFlight());
+  service_binding_->events().OnCloseSoon();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(test_recorder_.IsRecordInFlight());
+
+  // The service should be unbound once all data is drained.
+  EXPECT_TRUE(service_binding_->has_clients());
+  auto events = test_recorder_.WaitForEvents();
+  test_recorder_.SendAck();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(1u, events.size());
+  EXPECT_EQ("foo", events[0].histogram().name());
+  EXPECT_FALSE(service_binding_->has_clients());
+}
+
+TEST_F(LegacyMetricsClientTest, FlushNoData) {
+  client_.Start(kReportInterval);
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_TRUE(service_binding_->has_clients());
+  EXPECT_FALSE(test_recorder_.IsRecordInFlight());
+  service_binding_->events().OnCloseSoon();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(service_binding_->has_clients());
+}
+
+TEST_F(LegacyMetricsClientTest, FlushWithOutstandingAck) {
+  client_.Start(kReportInterval);
+  base::RunLoop().RunUntilIdle();
+
+  // Send "foo", but don't ack.
+  UMA_HISTOGRAM_COUNTS_1M("foo", 20);
+  task_environment_.FastForwardBy(kReportInterval);
+  EXPECT_TRUE(test_recorder_.IsRecordInFlight());
+
+  // Allow the flush operation to call Record() without waiting for a prior ack.
+  test_recorder_.set_expect_ack_dropped(true);
+
+  // Buffer another event and trigger a flush.
+  UMA_HISTOGRAM_COUNTS_1M("bar", 20);
+  EXPECT_TRUE(service_binding_->has_clients());
+  service_binding_->events().OnCloseSoon();
+
+  // Simulate an asynchronous ack from the recorder, which be delivered around
+  // the same time as the flush's Record() call. The ack should be gracefully
+  // ignored by the client.
+  test_recorder_.SendAck();
+
+  base::RunLoop().RunUntilIdle();
+
+  auto events = test_recorder_.WaitForEvents();
+  test_recorder_.SendAck();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(2u, events.size());
+  EXPECT_EQ("foo", events[0].histogram().name());
+  EXPECT_EQ("bar", events[1].histogram().name());
+  EXPECT_FALSE(service_binding_->has_clients());
+}
+
+TEST_F(LegacyMetricsClientTest, ExternalFlushSignal) {
+  ResultReceiver<base::OnceClosure> flush_receiver;
+  client_.SetNotifyFlushCallback(flush_receiver.GetReceiveCallback());
+  client_.Start(kReportInterval);
+  base::RunLoop().RunUntilIdle();
+
+  UMA_HISTOGRAM_COUNTS_1M("foo", 20);
+
+  // Verify that reporting does not start until the flush completion callback is
+  // run.
+  EXPECT_FALSE(test_recorder_.IsRecordInFlight());
+  service_binding_->events().OnCloseSoon();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(test_recorder_.IsRecordInFlight());
+
+  // Verify that invoking the completion callback unblocks reporting.
+  EXPECT_TRUE(flush_receiver.has_value());
+  std::move(*flush_receiver).Run();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(test_recorder_.IsRecordInFlight());
 }
 
 }  // namespace

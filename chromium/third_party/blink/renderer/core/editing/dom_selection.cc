@@ -96,7 +96,7 @@ void DOMSelection::UpdateFrameSelection(
   if (!did_set)
     return;
   Element* focused_element = GetFrame()->GetDocument()->FocusedElement();
-  frame_selection.DidSetSelectionDeprecated(options);
+  frame_selection.DidSetSelectionDeprecated(selection, options);
   if (GetFrame() && GetFrame()->GetDocument() &&
       focused_element != GetFrame()->GetDocument()->FocusedElement()) {
     UseCounter::Count(GetFrame()->GetDocument(),
@@ -671,8 +671,9 @@ void DOMSelection::addRange(Range* new_range) {
   // TODO(tkent): "Merge the ranges if they intersect" was removed. We show a
   // warning message for a while, and continue to collect the usage data.
   // <https://code.google.com/p/chromium/issues/detail?id=353069>.
-  Deprecation::CountDeprecation(tree_scope_->GetDocument(),
-                                WebFeature::kSelectionAddRangeIntersect);
+  Deprecation::CountDeprecation(
+      tree_scope_->GetDocument().GetExecutionContext(),
+      WebFeature::kSelectionAddRangeIntersect);
 }
 
 // https://www.w3.org/TR/selection-api/#dom-selection-deletefromdocument
@@ -853,7 +854,7 @@ void DOMSelection::AddConsoleWarning(const String& message) {
   }
 }
 
-void DOMSelection::Trace(Visitor* visitor) {
+void DOMSelection::Trace(Visitor* visitor) const {
   visitor->Trace(tree_scope_);
   ScriptWrappable::Trace(visitor);
   ExecutionContextClient::Trace(visitor);

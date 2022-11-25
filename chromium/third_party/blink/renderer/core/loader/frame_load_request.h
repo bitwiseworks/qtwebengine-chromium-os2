@@ -26,16 +26,18 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LOADER_FRAME_LOAD_REQUEST_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LOADER_FRAME_LOAD_REQUEST_H_
 
+#include "base/memory/scoped_refptr.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/network/public/mojom/referrer_policy.mojom-blink.h"
 #include "third_party/blink/public/common/navigation/triggering_event_info.h"
 #include "third_party/blink/public/mojom/blob/blob_url_store.mojom-blink.h"
 #include "third_party/blink/public/mojom/loader/request_context_frame_type.mojom-blink.h"
+#include "third_party/blink/public/platform/web_impression.h"
 #include "third_party/blink/public/web/web_window_features.h"
-#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/frame_types.h"
 #include "third_party/blink/renderer/core/loader/frame_loader_types.h"
 #include "third_party/blink/renderer/core/loader/navigation_policy.h"
+#include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader_options.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/weborigin/referrer.h"
@@ -43,18 +45,19 @@
 namespace blink {
 
 class HTMLFormElement;
+class LocalDOMWindow;
 class KURL;
 
 struct CORE_EXPORT FrameLoadRequest {
   STACK_ALLOCATED();
 
  public:
-  FrameLoadRequest(Document* origin_document, const ResourceRequest&);
-  FrameLoadRequest(Document* origin_document, const ResourceRequestHead&);
+  FrameLoadRequest(LocalDOMWindow* origin_window, const ResourceRequest&);
+  FrameLoadRequest(LocalDOMWindow* origin_window, const ResourceRequestHead&);
   FrameLoadRequest(const FrameLoadRequest&) = delete;
   FrameLoadRequest& operator=(const FrameLoadRequest&) = delete;
 
-  Document* OriginDocument() const { return origin_document_; }
+  LocalDOMWindow* GetOriginWindow() const { return origin_window_; }
 
   mojom::RequestContextFrameType GetFrameType() const { return frame_type_; }
   void SetFrameType(mojom::RequestContextFrameType frame_type) {
@@ -103,9 +106,9 @@ struct CORE_EXPORT FrameLoadRequest {
     href_translate_ = translate;
   }
 
-  network::mojom::CSPDisposition ShouldCheckMainWorldContentSecurityPolicy()
-      const {
-    return should_check_main_world_content_security_policy_;
+  // The javascript world in which this request initiated.
+  const scoped_refptr<const DOMWrapperWorld>& JavascriptWorld() const {
+    return world_;
   }
 
   // The BlobURLToken that should be used when fetching the resource. This
@@ -144,12 +147,18 @@ struct CORE_EXPORT FrameLoadRequest {
     resource_request_.ClearHTTPOrigin();
   }
 
-  // Whether either OriginDocument, RequestorOrigin or IsolatedWorldOrigin can
-  // display the |url|,
+  // Impressions are set when a FrameLoadRequest is created for a click on an
+  // anchor tag that has conversion measurement attributes.
+  void SetImpression(const WebImpression& impression) {
+    impression_ = impression;
+  }
+
+  const base::Optional<WebImpression>& Impression() { return impression_; }
+
   bool CanDisplay(const KURL&) const;
 
  private:
-  Document* origin_document_;
+  LocalDOMWindow* origin_window_;
   ResourceRequest resource_request_;
   AtomicString href_translate_;
   ClientNavigationReason client_navigation_reason_ =
@@ -159,8 +168,7 @@ struct CORE_EXPORT FrameLoadRequest {
       TriggeringEventInfo::kNotFromEvent;
   HTMLFormElement* form_ = nullptr;
   ShouldSendReferrer should_send_referrer_;
-  network::mojom::CSPDisposition
-      should_check_main_world_content_security_policy_;
+  scoped_refptr<const DOMWrapperWorld> world_;
   scoped_refptr<base::RefCountedData<mojo::Remote<mojom::blink::BlobURLToken>>>
       blob_url_token_;
   base::TimeTicks input_start_time_;
@@ -168,6 +176,7 @@ struct CORE_EXPORT FrameLoadRequest {
       mojom::RequestContextFrameType::kNone;
   WebWindowFeatures window_features_;
   bool is_window_open_ = false;
+  base::Optional<WebImpression> impression_;
 };
 
 }  // namespace blink

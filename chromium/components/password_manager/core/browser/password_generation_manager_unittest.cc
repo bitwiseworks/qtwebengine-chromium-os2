@@ -6,7 +6,6 @@
 
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/metrics/histogram_tester.h"
 #include "base/test/simple_test_clock.h"
 #include "base/test/task_environment.h"
 #include "components/password_manager/core/browser/fake_form_fetcher.h"
@@ -22,7 +21,6 @@
 namespace password_manager {
 namespace {
 
-using autofill::PasswordForm;
 using base::ASCIIToUTF16;
 using testing::_;
 using testing::ElementsAre;
@@ -39,8 +37,8 @@ constexpr time_t kAnotherTime = 987654321;
 // Creates a dummy saved credential.
 PasswordForm CreateSaved() {
   PasswordForm form;
-  form.origin = GURL(kURL);
-  form.signon_realm = form.origin.spec();
+  form.url = GURL(kURL);
+  form.signon_realm = form.url.spec();
   form.action = GURL("https://login.example.org");
   form.username_value = ASCIIToUTF16("old_username");
   form.password_value = ASCIIToUTF16("12345");
@@ -48,10 +46,10 @@ PasswordForm CreateSaved() {
 }
 
 PasswordForm CreateSavedFederated() {
-  autofill::PasswordForm federated;
-  federated.origin = GURL(kURL);
+  PasswordForm federated;
+  federated.url = GURL(kURL);
   federated.signon_realm = "federation://example.in/google.com";
-  federated.type = autofill::PasswordForm::Type::kApi;
+  federated.type = PasswordForm::Type::kApi;
   federated.federation_origin =
       url::Origin::Create(GURL("https://google.com/"));
   federated.username_value = ASCIIToUTF16("federated_username");
@@ -61,8 +59,8 @@ PasswordForm CreateSavedFederated() {
 // Creates a dummy saved PSL credential.
 PasswordForm CreateSavedPSL() {
   PasswordForm form;
-  form.origin = GURL(kSubdomainURL);
-  form.signon_realm = form.origin.spec();
+  form.url = GURL(kSubdomainURL);
+  form.signon_realm = form.url.spec();
   form.action = GURL("https://login.example.org");
   form.username_value = ASCIIToUTF16("old_username2");
   form.password_value = ASCIIToUTF16("passw0rd");
@@ -73,12 +71,12 @@ PasswordForm CreateSavedPSL() {
 // Creates a dummy generated password.
 PasswordForm CreateGenerated() {
   PasswordForm form;
-  form.origin = GURL(kURL);
-  form.signon_realm = form.origin.spec();
+  form.url = GURL(kURL);
+  form.signon_realm = form.url.spec();
   form.action = GURL("https://signup.example.org");
   form.username_value = ASCIIToUTF16("MyName");
   form.password_value = ASCIIToUTF16("Strong password");
-  form.type = autofill::PasswordForm::Type::kGenerated;
+  form.type = PasswordForm::Type::kGenerated;
   return form;
 }
 
@@ -176,7 +174,6 @@ PasswordGenerationManagerTest::SetUpOverwritingUI(
 // Check that accepting a generated password simply relays the message to the
 // driver.
 TEST_F(PasswordGenerationManagerTest, GeneratedPasswordAccepted_EmptyStore) {
-  base::HistogramTester histogram_tester;
   PasswordForm generated = CreateGenerated();
   MockPasswordManagerDriver driver;
   FakeFormFetcher fetcher;
@@ -186,16 +183,12 @@ TEST_F(PasswordGenerationManagerTest, GeneratedPasswordAccepted_EmptyStore) {
       std::move(generated), fetcher.GetNonFederatedMatches(),
       fetcher.GetFederatedMatches(), driver.AsWeakPtr());
   EXPECT_FALSE(manager().HasGeneratedPassword());
-  histogram_tester.ExpectUniqueSample(
-      "PasswordGeneration.PresaveConflict",
-      metrics_util::GenerationPresaveConflict::kNoUsernameConflict, 1);
 }
 
 // In case of accepted password conflicts with an existing username the
 // credential can be presaved with an empty one. Thus, no conflict happens and
 // the driver should be notified directly.
 TEST_F(PasswordGenerationManagerTest, GeneratedPasswordAccepted_Conflict) {
-  base::HistogramTester histogram_tester;
   PasswordForm generated = CreateGenerated();
   const PasswordForm saved = CreateSaved();
   generated.username_value = saved.username_value;
@@ -208,19 +201,15 @@ TEST_F(PasswordGenerationManagerTest, GeneratedPasswordAccepted_Conflict) {
       std::move(generated), fetcher.GetNonFederatedMatches(),
       fetcher.GetFederatedMatches(), driver.AsWeakPtr());
   EXPECT_FALSE(manager().HasGeneratedPassword());
-  histogram_tester.ExpectUniqueSample(
-      "PasswordGeneration.PresaveConflict",
-      metrics_util::GenerationPresaveConflict::kNoConflictWithEmptyUsername, 1);
 }
 
 TEST_F(PasswordGenerationManagerTest, GeneratedPasswordAccepted_UpdateUI) {
-  base::HistogramTester histogram_tester;
   MockPasswordManagerDriver driver;
   EXPECT_CALL(driver, GeneratedPasswordAccepted(_)).Times(0);
   std::unique_ptr<PasswordFormManagerForUI> ui_form =
       SetUpOverwritingUI(driver.AsWeakPtr());
   ASSERT_TRUE(ui_form);
-  EXPECT_EQ(GURL(kURL), ui_form->GetOrigin());
+  EXPECT_EQ(GURL(kURL), ui_form->GetURL());
   EXPECT_THAT(
       ui_form->GetBestMatches(),
       ElementsAre(Field(&PasswordForm::username_value, ASCIIToUTF16(""))));
@@ -231,9 +220,6 @@ TEST_F(PasswordGenerationManagerTest, GeneratedPasswordAccepted_UpdateUI) {
             ui_form->GetPendingCredentials().password_value);
   EXPECT_THAT(ui_form->GetInteractionsStats(), IsEmpty());
   EXPECT_FALSE(ui_form->IsBlacklisted());
-  histogram_tester.ExpectUniqueSample(
-      "PasswordGeneration.PresaveConflict",
-      metrics_util::GenerationPresaveConflict::kConflictWithEmptyUsername, 1);
 }
 
 TEST_F(PasswordGenerationManagerTest,
@@ -410,7 +396,7 @@ TEST_F(PasswordGenerationManagerTest, PresaveGeneratedPassword_ThenUpdate) {
   unrelated_psl_password.password_value = ASCIIToUTF16("some password");
 
   EXPECT_CALL(store(), AddLogin(_));
-  const std::vector<const autofill::PasswordForm*> matches = {
+  const std::vector<const PasswordForm*> matches = {
       &related_password, &related_psl_password, &unrelated_password,
       &unrelated_psl_password};
   manager().PresaveGeneratedPassword(generated, matches, &form_saver());

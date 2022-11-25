@@ -7,8 +7,9 @@
 #include <limits>
 #include <memory>
 
+#include "base/check.h"
 #include "base/command_line.h"
-#include "base/logging.h"
+#include "base/notreached.h"
 #include "base/numerics/ranges.h"
 #include "build/build_config.h"
 #include "cc/paint/paint_flags.h"
@@ -43,7 +44,7 @@ const int kSliderThumbHeight = 21;
 constexpr SkColor kThumbActiveColor[2] = {SkColorSetRGB(0xF4, 0xF4, 0xF4),
                                           gfx::kPlaceholderColor};
 constexpr SkColor kThumbInactiveColor[2] = {SkColorSetRGB(0xEA, 0xEA, 0xEA),
-                                            gfx::kPlaceholderColor};
+                                            SK_ColorWHITE};
 constexpr SkColor kTrackColor[2] = {SkColorSetRGB(0xD3, 0xD3, 0xD3),
                                     gfx::kPlaceholderColor};
 constexpr SkColor kSliderTrackBackgroundColor[2] = {
@@ -719,15 +720,17 @@ SkRect NativeThemeBase::PaintCheckboxRadioCommon(
     flags.setStyle(cc::PaintFlags::kFill_Style);
     canvas->drawRoundRect(background_rect, border_radius, border_radius, flags);
 
-    // Draw the border.
-    if (!(is_checkbox && button.checked)) {
+    // For checkbox the border is drawn only when it is unchecked or
+    // indeterminate. For radio the border is always drawn.
+    if (!(is_checkbox && button.checked && !button.indeterminate)) {
       // Shrink half border width so the final pixels of the border will be
       // within the rectangle.
       const auto border_rect =
           skrect.makeInset(kBorderWidth / 2, kBorderWidth / 2);
       SkColor border_color =
-          button.checked ? ControlsAccentColorForState(state, color_scheme)
-                         : ControlsBorderColorForState(state, color_scheme);
+          (button.checked && !button.indeterminate)
+              ? ControlsAccentColorForState(state, color_scheme)
+              : ControlsBorderColorForState(state, color_scheme);
       flags.setColor(border_color);
       flags.setStyle(cc::PaintFlags::kStroke_Style);
       flags.setStrokeWidth(kBorderWidth);
@@ -1167,7 +1170,8 @@ void NativeThemeBase::PaintSliderTrack(cc::PaintCanvas* canvas,
     flags.setStyle(cc::PaintFlags::kStroke_Style);
     flags.setStrokeWidth(kBorderWidth);
     SkColor border_color = ControlsBorderColorForState(state, color_scheme);
-    if (!UsesHighContrastColors() && state != kDisabled)
+    if (!UsesHighContrastColors() && state != kDisabled &&
+        color_scheme != ColorScheme::kDark)
       border_color = SkColorSetA(border_color, 0x80);
     flags.setColor(border_color);
     track_rect.inset(kBorderWidth / 2, kBorderWidth / 2);
@@ -1331,7 +1335,7 @@ void NativeThemeBase::PaintProgressBar(
     flags.setStyle(cc::PaintFlags::kStroke_Style);
     flags.setStrokeWidth(kBorderWidth);
     SkColor border_color = GetControlColor(kBorder, color_scheme);
-    if (!UsesHighContrastColors())
+    if (!UsesHighContrastColors() && color_scheme != ColorScheme::kDark)
       border_color = SkColorSetA(border_color, 0x80);
     flags.setColor(border_color);
     track_rect.inset(kBorderWidth / 2, kBorderWidth / 2);
@@ -1415,7 +1419,8 @@ SkColor NativeThemeBase::GetArrowColor(State state,
   SkColorToHSV(GetColor(kTrackColor, color_scheme), track_hsv);
 
   SkScalar thumb_hsv[3];
-  SkColorToHSV(GetColor(kThumbInactiveColor, color_scheme), thumb_hsv);
+  SkColorToHSV(GetControlColor(kScrollbarThumbInactive, color_scheme),
+               thumb_hsv);
   return OutlineColor(track_hsv, thumb_hsv);
 }
 
@@ -1618,6 +1623,24 @@ SkColor NativeThemeBase::GetControlColor(ControlColorId color_id,
       return SkColorSetRGB(0xCB, 0xCB, 0xCB);
     case kAutoCompleteBackground:
       return SkColorSetRGB(0xE8, 0xF0, 0xFE);
+    case kScrollbarArrowBackground:
+    case kScrollbarTrack:
+      return SkColorSetRGB(0xF1, 0xF1, 0xF1);
+    case kScrollbarArrowBackgroundHovered:
+      return SkColorSetRGB(0xD2, 0xD2, 0xD2);
+    case kScrollbarArrowBackgroundPressed:
+      return SkColorSetRGB(0x78, 0x78, 0x78);
+    case kScrollbarArrowHovered:
+    case kScrollbarArrow:
+      return SkColorSetRGB(0x50, 0x50, 0x50);
+    case kScrollbarArrowPressed:
+      return SK_ColorWHITE;
+    case kScrollbarThumbInactive:
+      return SkColorSetRGB(0xEA, 0xEA, 0xEA);
+    case kScrollbarThumbHovered:
+    case kScrollbarThumbPressed:
+    case kScrollbarThumb:
+      return SK_ColorBLACK;
   }
   NOTREACHED();
   return gfx::kPlaceholderColor;
@@ -1625,46 +1648,66 @@ SkColor NativeThemeBase::GetControlColor(ControlColorId color_id,
 
 SkColor NativeThemeBase::GetDarkModeControlColor(
     ControlColorId color_id) const {
-    switch (color_id) {
+  switch (color_id) {
     case kAccent:
-      return SkColorSetRGB(0xC3, 0xC3, 0xC3);
+      return SkColorSetRGB(0x99, 0xC8, 0xFF);
     case kHoveredAccent:
-      return SkColorSetRGB(0xD8, 0xD8, 0xD8);
+      return SkColorSetRGB(0xD1, 0xE6, 0xFF);
     case kPressedAccent:
-      return SkColorSetRGB(0xB9, 0xB9, 0xB9);
+      return SkColorSetRGB(0x61, 0xA9, 0xFF);
     case kDisabledAccent:
-      return SkColorSetARGB(0x4D, 0xC3, 0xC3, 0xC3);
+      return SkColorSetRGB(0x75, 0x75, 0x75);
     case kProgressValue:
       return SkColorSetRGB(0x63, 0xAD, 0xE5);
     case kFill:
+      return SkColorSetRGB(0x3B, 0x3B, 0x3B);
     case kLightenLayer:
     case kAutoCompleteBackground:
     case kBackground:
       return SkColorSetRGB(0x3B, 0x3B, 0x3B);
     case kBorder:
+      return SkColorSetRGB(0x85, 0x85, 0x85);
     case kSlider:
-      return SkColorSetRGB(0xC3, 0xC3, 0xC3);
+      return SkColorSetRGB(0x99, 0xC8, 0xFF);
     case kHoveredSlider:
-      return SkColorSetRGB(0xD8, 0xD8, 0xD8);
+      return SkColorSetRGB(0xD1, 0xE6, 0xFF);
     case kPressedSlider:
-      return SkColorSetRGB(0xB9, 0xB9, 0xB9);
+      return SkColorSetRGB(0x61, 0xA9, 0xFF);
     case kDisabledSlider:
-      return SkColorSetRGB(0x70, 0x70, 0x70);
+      return SkColorSetRGB(0x75, 0x75, 0x75);
     case kDisabledBackground:
-      return SkColorSetARGB(0x4D, 0x3B, 0x3B, 0x3B);
+      return SkColorSetRGB(0x3B, 0x3B, 0x3B);
     case kHoveredBorder:
-      return SkColorSetRGB(0xEA, 0xEA, 0xEA);
-    case kPressedBorder:
       return SkColorSetRGB(0xAC, 0xAC, 0xAC);
+    case kPressedBorder:
+      return SkColorSetRGB(0x6E, 0x6E, 0x6E);
     case kDisabledBorder:
-      return SkColorSetARGB(0x4D ,0xC3, 0xC3, 0xC3);
+      return SkColorSetRGB(0x62, 0x62, 0x62);
     case kHoveredFill:
-      return SkColorSetRGB(0x54, 0x54, 0x54);
+      return SkColorSetRGB(0x3B, 0x3B, 0x3B);
     case kPressedFill:
-      return SkColorSetRGB(0x45, 0x45, 0x45);
+      return SkColorSetRGB(0x3B, 0x3B, 0x3B);
     case kDisabledFill:
-      return SkColorSetARGB(0x4D, 0x3B, 0x3B, 0x3B);
-    }
+      return SkColorSetRGB(0x36, 0x36, 0x36);
+    case kScrollbarArrowBackground:
+      return SkColorSetRGB(0x42, 0x42, 0x42);
+    case kScrollbarArrowBackgroundHovered:
+      return SkColorSetRGB(0x4F, 0x4F, 0x4F);
+    case kScrollbarArrowBackgroundPressed:
+      return SkColorSetRGB(0xB1, 0xB1, 0xB1);
+    case kScrollbarArrowHovered:
+    case kScrollbarArrow:
+      return SK_ColorWHITE;
+    case kScrollbarArrowPressed:
+      return SK_ColorBLACK;
+    case kScrollbarTrack:
+      return SkColorSetRGB(0x42, 0x42, 0x42);
+    case kScrollbarThumbInactive:
+    case kScrollbarThumbHovered:
+    case kScrollbarThumbPressed:
+    case kScrollbarThumb:
+      return SK_ColorWHITE;
+  }
   NOTREACHED();
   return gfx::kPlaceholderColor;
 }
@@ -1689,6 +1732,10 @@ SkColor NativeThemeBase::GetHighContrastControlColor(
       case kSlider:
       case kHoveredSlider:
       case kPressedSlider:
+      case kScrollbarThumbHovered:
+      case kScrollbarThumbPressed:
+      case kScrollbarArrowBackgroundHovered:
+      case kScrollbarArrowBackgroundPressed:
         return system_colors_[SystemThemeColor::kHighlight];
       case kBackground:
       case kDisabledBackground:
@@ -1698,10 +1745,19 @@ SkColor NativeThemeBase::GetHighContrastControlColor(
       case kDisabledFill:
       case kAutoCompleteBackground:
       case kLightenLayer:
+      case kScrollbarArrowBackground:
+      case kScrollbarTrack:
         return system_colors_[SystemThemeColor::kWindow];
+      case kScrollbarArrow:
+      case kScrollbarThumb:
+      case kScrollbarThumbInactive:
+        return system_colors_[SystemThemeColor::kWindowText];
+      case kScrollbarArrowHovered:
+      case kScrollbarArrowPressed:
+        return system_colors_[SystemThemeColor::kButtonFace];
     }
   } else {
-    // Default high contrast colors (used in web test mode)
+    //   // Default high contrast colors (used in web test mode)
     switch (color_id) {
       case kDisabledBorder:
       case kDisabledAccent:
@@ -1710,6 +1766,9 @@ SkColor NativeThemeBase::GetHighContrastControlColor(
       case kBorder:
       case kHoveredBorder:
       case kPressedBorder:
+      case kScrollbarThumbInactive:
+      case kScrollbarArrowBackground:
+      case kScrollbarTrack:
         return SK_ColorWHITE;
       case kAccent:
       case kHoveredAccent:
@@ -1727,7 +1786,16 @@ SkColor NativeThemeBase::GetHighContrastControlColor(
       case kDisabledFill:
       case kAutoCompleteBackground:
       case kLightenLayer:
+      case kScrollbarThumb:
+      case kScrollbarArrow:
+      case kScrollbarArrowHovered:
+      case kScrollbarArrowPressed:
         return SK_ColorBLACK;
+      case kScrollbarThumbHovered:
+      case kScrollbarThumbPressed:
+      case kScrollbarArrowBackgroundHovered:
+      case kScrollbarArrowBackgroundPressed:
+        return SkColorSetRGB(0x1A, 0xEB, 0xFF);
     }
   }
   NOTREACHED();
@@ -1768,11 +1836,16 @@ SkRect NativeThemeBase::AlignSliderTrack(
         std::min(float(slider_rect.right()), mid_x + kAlignment),
         slider_rect.bottom());
   } else {
-    const float right = is_value ? slider_rect.x() + slider.thumb_x + kAlignment
-                                 : slider_rect.right();
+    const float right = is_value && !slider.right_to_left
+                            ? slider_rect.x() + slider.thumb_x + kAlignment
+                            : slider_rect.right();
+    const float left = is_value && slider.right_to_left
+                           ? slider_rect.x() + slider.thumb_x + kAlignment
+                           : slider_rect.x();
+
     aligned_rect.setLTRB(
-        slider_rect.x(), std::max(float(slider_rect.y()), mid_y - kAlignment),
-        right, std::min(float(slider_rect.bottom()), mid_y + kAlignment));
+        left, std::max(float(slider_rect.y()), mid_y - kAlignment), right,
+        std::min(float(slider_rect.bottom()), mid_y + kAlignment));
   }
 
   return aligned_rect;

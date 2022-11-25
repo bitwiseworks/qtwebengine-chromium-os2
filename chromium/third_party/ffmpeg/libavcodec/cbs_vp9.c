@@ -253,14 +253,13 @@ static int cbs_vp9_write_le(CodedBitstreamContext *ctx, PutBitContext *pbc,
 #define SUBSCRIPTS(subs, ...) (subs > 0 ? ((int[subs + 1]){ subs, __VA_ARGS__ }) : NULL)
 
 #define f(width, name) \
-        xf(width, name, current->name, 0)
+        xf(width, name, current->name, 0, )
 #define s(width, name) \
-        xs(width, name, current->name, 0)
+        xs(width, name, current->name, 0, )
 #define fs(width, name, subs, ...) \
         xf(width, name, current->name, subs, __VA_ARGS__)
 #define ss(width, name, subs, ...) \
         xs(width, name, current->name, subs, __VA_ARGS__)
-
 
 #define READ
 #define READWRITE read
@@ -295,9 +294,9 @@ static int cbs_vp9_write_le(CodedBitstreamContext *ctx, PutBitContext *pbc,
 #define delta_q(name) do { \
         uint8_t delta_coded; \
         int8_t delta_q; \
-        xf(1, name.delta_coded, delta_coded, 0); \
+        xf(1, name.delta_coded, delta_coded, 0, ); \
         if (delta_coded) \
-            xs(4, name.delta_q, delta_q, 0); \
+            xs(4, name.delta_q, delta_q, 0, ); \
         else \
             delta_q = 0; \
         current->name = delta_q; \
@@ -366,9 +365,9 @@ static int cbs_vp9_write_le(CodedBitstreamContext *ctx, PutBitContext *pbc,
     } while (0)
 
 #define delta_q(name) do { \
-        xf(1, name.delta_coded, !!current->name, 0); \
+        xf(1, name.delta_coded, !!current->name, 0, ); \
         if (current->name) \
-            xs(4, name.delta_q, current->name, 0); \
+            xs(4, name.delta_q, current->name, 0, ); \
     } while (0)
 
 #define prob(name, subs, ...) do { \
@@ -452,7 +451,7 @@ static int cbs_vp9_split_fragment(CodedBitstreamContext *ctx,
                 return AVERROR_INVALIDDATA;
             }
 
-            err = ff_cbs_insert_unit_data(ctx, frag, -1, 0,
+            err = ff_cbs_insert_unit_data(frag, -1, 0,
                                           frag->data + pos,
                                           sfi.frame_sizes[i],
                                           frag->data_ref);
@@ -470,7 +469,7 @@ static int cbs_vp9_split_fragment(CodedBitstreamContext *ctx,
         return 0;
 
     } else {
-        err = ff_cbs_insert_unit_data(ctx, frag, -1, 0,
+        err = ff_cbs_insert_unit_data(frag, -1, 0,
                                       frag->data, frag->data_size,
                                       frag->data_ref);
         if (err < 0)
@@ -498,7 +497,7 @@ static int cbs_vp9_read_unit(CodedBitstreamContext *ctx,
     if (err < 0)
         return err;
 
-    err = ff_cbs_alloc_unit_content(ctx, unit, sizeof(*frame),
+    err = ff_cbs_alloc_unit_content(unit, sizeof(*frame),
                                     &cbs_vp9_free_frame);
     if (err < 0)
         return err;

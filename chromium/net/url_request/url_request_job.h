@@ -27,6 +27,7 @@
 #include "net/http/http_response_headers.h"
 #include "net/socket/connection_attempts.h"
 #include "net/url_request/redirect_info.h"
+#include "net/url_request/referrer_policy.h"
 #include "net/url_request/url_request.h"
 #include "url/gurl.h"
 
@@ -39,19 +40,17 @@ class HttpRequestHeaders;
 class HttpResponseInfo;
 class IOBuffer;
 struct LoadTimingInfo;
-class NetworkDelegate;
 class ProxyServer;
 class SSLCertRequestInfo;
 class SSLInfo;
 class SSLPrivateKey;
+struct TransportInfo;
 class UploadDataStream;
-class URLRequestStatus;
 class X509Certificate;
 
 class NET_EXPORT URLRequestJob {
  public:
-  explicit URLRequestJob(URLRequest* request,
-                         NetworkDelegate* network_delegate);
+  explicit URLRequestJob(URLRequest* request);
   virtual ~URLRequestJob();
 
   // Returns the request that owns this job.
@@ -234,13 +233,16 @@ class NET_EXPORT URLRequestJob {
 
   // Sets a callback that will be invoked each time the request is about to
   // be actually sent and will receive actual request headers that are about
-  // to hit the wire, including SPDY/QUIC internal headers and any additional
-  // request headers set via BeforeSendHeaders hooks.
+  // to hit the wire, including SPDY/QUIC internal headers.
   virtual void SetRequestHeadersCallback(RequestHeadersCallback callback) {}
 
   // Sets a callback that will be invoked each time the response is received
   // from the remote party with the actual response headers recieved.
   virtual void SetResponseHeadersCallback(ResponseHeadersCallback callback) {}
+
+  // Causes the current transaction always close its active socket on
+  // destruction. Does not close H2/H3 sessions.
+  virtual void CloseConnectionOnDestruction();
 
   // Given |policy|, |original_referrer|, and |destination|, returns the
   // referrer URL mandated by |request|'s referrer policy.
@@ -251,12 +253,15 @@ class NET_EXPORT URLRequestJob {
   // (This allows reporting in a UMA whether the request is same-origin, without
   // recomputing that information.)
   static GURL ComputeReferrerForPolicy(
-      URLRequest::ReferrerPolicy policy,
+      ReferrerPolicy policy,
       const GURL& original_referrer,
       const GURL& destination,
       bool* same_origin_out_for_metrics = nullptr);
 
  protected:
+  // Notifies the job that we are connected.
+  int NotifyConnected(const TransportInfo& info);
+
   // Notifies the job that a certificate is requested.
   void NotifyCertificateRequested(SSLCertRequestInfo* cert_request_info);
 
@@ -266,7 +271,7 @@ class NET_EXPORT URLRequestJob {
                                  bool fatal);
 
   // Delegates to URLRequest.
-  bool CanGetCookies(const CookieList& cookie_list) const;
+  bool CanGetCookies() const;
 
   // Delegates to URLRequest.
   bool CanSetCookie(const net::CanonicalCookie& cookie,
@@ -284,7 +289,7 @@ class NET_EXPORT URLRequestJob {
 
   // Notifies the request that a start error has occurred.
   // NOTE: Must not be called synchronously from |Start|.
-  void NotifyStartError(const URLRequestStatus& status);
+  void NotifyStartError(int net_error);
 
   // Used as an asynchronous callback for Kill to notify the URLRequest
   // that we were canceled.
@@ -321,12 +326,6 @@ class NET_EXPORT URLRequestJob {
   // Subclasses should return the appropriate last SourceStream of the chain,
   // or nullptr on error.
   virtual std::unique_ptr<SourceStream> SetUpSourceStream();
-
-  // Provides derived classes with access to the request's network delegate.
-  NetworkDelegate* network_delegate() { return network_delegate_; }
-
-  // The status of the job.
-  const URLRequestStatus GetStatus();
 
   // Set the proxy server that was used, if any.
   void SetProxyServer(const ProxyServer& proxy_server);
@@ -394,7 +393,7 @@ class NET_EXPORT URLRequestJob {
   // asynchronously.  Otherwise, the caller will need to do this itself,
   // possibly through a synchronous return value.
   // TODO(mmenke):  Remove |notify_done|, and make caller handle notification.
-  void OnDone(const URLRequestStatus& status, bool notify_done);
+  void OnDone(int net_error, bool notify_done);
 
   // Takes care of the notification initiated by OnDone() to avoid re-entering
   // the URLRequest::Delegate.
@@ -432,9 +431,6 @@ class NET_EXPORT URLRequestJob {
   // Set when a redirect is deferred. Redirects are deferred after validity
   // checks are performed, so this field must not be modified.
   base::Optional<RedirectInfo> deferred_redirect_info_;
-
-  // The network delegate to use with this request, if any.
-  NetworkDelegate* network_delegate_;
 
   // Non-null if ReadRawData() returned ERR_IO_PENDING, and the read has not
   // completed.

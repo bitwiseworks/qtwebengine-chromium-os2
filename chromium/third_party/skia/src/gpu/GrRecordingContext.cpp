@@ -5,12 +5,13 @@
  * found in the LICENSE file.
  */
 
-#include "include/private/GrRecordingContext.h"
+#include "include/gpu/GrRecordingContext.h"
 
-#include "include/gpu/GrContext.h"
+#include "include/gpu/GrContextThreadSafeProxy.h"
 #include "src/core/SkArenaAlloc.h"
 #include "src/gpu/GrAuditTrail.h"
 #include "src/gpu/GrCaps.h"
+#include "src/gpu/GrContextThreadSafeProxyPriv.h"
 #include "src/gpu/GrDrawingManager.h"
 #include "src/gpu/GrMemoryPool.h"
 #include "src/gpu/GrProgramDesc.h"
@@ -21,9 +22,6 @@
 #include "src/gpu/SkGr.h"
 #include "src/gpu/effects/GrSkSLFP.h"
 #include "src/gpu/text/GrTextBlobCache.h"
-
-#define ASSERT_SINGLE_OWNER_PRIV \
-    SkDEBUGCODE(GrSingleOwner::AutoEnforce debug_SingleOwner(this->singleOwner());)
 
 GrRecordingContext::ProgramData::ProgramData(std::unique_ptr<const GrProgramDesc> desc,
                                              const GrProgramInfo* info)
@@ -36,48 +34,20 @@ GrRecordingContext::ProgramData::ProgramData(ProgramData&& other)
         , fInfo(other.fInfo) {
 }
 
-GrRecordingContext::ProgramData::~ProgramData() {}
+GrRecordingContext::ProgramData::~ProgramData() = default;
 
-GrRecordingContext::GrRecordingContext(GrBackendApi backend,
-                                       const GrContextOptions& options,
-                                       uint32_t contextID)
-        : INHERITED(backend, options, contextID)
+GrRecordingContext::GrRecordingContext(sk_sp<GrContextThreadSafeProxy> proxy)
+        : INHERITED(std::move(proxy))
         , fAuditTrail(new GrAuditTrail()) {
 }
 
-GrRecordingContext::~GrRecordingContext() { }
+GrRecordingContext::~GrRecordingContext() = default;
 
-/**
- * TODO: move textblob draw calls below context (see comment below)
- */
-static void textblobcache_overbudget_CB(void* data) {
-    SkASSERT(data);
-    GrRecordingContext* context = reinterpret_cast<GrRecordingContext*>(data);
-
-    GrContext* direct = context->priv().asDirectContext();
-    if (!direct) {
-        return;
-    }
-
-    // TextBlobs are drawn at the SkGpuDevice level, therefore they cannot rely on
-    // GrRenderTargetContext to perform a necessary flush.  The solution is to move drawText calls
-    // to below the GrContext level, but this is not trivial because they call drawPath on
-    // SkGpuDevice.
-    direct->flush();
-}
-
-bool GrRecordingContext::init(sk_sp<const GrCaps> caps) {
-
-    if (!INHERITED::init(std::move(caps))) {
-        return false;
-    }
-
-    fStrikeCache.reset(new GrStrikeCache{});
-
-    fTextBlobCache.reset(new GrTextBlobCache(textblobcache_overbudget_CB, this,
-                                             this->contextID()));
-
-    return true;
+int GrRecordingContext::maxSurfaceSampleCountForColorType(SkColorType colorType) const {
+    GrBackendFormat format =
+            this->caps()->getDefaultBackendFormat(SkColorTypeToGrColorType(colorType),
+                                                  GrRenderable::kYes);
+    return this->caps()->maxRenderTargetSampleCount(format);
 }
 
 void GrRecordingContext::setupDrawingManager(bool sortOpsTasks, bool reduceOpsTaskSplitting) {
@@ -94,26 +64,8 @@ void GrRecordingContext::setupDrawingManager(bool sortOpsTasks, bool reduceOpsTa
         prcOptions.fGpuPathRenderers &= ~GpuPathRenderers::kSmall;
     }
 
-    if (!this->proxyProvider()->renderingDirectly()) {
-        // DDL TODO: remove this crippling of the path renderer chain
-        // Disable the small path renderer bc of the proxies in the atlas. They need to be
-        // unified when the opsTasks are added back to the destination drawing manager.
-        prcOptions.fGpuPathRenderers &= ~GpuPathRenderers::kSmall;
-    }
-
-    GrTextContext::Options textContextOptions;
-    textContextOptions.fMaxDistanceFieldFontSize = this->options().fGlyphsAsPathsFontSize;
-    textContextOptions.fMinDistanceFieldFontSize = this->options().fMinDistanceFieldFontSize;
-    textContextOptions.fDistanceFieldVerticesAlwaysHaveW = false;
-#if SK_SUPPORT_ATLAS_TEXT
-    if (GrContextOptions::Enable::kYes == this->options().fDistanceFieldGlyphVerticesAlwaysHaveW) {
-        textContextOptions.fDistanceFieldVerticesAlwaysHaveW = true;
-    }
-#endif
-
     fDrawingManager.reset(new GrDrawingManager(this,
                                                prcOptions,
-                                               textContextOptions,
                                                sortOpsTasks,
                                                reduceOpsTaskSplitting));
 }
@@ -121,12 +73,15 @@ void GrRecordingContext::setupDrawingManager(bool sortOpsTasks, bool reduceOpsTa
 void GrRecordingContext::abandonContext() {
     INHERITED::abandonContext();
 
-    fStrikeCache->freeAll();
-    fTextBlobCache->freeAll();
+    this->destroyDrawingManager();
 }
 
 GrDrawingManager* GrRecordingContext::drawingManager() {
     return fDrawingManager.get();
+}
+
+void GrRecordingContext::destroyDrawingManager() {
+    fDrawingManager.reset();
 }
 
 GrRecordingContext::Arenas::Arenas(GrOpMemoryPool* opMemoryPool, SkArenaAlloc* recordTimeAllocator)
@@ -169,15 +124,36 @@ GrRecordingContext::OwnedArenas&& GrRecordingContext::detachArenas() {
 }
 
 GrTextBlobCache* GrRecordingContext::getTextBlobCache() {
-    return fTextBlobCache.get();
+    return fThreadSafeProxy->priv().getTextBlobCache();
 }
 
 const GrTextBlobCache* GrRecordingContext::getTextBlobCache() const {
-    return fTextBlobCache.get();
+    return fThreadSafeProxy->priv().getTextBlobCache();
+}
+
+GrThreadSafeUniquelyKeyedProxyViewCache* GrRecordingContext::threadSafeViewCache() {
+    return fThreadSafeProxy->priv().threadSafeViewCache();
+}
+
+const GrThreadSafeUniquelyKeyedProxyViewCache* GrRecordingContext::threadSafeViewCache() const {
+    return fThreadSafeProxy->priv().threadSafeViewCache();
 }
 
 void GrRecordingContext::addOnFlushCallbackObject(GrOnFlushCallbackObject* onFlushCBObject) {
     this->drawingManager()->addOnFlushCallbackObject(onFlushCBObject);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+int GrRecordingContext::maxTextureSize() const { return this->caps()->maxTextureSize(); }
+
+int GrRecordingContext::maxRenderTargetSize() const { return this->caps()->maxRenderTargetSize(); }
+
+bool GrRecordingContext::colorTypeSupportedAsImage(SkColorType colorType) const {
+    GrBackendFormat format =
+            this->caps()->getDefaultBackendFormat(SkColorTypeToGrColorType(colorType),
+                                                  GrRenderable::kNo);
+    return format.isValid();
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -189,7 +165,43 @@ void GrRecordingContextPriv::addOnFlushCallbackObject(GrOnFlushCallbackObject* o
     fContext->addOnFlushCallbackObject(onFlushCBObject);
 }
 
-GrContext* GrRecordingContextPriv::backdoor() {
-    return (GrContext*) fContext;
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+#ifdef SK_ENABLE_DUMP_GPU
+#include "src/utils/SkJSONWriter.h"
+
+void GrRecordingContext::dumpJSON(SkJSONWriter* writer) const {
+    writer->beginObject();
+
+#if GR_GPU_STATS
+    writer->appendS32("path_masks_generated", this->stats()->numPathMasksGenerated());
+    writer->appendS32("path_mask_cache_hits", this->stats()->numPathMaskCacheHits());
+#endif
+
+    writer->endObject();
 }
+#else
+void GrRecordingContext::dumpJSON(SkJSONWriter*) const { }
+#endif
+
+#if GR_TEST_UTILS
+
+#if GR_GPU_STATS
+
+void GrRecordingContext::Stats::dump(SkString* out) {
+    out->appendf("Num Path Masks Generated: %d\n", fNumPathMasksGenerated);
+    out->appendf("Num Path Mask Cache Hits: %d\n", fNumPathMaskCacheHits);
+}
+
+void GrRecordingContext::Stats::dumpKeyValuePairs(SkTArray<SkString>* keys,
+                                                  SkTArray<double>* values) {
+    keys->push_back(SkString("path_masks_generated"));
+    values->push_back(fNumPathMasksGenerated);
+
+    keys->push_back(SkString("path_mask_cache_hits"));
+    values->push_back(fNumPathMaskCacheHits);
+}
+
+#endif // GR_GPU_STATS
+#endif // GR_TEST_UTILS
 

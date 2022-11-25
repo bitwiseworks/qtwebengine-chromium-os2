@@ -10,6 +10,7 @@ import * as Context from './Context.js';
 import * as ContextFlavorListener from './ContextFlavorListener.js';
 import * as ContextMenu from './ContextMenu.js';
 import * as Dialog from './Dialog.js';
+import * as DockController from './DockController.js';
 import * as DropTarget from './DropTarget.js';
 import * as EmptyWidget from './EmptyWidget.js';
 import * as FilterBar from './FilterBar.js';
@@ -62,7 +63,8 @@ import * as XLink from './XLink.js';
 import * as XWidget from './XWidget.js';
 import * as ZoomManager from './ZoomManager.js';
 
-/** @typedef {{box: !AnchorBox, show:(function(!GlassPane.GlassPane):!Promise<boolean>), hide:(function()|undefined)}} */
+/** @typedef {{box: !AnchorBox, show:(function(!GlassPane.GlassPane):!Promise<boolean>), hide:(function():void|undefined)}} */
+// @ts-ignore typedef
 export let PopoverRequest;
 
 export {
@@ -75,6 +77,7 @@ export {
   ContextMenu,
   Dialog,
   DropTarget,
+  DockController,
   EmptyWidget,
   FilterBar,
   FilterSuggestionBuilder,

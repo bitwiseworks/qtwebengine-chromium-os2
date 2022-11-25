@@ -14,6 +14,12 @@ import "url/mojom/url.mojom";
 // There is one instance of this interface per render frame host in the browser
 // process. All methods are called by renderer on browser.
 interface AutofillDriver {
+  // Pushes a form the user interacted with from the AutofillAgent to the
+  // AutofillDriver, which may consider this form as a probably-submitted form
+  // once the page is navigated away from. If |form| is not set, it resets the
+  // last-interacted form.
+  SetFormToBeProbablySubmitted(FormData? form);
+
   // Notification that forms have been seen that are candidates for
   // filling/submitting by the AutofillManager.
   FormsSeen(array<FormData> forms, mojo_base.mojom.TimeTicks timestamp);
@@ -71,10 +77,6 @@ interface AutofillDriver {
 
   // Sent when a text field is done editing.
   DidEndTextFieldEditing();
-
-  // Informs browser of data list values for the current field.
-  SetDataList(array<mojo_base.mojom.String16> values,
-              array<mojo_base.mojom.String16> labels);
 };
 
 // There is one instance of this interface per web contents in the browser
@@ -94,13 +96,10 @@ interface PasswordManagerDriver {
   // Notification that this password form was submitted by the user.
   PasswordFormSubmitted(FormData form_data);
 
-  // Notification that a user starts typing in password fields and the omnibox
-  // icon with anchored save/update prompt should be available.
-  ShowManualFallbackForSaving(FormData form_data);
-
-  // Notification that there is no user input in password fields and the
-  // save/update prompt anchored to the omnibox icon should be removed.
-  HideManualFallbackForSaving();
+  // Notification that a user has modified a password field. This is fired both
+  // when typing new characters and deleting characters, so the password field
+  // in `form_data` may or may not be empty
+  InformAboutUserInput(FormData form_data);
 
   // Notification that same-document navigation happened. We use this as a
   // signal for successful login.
@@ -121,7 +120,7 @@ interface PasswordManagerDriver {
 
   // Notification that the user (not JavaScript) modified the value of a
   // non-password field with |renderer_id|, and |value| is the current value.
-  UserModifiedNonPasswordField(uint32 renderer_id,
+  UserModifiedNonPasswordField(FieldRendererId renderer_id,
                                mojo_base.mojom.String16 value);
 
   // Instructs the browser to show a popup with password suggestions. The popup
@@ -147,7 +146,7 @@ interface PasswordManagerDriver {
   // integer serialization of autofill::FillingResult. It is passed as an
   // integer as no further interpretation of the value is necessary in the
   // browser.
-  LogFirstFillingResult(uint32 form_renderer_id, int32 result);
+  LogFirstFillingResult(FormRendererId form_renderer_id, int32 result);
 };
 
 // There is one instance of this interface per web contents in the browser
@@ -162,8 +161,11 @@ interface PasswordGenerationDriver {
   // The location should be specified in the renderers coordinate system. Form
   // is the form associated with the password field. |field_renderer_id| is the
   // ID of the password field triggering generation.
-  ShowPasswordEditingPopup(gfx.mojom.RectF bounds, FormData form_data,
-      uint32 field_renderer_id, mojo_base.mojom.String16 password_value);
+  ShowPasswordEditingPopup(
+    gfx.mojom.RectF bounds,
+    FormData form_data,
+    FieldRendererId field_renderer_id,
+    mojo_base.mojom.String16 password_value);
 
   // Informs the browser that the password generation option was rejected
   // by the user typing more characters than the maximum offer size into the
@@ -172,7 +174,7 @@ interface PasswordGenerationDriver {
 
   // Instructs the browser to presave the form with generated password.
   PresaveGeneratedPassword(FormData form_data,
-                          mojo_base.mojom.String16 password_value);
+                           mojo_base.mojom.String16 password_value);
 
   // Instructs the browser that form no longer contains a generated password and
   // the presaved form should be removed.

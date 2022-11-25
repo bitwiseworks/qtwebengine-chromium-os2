@@ -25,8 +25,6 @@
 #include "components/arc/intent_helper/open_url_delegate.h"
 #include "components/arc/session/arc_bridge_service.h"
 #include "components/url_formatter/url_fixer.h"
-#include "content/public/common/service_manager_connection.h"
-#include "services/service_manager/public/cpp/connector.h"
 #include "ui/base/layout.h"
 #include "url/url_constants.h"
 
@@ -142,12 +140,7 @@ void ArcIntentHelperBridge::OnIconInvalidated(const std::string& package_name) {
 void ArcIntentHelperBridge::OnOpenDownloads() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   RecordOpenType(ArcIntentHelperOpenType::DOWNLOADS);
-  // TODO(607411): If the FileManager is not yet open this will open to
-  // downloads by default, which is what we want.  However if it is open it will
-  // simply be brought to the forgeground without forcibly being navigated to
-  // downloads, which is probably not ideal.
-  // TODO(mash): Support this functionality without ash::Shell access in Chrome.
-  ash::NewWindowDelegate::GetInstance()->OpenFileManager();
+  ash::NewWindowDelegate::GetInstance()->OpenDownloadsFolder();
 }
 
 void ArcIntentHelperBridge::OnOpenUrl(const std::string& url) {
@@ -173,11 +166,10 @@ void ArcIntentHelperBridge::OnOpenCustomTab(const std::string& url,
   const GURL gurl(url_formatter::FixupURL(url, /*desired_tld=*/std::string()));
   if (!gurl.is_valid() ||
       allowed_arc_schemes_.find(gurl.scheme()) == allowed_arc_schemes_.end()) {
-    std::move(callback).Run(nullptr);
+    std::move(callback).Run(mojo::NullRemote());
     return;
   }
-  g_open_url_delegate->OpenArcCustomTab(gurl, task_id, surface_id, top_margin,
-                                        std::move(callback));
+  g_open_url_delegate->OpenArcCustomTab(gurl, task_id, std::move(callback));
 }
 
 void ArcIntentHelperBridge::OnOpenChromePage(mojom::ChromePage page) {
@@ -235,7 +227,8 @@ void ArcIntentHelperBridge::LaunchCameraApp(uint32_t intent_id,
                                             arc::mojom::CameraIntentMode mode,
                                             bool should_handle_result,
                                             bool should_down_scale,
-                                            bool is_secure) {
+                                            bool is_secure,
+                                            int32_t task_id) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   base::DictionaryValue intent_info;
@@ -247,7 +240,7 @@ void ArcIntentHelperBridge::LaunchCameraApp(uint32_t intent_id,
           << "&shouldHandleResult=" << should_handle_result
           << "&shouldDownScale=" << should_down_scale
           << "&isSecure=" << is_secure;
-  g_control_camera_app_delegate->LaunchCameraApp(queries.str());
+  g_control_camera_app_delegate->LaunchCameraApp(queries.str(), task_id);
 }
 
 void ArcIntentHelperBridge::OnIntentFiltersUpdatedForPackage(
@@ -319,6 +312,11 @@ bool ArcIntentHelperBridge::ShouldChromeHandleUrl(const GURL& url) {
 
   // Didn't find any matches for Android so let Chrome handle it.
   return true;
+}
+
+void ArcIntentHelperBridge::SetAdaptiveIconDelegate(
+    AdaptiveIconDelegate* delegate) {
+  icon_loader_.SetAdaptiveIconDelegate(delegate);
 }
 
 void ArcIntentHelperBridge::AddObserver(ArcIntentHelperObserver* observer) {

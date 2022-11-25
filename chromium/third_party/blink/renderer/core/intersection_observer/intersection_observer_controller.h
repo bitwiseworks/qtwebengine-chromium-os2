@@ -22,8 +22,6 @@ class IntersectionObserverController
     : public GarbageCollected<IntersectionObserverController>,
       public ExecutionContextClient,
       public NameClient {
-  USING_GARBAGE_COLLECTED_MIXIN(IntersectionObserverController);
-
  public:
   explicit IntersectionObserverController(ExecutionContext*);
   virtual ~IntersectionObserverController();
@@ -50,7 +48,7 @@ class IntersectionObserverController
 
   bool NeedsOcclusionTracking() const { return needs_occlusion_tracking_; }
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
   const char* NameInHeapSnapshot() const override {
     return "IntersectionObserverController";
   }

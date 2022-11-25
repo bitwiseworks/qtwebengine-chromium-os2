@@ -11,8 +11,9 @@
 #include <vssym32.h>
 
 #include "base/bind.h"
+#include "base/check.h"
 #include "base/command_line.h"
-#include "base/logging.h"
+#include "base/notreached.h"
 #include "base/optional.h"
 #include "base/stl_util.h"
 #include "base/threading/sequenced_task_runner_handle.h"
@@ -590,12 +591,14 @@ SkColor NativeThemeWin::GetSystemColor(ColorId color_id,
   if (color_scheme == ColorScheme::kDefault)
     color_scheme = GetDefaultSystemColorScheme();
 
-  return (color_scheme == ColorScheme::kPlatformHighContrast)
-             ? GetPlatformHighContrastColor(color_id)
-             : NativeTheme::GetSystemColor(color_id, color_scheme);
+  base::Optional<SkColor> color;
+  if (color_scheme == ColorScheme::kPlatformHighContrast)
+    color = GetPlatformHighContrastColor(color_id);
+  return color.value_or(NativeTheme::GetSystemColor(color_id, color_scheme));
 }
 
-SkColor NativeThemeWin::GetPlatformHighContrastColor(ColorId color_id) const {
+base::Optional<SkColor> NativeThemeWin::GetPlatformHighContrastColor(
+    ColorId color_id) const {
   switch (color_id) {
     // Window Background
     case kColorId_WindowBackground:
@@ -605,12 +608,14 @@ SkColor NativeThemeWin::GetPlatformHighContrastColor(ColorId color_id) const {
     case kColorId_TreeBackground:
     case kColorId_TableHeaderBackground:
     case kColorId_TableBackground:
+    case kColorId_TableBackgroundAlternate:
     case kColorId_TooltipBackground:
     case kColorId_ProminentButtonDisabledColor:
+    case kColorId_NotificationDefaultBackground:
       return system_colors_[SystemThemeColor::kWindow];
 
     // Window Text
-    case kColorId_DefaultIconColor:
+    case kColorId_MenuIconColor:
     case kColorId_DialogForeground:
     case kColorId_LabelEnabledColor:
     case kColorId_LabelSecondaryColor:
@@ -619,12 +624,14 @@ SkColor NativeThemeWin::GetPlatformHighContrastColor(ColorId color_id) const {
     case kColorId_TableHeaderText:
     case kColorId_TableGroupingIndicatorColor:
     case kColorId_TableHeaderSeparator:
+    case kColorId_TooltipIcon:
     case kColorId_TooltipText:
     case kColorId_ThrobberSpinningColor:
     case kColorId_ThrobberLightColor:
     case kColorId_AlertSeverityLow:
     case kColorId_AlertSeverityMedium:
     case kColorId_AlertSeverityHigh:
+    case kColorId_DefaultIconColor:
       return system_colors_[SystemThemeColor::kWindowText];
 
     // Hyperlinks
@@ -642,11 +649,11 @@ SkColor NativeThemeWin::GetPlatformHighContrastColor(ColorId color_id) const {
       return system_colors_[SystemThemeColor::kGrayText];
 
     // Button Background
+    case kColorId_ButtonColor:
     case kColorId_MenuBackgroundColor:
     case kColorId_HighlightedMenuItemBackgroundColor:
     case kColorId_TextfieldDefaultBackground:
     case kColorId_TextfieldReadOnlyBackground:
-    case kColorId_ButtonPressedShade:
       return system_colors_[SystemThemeColor::kButtonFace];
 
     // Button Text Foreground
@@ -673,6 +680,7 @@ SkColor NativeThemeWin::GetPlatformHighContrastColor(ColorId color_id) const {
     case kColorId_FocusedMenuItemBackgroundColor:
     case kColorId_LabelTextSelectionBackgroundFocused:
     case kColorId_TextfieldSelectionBackgroundFocused:
+    case kColorId_TooltipIconHovered:
     case kColorId_TreeSelectionBackgroundFocused:
     case kColorId_TreeSelectionBackgroundUnfocused:
     case kColorId_TableSelectionBackgroundFocused:
@@ -691,7 +699,7 @@ SkColor NativeThemeWin::GetPlatformHighContrastColor(ColorId color_id) const {
       return system_colors_[SystemThemeColor::kHighlightText];
 
     default:
-      return gfx::kPlaceholderColor;
+      return base::nullopt;
   }
 }
 
@@ -725,17 +733,16 @@ NativeThemeWin::CalculatePreferredColorScheme() const {
   if (!UsesHighContrastColors())
     return NativeTheme::CalculatePreferredColorScheme();
 
-  // The Windows SystemParametersInfo API will return the high contrast theme
-  // as a string. However, this string is language dependent. Instead, to
-  // account for non-English systems, sniff out the system colors to
-  // determine the high contrast color scheme.
-  SkColor fg_color = system_colors_[SystemThemeColor::kWindowText];
+  // According to the spec, the preferred color scheme for web content is 'dark'
+  // if 'Canvas' has L<33% and 'light' if L>67%. On Windows, the 'Canvas'
+  // keyword is mapped to the 'Window' system color. As such, we use the
+  // luminance of 'Window' to calculate the corresponding luminance of 'Canvas'.
+  // https://www.w3.org/TR/css-color-adjust-1/#forced
   SkColor bg_color = system_colors_[SystemThemeColor::kWindow];
-  if (bg_color == SK_ColorWHITE && fg_color == SK_ColorBLACK)
-    return NativeTheme::PreferredColorScheme::kLight;
-  if (bg_color == SK_ColorBLACK && fg_color == SK_ColorWHITE)
+  float luminance = color_utils::GetRelativeLuminance(bg_color);
+  if (luminance < 0.33)
     return NativeTheme::PreferredColorScheme::kDark;
-  return NativeTheme::PreferredColorScheme::kNoPreference;
+  return NativeTheme::PreferredColorScheme::kLight;
 }
 
 NativeTheme::ColorScheme NativeThemeWin::GetDefaultSystemColorScheme() const {
@@ -772,10 +779,10 @@ void NativeThemeWin::PaintIndirect(cc::PaintCanvas* destination_canvas,
     return;
   }
 
-  if (!offscreen_hdc.SelectBitmap(skia::CreateHBitmap(
-          rect.width(), rect.height(), false, nullptr, nullptr))) {
+  base::win::ScopedBitmap hbitmap = skia::CreateHBitmapXRGB8888(
+      rect.width(), rect.height(), nullptr, nullptr);
+  if (!offscreen_hdc.SelectBitmap(hbitmap.release()))
     return;
-  }
 
   // Will be NULL if lower-level Windows calls fail, or if the backing
   // allocated is 0 pixels in size (which should never happen according to

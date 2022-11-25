@@ -18,8 +18,6 @@ namespace blink {
 
 class MediaKeySystemAccessInitializerBase : public EncryptedMediaRequest,
                                             public ExecutionContextClient {
-  USING_GARBAGE_COLLECTED_MIXIN(MediaKeySystemAccessInitializerBase);
-
  public:
   MediaKeySystemAccessInitializerBase(
       ScriptState* script_state,
@@ -41,16 +39,16 @@ class MediaKeySystemAccessInitializerBase : public EncryptedMediaRequest,
   // Promise() in script_promise_resolver.h
   ScriptPromise Promise();
 
-  void Trace(Visitor* visitor) override;
+  void Trace(Visitor* visitor) const override;
 
  protected:
   // Returns true if the ExecutionContext is valid, false otherwise.
   bool IsExecutionContextValid() const;
 
-  // For widevine key system, generate warning and report to UMA if
-  // |m_supportedConfigurations| contains any video capability with empty
-  // robustness string.
-  void CheckVideoCapabilityRobustness() const;
+  // For widevine key system, generate warning if |supported_configurations_|
+  // contains any video capability with empty robustness string. Also report
+  // UMA and UKM.
+  void GenerateWarningAndReportMetrics() const;
 
   Member<ScriptPromiseResolver> resolver_;
   const String key_system_;

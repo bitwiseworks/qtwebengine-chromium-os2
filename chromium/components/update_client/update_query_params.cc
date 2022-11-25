@@ -4,7 +4,7 @@
 
 #include "components/update_client/update_query_params.h"
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
 #include "build/branding_buildflags.h"
@@ -25,7 +25,7 @@ const char kUnknown[] = "unknown";
 // The request extra information is the OS and architecture, this helps
 // the server select the right package to be delivered.
 const char kOs[] =
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
     "mac";
 #elif defined(OS_WIN)
     "win";
@@ -62,11 +62,11 @@ const char kArch[] =
 #error "unknown arch"
 #endif
 
-const char kChrome[] = "chrome";
-
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+const char kChrome[] = "chrome";
 const char kCrx[] = "chromecrx";
 #else
+const char kChrome[] = "chromium";
 const char kCrx[] = "chromiumcrx";
 #endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
@@ -88,10 +88,8 @@ const char* UpdateQueryParams::GetProdIdString(UpdateQueryParams::ProdId prod) {
   switch (prod) {
     case UpdateQueryParams::CHROME:
       return kChrome;
-      break;
     case UpdateQueryParams::CRX:
       return kCrx;
-      break;
   }
   return kUnknown;
 }

@@ -18,25 +18,19 @@
 
 namespace quic {
 
-QuicSendControlStream::QuicSendControlStream(
-    QuicStreamId id,
-    QuicSpdySession* spdy_session,
-    uint64_t qpack_maximum_dynamic_table_capacity,
-    uint64_t qpack_maximum_blocked_streams,
-    uint64_t max_inbound_header_list_size)
+QuicSendControlStream::QuicSendControlStream(QuicStreamId id,
+                                             QuicSpdySession* spdy_session,
+                                             const SettingsFrame& settings)
     : QuicStream(id, spdy_session, /*is_static = */ true, WRITE_UNIDIRECTIONAL),
       settings_sent_(false),
-      qpack_maximum_dynamic_table_capacity_(
-          qpack_maximum_dynamic_table_capacity),
-      qpack_maximum_blocked_streams_(qpack_maximum_blocked_streams),
-      max_inbound_header_list_size_(max_inbound_header_list_size),
+      settings_(settings),
       spdy_session_(spdy_session) {}
 
 void QuicSendControlStream::OnStreamReset(const QuicRstStreamFrame& /*frame*/) {
   QUIC_BUG << "OnStreamReset() called for write unidirectional stream.";
 }
 
-bool QuicSendControlStream::OnStopSending(uint16_t /* code */) {
+bool QuicSendControlStream::OnStopSending(QuicRstStreamErrorCode /* code */) {
   stream_delegate()->OnStreamError(
       QUIC_HTTP_CLOSED_CRITICAL_STREAM,
       "STOP_SENDING received for send control stream");
@@ -56,13 +50,7 @@ void QuicSendControlStream::MaybeSendSettingsFrame() {
   WriteOrBufferData(quiche::QuicheStringPiece(writer.data(), writer.length()),
                     false, nullptr);
 
-  SettingsFrame settings;
-  settings.values[SETTINGS_QPACK_MAX_TABLE_CAPACITY] =
-      qpack_maximum_dynamic_table_capacity_;
-  settings.values[SETTINGS_QPACK_BLOCKED_STREAMS] =
-      qpack_maximum_blocked_streams_;
-  settings.values[SETTINGS_MAX_HEADER_LIST_SIZE] =
-      max_inbound_header_list_size_;
+  SettingsFrame settings = settings_;
   // https://tools.ietf.org/html/draft-ietf-quic-http-25#section-7.2.4.1
   // specifies that setting identifiers of 0x1f * N + 0x21 are reserved and
   // greasing should be attempted.
@@ -133,20 +121,20 @@ void QuicSendControlStream::SendMaxPushIdFrame(PushId max_push_id) {
                     /*fin = */ false, nullptr);
 }
 
-void QuicSendControlStream::SendGoAway(QuicStreamId stream_id) {
+void QuicSendControlStream::SendGoAway(QuicStreamId id) {
   QuicConnection::ScopedPacketFlusher flusher(session()->connection());
   MaybeSendSettingsFrame();
 
   GoAwayFrame frame;
-  // If the peer hasn't created any stream yet. Use stream id 0 to indicate no
+  // If the peer has not created any stream yet, use stream ID 0 to indicate no
   // request is accepted.
-  if (stream_id ==
-      QuicUtils::GetInvalidStreamId(session()->transport_version())) {
-    stream_id = 0;
+  if (!GetQuicReloadableFlag(quic_fix_http3_goaway_stream_id) &&
+      id == QuicUtils::GetInvalidStreamId(session()->transport_version())) {
+    id = 0;
   }
-  frame.stream_id = stream_id;
+  frame.id = id;
   if (spdy_session_->debug_visitor()) {
-    spdy_session_->debug_visitor()->OnGoAwayFrameSent(stream_id);
+    spdy_session_->debug_visitor()->OnGoAwayFrameSent(id);
   }
 
   std::unique_ptr<char[]> buffer;

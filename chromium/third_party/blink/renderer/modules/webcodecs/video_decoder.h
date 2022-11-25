@@ -8,26 +8,70 @@
 #include <stdint.h>
 #include <memory>
 
+#include "media/base/media_log.h"
 #include "media/base/status.h"
 #include "media/base/video_decoder.h"
+#include "media/base/video_decoder_config.h"
+#include "media/media_buildflags.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_video_frame_output_callback.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_web_codecs_error_callback.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
+#include "third_party/blink/renderer/modules/webcodecs/codec_config_eval.h"
+#include "third_party/blink/renderer/modules/webcodecs/decoder_template.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/heap/heap_allocator.h"
 #include "third_party/blink/renderer/platform/heap/member.h"
 
+namespace media {
+
+class VideoFrame;
+class DecoderBuffer;
+class MediaLog;
+
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+class H264ToAnnexBBitstreamConverter;
+namespace mp4 {
+struct AVCDecoderConfigurationRecord;
+}
+#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+
+}  // namespace media
+
 namespace blink {
 
 class EncodedVideoChunk;
-class EncodedVideoConfig;
 class ExceptionState;
-class ScriptState;
+class VideoDecoderConfig;
 class VideoDecoderInit;
+class VideoFrame;
+class V8VideoFrameOutputCallback;
 
-class MODULES_EXPORT VideoDecoder final : public ScriptWrappable {
+class MODULES_EXPORT VideoDecoderTraits {
+ public:
+  using InitType = VideoDecoderInit;
+  using OutputType = VideoFrame;
+  using MediaOutputType = media::VideoFrame;
+  using MediaDecoderType = media::VideoDecoder;
+  using OutputCallbackType = V8VideoFrameOutputCallback;
+  using ConfigType = VideoDecoderConfig;
+  using MediaConfigType = media::VideoDecoderConfig;
+  using InputType = EncodedVideoChunk;
+
+  static std::unique_ptr<MediaDecoderType> CreateDecoder(
+      ExecutionContext& execution_context,
+      media::MediaLog* media_log);
+  static void InitializeDecoder(MediaDecoderType& decoder,
+                                const MediaConfigType& media_config,
+                                MediaDecoderType::InitCB init_cb,
+                                MediaDecoderType::OutputCB output_cb);
+  static int GetMaxDecodeRequests(const MediaDecoderType& decoder);
+};
+
+class MODULES_EXPORT VideoDecoder : public DecoderTemplate<VideoDecoderTraits> {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -36,53 +80,19 @@ class MODULES_EXPORT VideoDecoder final : public ScriptWrappable {
                               ExceptionState&);
 
   VideoDecoder(ScriptState*, const VideoDecoderInit*, ExceptionState&);
-  ~VideoDecoder() override;
+  ~VideoDecoder() override = default;
 
-  // video_decoder.idl implementation.
-  int32_t decodeQueueSize();
-  int32_t decodeProcessingCount();
-  ScriptPromise configure(const EncodedVideoConfig*, ExceptionState&);
-  ScriptPromise decode(const EncodedVideoChunk*, ExceptionState&);
-  ScriptPromise flush(ExceptionState&);
-  ScriptPromise reset(ExceptionState&);
+ protected:
+  CodecConfigEval MakeMediaConfig(const ConfigType& config,
+                                  MediaConfigType* out_media_config,
+                                  String* out_console_message) override;
+  scoped_refptr<media::DecoderBuffer> MakeDecoderBuffer(
+      const InputType& input) override;
 
-  // GarbageCollected override.
-  void Trace(Visitor*) override;
-
- private:
-  struct Request : public GarbageCollected<Request> {
-    enum class Type {
-      kConfigure,
-      kDecode,
-      kFlush,
-      kReset,
-    };
-
-    void Trace(Visitor*);
-
-    Type type;
-    Member<const EncodedVideoConfig> config;
-    Member<const EncodedVideoChunk> chunk;
-    Member<ScriptPromiseResolver> resolver;
-  };
-
-  ScriptPromise EnqueueRequest(Request* request);
-  void ProcessRequests();
-  void HandleError();
-
-  // Called by |decoder_|.
-  void OnInitializeDone(media::Status status);
-  void OnDecodeDone(uint32_t id, media::DecodeStatus);
-  void OnOutput(scoped_refptr<media::VideoFrame>);
-
-  Member<ScriptState> script_state_;
-
-  HeapDeque<Member<Request>> requests_;
-  int32_t requested_decodes_ = 0;
-  int32_t requested_resets_ = 0;
-
-  std::unique_ptr<media::VideoDecoder> decoder_;
-  HeapHashMap<uint32_t, Member<Request>> pending_decodes_;
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+  std::unique_ptr<media::H264ToAnnexBBitstreamConverter> h264_converter_;
+  std::unique_ptr<media::mp4::AVCDecoderConfigurationRecord> h264_avcc_;
+#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
 };
 
 }  // namespace blink

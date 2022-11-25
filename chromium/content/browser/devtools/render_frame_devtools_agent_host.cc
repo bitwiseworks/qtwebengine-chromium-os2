@@ -14,13 +14,13 @@
 #include "base/lazy_instance.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "content/browser/bad_message.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/devtools/devtools_manager.h"
 #include "content/browser/devtools/devtools_renderer_channel.h"
 #include "content/browser/devtools/devtools_session.h"
+#include "content/browser/devtools/protocol/audits_handler.h"
 #include "content/browser/devtools/protocol/background_service_handler.h"
 #include "content/browser/devtools/protocol/browser_handler.h"
 #include "content/browser/devtools/protocol/dom_handler.h"
@@ -29,6 +29,7 @@
 #include "content/browser/devtools/protocol/input_handler.h"
 #include "content/browser/devtools/protocol/inspector_handler.h"
 #include "content/browser/devtools/protocol/io_handler.h"
+#include "content/browser/devtools/protocol/log_handler.h"
 #include "content/browser/devtools/protocol/memory_handler.h"
 #include "content/browser/devtools/protocol/network_handler.h"
 #include "content/browser/devtools/protocol/overlay_handler.h"
@@ -40,8 +41,8 @@
 #include "content/browser/devtools/protocol/storage_handler.h"
 #include "content/browser/devtools/protocol/target_handler.h"
 #include "content/browser/devtools/protocol/tracing_handler.h"
-#include "content/browser/frame_host/navigation_request.h"
-#include "content/browser/frame_host/render_frame_host_impl.h"
+#include "content/browser/renderer_host/navigation_request.h"
+#include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/site_instance_impl.h"
@@ -57,7 +58,6 @@
 #include "content/public/browser/network_service_instance.h"
 #include "content/public/browser/render_widget_host_iterator.h"
 #include "content/public/browser/web_contents_delegate.h"
-#include "mojo/public/cpp/bindings/associated_binding.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "third_party/blink/public/mojom/devtools/devtools_agent.mojom.h"
 
@@ -67,7 +67,7 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "services/device/public/mojom/wake_lock_context.mojom.h"
-#elif BUILDFLAG(ENABLE_WEB_AUTH)
+#else
 #include "content/browser/devtools/protocol/webauthn_handler.h"
 #endif
 
@@ -87,21 +87,23 @@ RenderFrameDevToolsAgentHost* FindAgentHost(FrameTreeNode* frame_tree_node) {
 }
 
 bool ShouldCreateDevToolsForNode(FrameTreeNode* ftn) {
-  return !ftn->parent() || ftn->current_frame_host()->IsCrossProcessSubframe();
-}
-
-FrameTreeNode* GetFrameTreeNodeAncestor(FrameTreeNode* frame_tree_node) {
-  while (frame_tree_node && !ShouldCreateDevToolsForNode(frame_tree_node))
-    frame_tree_node = frame_tree_node->parent();
-  DCHECK(frame_tree_node);
-  return frame_tree_node;
+  return !ftn->parent() ||
+         (ftn->current_frame_host() &&
+          ftn->current_frame_host()->IsCrossProcessSubframe());
 }
 
 }  // namespace
 
+FrameTreeNode* GetFrameTreeNodeAncestor(FrameTreeNode* frame_tree_node) {
+  while (frame_tree_node && !ShouldCreateDevToolsForNode(frame_tree_node))
+    frame_tree_node = FrameTreeNode::From(frame_tree_node->parent());
+  DCHECK(frame_tree_node);
+  return frame_tree_node;
+}
+
 // static
-scoped_refptr<DevToolsAgentHost>
-DevToolsAgentHost::GetOrCreateFor(WebContents* web_contents) {
+scoped_refptr<DevToolsAgentHost> DevToolsAgentHost::GetOrCreateFor(
+    WebContents* web_contents) {
   FrameTreeNode* node =
       static_cast<WebContentsImpl*>(web_contents)->GetFrameTree()->root();
   // TODO(dgozman): this check should not be necessary. See
@@ -283,13 +285,15 @@ WebContents* RenderFrameDevToolsAgentHost::GetWebContents() {
   return web_contents();
 }
 
-bool RenderFrameDevToolsAgentHost::AttachSession(DevToolsSession* session) {
+bool RenderFrameDevToolsAgentHost::AttachSession(DevToolsSession* session,
+                                                 bool acquire_wake_lock) {
   if (!ShouldAllowSession(session))
     return false;
 
   auto emulation_handler = std::make_unique<protocol::EmulationHandler>();
   protocol::EmulationHandler* emulation_handler_ptr = emulation_handler.get();
 
+  session->AddHandler(std::make_unique<protocol::AuditsHandler>());
   session->AddHandler(std::make_unique<protocol::BackgroundServiceHandler>());
   auto browser_handler = std::make_unique<protocol::BrowserHandler>(
       session->GetClient()->MayWriteLocalFiles());
@@ -340,9 +344,10 @@ bool RenderFrameDevToolsAgentHost::AttachSession(DevToolsSession* session) {
     session->AddHandler(std::make_unique<protocol::TracingHandler>(
         frame_tree_node_, GetIOContext()));
   }
-#if BUILDFLAG(ENABLE_WEB_AUTH)
+  session->AddHandler(std::make_unique<protocol::LogHandler>());
+#if !defined(OS_ANDROID)
   session->AddHandler(std::make_unique<protocol::WebAuthnHandler>());
-#endif  // BUILDFLAG(ENABLE_WEB_AUTH)
+#endif  // !defined(OS_ANDROID)
 
   if (sessions().empty()) {
 #ifdef OS_ANDROID
@@ -354,7 +359,8 @@ bool RenderFrameDevToolsAgentHost::AttachSession(DevToolsSession* session) {
 #endif
     UpdateRawHeadersAccess(nullptr, frame_host_);
 #if defined(OS_ANDROID)
-    GetWakeLock()->RequestWakeLock();
+    if (acquire_wake_lock)
+      GetWakeLock()->RequestWakeLock();
 #endif
   }
   return true;
@@ -442,13 +448,6 @@ void RenderFrameDevToolsAgentHost::DidFinishNavigation(
   }
   for (auto* target : protocol::TargetHandler::ForAgentHost(this))
     target->DidFinishNavigation();
-
-  // RenderFrameDevToolsAgentHost is associated with frame_tree_node, while
-  // documents in the back-forward cache share a node, therefore we can't cache
-  // them. TODO(1001087): add support long-term.
-  content::BackForwardCache::DisableForRenderFrameHost(
-      navigation_handle->GetPreviousRenderFrameHostId(),
-      "RenderFrameDevToolsAgentHost");
 }
 
 void RenderFrameDevToolsAgentHost::UpdateFrameHost(
@@ -475,8 +474,11 @@ void RenderFrameDevToolsAgentHost::UpdateFrameHost(
     if (!ShouldAllowSession(session))
       restricted_sessions.push_back(session);
   }
-  if (!restricted_sessions.empty())
+  scoped_refptr<RenderFrameDevToolsAgentHost> protect;
+  if (!restricted_sessions.empty()) {
+    protect = this;
     ForceDetachRestrictedSessions(restricted_sessions);
+  }
 
   UpdateFrameAlive();
 }
@@ -565,6 +567,8 @@ void RenderFrameDevToolsAgentHost::UpdateFrameAlive() {
   render_frame_alive_ = frame_host_ && frame_host_->IsRenderFrameLive();
   if (render_frame_alive_ && render_frame_crashed_) {
     render_frame_crashed_ = false;
+    for (DevToolsSession* session : sessions())
+      session->ClearPendingMessages();
     for (auto* inspector : protocol::InspectorHandler::ForAgentHost(this))
       inspector->TargetReloadedAfterCrash();
   }
@@ -595,16 +599,6 @@ void RenderFrameDevToolsAgentHost::RenderProcessExited(
         inspector->TargetDetached("Render process gone.");
       break;
   }
-}
-
-void RenderFrameDevToolsAgentHost::DidAttachInterstitialPage() {
-  for (auto* page : protocol::PageHandler::ForAgentHost(this))
-    page->DidAttachInterstitialPage();
-}
-
-void RenderFrameDevToolsAgentHost::DidDetachInterstitialPage() {
-  for (auto* page : protocol::PageHandler::ForAgentHost(this))
-    page->DidDetachInterstitialPage();
 }
 
 void RenderFrameDevToolsAgentHost::OnVisibilityChanged(
@@ -664,7 +658,7 @@ void RenderFrameDevToolsAgentHost::ConnectWebContents(WebContents* wc) {
 std::string RenderFrameDevToolsAgentHost::GetParentId() {
   if (IsChildFrame()) {
     FrameTreeNode* frame_tree_node =
-        GetFrameTreeNodeAncestor(frame_tree_node_->parent());
+        GetFrameTreeNodeAncestor(frame_tree_node_->parent()->frame_tree_node());
     return RenderFrameDevToolsAgentHost::GetOrCreateFor(frame_tree_node)
         ->GetId();
   }
@@ -683,6 +677,19 @@ std::string RenderFrameDevToolsAgentHost::GetOpenerId() {
     return std::string();
   FrameTreeNode* opener = frame_tree_node_->original_opener();
   return opener ? opener->devtools_frame_token().ToString() : std::string();
+}
+
+std::string RenderFrameDevToolsAgentHost::GetOpenerFrameId() {
+  if (!frame_tree_node_)
+    return std::string();
+  const base::Optional<base::UnguessableToken>& opener_devtools_frame_token =
+      frame_tree_node_->opener_devtools_frame_token();
+  return opener_devtools_frame_token ? opener_devtools_frame_token->ToString()
+                                     : std::string();
+}
+
+bool RenderFrameDevToolsAgentHost::CanAccessOpener() {
+  return (frame_tree_node_ && frame_tree_node_->opener());
 }
 
 std::string RenderFrameDevToolsAgentHost::GetType() {
@@ -783,8 +790,8 @@ void RenderFrameDevToolsAgentHost::SignalSynchronousSwapCompositorFrame(
       static_cast<RenderFrameHostImpl*>(frame_host)->frame_tree_node()));
   if (dtah) {
     // Unblock the compositor.
-    base::PostTask(
-        FROM_HERE, {BrowserThread::UI},
+    GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE,
         base::BindOnce(
             &RenderFrameDevToolsAgentHost::SynchronousSwapCompositorFrame,
             dtah.get(), frame_metadata));
@@ -841,14 +848,21 @@ bool RenderFrameDevToolsAgentHost::ShouldAllowSession(
       !manager->delegate()->AllowInspectingRenderFrameHost(frame_host_)) {
     return false;
   }
-  auto* root = static_cast<RenderFrameHostImpl*>(frame_host_)->frame_tree_node();
+  // In case this is called during the navigation, besides checking the
+  // access to the entire current local tree (below), ensure we can access
+  // the target URL.
+  const GURL& target_url = frame_host_->GetSiteInstance()->GetSiteURL();
+  if (!session->GetClient()->MayAttachToURL(target_url,
+                                            frame_host_->web_ui())) {
+    return false;
+  }
+  auto* root = FrameTreeNode::From(frame_host_);
   for (FrameTreeNode* node : root->frame_tree()->SubtreeNodes(root)) {
     // Note this may be called before navigation is committed.
     RenderFrameHostImpl* rfh = node->current_frame_host();
     const GURL& url = rfh->GetSiteInstance()->GetSiteURL();
-    if (!session->GetClient()->MayAttachToURL(url, rfh->web_ui())) {
+    if (!session->GetClient()->MayAttachToURL(url, rfh->web_ui()))
       return false;
-    }
   }
   return true;
 }

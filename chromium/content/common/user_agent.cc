@@ -7,16 +7,21 @@
 #include <stdint.h>
 
 #include "base/feature_list.h"
-#include "base/logging.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "build/util/webkit_version.h"
+
+#if defined(OS_MAC)
+#include "base/mac/mac_util.h"
+#endif
 
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
-#elif defined(OS_POSIX) && !defined(OS_MACOSX)
+#elif defined(OS_POSIX) && !defined(OS_MAC)
 #include <sys/utsname.h>
 #endif
 
@@ -24,15 +29,10 @@ namespace content {
 
 namespace {
 
-#if defined(OS_ANDROID)
-const base::Feature kAndroidUserAgentStringContainsBuildId{
-    "AndroidUserAgentStringContainsBuildId", base::FEATURE_DISABLED_BY_DEFAULT};
-#endif  // defined(OS_ANDROID)
-
 std::string GetUserAgentPlatform() {
 #if defined(OS_WIN)
   return "";
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
   return "Macintosh; ";
 #elif defined(USE_X11) || defined(USE_OZONE)
   return "X11; ";  // strange, but that's what Firefox uses
@@ -61,9 +61,9 @@ std::string GetWebKitRevision() {
 }
 
 std::string BuildCpuInfo() {
-  std::string cpuinfo = "";
+  std::string cpuinfo;
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   cpuinfo = "Intel";
 #elif defined(OS_WIN)
   base::win::OSInfo* os_info = base::win::OSInfo::GetInstance();
@@ -77,7 +77,7 @@ std::string BuildCpuInfo() {
     else if (windows_architecture == base::win::OSInfo::IA64_ARCHITECTURE)
       cpuinfo = "Win64; IA64";
   }
-#elif defined(OS_POSIX) && !defined(OS_MACOSX)
+#elif defined(OS_POSIX) && !defined(OS_MAC)
   // Should work on any Posix system.
   struct utsname unixinfo;
   uname(&unixinfo);
@@ -94,9 +94,49 @@ std::string BuildCpuInfo() {
   return cpuinfo;
 }
 
-std::string GetOSVersion(bool include_android_build_number) {
+// Return the CPU architecture in Windows/Mac/POSIX and the empty string
+// elsewhere.
+std::string GetLowEntropyCpuArchitecture() {
+#if defined(OS_WIN)
+  base::win::OSInfo::WindowsArchitecture windows_architecture =
+      base::win::OSInfo::GetInstance()->GetArchitecture();
+  if (windows_architecture == base::win::OSInfo::ARM64_ARCHITECTURE) {
+    return "arm";
+  } else if ((windows_architecture == base::win::OSInfo::X86_ARCHITECTURE) ||
+             (windows_architecture == base::win::OSInfo::X64_ARCHITECTURE)) {
+    return "x86";
+  }
+#elif defined(OS_MAC)
+  base::mac::CPUType cpu_type = base::mac::GetCPUType();
+  if (cpu_type == base::mac::CPUType::kIntel) {
+    return "x86";
+  } else if (cpu_type == base::mac::CPUType::kArm ||
+             cpu_type == base::mac::CPUType::kTranslatedIntel) {
+    return "arm";
+  }
+#elif defined(OS_POSIX) && !defined(OS_ANDROID)
+  // This extra cpu_info_str variable is required to make sure the compiler
+  // doesn't optimize the copy away and have the StringPiece point at the
+  // internal std::string, resulting in a memory violation.
+  std::string cpu_info_str = BuildCpuInfo();
+  base::StringPiece cpu_info = cpu_info_str;
+  if (base::StartsWith(cpu_info, "arm") ||
+      base::StartsWith(cpu_info, "aarch")) {
+    return "arm";
+  } else if ((base::StartsWith(cpu_info, "i") &&
+              cpu_info.substr(2, 2) == "86") ||
+             base::StartsWith(cpu_info, "x86")) {
+    return "x86";
+  }
+#endif
+  return std::string();
+}
+
+std::string GetOSVersion(IncludeAndroidBuildNumber include_android_build_number,
+                         IncludeAndroidModel include_android_model) {
   std::string os_version;
-#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_CHROMEOS)
+#if defined(OS_WIN) || defined(OS_MAC) || defined(OS_CHROMEOS) || \
+    BUILDFLAG(IS_LACROS)
   int32_t os_major_version = 0;
   int32_t os_minor_version = 0;
   int32_t os_bugfix_version = 0;
@@ -106,18 +146,19 @@ std::string GetOSVersion(bool include_android_build_number) {
 
 #if defined(OS_ANDROID)
   std::string android_version_str = base::SysInfo::OperatingSystemVersion();
-  std::string android_info_str = GetAndroidOSInfo(include_android_build_number);
+  std::string android_info_str =
+      GetAndroidOSInfo(include_android_build_number, include_android_model);
 #endif
 
   base::StringAppendF(&os_version,
 #if defined(OS_WIN)
-                      "%d.%d; ", os_major_version, os_minor_version
-#elif defined(OS_MACOSX)
+                      "%d.%d", os_major_version, os_minor_version
+#elif defined(OS_MAC)
                       "%d_%d_%d", os_major_version, os_minor_version,
                       os_bugfix_version
-#elif defined(OS_CHROMEOS)
-                      "%d.%d.%d",
-                      os_major_version, os_minor_version, os_bugfix_version
+#elif defined(OS_CHROMEOS) || BUILDFLAG(IS_LACROS)
+                      "%d.%d.%d", os_major_version, os_minor_version,
+                      os_bugfix_version
 #elif defined(OS_ANDROID)
                       "%s%s", android_version_str.c_str(),
                       android_info_str.c_str()
@@ -128,26 +169,38 @@ std::string GetOSVersion(bool include_android_build_number) {
   return os_version;
 }
 
-std::string BuildOSCpuInfo(bool include_android_build_number) {
-  std::string cputype = BuildCpuInfo();
-  std::string os_version = GetOSVersion(include_android_build_number);
+std::string BuildOSCpuInfo(
+    IncludeAndroidBuildNumber include_android_build_number,
+    IncludeAndroidModel include_android_model) {
+  return BuildOSCpuInfoFromOSVersionAndCpuType(
+      GetOSVersion(include_android_build_number, include_android_model),
+      BuildCpuInfo());
+}
+
+std::string BuildOSCpuInfoFromOSVersionAndCpuType(const std::string& os_version,
+                                                  const std::string& cpu_type) {
   std::string os_cpu;
 
-#if !defined(OS_ANDROID) && defined(OS_POSIX) && !defined(OS_MACOSX)
+#if !defined(OS_ANDROID) && defined(OS_POSIX) && !defined(OS_MAC)
   // Should work on any Posix system.
   struct utsname unixinfo;
   uname(&unixinfo);
 #endif
 
-  base::StringAppendF(&os_cpu,
 #if defined(OS_WIN)
-                      "Windows NT %s%s", os_version.c_str(), cputype.c_str()
-#elif defined(OS_MACOSX)
-                      "%s Mac OS X %s", cputype.c_str(), os_version.c_str()
-#elif defined(OS_CHROMEOS)
+  if (!cpu_type.empty())
+    base::StringAppendF(&os_cpu, "Windows NT %s; %s", os_version.c_str(),
+                        cpu_type.c_str());
+  else
+    base::StringAppendF(&os_cpu, "Windows NT %s", os_version.c_str());
+#else
+  base::StringAppendF(&os_cpu,
+#if defined(OS_MAC)
+                      "%s Mac OS X %s", cpu_type.c_str(), os_version.c_str()
+#elif defined(OS_CHROMEOS) || BUILDFLAG(IS_LACROS)
                       "CrOS "
                       "%s %s",
-                      cputype.c_str(),  // e.g. i686
+                      cpu_type.c_str(),  // e.g. i686
                       os_version.c_str()
 #elif defined(OS_ANDROID)
                       "Android %s", os_version.c_str()
@@ -156,9 +209,10 @@ std::string BuildOSCpuInfo(bool include_android_build_number) {
 #elif defined(OS_POSIX)
                       "%s %s",
                       unixinfo.sysname,  // e.g. Linux
-                      cputype.c_str()    // e.g. i686
+                      cpu_type.c_str()   // e.g. i686
 #endif
   );
+#endif
 
   return os_cpu;
 }
@@ -178,12 +232,14 @@ std::string GetFrozenUserAgent(bool mobile, std::string major_version) {
 std::string BuildUserAgentFromProduct(const std::string& product) {
   std::string os_info;
   base::StringAppendF(&os_info, "%s%s", GetUserAgentPlatform().c_str(),
-                      BuildOSCpuInfo(false).c_str());
+                      BuildOSCpuInfo(IncludeAndroidBuildNumber::Exclude,
+                                     IncludeAndroidModel::Include)
+                          .c_str());
   return BuildUserAgentFromOSAndProduct(os_info, product);
 }
 
 std::string BuildModelInfo() {
-  std::string model = "";
+  std::string model;
 #if defined(OS_ANDROID)
   // Only send the model information if on the release build of Android,
   // matching user agent behaviour.
@@ -197,28 +253,32 @@ std::string BuildModelInfo() {
 std::string BuildUserAgentFromProductAndExtraOSInfo(
     const std::string& product,
     const std::string& extra_os_info,
-    bool include_android_build_number) {
+    IncludeAndroidBuildNumber include_android_build_number) {
   std::string os_info;
-  base::StringAppendF(&os_info, "%s%s%s", GetUserAgentPlatform().c_str(),
-                      BuildOSCpuInfo(include_android_build_number).c_str(),
-                      extra_os_info.c_str());
+  base::StrAppend(&os_info, {GetUserAgentPlatform(),
+                             BuildOSCpuInfo(include_android_build_number,
+                                            IncludeAndroidModel::Include),
+                             extra_os_info});
   return BuildUserAgentFromOSAndProduct(os_info, product);
 }
 
-std::string GetAndroidOSInfo(bool include_android_build_number) {
+std::string GetAndroidOSInfo(
+    IncludeAndroidBuildNumber include_android_build_number,
+    IncludeAndroidModel include_android_model) {
   std::string android_info_str;
 
   // Send information about the device.
   bool semicolon_inserted = false;
-  std::string android_device_name = BuildModelInfo();
-  if (!android_device_name.empty()) {
-    android_info_str += "; " + android_device_name;
-    semicolon_inserted = true;
+  if (include_android_model == IncludeAndroidModel::Include) {
+    std::string android_device_name = BuildModelInfo();
+    if (!android_device_name.empty()) {
+      android_info_str += "; " + android_device_name;
+      semicolon_inserted = true;
+    }
   }
 
   // Append the build ID.
-  if (base::FeatureList::IsEnabled(kAndroidUserAgentStringContainsBuildId) ||
-      include_android_build_number) {
+  if (include_android_build_number == IncludeAndroidBuildNumber::Include) {
     std::string android_build_id = base::SysInfo::GetAndroidBuildID();
     if (!android_build_id.empty()) {
       if (!semicolon_inserted)

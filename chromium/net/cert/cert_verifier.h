@@ -65,6 +65,12 @@ class NET_EXPORT CertVerifier {
     // system store. This is implementation-specific plumbing for passing
     // additional anchors through.
     CertificateList additional_trust_anchors;
+
+    // Additional temporary certs to consider as intermediates during path
+    // validation. Ordinarily, implementations of CertVerifier use intermediate
+    // certs from the configured system store. This is implementation-specific
+    // plumbing for passing additional intermediates through.
+    CertificateList additional_untrusted_authorities;
   };
 
   class Request {
@@ -115,6 +121,7 @@ class NET_EXPORT CertVerifier {
   // RFC6962 section 3.3.1. It may be ignored by the CertVerifier.
   class NET_EXPORT RequestParams {
    public:
+    RequestParams();
     RequestParams(scoped_refptr<X509Certificate> certificate,
                   const std::string& hostname,
                   int flags,
@@ -195,6 +202,11 @@ class NET_EXPORT CertVerifier {
   // Creates a CertVerifier implementation that verifies certificates using
   // the preferred underlying cryptographic libraries.  |cert_net_fetcher| may
   // not be used, depending on the platform.
+  static std::unique_ptr<CertVerifier> CreateDefaultWithoutCaching(
+      scoped_refptr<CertNetFetcher> cert_net_fetcher);
+
+  // Wraps the result of |CreateDefaultWithoutCaching| in a CachingCertVerifier
+  // and a CoalescingCertVerifier.
   static std::unique_ptr<CertVerifier> CreateDefault(
       scoped_refptr<CertNetFetcher> cert_net_fetcher);
 };

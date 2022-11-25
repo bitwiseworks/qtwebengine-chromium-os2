@@ -16,7 +16,7 @@
 #include "VkBuffer.hpp"
 #include "VkImage.hpp"
 
-#include "VkConfig.h"
+#include "VkConfig.hpp"
 
 namespace vk {
 
@@ -46,6 +46,13 @@ public:
 
 #if SWIFTSHADER_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER
 	virtual VkResult exportAhb(struct AHardwareBuffer **pAhb) const
+	{
+		return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+	}
+#endif
+
+#if VK_USE_PLATFORM_FUCHSIA
+	virtual VkResult exportHandle(zx_handle_t *pHandle) const
 	{
 		return VK_ERROR_INVALID_EXTERNAL_HANDLE;
 	}
@@ -219,6 +226,10 @@ private:
 #	endif
 #endif
 
+#if VK_USE_PLATFORM_FUCHSIA
+#	include "VkDeviceMemoryExternalFuchsia.hpp"
+#endif
+
 namespace vk {
 
 static void findTraits(const VkMemoryAllocateInfo *pAllocateInfo,
@@ -236,6 +247,12 @@ static void findTraits(const VkMemoryAllocateInfo *pAllocateInfo,
 		return;
 	}
 #endif
+#if VK_USE_PLATFORM_FUCHSIA
+	if(parseCreateInfo<zircon::VmoExternalMemory>(pAllocateInfo, pTraits))
+	{
+		return;
+	}
+#endif
 	if(parseCreateInfo<ExternalMemoryHost>(pAllocateInfo, pTraits))
 	{
 		return;
@@ -246,13 +263,13 @@ static void findTraits(const VkMemoryAllocateInfo *pAllocateInfo,
 DeviceMemory::DeviceMemory(const VkMemoryAllocateInfo *pAllocateInfo, void *mem)
     : size(pAllocateInfo->allocationSize)
     , memoryTypeIndex(pAllocateInfo->memoryTypeIndex)
-    , external(reinterpret_cast<ExternalBase *>(mem))
 {
 	ASSERT(size);
 
 	ExternalMemoryTraits traits;
 	findTraits(pAllocateInfo, &traits);
-	traits.instanceInit(external, pAllocateInfo);
+	traits.instanceInit(mem, pAllocateInfo);
+	external = reinterpret_cast<ExternalBase *>(mem);
 }
 
 void DeviceMemory::destroy(const VkAllocationCallbacks *pAllocator)
@@ -345,6 +362,13 @@ VkResult DeviceMemory::exportAhb(struct AHardwareBuffer **pAhb) const
 VkResult DeviceMemory::getAhbProperties(const struct AHardwareBuffer *buffer, VkAndroidHardwareBufferPropertiesANDROID *pProperties)
 {
 	return AHardwareBufferExternalMemory::getAhbProperties(buffer, pProperties);
+}
+#endif
+
+#if VK_USE_PLATFORM_FUCHSIA
+VkResult DeviceMemory::exportHandle(zx_handle_t *pHandle) const
+{
+	return external->exportHandle(pHandle);
 }
 #endif
 

@@ -4,15 +4,19 @@
 
 #include "src/snapshot/code-serializer.h"
 
+#include "src/base/platform/platform.h"
 #include "src/codegen/macro-assembler.h"
+#include "src/common/globals.h"
 #include "src/debug/debug.h"
 #include "src/heap/heap-inl.h"
+#include "src/heap/local-factory-inl.h"
 #include "src/logging/counters.h"
 #include "src/logging/log.h"
 #include "src/objects/objects-inl.h"
 #include "src/objects/slots.h"
 #include "src/objects/visitors.h"
 #include "src/snapshot/object-deserializer.h"
+#include "src/snapshot/snapshot-utils.h"
 #include "src/snapshot/snapshot.h"
 #include "src/utils/version.h"
 
@@ -31,7 +35,8 @@ ScriptData::ScriptData(const byte* data, int length)
 }
 
 CodeSerializer::CodeSerializer(Isolate* isolate, uint32_t source_hash)
-    : Serializer(isolate), source_hash_(source_hash) {
+    : Serializer(isolate, Snapshot::kDefaultSerializerFlags),
+      source_hash_(source_hash) {
   allocator()->UseCustomChunkSize(FLAG_serialization_chunk_size);
 }
 
@@ -61,7 +66,7 @@ ScriptCompiler::CachedData* CodeSerializer::Serialize(
   Handle<String> source(String::cast(script->source()), isolate);
   CodeSerializer cs(isolate, SerializedCodeData::SourceHash(
                                  source, script->origin_options()));
-  DisallowHeapAllocation no_gc;
+  DisallowGarbageCollection no_gc;
   cs.reference_map()->AddAttachedReference(
       reinterpret_cast<void*>(source->ptr()));
   ScriptData* script_data = cs.SerializeSharedFunctionInfo(info);
@@ -83,7 +88,7 @@ ScriptCompiler::CachedData* CodeSerializer::Serialize(
 
 ScriptData* CodeSerializer::SerializeSharedFunctionInfo(
     Handle<SharedFunctionInfo> info) {
-  DisallowHeapAllocation no_gc;
+  DisallowGarbageCollection no_gc;
 
   VisitRootPointer(Root::kHandleScope, nullptr,
                    FullObjectSlot(info.location()));
@@ -102,14 +107,14 @@ bool CodeSerializer::SerializeReadOnlyObject(HeapObject obj) {
   // create a back reference that encodes the page number as the chunk_index and
   // the offset within the page as the chunk_offset.
   Address address = obj.address();
-  Page* page = Page::FromAddress(address);
+  BasicMemoryChunk* chunk = BasicMemoryChunk::FromAddress(address);
   uint32_t chunk_index = 0;
   ReadOnlySpace* const read_only_space = isolate()->heap()->read_only_space();
-  for (Page* p : *read_only_space) {
-    if (p == page) break;
+  for (ReadOnlyPage* page : read_only_space->pages()) {
+    if (chunk == page) break;
     ++chunk_index;
   }
-  uint32_t chunk_offset = static_cast<uint32_t>(page->Offset(address));
+  uint32_t chunk_offset = static_cast<uint32_t>(chunk->Offset(address));
   SerializerReference back_reference = SerializerReference::BackReference(
       SnapshotSpace::kReadOnlyHeap, chunk_index, chunk_offset);
   reference_map()->Add(reinterpret_cast<void*>(obj.ptr()), back_reference);
@@ -190,12 +195,12 @@ void CodeSerializer::SerializeObject(HeapObject obj) {
   // bytecode array stored within the InterpreterData, which is the important
   // information. On deserialization we'll create our code objects again, if
   // --interpreted-frames-native-stack is on. See v8:9122 for more context
-#if !defined(V8_TARGET_ARCH_ARM) && !defined(V8_TARGET_ARCH_S390X)
+#ifndef V8_TARGET_ARCH_ARM
   if (V8_UNLIKELY(FLAG_interpreted_frames_native_stack) &&
       obj.IsInterpreterData()) {
     obj = InterpreterData::cast(obj).bytecode_array();
   }
-#endif  // !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_S390X
+#endif  // V8_TARGET_ARCH_ARM
 
   // Past this point we should not see any (context-specific) maps anymore.
   CHECK(!obj.IsMap());
@@ -215,7 +220,7 @@ void CodeSerializer::SerializeGeneric(HeapObject heap_object) {
   serializer.Serialize();
 }
 
-#if !defined(V8_TARGET_ARCH_ARM) && !defined(V8_TARGET_ARCH_S390X)
+#ifndef V8_TARGET_ARCH_ARM
 // NOTE(mmarchini): when FLAG_interpreted_frames_native_stack is on, we want to
 // create duplicates of InterpreterEntryTrampoline for the deserialized
 // functions, otherwise we'll call the builtin IET for those functions (which
@@ -255,7 +260,35 @@ void CreateInterpreterDataForDeserializedCode(Isolate* isolate,
                             column_num));
   }
 }
-#endif  // !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_S390X
+#endif  // V8_TARGET_ARCH_ARM
+
+namespace {
+class StressOffThreadDeserializeThread final : public base::Thread {
+ public:
+  explicit StressOffThreadDeserializeThread(LocalIsolate* local_isolate,
+                                            const SerializedCodeData* scd)
+      : Thread(
+            base::Thread::Options("StressOffThreadDeserializeThread", 2 * MB)),
+        local_isolate_(local_isolate),
+        scd_(scd) {}
+
+  MaybeHandle<SharedFunctionInfo> maybe_result() const { return maybe_result_; }
+
+  void Run() final {
+    MaybeHandle<SharedFunctionInfo> local_maybe_result =
+        ObjectDeserializer::DeserializeSharedFunctionInfoOffThread(
+            local_isolate_, scd_, local_isolate_->factory()->empty_string());
+
+    maybe_result_ =
+        local_isolate_->heap()->NewPersistentMaybeHandle(local_maybe_result);
+  }
+
+ private:
+  LocalIsolate* local_isolate_;
+  const SerializedCodeData* scd_;
+  MaybeHandle<SharedFunctionInfo> maybe_result_;
+};
+}  // namespace
 
 MaybeHandle<SharedFunctionInfo> CodeSerializer::Deserialize(
     Isolate* isolate, ScriptData* cached_data, Handle<String> source,
@@ -268,8 +301,7 @@ MaybeHandle<SharedFunctionInfo> CodeSerializer::Deserialize(
   SerializedCodeData::SanityCheckResult sanity_check_result =
       SerializedCodeData::CHECK_SUCCESS;
   const SerializedCodeData scd = SerializedCodeData::FromCachedData(
-      isolate, cached_data,
-      SerializedCodeData::SourceHash(source, origin_options),
+      cached_data, SerializedCodeData::SourceHash(source, origin_options),
       &sanity_check_result);
   if (sanity_check_result != SerializedCodeData::CHECK_SUCCESS) {
     if (FLAG_profile_deserialization) PrintF("[Cached code failed check]\n");
@@ -280,8 +312,26 @@ MaybeHandle<SharedFunctionInfo> CodeSerializer::Deserialize(
   }
 
   // Deserialize.
-  MaybeHandle<SharedFunctionInfo> maybe_result =
-      ObjectDeserializer::DeserializeSharedFunctionInfo(isolate, &scd, source);
+  MaybeHandle<SharedFunctionInfo> maybe_result;
+  // TODO(leszeks): Add LocalHeap support to deserializer
+  if (false && FLAG_stress_background_compile) {
+    LocalIsolate local_isolate(isolate);
+
+    StressOffThreadDeserializeThread thread(&local_isolate, &scd);
+    CHECK(thread.Start());
+    thread.Join();
+
+    maybe_result = thread.maybe_result();
+
+    // Fix-up result script source.
+    Handle<SharedFunctionInfo> result;
+    if (maybe_result.ToHandle(&result)) {
+      Script::cast(result->script()).set_source(*source);
+    }
+  } else {
+    maybe_result = ObjectDeserializer::DeserializeSharedFunctionInfo(
+        isolate, &scd, source);
+  }
 
   Handle<SharedFunctionInfo> result;
   if (!maybe_result.ToHandle(&result)) {
@@ -301,11 +351,11 @@ MaybeHandle<SharedFunctionInfo> CodeSerializer::Deserialize(
       isolate->is_profiling() ||
       isolate->code_event_dispatcher()->IsListeningToCodeEvents();
 
-#if !defined(V8_TARGET_ARCH_ARM) && !defined(V8_TARGET_ARCH_S390X)
+#ifndef V8_TARGET_ARCH_ARM
   if (V8_UNLIKELY(FLAG_interpreted_frames_native_stack))
     CreateInterpreterDataForDeserializedCode(isolate, result,
                                              log_code_creation);
-#endif  // !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_S390X
+#endif  // V8_TARGET_ARCH_ARM
 
   bool needs_source_positions = isolate->NeedsSourcePositionsForProfiling();
 
@@ -334,7 +384,7 @@ MaybeHandle<SharedFunctionInfo> CodeSerializer::Deserialize(
             SharedFunctionInfo::EnsureSourcePositionsAvailable(isolate,
                                                                shared_info);
           }
-          DisallowHeapAllocation no_gc;
+          DisallowGarbageCollection no_gc;
           int line_num =
               script->GetLineNumber(shared_info->StartPosition()) + 1;
           int column_num =
@@ -355,10 +405,9 @@ MaybeHandle<SharedFunctionInfo> CodeSerializer::Deserialize(
   return scope.CloseAndEscape(result);
 }
 
-
 SerializedCodeData::SerializedCodeData(const std::vector<byte>* payload,
                                        const CodeSerializer* cs) {
-  DisallowHeapAllocation no_gc;
+  DisallowGarbageCollection no_gc;
   std::vector<Reservation> reservations = cs->EncodeReservations();
 
   // Calculate sizes.
@@ -403,7 +452,7 @@ SerializedCodeData::SerializedCodeData(const std::vector<byte>* payload,
 }
 
 SerializedCodeData::SanityCheckResult SerializedCodeData::SanityCheck(
-    Isolate* isolate, uint32_t expected_source_hash) const {
+    uint32_t expected_source_hash) const {
   if (this->size_ < kHeaderSize) return INVALID_HEADER;
   uint32_t magic_number = GetMagicNumber();
   if (magic_number != kMagicNumber) return MAGIC_NUMBER_MISMATCH;
@@ -469,11 +518,11 @@ SerializedCodeData::SerializedCodeData(ScriptData* data)
     : SerializedData(const_cast<byte*>(data->data()), data->length()) {}
 
 SerializedCodeData SerializedCodeData::FromCachedData(
-    Isolate* isolate, ScriptData* cached_data, uint32_t expected_source_hash,
+    ScriptData* cached_data, uint32_t expected_source_hash,
     SanityCheckResult* rejection_result) {
-  DisallowHeapAllocation no_gc;
+  DisallowGarbageCollection no_gc;
   SerializedCodeData scd(cached_data);
-  *rejection_result = scd.SanityCheck(isolate, expected_source_hash);
+  *rejection_result = scd.SanityCheck(expected_source_hash);
   if (*rejection_result != CHECK_SUCCESS) {
     cached_data->Reject();
     return SerializedCodeData(nullptr, 0);

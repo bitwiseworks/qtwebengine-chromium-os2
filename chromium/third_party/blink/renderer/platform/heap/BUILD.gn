@@ -27,6 +27,10 @@ jumbo_source_set("heap_unsanitized") {
   configs +=
       [ "//third_party/blink/renderer/platform:blink_platform_implementation" ]
 
+  # std::atomic<>:: functions must be inlined.
+  configs -= [ "//build/config/compiler:default_optimization" ]
+  configs += [ "//build/config/compiler:optimize_max" ]
+
   sources = [
     "unsanitized_atomic.cc",
     "unsanitized_atomic.h",
@@ -36,6 +40,7 @@ jumbo_source_set("heap_unsanitized") {
     "//base",
     "//third_party/blink/renderer/platform/wtf",
   ]
+  public_deps = [ "//third_party/blink/renderer/platform:platform_export" ]
 }
 
 blink_platform_sources("heap") {
@@ -45,8 +50,6 @@ blink_platform_sources("heap") {
     "blink_gc.h",
     "blink_gc_memory_dump_provider.cc",
     "blink_gc_memory_dump_provider.h",
-    "cancelable_task_scheduler.cc",
-    "cancelable_task_scheduler.h",
     "collection_support/heap_hash_table_backing.h",
     "collection_support/heap_linked_stack.h",
     "collection_support/heap_vector_backing.h",
@@ -68,6 +71,8 @@ blink_platform_sources("heap") {
     "heap_stats_collector.cc",
     "heap_stats_collector.h",
     "heap_traits.h",
+    "marking_scheduling_oracle.cc",
+    "marking_scheduling_oracle.h",
     "marking_verifier.cc",
     "marking_verifier.h",
     "marking_visitor.cc",
@@ -114,6 +119,13 @@ blink_platform_sources("heap") {
     configs -= [ "//build/config/compiler:default_optimization" ]
     configs += [ "//build/config/compiler:optimize_max" ]
   }
+
+  visibility = [
+    "//third_party/blink/renderer/platform:platform",
+    "//third_party/blink/renderer/platform/instrumentation:instrumentation",
+    "//third_party/blink/renderer/platform/loader:loader",
+    "//third_party/blink/renderer/platform/scheduler:scheduler",
+  ]
 }
 
 jumbo_source_set("test_support") {
@@ -129,7 +141,9 @@ jumbo_source_set("test_support") {
     "//testing/gtest",
     "//third_party/blink/public/mojom:mojom_platform_blink_headers",
     "//third_party/blink/renderer/platform:bindings_buildflags",
+    "//third_party/blink/renderer/platform:platform",
   ]
+  public_deps = [ "//base/test:test_support" ]
 }
 
 test("blink_heap_unittests") {
@@ -148,30 +162,30 @@ jumbo_source_set("blink_heap_unittests_sources") {
   testonly = true
   sources = [
     "../testing/run_all_tests.cc",
-    "blink_gc_memory_dump_provider_test.cc",
-    "cancelable_task_scheduler_test.cc",
-    "card_table_test.cc",
-    "collection_support/heap_linked_stack_test.cc",
-    "concurrent_marking_test.cc",
-    "gc_info_test.cc",
-    "heap_compact_test.cc",
-    "heap_stats_collector_test.cc",
-    "heap_test.cc",
-    "heap_thread_test.cc",
-    "heap_traits_test.cc",
-    "incremental_marking_test.cc",
-    "marking_verifier_test.cc",
-    "name_trait_test.cc",
-    "object_start_bitmap_test.cc",
-    "persistent_test.cc",
-    "thread_state_scheduling_test.cc",
-    "weakness_marking_test.cc",
-    "worklist_test.cc",
-    "write_barrier_perftest.cc",
+    "test/blink_gc_memory_dump_provider_test.cc",
+    "test/card_table_test.cc",
+    "test/concurrent_marking_test.cc",
+    "test/gc_info_test.cc",
+    "test/heap_compact_test.cc",
+    "test/heap_linked_stack_test.cc",
+    "test/heap_stats_collector_test.cc",
+    "test/heap_test.cc",
+    "test/heap_thread_test.cc",
+    "test/heap_traits_test.cc",
+    "test/incremental_marking_test.cc",
+    "test/marking_scheduling_oracle_test.cc",
+    "test/marking_verifier_test.cc",
+    "test/name_trait_test.cc",
+    "test/object_start_bitmap_test.cc",
+    "test/persistent_test.cc",
+    "test/thread_state_scheduling_test.cc",
+    "test/weakness_marking_test.cc",
+    "test/worklist_test.cc",
+    "test/write_barrier_perftest.cc",
   ]
 
   if (enable_blink_heap_young_generation) {
-    sources += [ "minor_gc_test.cc" ]
+    sources += [ "test/minor_gc_test.cc" ]
   }
 
   configs += [
@@ -181,8 +195,11 @@ jumbo_source_set("blink_heap_unittests_sources") {
   ]
 
   deps = [
+    ":test_support",
     "//base",
     "//base/test:test_support",
+    "//mojo/core/embedder:embedder",
+    "//skia:test_fonts",
     "//testing/gmock",
     "//testing/gtest",
     "//third_party/blink/renderer/platform:test_support",

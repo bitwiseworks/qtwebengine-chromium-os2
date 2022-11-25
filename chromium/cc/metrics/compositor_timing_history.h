@@ -11,6 +11,7 @@
 #include "cc/base/rolling_time_delta_history.h"
 #include "cc/cc_export.h"
 #include "cc/metrics/event_metrics.h"
+#include "cc/scheduler/scheduler.h"
 #include "cc/tiles/tile_priority.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 
@@ -73,13 +74,13 @@ class CC_EXPORT CompositorTimingHistory {
 
   // Events to be timed.
   void WillBeginImplFrame(const viz::BeginFrameArgs& args,
-                          bool new_active_tree_is_likely,
                           base::TimeTicks now);
   void WillFinishImplFrame(bool needs_redraw, const viz::BeginFrameId& id);
   void BeginImplFrameNotExpectedSoon();
   void WillBeginMainFrame(const viz::BeginFrameArgs& args);
   void BeginMainFrameStarted(base::TimeTicks begin_main_frame_start_time_);
-  void BeginMainFrameAborted(const viz::BeginFrameId& id);
+  void BeginMainFrameAborted(const viz::BeginFrameId& id,
+                             CommitEarlyOutReason reason);
   void NotifyReadyToCommit(std::unique_ptr<BeginMainFrameMetrics> details);
   void WillCommit();
   void DidCommit();
@@ -90,17 +91,14 @@ class CC_EXPORT CompositorTimingHistory {
   void DidActivate();
   void WillDraw();
   void DidDraw(bool used_new_active_tree,
-               size_t composited_animations_count,
-               size_t main_thread_animations_count,
-               bool current_frame_had_raf,
-               bool next_frame_has_pending_raf,
                bool has_custom_property_animations);
   void DidSubmitCompositorFrame(
       uint32_t frame_token,
       const viz::BeginFrameId& current_frame_id,
       const viz::BeginFrameId& last_activated_frame_id,
       EventMetricsSet events_metrics);
-  void DidNotProduceFrame(const viz::BeginFrameId& id);
+  void DidNotProduceFrame(const viz::BeginFrameId& id,
+                          FrameSkippedReason skip_reason);
   void DidReceiveCompositorFrameAck();
   void DidPresentCompositorFrame(uint32_t frame_token,
                                  const viz::FrameTimingDetails& details);
@@ -123,7 +121,6 @@ class CC_EXPORT CompositorTimingHistory {
  protected:
   void DidBeginMainFrame(base::TimeTicks begin_main_frame_end_time);
 
-  void SetBeginMainFrameNeededContinuously(bool active);
   void SetCompositorDrawingContinuously(bool active);
 
   static std::unique_ptr<UMAReporter> CreateUMAReporter(UMACategory category);
@@ -134,11 +131,8 @@ class CC_EXPORT CompositorTimingHistory {
 
   // Used to calculate frame rates of Main and Impl threads.
   bool did_send_begin_main_frame_;
-  bool begin_main_frame_needed_continuously_;
   bool compositor_drawing_continuously_;
-  base::TimeTicks begin_main_frame_end_time_prev_;
   base::TimeTicks new_active_tree_draw_end_time_prev_;
-  base::TimeTicks new_active_tree_draw_end_time_prev_committing_continuously_;
   base::TimeTicks draw_end_time_prev_;
 
   // If you add any history here, please remember to reset it in
@@ -177,10 +171,7 @@ class CC_EXPORT CompositorTimingHistory {
   CompositorFrameReportingController* compositor_frame_reporting_controller_;
 
   // Used only for reporting animation targeted UMA.
-  bool previous_frame_had_composited_animations_ = false;
-  bool previous_frame_had_main_thread_animations_ = false;
   bool previous_frame_had_custom_property_animations_ = false;
-  bool previous_frame_had_raf_ = false;
 
   TreePriority tree_priority_ = SAME_PRIORITY_FOR_BOTH_TREES;
 };

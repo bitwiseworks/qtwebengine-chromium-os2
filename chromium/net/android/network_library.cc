@@ -8,7 +8,7 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "net/dns/public/dns_protocol.h"
 #include "net/net_jni_headers/AndroidNetworkLibrary_jni.h"
 #include "net/net_jni_headers/DnsStatus_jni.h"
@@ -157,6 +157,11 @@ internal::ConfigParsePosixResult GetDnsServers(
 
   return dns_servers->size() ? internal::CONFIG_PARSE_POSIX_OK
                              : internal::CONFIG_PARSE_POSIX_NO_NAMESERVERS;
+}
+
+bool ReportBadDefaultNetwork() {
+  return Java_AndroidNetworkLibrary_reportBadDefaultNetwork(
+      AttachCurrentThread());
 }
 
 void TagSocket(SocketDescriptor socket, uid_t uid, int32_t tag) {

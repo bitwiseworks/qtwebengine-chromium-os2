@@ -10,6 +10,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "ui/aura/window.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/pointer/touch_editing_controller.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/canvas.h"
@@ -25,9 +26,16 @@
 namespace views {
 namespace {
 
-constexpr int kMenuCommands[] = {IDS_APP_CUT, IDS_APP_COPY, IDS_APP_PASTE};
+struct MenuCommand {
+  int command_id;
+  int message_id;
+} kMenuCommands[] = {
+    {ui::TouchEditable::kCut, IDS_APP_CUT},
+    {ui::TouchEditable::kCopy, IDS_APP_COPY},
+    {ui::TouchEditable::kPaste, IDS_APP_PASTE},
+};
+
 constexpr int kSpacingBetweenButtons = 2;
-constexpr int kEllipsesButtonTag = -1;
 
 }  // namespace
 
@@ -95,8 +103,8 @@ bool TouchSelectionMenuViews::IsMenuAvailable(
     const ui::TouchSelectionMenuClient* client) {
   DCHECK(client);
 
-  const auto is_enabled = [client](int command) {
-    return client->IsCommandIdEnabled(command);
+  const auto is_enabled = [client](MenuCommand command) {
+    return client->IsCommandIdEnabled(command.command_id);
   };
   return std::any_of(std::cbegin(kMenuCommands), std::cend(kMenuCommands),
                      is_enabled);
@@ -113,22 +121,25 @@ void TouchSelectionMenuViews::CloseMenu() {
 TouchSelectionMenuViews::~TouchSelectionMenuViews() = default;
 
 void TouchSelectionMenuViews::CreateButtons() {
-  for (int command_id : kMenuCommands) {
-    if (!client_->IsCommandIdEnabled(command_id))
+  for (const auto& command : kMenuCommands) {
+    if (!client_->IsCommandIdEnabled(command.command_id))
       continue;
 
     Button* button =
-        CreateButton(l10n_util::GetStringUTF16(command_id), command_id);
+        CreateButton(l10n_util::GetStringUTF16(command.message_id));
+    button->set_tag(command.command_id);
     AddChildView(button);
   }
 
-  // Finally, add ellipses button.
-  AddChildView(CreateButton(base::ASCIIToUTF16("..."), kEllipsesButtonTag));
+  // Finally, add ellipsis button.
+  LabelButton* ellipsis_button = CreateButton(base::ASCIIToUTF16("..."));
+  ellipsis_button->SetID(ButtonViewId::kEllipsisButton);
+  AddChildView(ellipsis_button);
   InvalidateLayout();
 }
 
-LabelButton* TouchSelectionMenuViews::CreateButton(const base::string16& title,
-                                                   int tag) {
+LabelButton* TouchSelectionMenuViews::CreateButton(
+    const base::string16& title) {
   base::string16 label =
       gfx::RemoveAcceleratorChar(title, '&', nullptr, nullptr);
   LabelButton* button = new LabelButton(this, label, style::CONTEXT_TOUCH_MENU);
@@ -136,7 +147,6 @@ LabelButton* TouchSelectionMenuViews::CreateButton(const base::string16& title,
   button->SetMinSize(kMenuButtonMinSize);
   button->SetFocusForPlatform();
   button->SetHorizontalAlignment(gfx::ALIGN_CENTER);
-  button->set_tag(tag);
   return button;
 }
 
@@ -171,14 +181,13 @@ void TouchSelectionMenuViews::WindowClosing() {
 void TouchSelectionMenuViews::ButtonPressed(Button* sender,
                                             const ui::Event& event) {
   CloseMenu();
-  if (sender->tag() != kEllipsesButtonTag)
+  if (sender->GetID() != ButtonViewId::kEllipsisButton)
     client_->ExecuteCommand(sender->tag(), event.flags());
   else
     client_->RunContextMenu();
 }
 
-BEGIN_METADATA(TouchSelectionMenuViews)
-METADATA_PARENT_CLASS(BubbleDialogDelegateView)
-END_METADATA()
+BEGIN_METADATA(TouchSelectionMenuViews, BubbleDialogDelegateView)
+END_METADATA
 
 }  // namespace views

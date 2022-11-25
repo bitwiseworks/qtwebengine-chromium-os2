@@ -6,6 +6,8 @@
 #define COMPONENTS_SIGNIN_PUBLIC_IDENTITY_MANAGER_IDENTITY_TEST_ENVIRONMENT_H_
 
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "base/callback.h"
 #include "base/optional.h"
@@ -20,6 +22,10 @@ class FakeProfileOAuth2TokenService;
 class IdentityTestEnvironmentProfileAdaptor;
 class PrefService;
 class TestSigninClient;
+
+namespace chromeos {
+class AccountManagerFactory;
+}
 
 namespace sync_preferences {
 class TestingPrefServiceSyncable;
@@ -44,6 +50,19 @@ class TestIdentityManagerObserver;
 // requirement.
 class IdentityTestEnvironment : public IdentityManager::DiagnosticsObserver {
  public:
+  struct PendingRequest {
+    PendingRequest(CoreAccountId account_id,
+                   std::string client_id,
+                   std::string client_secret,
+                   OAuth2AccessTokenManager::ScopeSet scopes);
+    PendingRequest(const PendingRequest&);
+    ~PendingRequest();
+    CoreAccountId account_id;
+    std::string client_id;
+    std::string client_secret;
+    OAuth2AccessTokenManager::ScopeSet scopes;
+  };
+
   // Preferred constructor: constructs an IdentityManager object and its
   // dependencies internally. Cannot be used if the client of this class
   // is still interacting directly with those dependencies (e.g., if
@@ -124,6 +143,8 @@ class IdentityTestEnvironment : public IdentityManager::DiagnosticsObserver {
   // Like MakeAccountAvailable(), but adds an "unconsented" primary account. See
   // ./README.md for the distinction between primary account and unconsented
   // primary account.
+  // TODO(crbug.com/1046746): Rename/Refactor |*PrimaryAccount*| functions to
+  // take |ConsentLevel| instead.
   AccountInfo MakeUnconsentedPrimaryAccountAvailable(const std::string& email);
 
   // Combination of MakeAccountAvailable() and SetCookieAccounts() for a single
@@ -272,6 +293,9 @@ class IdentityTestEnvironment : public IdentityManager::DiagnosticsObserver {
   // Returns whether there is a access token request pending.
   bool IsAccessTokenRequestPending();
 
+  // Returns the pending access token requests.
+  std::vector<PendingRequest> GetPendingAccessTokenRequests();
+
   // Sets whether the list of accounts in Gaia cookie jar is fresh and does not
   // need to be updated.
   void SetFreshnessOfAccountsInGaiaCookie(bool accounts_are_fresh);
@@ -295,6 +319,11 @@ class IdentityTestEnvironment : public IdentityManager::DiagnosticsObserver {
 
   // Simulates a merge session failure with |auth_error| as the error.
   void SimulateMergeSessionFailure(const GoogleServiceAuthError& auth_error);
+
+  // Sets the TestURLLoaderFactory used for cookie-related requests. This
+  // factory is expected to be the same factory as the one used by SigninClient.
+  void SetTestURLLoaderFactory(
+      network::TestURLLoaderFactory* test_url_loader_factory);
 
  private:
   friend class ::IdentityTestEnvironmentProfileAdaptor;
@@ -322,7 +351,7 @@ class IdentityTestEnvironment : public IdentityManager::DiagnosticsObserver {
       AccountConsistencyMethod account_consistency);
 
   // Constructs an IdentityTestEnvironment that uses the supplied
-  // |identity_manager|.
+  // |identity_manager| and |signin_client|.
   // For use only in contexts where IdentityManager and its dependencies are all
   // unavoidably created by the embedder (e.g., //chrome-level unittests that
   // use the ProfileKeyedServiceFactory infrastructure).
@@ -330,7 +359,39 @@ class IdentityTestEnvironment : public IdentityManager::DiagnosticsObserver {
   // unittests that must use the IdentityManager instance associated with the
   // Profile. If you think you have another use case for it, contact
   // blundell@chromium.org.
-  IdentityTestEnvironment(IdentityManager* identity_manager);
+  IdentityTestEnvironment(IdentityManager* identity_manager,
+                          SigninClient* signin_client);
+
+  // Shared constructor initialization logic.
+  void Initialize();
+
+  // Create an IdentityManager instance for tests.
+#if defined(OS_CHROMEOS)
+  static std::unique_ptr<IdentityManager> BuildIdentityManagerForTests(
+      SigninClient* signin_client,
+      PrefService* pref_service,
+      base::FilePath user_data_dir,
+      chromeos::AccountManagerFactory* chromeos_account_manager_factory,
+      AccountConsistencyMethod account_consistency =
+          AccountConsistencyMethod::kDisabled);
+#else
+  static std::unique_ptr<IdentityManager> BuildIdentityManagerForTests(
+      SigninClient* signin_client,
+      PrefService* pref_service,
+      base::FilePath user_data_dir,
+      AccountConsistencyMethod account_consistency =
+          AccountConsistencyMethod::kDisabled);
+#endif
+
+  static std::unique_ptr<IdentityManager> FinishBuildIdentityManagerForTests(
+      IdentityManager::InitParameters&& init_params,
+      std::unique_ptr<AccountTrackerService> account_tracker_service,
+      std::unique_ptr<ProfileOAuth2TokenService> token_service,
+      SigninClient* signin_client,
+      PrefService* pref_service,
+      base::FilePath user_data_dir,
+      AccountConsistencyMethod account_consistency =
+          AccountConsistencyMethod::kDisabled);
 
   // IdentityManager::DiagnosticsObserver:
   void OnAccessTokenRequested(const CoreAccountId& account_id,
@@ -353,12 +414,20 @@ class IdentityTestEnvironment : public IdentityManager::DiagnosticsObserver {
   // Returns the FakeProfileOAuth2TokenService owned by IdentityManager.
   FakeProfileOAuth2TokenService* fake_token_service();
 
+  // Returns the TestURLLoaderFactory that is either extracted from
+  // IdentityManagerDependenciesOwner or set manually via
+  // SetTestURLLoaderFactory(). Crashes if the factory wasn't set.
+  network::TestURLLoaderFactory* test_url_loader_factory();
+
   // Owner of all dependencies that don't belong to IdentityManager.
   std::unique_ptr<IdentityManagerDependenciesOwner> dependencies_owner_;
 
-  // This will be null if a TestSigninClient was provided to
-  // IdentityTestEnvironment's constructor.
-  std::unique_ptr<TestSigninClient> owned_signin_client_;
+  // Non-owning pointer to the TestURLLoaderFactory.
+  network::TestURLLoaderFactory* test_url_loader_factory_ = nullptr;
+
+  // If IdentityTestEnvironment doesn't use TestSigninClient, stores a
+  // non-owning pointer to the SigninClient.
+  SigninClient* raw_signin_client_ = nullptr;
 
   // Depending on which constructor is used, exactly one of these will be
   // non-null. See the documentation on the constructor wherein IdentityManager
@@ -370,17 +439,6 @@ class IdentityTestEnvironment : public IdentityManager::DiagnosticsObserver {
 
   base::OnceClosure on_access_token_requested_callback_;
   std::vector<AccessTokenRequestState> requesters_;
-
-  // Create an IdentityManager instance for tests.
-  static std::unique_ptr<IdentityManager> BuildIdentityManagerForTests(
-      SigninClient* signin_client,
-      PrefService* pref_service,
-      base::FilePath user_data_dir,
-      AccountConsistencyMethod account_consistency =
-          AccountConsistencyMethod::kDisabled);
-
-  // Shared constructor initialization logic.
-  void Initialize();
 
   base::WeakPtrFactory<IdentityTestEnvironment> weak_ptr_factory_{this};
 

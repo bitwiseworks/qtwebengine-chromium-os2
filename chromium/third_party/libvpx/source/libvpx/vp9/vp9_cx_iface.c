@@ -355,13 +355,14 @@ static vpx_codec_err_t validate_img(vpx_codec_alg_priv_t *ctx,
   switch (img->fmt) {
     case VPX_IMG_FMT_YV12:
     case VPX_IMG_FMT_I420:
-    case VPX_IMG_FMT_I42016: break;
+    case VPX_IMG_FMT_I42016:
+    case VPX_IMG_FMT_NV12: break;
     case VPX_IMG_FMT_I422:
     case VPX_IMG_FMT_I444:
     case VPX_IMG_FMT_I440:
       if (ctx->cfg.g_profile != (unsigned int)PROFILE_1) {
         ERROR(
-            "Invalid image format. I422, I444, I440 images are "
+            "Invalid image format. I422, I444, I440, NV12 images are "
             "not supported in profile.");
       }
       break;
@@ -391,6 +392,7 @@ static vpx_codec_err_t validate_img(vpx_codec_alg_priv_t *ctx,
 static int get_image_bps(const vpx_image_t *img) {
   switch (img->fmt) {
     case VPX_IMG_FMT_YV12:
+    case VPX_IMG_FMT_NV12:
     case VPX_IMG_FMT_I420: return 12;
     case VPX_IMG_FMT_I422: return 16;
     case VPX_IMG_FMT_I444: return 24;
@@ -468,10 +470,11 @@ static vpx_rational64_t get_g_timebase_in_ts(vpx_rational_t g_timebase) {
 }
 
 static vpx_codec_err_t set_encoder_config(
-    VP9EncoderConfig *oxcf, const vpx_codec_enc_cfg_t *cfg,
+    VP9EncoderConfig *oxcf, vpx_codec_enc_cfg_t *cfg,
     const struct vp9_extracfg *extra_cfg) {
   const int is_vbr = cfg->rc_end_usage == VPX_VBR;
   int sl, tl;
+  unsigned int raw_target_rate;
   oxcf->profile = cfg->g_profile;
   oxcf->max_threads = (int)cfg->g_threads;
   oxcf->width = cfg->g_w;
@@ -498,8 +501,14 @@ static vpx_codec_err_t set_encoder_config(
       cfg->g_pass == VPX_RC_FIRST_PASS ? 0 : cfg->g_lag_in_frames;
   oxcf->rc_mode = cfg->rc_end_usage;
 
+  raw_target_rate =
+      (unsigned int)((int64_t)oxcf->width * oxcf->height * oxcf->bit_depth * 3 *
+                     oxcf->init_framerate / 1000);
+  // Cap target bitrate to raw rate
+  cfg->rc_target_bitrate = VPXMIN(raw_target_rate, cfg->rc_target_bitrate);
+
   // Convert target bandwidth from Kbit/s to Bit/s
-  oxcf->target_bandwidth = 1000 * cfg->rc_target_bitrate;
+  oxcf->target_bandwidth = 1000 * (int64_t)cfg->rc_target_bitrate;
   oxcf->rc_max_intra_bitrate_pct = extra_cfg->rc_max_intra_bitrate_pct;
   oxcf->rc_max_inter_bitrate_pct = extra_cfg->rc_max_inter_bitrate_pct;
   oxcf->gf_cbr_boost_pct = extra_cfg->gf_cbr_boost_pct;
@@ -698,6 +707,10 @@ static vpx_codec_err_t ctrl_set_cpuused(vpx_codec_alg_priv_t *ctx,
   extra_cfg.cpu_used = CAST(VP8E_SET_CPUUSED, args);
   extra_cfg.cpu_used = VPXMIN(9, extra_cfg.cpu_used);
   extra_cfg.cpu_used = VPXMAX(-9, extra_cfg.cpu_used);
+#if CONFIG_REALTIME_ONLY
+  if (extra_cfg.cpu_used > -5 && extra_cfg.cpu_used < 5)
+    extra_cfg.cpu_used = (extra_cfg.cpu_used > 0) ? 5 : -5;
+#endif
   return update_extra_cfg(ctx, &extra_cfg);
 }
 
@@ -1703,6 +1716,14 @@ static vpx_codec_err_t ctrl_set_postencode_drop(vpx_codec_alg_priv_t *ctx,
   return VPX_CODEC_OK;
 }
 
+static vpx_codec_err_t ctrl_set_disable_overshoot_maxq_cbr(
+    vpx_codec_alg_priv_t *ctx, va_list args) {
+  VP9_COMP *const cpi = ctx->cpi;
+  const unsigned int data = va_arg(args, unsigned int);
+  cpi->rc.disable_overshoot_maxq_cbr = data;
+  return VPX_CODEC_OK;
+}
+
 static vpx_codec_ctrl_fn_map_t encoder_ctrl_maps[] = {
   { VP8_COPY_REFERENCE, ctrl_copy_reference },
 
@@ -1747,6 +1768,7 @@ static vpx_codec_ctrl_fn_map_t encoder_ctrl_maps[] = {
   { VP9E_SET_TARGET_LEVEL, ctrl_set_target_level },
   { VP9E_SET_ROW_MT, ctrl_set_row_mt },
   { VP9E_SET_POSTENCODE_DROP, ctrl_set_postencode_drop },
+  { VP9E_SET_DISABLE_OVERSHOOT_MAXQ_CBR, ctrl_set_disable_overshoot_maxq_cbr },
   { VP9E_ENABLE_MOTION_VECTOR_UNIT_TEST, ctrl_enable_motion_vector_unit_test },
   { VP9E_SET_SVC_INTER_LAYER_PRED, ctrl_set_svc_inter_layer_pred },
   { VP9E_SET_SVC_FRAME_DROP_LAYER, ctrl_set_svc_frame_drop_layer },
@@ -1886,7 +1908,7 @@ static vp9_extracfg get_extra_cfg() {
 
 VP9EncoderConfig vp9_get_encoder_config(int frame_width, int frame_height,
                                         vpx_rational_t frame_rate,
-                                        int target_bitrate,
+                                        int target_bitrate, int encode_speed,
                                         vpx_enc_pass enc_pass) {
   /* This function will generate the same VP9EncoderConfig used by the
    * vpxenc command given below.
@@ -1897,6 +1919,7 @@ VP9EncoderConfig vp9_get_encoder_config(int frame_width, int frame_height,
    * HEIGHT:  frame_height
    * FPS:     frame_rate
    * BITRATE: target_bitrate
+   * CPU_USED:encode_speed
    *
    * INPUT, OUTPUT, LIMIT will not affect VP9EncoderConfig
    *
@@ -1908,9 +1931,10 @@ VP9EncoderConfig vp9_get_encoder_config(int frame_width, int frame_height,
    * BITRATE=600
    * FPS=30/1
    * LIMIT=150
+   * CPU_USED=0
    * ./vpxenc --limit=$LIMIT --width=$WIDTH --height=$HEIGHT --fps=$FPS
    * --lag-in-frames=25 \
-   *  --codec=vp9 --good --cpu-used=0 --threads=0 --profile=0 \
+   *  --codec=vp9 --good --cpu-used=CPU_USED --threads=0 --profile=0 \
    *  --min-q=0 --max-q=63 --auto-alt-ref=1 --passes=2 --kf-max-dist=150 \
    *  --kf-min-dist=0 --drop-frame=0 --static-thresh=0 --bias-pct=50 \
    *  --minsection-pct=0 --maxsection-pct=150 --arnr-maxframes=7 --psnr \
@@ -1933,6 +1957,7 @@ VP9EncoderConfig vp9_get_encoder_config(int frame_width, int frame_height,
   oxcf.tile_columns = 0;
   oxcf.frame_parallel_decoding_mode = 0;
   oxcf.two_pass_vbrmax_section = 150;
+  oxcf.speed = abs(encode_speed);
   return oxcf;
 }
 

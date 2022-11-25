@@ -26,8 +26,10 @@ network::mojom::CSPSourceListPtr BuildCSPSourceList(
     sources.push_back(BuildCSPSource(source));
 
   return network::mojom::CSPSourceList::New(
-      std::move(sources), source_list.allow_self, source_list.allow_star,
-      source_list.allow_redirects);
+      std::move(sources), std::vector<std::string>(),
+      std::vector<network::mojom::CSPHashSourcePtr>(), source_list.allow_self,
+      source_list.allow_star, source_list.allow_redirects, false, false, false,
+      false, false, false);
 }
 
 network::mojom::ContentSecurityPolicyPtr BuildContentSecurityPolicy(
@@ -42,6 +44,7 @@ network::mojom::ContentSecurityPolicyPtr BuildContentSecurityPolicy(
     auto name = network::ToCSPDirectiveName(directive.name.Utf8());
     policy->directives[name] = BuildCSPSourceList(directive.source_list);
   }
+  policy->upgrade_insecure_requests = policy_in.upgrade_insecure_requests;
 
   for (const blink::WebString& endpoint : policy_in.report_endpoints)
     policy->report_endpoints.push_back(endpoint.Utf8());

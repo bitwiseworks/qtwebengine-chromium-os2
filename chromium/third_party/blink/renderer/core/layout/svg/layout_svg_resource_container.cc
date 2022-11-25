@@ -49,6 +49,7 @@ LayoutSVGResourceContainer::LayoutSVGResourceContainer(SVGElement* node)
 LayoutSVGResourceContainer::~LayoutSVGResourceContainer() = default;
 
 void LayoutSVGResourceContainer::UpdateLayout() {
+  NOT_DESTROYED();
   // FIXME: Investigate a way to detect and break resource layout dependency
   // cycles early. Then we can remove this method altogether, and fall back onto
   // LayoutSVGHiddenContainer::layout().
@@ -64,6 +65,7 @@ void LayoutSVGResourceContainer::UpdateLayout() {
 }
 
 void LayoutSVGResourceContainer::WillBeDestroyed() {
+  NOT_DESTROYED();
   LayoutSVGHiddenContainer::WillBeDestroyed();
   // The resource is being torn down.
   // TODO(fs): Remove this when SVGResources is gone.
@@ -74,6 +76,7 @@ void LayoutSVGResourceContainer::WillBeDestroyed() {
 void LayoutSVGResourceContainer::StyleDidChange(
     StyleDifference diff,
     const ComputedStyle* old_style) {
+  NOT_DESTROYED();
   LayoutSVGHiddenContainer::StyleDidChange(diff, old_style);
   // The resource has been attached. Notify any pending clients that
   // they can now try to add themselves as clients to the resource.
@@ -86,6 +89,7 @@ void LayoutSVGResourceContainer::StyleDidChange(
 
 bool LayoutSVGResourceContainer::FindCycle(
     SVGResourcesCycleSolver& solver) const {
+  NOT_DESTROYED();
   if (solver.IsKnownAcyclic(this))
     return false;
   SVGResourcesCycleSolver::Scope scope(solver);
@@ -97,7 +101,7 @@ bool LayoutSVGResourceContainer::FindCycle(
 
 bool LayoutSVGResourceContainer::FindCycleInResources(
     SVGResourcesCycleSolver& solver,
-    const LayoutObject& layout_object) const {
+    const LayoutObject& layout_object) {
   SVGResources* resources =
       SVGResourcesCache::CachedResourcesForLayoutObject(layout_object);
   if (!resources)
@@ -116,30 +120,39 @@ bool LayoutSVGResourceContainer::FindCycleInResources(
 
 bool LayoutSVGResourceContainer::FindCycleFromSelf(
     SVGResourcesCycleSolver& solver) const {
-  if (FindCycleInResources(solver, *this))
-    return true;
-  return FindCycleInDescendants(solver);
+  NOT_DESTROYED();
+  return FindCycleInSubtree(solver, *this);
 }
 
 bool LayoutSVGResourceContainer::FindCycleInDescendants(
-    SVGResourcesCycleSolver& solver) const {
-  LayoutObject* node = FirstChild();
+    SVGResourcesCycleSolver& solver,
+    const LayoutObject& root) {
+  LayoutObject* node = root.SlowFirstChild();
   while (node) {
     // Skip subtrees which are themselves resources. (They will be
     // processed - if needed - when they are actually referenced.)
     if (node->IsSVGResourceContainer()) {
-      node = node->NextInPreOrderAfterChildren(this);
+      node = node->NextInPreOrderAfterChildren(&root);
       continue;
     }
     if (FindCycleInResources(solver, *node))
       return true;
-    node = node->NextInPreOrder(this);
+    node = node->NextInPreOrder(&root);
   }
   return false;
 }
 
+bool LayoutSVGResourceContainer::FindCycleInSubtree(
+    SVGResourcesCycleSolver& solver,
+    const LayoutObject& root) {
+  if (FindCycleInResources(solver, root))
+    return true;
+  return FindCycleInDescendants(solver, root);
+}
+
 void LayoutSVGResourceContainer::MarkAllClientsForInvalidation(
     InvalidationModeMask invalidation_mask) {
+  NOT_DESTROYED();
   if (is_invalidating_)
     return;
   LocalSVGResource* resource = ResourceForContainer(*this);
@@ -183,6 +196,7 @@ void LayoutSVGResourceContainer::MarkClientForInvalidation(
 void LayoutSVGResourceContainer::InvalidateCacheAndMarkForLayout(
     LayoutInvalidationReasonForTracing reason,
     SubtreeLayoutScope* layout_scope) {
+  NOT_DESTROYED();
   if (SelfNeedsLayout())
     return;
 
@@ -195,6 +209,7 @@ void LayoutSVGResourceContainer::InvalidateCacheAndMarkForLayout(
 
 void LayoutSVGResourceContainer::InvalidateCacheAndMarkForLayout(
     SubtreeLayoutScope* layout_scope) {
+  NOT_DESTROYED();
   InvalidateCacheAndMarkForLayout(
       layout_invalidation_reason::kSvgResourceInvalidated, layout_scope);
 }
@@ -209,10 +224,19 @@ static inline void RemoveFromCacheAndInvalidateDependencies(
   if (SVGResources* resources =
           SVGResourcesCache::CachedResourcesForLayoutObject(object)) {
     SVGElementResourceClient* client = element->GetSVGResourceClient();
-    if (InvalidationModeMask invalidation_mask =
-            resources->RemoveClientFromCacheAffectingObjectBounds(*client)) {
+    if (resources->HasClipOrMaskOrFilter()) {
+      InvalidationModeMask invalidation_mask =
+          SVGResourceClient::kBoundariesInvalidation;
+      bool filter_data_invalidated = false;
+      if (resources->Filter()) {
+        filter_data_invalidated = client->ClearFilterData();
+        invalidation_mask |=
+            filter_data_invalidated ? SVGResourceClient::kPaintInvalidation : 0;
+      }
       LayoutSVGResourceContainer::MarkClientForInvalidation(object,
                                                             invalidation_mask);
+      if (filter_data_invalidated)
+        client->MarkFilterDataDirty();
     }
   }
 

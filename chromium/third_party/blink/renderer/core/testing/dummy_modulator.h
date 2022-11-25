@@ -7,6 +7,7 @@
 
 #include "base/single_thread_task_runner.h"
 #include "third_party/blink/renderer/bindings/core/v8/module_record.h"
+#include "third_party/blink/renderer/bindings/core/v8/module_request.h"
 #include "third_party/blink/renderer/core/script/modulator.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 
@@ -27,12 +28,12 @@ class DummyModulator : public Modulator {
  public:
   DummyModulator();
   ~DummyModulator() override;
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   ModuleRecordResolver* GetModuleRecordResolver() override;
   base::SingleThreadTaskRunner* TaskRunner() override;
   ScriptState* GetScriptState() override;
-  V8CacheOptions GetV8CacheOptions() const override;
+  mojom::blink::V8CacheOptions GetV8CacheOptions() const override;
   bool IsScriptingDisabled() const override;
 
   bool ImportMapsEnabled() const override;
@@ -74,7 +75,8 @@ class DummyModulator : public Modulator {
   ScriptValue InstantiateModule(v8::Local<v8::Module>, const KURL&) override;
   Vector<ModuleRequest> ModuleRequestsFromModuleRecord(
       v8::Local<v8::Module>) override;
-  ScriptValue ExecuteModule(ModuleScript*, CaptureEvalErrorFlag) override;
+  ScriptEvaluationResult ExecuteModule(ModuleScript*,
+                                       CaptureEvalErrorFlag) override;
   ModuleScriptFetcher* CreateModuleScriptFetcher(
       ModuleScriptCustomFetchType,
       util::PassKey<ModuleScriptLoader>) override;

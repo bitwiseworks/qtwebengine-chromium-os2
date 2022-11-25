@@ -20,7 +20,8 @@ namespace dom_distiller {
 namespace {
 
 const GURL GetDistillerViewUrlFromUrl(const std::string& url) {
-  return url_utils::GetDistillerViewUrlFromUrl(kDomDistillerScheme, GURL(url));
+  return url_utils::GetDistillerViewUrlFromUrl(kDomDistillerScheme, GURL(url),
+                                               "Title");
 }
 
 const GURL GetDistillerViewUrlFromEntryId(const std::string& id) {
@@ -145,6 +146,12 @@ TEST_F(DomDistillerViewerTest, TestGetDistilledPageFontFamilyJsOutput) {
             0);
   EXPECT_EQ(kSansSerifJsFontFamily.compare(viewer::GetDistilledPageFontFamilyJs(
                 mojom::FontFamily::kSansSerif)),
+            0);
+}
+
+TEST_F(DomDistillerViewerTest, TestGetDistilledPageFontScalingJsOutput) {
+  std::string kJsFontScaling = "useFontScaling(5);";
+  EXPECT_EQ(kJsFontScaling.compare(viewer::GetDistilledPageFontScalingJs(5)),
             0);
 }
 

@@ -26,6 +26,7 @@ P2PQuicStreamImpl::P2PQuicStreamImpl(quic::PendingStream* pending,
                                      uint32_t delegate_read_buffer_size,
                                      uint32_t write_buffer_size)
     : quic::QuicStream(pending,
+                       session,
                        quic::BIDIRECTIONAL,
                        /*is_static=*/false),
       delegate_read_buffer_size_(delegate_read_buffer_size),
@@ -96,7 +97,8 @@ void P2PQuicStreamImpl::OnDataAvailable() {
   }
 }
 
-void P2PQuicStreamImpl::OnStreamDataConsumed(size_t bytes_consumed) {
+void P2PQuicStreamImpl::OnStreamDataConsumed(
+    quic::QuicByteCount bytes_consumed) {
   // We should never consume more than has been written.
   DCHECK_GE(write_buffered_amount_, bytes_consumed);
   QuicStream::OnStreamDataConsumed(bytes_consumed);

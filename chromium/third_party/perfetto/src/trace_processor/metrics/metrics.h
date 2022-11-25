@@ -27,7 +27,7 @@
 #include "perfetto/protozero/message.h"
 #include "perfetto/protozero/scattered_heap_buffer.h"
 #include "perfetto/trace_processor/trace_processor.h"
-#include "src/trace_processor/descriptors.h"
+#include "src/trace_processor/util/descriptors.h"
 
 #include "protos/perfetto/trace_processor/metrics_impl.pbzero.h"
 
@@ -146,6 +146,9 @@ int TemplateReplace(
     const std::string& raw_text,
     const std::unordered_map<std::string, std::string>& substitutions,
     std::string* out);
+
+// Implements the NULL_IF_EMPTY SQL function.
+void NullIfEmpty(sqlite3_context* ctx, int argc, sqlite3_value** argv);
 
 // These functions implement the RepeatedField SQL aggregate functions.
 void RepeatedFieldStep(sqlite3_context* ctx, int argc, sqlite3_value** argv);

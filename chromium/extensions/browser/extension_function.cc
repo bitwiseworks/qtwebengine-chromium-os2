@@ -225,10 +225,10 @@ class ErrorWithArgumentsResponseValue : public ArgumentListResponseValue {
 
 class ErrorResponseValue : public ExtensionFunction::ResponseValueObject {
  public:
-  ErrorResponseValue(ExtensionFunction* function, const std::string& error) {
+  ErrorResponseValue(ExtensionFunction* function, std::string error) {
     // It would be nice to DCHECK(!error.empty()) but too many legacy extension
     // function implementations don't set error but signal failure.
-    SetFunctionError(function, error);
+    SetFunctionError(function, std::move(error));
   }
 
   ~ErrorResponseValue() override {}
@@ -321,7 +321,6 @@ void UserGestureForTests::DecrementCount() {
   --count_;
 }
 
-
 }  // namespace
 
 void ExtensionFunction::ResponseValueObject::SetFunctionResults(
@@ -334,10 +333,10 @@ void ExtensionFunction::ResponseValueObject::SetFunctionResults(
 
 void ExtensionFunction::ResponseValueObject::SetFunctionError(
     ExtensionFunction* function,
-    const std::string& error) {
+    std::string error) {
   DCHECK(function->error_.empty()) << "Function " << function->name_
                                    << "already has an error.";
-  function->error_ = error;
+  function->error_ = std::move(error);
 }
 
 // static
@@ -399,6 +398,13 @@ ExtensionFunction::~ExtensionFunction() {
       << name();
 }
 
+void ExtensionFunction::AddWorkerResponseTarget() {
+  DCHECK(is_from_service_worker());
+
+  if (dispatcher())
+    dispatcher()->AddWorkerResponseTarget(this);
+}
+
 bool ExtensionFunction::HasPermission() const {
   Feature::Availability availability =
       ExtensionAPI::GetSharedInstance()->IsAvailable(
@@ -407,8 +413,8 @@ bool ExtensionFunction::HasPermission() const {
   return availability.is_available();
 }
 
-void ExtensionFunction::RespondWithError(const std::string& error) {
-  Respond(Error(error));
+void ExtensionFunction::RespondWithError(std::string error) {
+  Respond(Error(std::move(error)));
 }
 
 bool ExtensionFunction::PreRunValidation(std::string* error) {
@@ -446,8 +452,8 @@ bool ExtensionFunction::ShouldSkipQuotaLimiting() const {
   return false;
 }
 
-void ExtensionFunction::OnQuotaExceeded(const std::string& violation_error) {
-  RespondWithError(violation_error);
+void ExtensionFunction::OnQuotaExceeded(std::string violation_error) {
+  RespondWithError(std::move(violation_error));
 }
 
 void ExtensionFunction::SetArgs(base::Value args) {
@@ -511,6 +517,12 @@ content::WebContents* ExtensionFunction::GetSenderWebContents() {
              : nullptr;
 }
 
+void ExtensionFunction::OnServiceWorkerAck() {
+  // Derived classes must override this if they require and implement an
+  // ACK from the Service Worker.
+  NOTREACHED();
+}
+
 ExtensionFunction::ResponseValue ExtensionFunction::NoArguments() {
   return ResponseValue(
       new ArgumentListResponseValue(this, std::make_unique<base::ListValue>()));
@@ -537,9 +549,8 @@ ExtensionFunction::ResponseValue ExtensionFunction::ArgumentList(
   return ResponseValue(new ArgumentListResponseValue(this, std::move(args)));
 }
 
-ExtensionFunction::ResponseValue ExtensionFunction::Error(
-    const std::string& error) {
-  return ResponseValue(new ErrorResponseValue(this, error));
+ExtensionFunction::ResponseValue ExtensionFunction::Error(std::string error) {
+  return ResponseValue(new ErrorResponseValue(this, std::move(error)));
 }
 
 ExtensionFunction::ResponseValue ExtensionFunction::Error(
@@ -618,6 +629,10 @@ bool ExtensionFunction::HasOptionalArgument(size_t index) {
 
 void ExtensionFunction::WriteToConsole(blink::mojom::ConsoleMessageLevel level,
                                        const std::string& message) {
+  // TODO(crbug.com/1096166): Service Worker-based extensions don't have a
+  // RenderFrameHost.
+  if (!render_frame_host_)
+    return;
   // Only the main frame handles dev tools messages.
   WebContents::FromRenderFrameHost(render_frame_host_)
       ->GetMainFrame()

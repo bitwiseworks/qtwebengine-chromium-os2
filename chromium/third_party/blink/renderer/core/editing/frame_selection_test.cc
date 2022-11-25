@@ -48,7 +48,7 @@ class FrameSelectionTest : public EditingTestBase {
     return Selection().ComputeVisibleSelectionInDOMTree();
   }
   VisibleSelectionInFlatTree GetVisibleSelectionInFlatTree() const {
-    return Selection().GetSelectionInFlatTree();
+    return Selection().ComputeVisibleSelectionInFlatTree();
   }
 
   Text* AppendTextNode(const String& data);
@@ -126,7 +126,7 @@ TEST_F(FrameSelectionTest, PaintCaretShouldNotLayout) {
   GetDocument().body()->focus();
   EXPECT_TRUE(GetDocument().body()->IsFocused());
 
-  Selection().SetCaretVisible(true);
+  Selection().SetCaretEnabled(true);
   Selection().SetSelectionAndEndTyping(
       SelectionInDOMTree::Builder().Collapse(Position(text, 0)).Build());
   UpdateAllLifecyclePhasesForTest();
@@ -143,7 +143,8 @@ TEST_F(FrameSelectionTest, PaintCaretShouldNotLayout) {
     frame_rect.SetHeight(frame_rect.Height() + 1);
     GetDummyPageHolder().GetFrameView().SetFrameRect(frame_rect);
   }
-  auto paint_controller = std::make_unique<PaintController>();
+  auto paint_controller =
+      std::make_unique<PaintController>(PaintController::kTransient);
   {
     GraphicsContext context(*paint_controller);
     paint_controller->UpdateCurrentPaintChunkProperties(
@@ -606,7 +607,7 @@ TEST_F(FrameSelectionTest, FocusingButtonHidesRangeInDisabledTextControl) {
   // FrameSelection::SelectAll (= textarea.select() in JavaScript) would have
   // been shorter, but currently that doesn't work on a *disabled* text control.
   const IntRect elem_bounds = textarea->BoundsInViewport();
-  WebMouseEvent double_click(WebMouseEvent::kMouseDown, 0,
+  WebMouseEvent double_click(WebMouseEvent::Type::kMouseDown, 0,
                              WebInputEvent::GetStaticTimeStampForTests());
   double_click.SetPositionInWidget(elem_bounds.X(), elem_bounds.Y());
   double_click.SetPositionInScreen(elem_bounds.X(), elem_bounds.Y());

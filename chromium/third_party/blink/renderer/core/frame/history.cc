@@ -25,9 +25,11 @@
 
 #include "third_party/blink/renderer/core/frame/history.h"
 
+#include "third_party/blink/public/mojom/web_feature/web_feature.mojom-shared.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/frame_console.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
@@ -61,11 +63,11 @@ bool EqualIgnoringQueryAndFragment(const KURL& a, const KURL& b) {
 }  // namespace
 
 History::History(LocalFrame* frame)
-    : DOMWindowClient(frame), last_state_object_requested_(nullptr) {}
+    : ExecutionContextClient(frame), last_state_object_requested_(nullptr) {}
 
-void History::Trace(Visitor* visitor) {
+void History::Trace(Visitor* visitor) const {
   ScriptWrappable::Trace(visitor);
-  DOMWindowClient::Trace(visitor);
+  ExecutionContextClient::Trace(visitor);
 }
 
 unsigned History::length(ExceptionState& exception_state) const {
@@ -78,19 +80,42 @@ unsigned History::length(ExceptionState& exception_state) const {
   return GetFrame()->Client()->BackForwardLength();
 }
 
-ScriptValue History::state(v8::Isolate* isolate,
+ScriptValue History::state(ScriptState* script_state,
                            ExceptionState& exception_state) {
+  v8::Isolate* isolate = script_state->GetIsolate();
+  static const V8PrivateProperty::SymbolKey kHistoryStatePrivateProperty;
+  auto private_prop =
+      V8PrivateProperty::GetSymbol(isolate, kHistoryStatePrivateProperty);
+  v8::Local<v8::Object> v8_history = ToV8(this, script_state).As<v8::Object>();
+  v8::Local<v8::Value> v8_state;
+
+  // Returns the same V8 value unless the history gets updated.  This
+  // implementation is mostly the same as the one of [CachedAttribute], but
+  // it's placed in this function rather than in Blink-V8 bindings layer so
+  // that PopStateEvent.state can also access the same V8 value.
+  scoped_refptr<SerializedScriptValue> current_state = StateInternal();
+  if (last_state_object_requested_ == current_state) {
+    if (!private_prop.GetOrUndefined(v8_history).ToLocal(&v8_state))
+      return ScriptValue::CreateNull(isolate);
+    if (!v8_state->IsUndefined())
+      return ScriptValue(isolate, v8_state);
+  }
+
   if (!GetFrame()) {
     exception_state.ThrowSecurityError(
-        "May not use a History object associated with a Document that is not "
-        "fully active");
-    return ScriptValue::CreateNull(isolate);
+        "May not use a History object associated with a Document that is "
+        "not fully active");
+    v8_state = v8::Null(isolate);
+  } else if (!current_state) {
+    v8_state = v8::Null(isolate);
+  } else {
+    ScriptState::EscapableScope target_context_scope(script_state);
+    v8_state = target_context_scope.Escape(current_state->Deserialize(isolate));
   }
-  last_state_object_requested_ = StateInternal();
-  if (!last_state_object_requested_)
-    return ScriptValue::CreateNull(isolate);
-  return ScriptValue(isolate,
-                     last_state_object_requested_->Deserialize(isolate));
+
+  last_state_object_requested_ = current_state;
+  private_prop.Set(v8_history, v8_state);
+  return ScriptValue(isolate, v8_state);
 }
 
 SerializedScriptValue* History::StateInternal() const {
@@ -115,8 +140,9 @@ void History::setScrollRestoration(const String& value,
     return;
   }
 
-  HistoryScrollRestorationType scroll_restoration =
-      value == "manual" ? kScrollRestorationManual : kScrollRestorationAuto;
+  mojom::blink::ScrollRestorationType scroll_restoration =
+      value == "manual" ? mojom::blink::ScrollRestorationType::kManual
+                        : mojom::blink::ScrollRestorationType::kAuto;
   if (scroll_restoration == ScrollRestorationInternal())
     return;
 
@@ -134,12 +160,15 @@ String History::scrollRestoration(ExceptionState& exception_state) {
         "fully active");
     return "auto";
   }
-  return ScrollRestorationInternal() == kScrollRestorationManual ? "manual"
-                                                                 : "auto";
+  return ScrollRestorationInternal() ==
+                 mojom::blink::ScrollRestorationType::kManual
+             ? "manual"
+             : "auto";
 }
 
-HistoryScrollRestorationType History::ScrollRestorationInternal() const {
-  constexpr HistoryScrollRestorationType default_type = kScrollRestorationAuto;
+mojom::blink::ScrollRestorationType History::ScrollRestorationInternal() const {
+  constexpr mojom::blink::ScrollRestorationType default_type =
+      mojom::blink::ScrollRestorationType::kAuto;
 
   LocalFrame* frame = GetFrame();
   if (!frame)
@@ -154,10 +183,6 @@ HistoryScrollRestorationType History::ScrollRestorationInternal() const {
     return default_type;
 
   return history_item->ScrollRestorationType();
-}
-
-bool History::stateChanged() const {
-  return last_state_object_requested_ != StateInternal();
 }
 
 bool History::IsSameAsCurrentState(SerializedScriptValue* state) const {
@@ -184,14 +209,13 @@ void History::go(ScriptState* script_state,
   }
 
   DCHECK(IsMainThread());
-  Document* active_document =
-      Document::From(ExecutionContext::From(script_state));
-  if (!active_document)
+  auto* active_window = LocalDOMWindow::From(script_state);
+  if (!active_window)
     return;
 
-  if (!active_document->GetFrame() ||
-      !active_document->GetFrame()->CanNavigate(*GetFrame()) ||
-      !active_document->GetFrame()->IsNavigationAllowed() ||
+  if (!active_window->GetFrame() ||
+      !active_window->GetFrame()->CanNavigate(*GetFrame()) ||
+      !active_window->GetFrame()->IsNavigationAllowed() ||
       !GetFrame()->IsNavigationAllowed()) {
     return;
   }
@@ -301,12 +325,13 @@ bool History::CanChangeToUrl(const KURL& url,
   return true;
 }
 
-void History::StateObjectAdded(scoped_refptr<SerializedScriptValue> data,
-                               const String& /* title */,
-                               const String& url_string,
-                               HistoryScrollRestorationType restoration_type,
-                               WebFrameLoadType type,
-                               ExceptionState& exception_state) {
+void History::StateObjectAdded(
+    scoped_refptr<SerializedScriptValue> data,
+    const String& /* title */,
+    const String& url_string,
+    mojom::blink::ScrollRestorationType restoration_type,
+    WebFrameLoadType type,
+    ExceptionState& exception_state) {
   if (!GetFrame() || !GetFrame()->GetPage() ||
       !GetFrame()->Loader().GetDocumentLoader()) {
     exception_state.ThrowSecurityError(
@@ -316,7 +341,7 @@ void History::StateObjectAdded(scoped_refptr<SerializedScriptValue> data,
   }
 
   KURL full_url = UrlForState(url_string);
-  if (!CanChangeToUrl(full_url, GetFrame()->GetDocument()->GetSecurityOrigin(),
+  if (!CanChangeToUrl(full_url, GetFrame()->DomWindow()->GetSecurityOrigin(),
                       GetFrame()->GetDocument()->Url())) {
     // We can safely expose the URL to JavaScript, as a) no redirection takes
     // place: JavaScript already had this URL, b) JavaScript can only access a
@@ -324,7 +349,7 @@ void History::StateObjectAdded(scoped_refptr<SerializedScriptValue> data,
     exception_state.ThrowSecurityError(
         "A history state object with URL '" + full_url.ElidedString() +
         "' cannot be created in a document with origin '" +
-        GetFrame()->GetDocument()->GetSecurityOrigin()->ToString() +
+        GetFrame()->DomWindow()->GetSecurityOrigin()->ToString() +
         "' and URL '" + GetFrame()->GetDocument()->Url().ElidedString() + "'.");
     return;
   }

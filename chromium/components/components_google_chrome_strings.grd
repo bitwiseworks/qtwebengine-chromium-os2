@@ -30,6 +30,7 @@
       <output filename="components_google_chrome_strings_pa.pak" type="data_package" lang="pa" />
       <output filename="components_google_chrome_strings_si.pak" type="data_package" lang="si" />
       <output filename="components_google_chrome_strings_sq.pak" type="data_package" lang="sq" />
+      <output filename="components_google_chrome_strings_sr-Latn.pak" type="data_package" lang="sr-Latn" />
       <output filename="components_google_chrome_strings_ur.pak" type="data_package" lang="ur" />
       <output filename="components_google_chrome_strings_uz.pak" type="data_package" lang="uz" />
       <output filename="components_google_chrome_strings_zh-HK.pak" type="data_package" lang="zh-HK" />
@@ -273,6 +274,10 @@
       </message>
 
       <!-- Version UI -->
+      <message name="IDS_SHORT_PRODUCT_LOGO_ALT_TEXT" desc="Alt text for the Chrome logo image.">
+        Chrome logo
+      </message>
+
       <message name="IDS_VERSION_UI_LICENSE" desc="The label below the copyright message, containing the URLs.">
         Google Chrome is made possible by the <ph name="BEGIN_LINK_CHROMIUM">&lt;a target="_blank" href="$1"&gt;</ph>Chromium<ph name="END_LINK_CHROMIUM">&lt;/a&gt;</ph> open source project and other <ph name="BEGIN_LINK_OSS">&lt;a target="_blank" href="$2"&gt;</ph>open source software<ph name="END_LINK_OSS">&lt;/a&gt;</ph>.
       </message>
@@ -281,13 +286,6 @@
       <message name="IDS_PAGE_INFO_INTERNAL_PAGE" desc="Message to display in the page info bubble when the page you are on is a chrome:// page or about:something.">
         You're viewing a secure Google Chrome page
       </message>
-
-      <if expr="is_android">
-      <!-- Only used in the dialog shown after tapping "Details" in page info -->
-      <message name="IDS_PAGE_INFO_SECURE_IDENTITY_VERIFIED" desc="The text of the identity section when the page is secure and uses a valid certificate.">
-        Chrome verified that <ph name="ISSUER">$1<ex>VeriSign</ex></ph> issued this website's certificate.
-      </message>
-      </if>
 
       <!-- Session Crash -->
       <message name="IDS_SESSION_CRASHED_VIEW_MESSAGE" desc="Message shown when the last session didn't exit cleanly.">

@@ -5,6 +5,8 @@
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <sys/prctl.h>
+
 #include <memory>
 
 #if defined(OS_ANDROID)
@@ -16,6 +18,7 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
 #include "base/format_macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/process/process_metrics.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -183,6 +186,8 @@ uint32_t ParseSmapsCounter(char* counter_line, VmRegion* region) {
     region->byte_stats_shared_clean_resident = ReadCounterBytes(counter_line);
   } else if (strcmp(counter_name, "Swap:") == 0) {
     region->byte_stats_swapped = ReadCounterBytes(counter_line);
+  } else if (strcmp(counter_name, "Locked:") == 0) {
+    region->byte_locked = ReadCounterBytes(counter_line);
   } else {
     res = 0;
   }
@@ -198,7 +203,7 @@ uint32_t ReadLinuxProcSmapsFile(FILE* smaps_file,
   fseek(smaps_file, 0, SEEK_SET);
 
   char line[kMaxLineSize];
-  const uint32_t kNumExpectedCountersPerRegion = 6;
+  const uint32_t kNumExpectedCountersPerRegion = 7;
   uint32_t counters_parsed_for_current_region = 0;
   uint32_t num_valid_regions = 0;
   bool should_add_current_region = false;
@@ -226,6 +231,44 @@ uint32_t ReadLinuxProcSmapsFile(FILE* smaps_file,
   }
   return num_valid_regions;
 }
+
+// RAII class making the current process dumpable via prctl(PR_SET_DUMPABLE, 1),
+// in case it is not currently dumpable as described in proc(5) and prctl(2).
+// Noop if the original dumpable state could not be determined.
+class ScopedProcessSetDumpable {
+ public:
+  ScopedProcessSetDumpable() {
+    int result = prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);
+    if (result < 0) {
+      PLOG(ERROR) << "prctl";
+      AvoidPrctlOnDestruction();
+      return;
+    }
+    was_dumpable_ = result > 0;
+
+    if (!was_dumpable_) {
+      if (prctl(PR_SET_DUMPABLE, 1, 0, 0, 0) != 0) {
+        PLOG(ERROR) << "prctl";
+        // PR_SET_DUMPABLE is often disallowed, avoid crashing in this case.
+        AvoidPrctlOnDestruction();
+      }
+    }
+  }
+
+  ScopedProcessSetDumpable(const ScopedProcessSetDumpable&) = delete;
+  ScopedProcessSetDumpable& operator=(const ScopedProcessSetDumpable&) = delete;
+
+  ~ScopedProcessSetDumpable() {
+    if (!was_dumpable_) {
+      PCHECK(prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) == 0) << "prctl";
+    }
+  }
+
+ private:
+  void AvoidPrctlOnDestruction() { was_dumpable_ = true; }
+
+  bool was_dumpable_;
+};
 
 }  // namespace
 
@@ -280,9 +323,13 @@ bool OSMetrics::FillOSMemoryDump(base::ProcessId pid,
       OSMetrics::GetMappedAndResidentPages(base::android::kStartOfText,
                                            base::android::kEndOfText,
                                            &accessed_pages_bitmap);
+  UMA_HISTOGRAM_ENUMERATION(
+      "Memory.NativeLibrary.MappedAndResidentMemoryFootprintCollectionStatus",
+      state);
 
   // MappedAndResidentPagesDumpState |state| can be |kAccessPagemapDenied|
-  // for Android devices running a kernel version < 4.4.
+  // for Android devices running a kernel version < 4.4 or because the process
+  // is not "dumpable", as described in proc(5).
   if (state != OSMetrics::MappedAndResidentPagesDumpState::kSuccess)
     return state != OSMetrics::MappedAndResidentPagesDumpState::kFailure;
 
@@ -323,8 +370,14 @@ OSMetrics::MappedAndResidentPagesDumpState OSMetrics::GetMappedAndResidentPages(
 
   base::ScopedFILE pagemap_file(fopen(kPagemap, "r"));
   if (!pagemap_file.get()) {
-    DLOG(WARNING) << "Could not open " << kPagemap;
-    return OSMetrics::MappedAndResidentPagesDumpState::kAccessPagemapDenied;
+    {
+      ScopedProcessSetDumpable set_dumpable;
+      pagemap_file.reset(fopen(kPagemap, "r"));
+    }
+    if (!pagemap_file.get()) {
+      DLOG(WARNING) << "Could not open " << kPagemap;
+      return OSMetrics::MappedAndResidentPagesDumpState::kAccessPagemapDenied;
+    }
   }
 
   const size_t kPageSize = base::GetPageSize();

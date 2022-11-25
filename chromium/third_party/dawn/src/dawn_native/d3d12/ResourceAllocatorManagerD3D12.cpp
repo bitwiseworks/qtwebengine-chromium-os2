@@ -19,9 +19,25 @@
 #include "dawn_native/d3d12/HeapAllocatorD3D12.h"
 #include "dawn_native/d3d12/HeapD3D12.h"
 #include "dawn_native/d3d12/ResidencyManagerD3D12.h"
+#include "dawn_native/d3d12/UtilsD3D12.h"
 
 namespace dawn_native { namespace d3d12 {
     namespace {
+        MemorySegment GetMemorySegment(Device* device, D3D12_HEAP_TYPE heapType) {
+            if (device->GetDeviceInfo().isUMA) {
+                return MemorySegment::Local;
+            }
+
+            D3D12_HEAP_PROPERTIES heapProperties =
+                device->GetD3D12Device()->GetCustomHeapProperties(0, heapType);
+
+            if (heapProperties.MemoryPoolPreference == D3D12_MEMORY_POOL_L1) {
+                return MemorySegment::Local;
+            }
+
+            return MemorySegment::NonLocal;
+        }
+
         D3D12_HEAP_TYPE GetD3D12HeapType(ResourceHeapKind resourceHeapKind) {
             switch (resourceHeapKind) {
                 case Readback_OnlyBuffers:
@@ -35,7 +51,7 @@ namespace dawn_native { namespace d3d12 {
                 case Upload_OnlyBuffers:
                 case Upload_AllBuffersAndTextures:
                     return D3D12_HEAP_TYPE_UPLOAD;
-                default:
+                case EnumCount:
                     UNREACHABLE();
             }
         }
@@ -54,7 +70,7 @@ namespace dawn_native { namespace d3d12 {
                     return D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES;
                 case Default_OnlyRenderableOrDepthTextures:
                     return D3D12_HEAP_FLAG_ALLOW_ONLY_RT_DS_TEXTURES;
-                default:
+                case EnumCount:
                     UNREACHABLE();
             }
         }
@@ -133,6 +149,17 @@ namespace dawn_native { namespace d3d12 {
             }
         }
 
+        bool IsClearValueOptimizable(const D3D12_RESOURCE_DESC& resourceDescriptor) {
+            // Optimized clear color cannot be set on buffers, non-render-target/depth-stencil
+            // textures, or typeless resources
+            // https://docs.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12device-createcommittedresource
+            // https://docs.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12device-createplacedresource
+            return !IsTypeless(resourceDescriptor.Format) &&
+                   resourceDescriptor.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER &&
+                   (resourceDescriptor.Flags & (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET |
+                                                D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)) != 0;
+        }
+
     }  // namespace
 
     ResourceAllocatorManager::ResourceAllocatorManager(Device* device) : mDevice(device) {
@@ -143,9 +170,12 @@ namespace dawn_native { namespace d3d12 {
         for (uint32_t i = 0; i < ResourceHeapKind::EnumCount; i++) {
             const ResourceHeapKind resourceHeapKind = static_cast<ResourceHeapKind>(i);
             mHeapAllocators[i] = std::make_unique<HeapAllocator>(
-                mDevice, GetD3D12HeapType(resourceHeapKind), GetD3D12HeapFlags(resourceHeapKind));
+                mDevice, GetD3D12HeapType(resourceHeapKind), GetD3D12HeapFlags(resourceHeapKind),
+                GetMemorySegment(device, GetD3D12HeapType(resourceHeapKind)));
+            mPooledHeapAllocators[i] =
+                std::make_unique<PooledResourceMemoryAllocator>(mHeapAllocators[i].get());
             mSubAllocatedResourceAllocators[i] = std::make_unique<BuddyMemoryAllocator>(
-                kMaxHeapSize, kMinHeapSize, mHeapAllocators[i].get());
+                kMaxHeapSize, kMinHeapSize, mPooledHeapAllocators[i].get());
         }
     }
 
@@ -153,27 +183,43 @@ namespace dawn_native { namespace d3d12 {
         D3D12_HEAP_TYPE heapType,
         const D3D12_RESOURCE_DESC& resourceDescriptor,
         D3D12_RESOURCE_STATES initialUsage) {
+        // In order to suppress a warning in the D3D12 debug layer, we need to specify an
+        // optimized clear value. As there are no negative consequences when picking a mismatched
+        // clear value, we use zero as the optimized clear value. This also enables fast clears on
+        // some architectures.
+        D3D12_CLEAR_VALUE zero{};
+        D3D12_CLEAR_VALUE* optimizedClearValue = nullptr;
+        if (IsClearValueOptimizable(resourceDescriptor)) {
+            zero.Format = resourceDescriptor.Format;
+            optimizedClearValue = &zero;
+        }
+
         // TODO(bryan.bernhart@intel.com): Conditionally disable sub-allocation.
         // For very large resources, there is no benefit to suballocate.
         // For very small resources, it is inefficent to suballocate given the min. heap
         // size could be much larger then the resource allocation.
         // Attempt to satisfy the request using sub-allocation (placed resource in a heap).
         ResourceHeapAllocation subAllocation;
-        DAWN_TRY_ASSIGN(subAllocation,
-                        CreatePlacedResource(heapType, resourceDescriptor, initialUsage));
+        DAWN_TRY_ASSIGN(subAllocation, CreatePlacedResource(heapType, resourceDescriptor,
+                                                            optimizedClearValue, initialUsage));
         if (subAllocation.GetInfo().mMethod != AllocationMethod::kInvalid) {
-            return subAllocation;
+            return std::move(subAllocation);
         }
 
         // If sub-allocation fails, fall-back to direct allocation (committed resource).
         ResourceHeapAllocation directAllocation;
         DAWN_TRY_ASSIGN(directAllocation,
-                        CreateCommittedResource(heapType, resourceDescriptor, initialUsage));
+                        CreateCommittedResource(heapType, resourceDescriptor, optimizedClearValue,
+                                                initialUsage));
+        if (directAllocation.GetInfo().mMethod != AllocationMethod::kInvalid) {
+            return std::move(directAllocation);
+        }
 
-        return directAllocation;
+        // If direct allocation fails, the system is probably out of memory.
+        return DAWN_OUT_OF_MEMORY_ERROR("Allocation failed");
     }
 
-    void ResourceAllocatorManager::Tick(Serial completedSerial) {
+    void ResourceAllocatorManager::Tick(ExecutionSerial completedSerial) {
         for (ResourceHeapAllocation& allocation :
              mAllocationsToDelete.IterateUpTo(completedSerial)) {
             if (allocation.GetInfo().mMethod == AllocationMethod::kSubAllocated) {
@@ -201,7 +247,7 @@ namespace dawn_native { namespace d3d12 {
         // calls DeallocateMemory again using the same allocation.
         allocation.Invalidate();
 
-        ASSERT(allocation.GetD3D12Resource().Get() == nullptr);
+        ASSERT(allocation.GetD3D12Resource() == nullptr);
     }
 
     void ResourceAllocatorManager::FreeMemory(ResourceHeapAllocation& allocation) {
@@ -222,6 +268,7 @@ namespace dawn_native { namespace d3d12 {
     ResultOrError<ResourceHeapAllocation> ResourceAllocatorManager::CreatePlacedResource(
         D3D12_HEAP_TYPE heapType,
         const D3D12_RESOURCE_DESC& requestedResourceDescriptor,
+        const D3D12_CLEAR_VALUE* optimizedClearValue,
         D3D12_RESOURCE_STATES initialUsage) {
         const ResourceHeapKind resourceHeapKind =
             GetResourceHeapKind(requestedResourceDescriptor.Dimension, heapType,
@@ -232,17 +279,26 @@ namespace dawn_native { namespace d3d12 {
             resourceHeapKind, requestedResourceDescriptor.SampleDesc.Count,
             requestedResourceDescriptor.Alignment);
 
+        // TODO(bryan.bernhart): Figure out how to compute the alignment without calling this
+        // twice.
         D3D12_RESOURCE_ALLOCATION_INFO resourceInfo =
             mDevice->GetD3D12Device()->GetResourceAllocationInfo(0, 1, &resourceDescriptor);
 
         // If the requested resource alignment was rejected, let D3D tell us what the
         // required alignment is for this resource.
-        if (resourceDescriptor.Alignment != resourceInfo.Alignment) {
+        if (resourceDescriptor.Alignment != 0 &&
+            resourceDescriptor.Alignment != resourceInfo.Alignment) {
             resourceDescriptor.Alignment = 0;
             resourceInfo =
                 mDevice->GetD3D12Device()->GetResourceAllocationInfo(0, 1, &resourceDescriptor);
         }
-        if (resourceInfo.SizeInBytes == 0) {
+
+        // If d3d tells us the resource size is invalid, treat the error as OOM.
+        // Otherwise, creating the resource could cause a device loss (too large).
+        // This is because NextPowerOfTwo(UINT64_MAX) overflows and proceeds to
+        // incorrectly allocate a mismatched size.
+        if (resourceInfo.SizeInBytes == 0 ||
+            resourceInfo.SizeInBytes == std::numeric_limits<uint64_t>::max()) {
             return DAWN_OUT_OF_MEMORY_ERROR("Resource allocation size was invalid.");
         }
 
@@ -260,7 +316,7 @@ namespace dawn_native { namespace d3d12 {
 
         // Before calling CreatePlacedResource, we must ensure the target heap is resident.
         // CreatePlacedResource will fail if it is not.
-        DAWN_TRY(mDevice->GetResidencyManager()->EnsureHeapsAreResident(&heap, 1));
+        DAWN_TRY(mDevice->GetResidencyManager()->LockAllocation(heap));
 
         // With placed resources, a single heap can be reused.
         // The resource placed at an offset is only reclaimed
@@ -272,9 +328,13 @@ namespace dawn_native { namespace d3d12 {
         ComPtr<ID3D12Resource> placedResource;
         DAWN_TRY(CheckOutOfMemoryHRESULT(
             mDevice->GetD3D12Device()->CreatePlacedResource(
-                heap->GetD3D12Heap().Get(), allocation.GetOffset(), &resourceDescriptor,
-                initialUsage, nullptr, IID_PPV_ARGS(&placedResource)),
+                heap->GetD3D12Heap(), allocation.GetOffset(), &resourceDescriptor, initialUsage,
+                optimizedClearValue, IID_PPV_ARGS(&placedResource)),
             "ID3D12Device::CreatePlacedResource"));
+
+        // After CreatePlacedResource has finished, the heap can be unlocked from residency. This
+        // will insert it into the residency LRU.
+        mDevice->GetResidencyManager()->UnlockAllocation(heap);
 
         return ResourceHeapAllocation{allocation.GetInfo(), allocation.GetOffset(),
                                       std::move(placedResource), heap};
@@ -283,6 +343,7 @@ namespace dawn_native { namespace d3d12 {
     ResultOrError<ResourceHeapAllocation> ResourceAllocatorManager::CreateCommittedResource(
         D3D12_HEAP_TYPE heapType,
         const D3D12_RESOURCE_DESC& resourceDescriptor,
+        const D3D12_CLEAR_VALUE* optimizedClearValue,
         D3D12_RESOURCE_STATES initialUsage) {
         D3D12_HEAP_PROPERTIES heapProperties;
         heapProperties.Type = heapType;
@@ -291,11 +352,14 @@ namespace dawn_native { namespace d3d12 {
         heapProperties.CreationNodeMask = 0;
         heapProperties.VisibleNodeMask = 0;
 
-        // If d3d tells us the resource is "zero-sized", the size is invalid and may cause a device
-        // lost (too large for driver). Instead, treat the error as a OOM.
+        // If d3d tells us the resource size is invalid, treat the error as OOM.
+        // Otherwise, creating the resource could cause a device loss (too large).
+        // This is because NextPowerOfTwo(UINT64_MAX) overflows and proceeds to
+        // incorrectly allocate a mismatched size.
         D3D12_RESOURCE_ALLOCATION_INFO resourceInfo =
             mDevice->GetD3D12Device()->GetResourceAllocationInfo(0, 1, &resourceDescriptor);
-        if (resourceInfo.SizeInBytes == 0) {
+        if (resourceInfo.SizeInBytes == 0 ||
+            resourceInfo.SizeInBytes == std::numeric_limits<uint64_t>::max()) {
             return DAWN_OUT_OF_MEMORY_ERROR("Resource allocation size was invalid.");
         }
 
@@ -306,23 +370,25 @@ namespace dawn_native { namespace d3d12 {
         // CreateCommittedResource will implicitly make the created resource resident. We must
         // ensure enough free memory exists before allocating to avoid an out-of-memory error when
         // overcommitted.
-        DAWN_TRY(mDevice->GetResidencyManager()->EnsureCanMakeResident(resourceInfo.SizeInBytes));
+        DAWN_TRY(mDevice->GetResidencyManager()->EnsureCanAllocate(
+            resourceInfo.SizeInBytes, GetMemorySegment(mDevice, heapType)));
 
         // Note: Heap flags are inferred by the resource descriptor and do not need to be explicitly
         // provided to CreateCommittedResource.
         ComPtr<ID3D12Resource> committedResource;
-        DAWN_TRY(
-            CheckOutOfMemoryHRESULT(mDevice->GetD3D12Device()->CreateCommittedResource(
-                                        &heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDescriptor,
-                                        initialUsage, nullptr, IID_PPV_ARGS(&committedResource)),
-                                    "ID3D12Device::CreateCommittedResource"));
+        DAWN_TRY(CheckOutOfMemoryHRESULT(
+            mDevice->GetD3D12Device()->CreateCommittedResource(
+                &heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDescriptor, initialUsage,
+                optimizedClearValue, IID_PPV_ARGS(&committedResource)),
+            "ID3D12Device::CreateCommittedResource"));
 
         // When using CreateCommittedResource, D3D12 creates an implicit heap that contains the
         // resource allocation. Because Dawn's memory residency management occurs at the resource
         // heap granularity, every directly allocated ResourceHeapAllocation also stores a Heap
         // object. This object is created manually, and must be deleted manually upon deallocation
         // of the committed resource.
-        Heap* heap = new Heap(committedResource, heapType, resourceInfo.SizeInBytes);
+        Heap* heap = new Heap(committedResource, GetMemorySegment(mDevice, heapType),
+                              resourceInfo.SizeInBytes);
 
         // Calling CreateCommittedResource implicitly calls MakeResident on the resource. We must
         // track this to avoid calling MakeResident a second time.
@@ -333,6 +399,12 @@ namespace dawn_native { namespace d3d12 {
 
         return ResourceHeapAllocation{info,
                                       /*offset*/ 0, std::move(committedResource), heap};
+    }
+
+    void ResourceAllocatorManager::DestroyPool() {
+        for (auto& alloc : mPooledHeapAllocators) {
+            alloc->DestroyPool();
+        }
     }
 
 }}  // namespace dawn_native::d3d12

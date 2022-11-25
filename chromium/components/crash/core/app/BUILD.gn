@@ -11,6 +11,13 @@ if (is_android) {
   import("//build/config/android/config.gni")
 }
 
+# This file depends on the legacy global sources assignment filter. It should
+# be converted to check target platform before assigning source files to the
+# sources variable. Remove this import and set_sources_assignment_filter call
+# when the file has been converted. See https://crbug.com/1018739 for details.
+import("//build/config/deprecated_default_sources_assignment_filter.gni")
+set_sources_assignment_filter(deprecated_default_sources_assignment_filter)
+
 source_set("lib") {
   visibility = [
     ":*",
@@ -22,7 +29,10 @@ source_set("lib") {
     "crash_reporter_client.h",
   ]
 
-  deps = [ "//base" ]
+  deps = [
+    "//base",
+    "//build:branding_buildflags",
+  ]
 }
 
 source_set("crashpad_handler_main") {
@@ -52,11 +62,11 @@ static_library("app") {
     "crashpad_win.cc",
   ]
 
-  if (is_mac || is_win || is_android || is_linux) {
+  if (is_mac || is_win || is_android || is_linux || is_chromeos) {
     sources += [ "crashpad.cc" ]
   }
 
-  if (is_linux) {
+  if (is_linux || is_chromeos) {
     sources += [
       "breakpad_linux.cc",
       "breakpad_linux.h",
@@ -70,9 +80,10 @@ static_library("app") {
   deps = [
     "//base",
     "//build:branding_buildflags",
+    "//content/public/common:content_descriptors",
   ]
 
-  if (is_mac || is_win || is_android || is_linux) {
+  if (is_mac || is_win || is_android || is_linux || is_chromeos) {
     deps += [
       "//third_party/crashpad/crashpad/client",
       "//third_party/crashpad/crashpad/util",
@@ -88,7 +99,7 @@ static_library("app") {
     ]
   }
 
-  if (is_android || is_linux) {
+  if (is_android || is_linux || is_chromeos) {
     deps += [
       "//base:base_static",
       "//components/crash/core/common",
@@ -96,7 +107,7 @@ static_library("app") {
     ]
   }
 
-  if (is_linux) {
+  if (is_linux || is_chromeos) {
     deps += [ "//third_party/breakpad:client" ]
   }
 
@@ -127,7 +138,7 @@ static_library("app") {
     libs = [ "log" ]
   }
 
-  if (is_linux) {
+  if (is_linux || is_chromeos) {
     data_deps = [ "//third_party/crashpad/crashpad/handler:crashpad_handler" ]
   }
 }

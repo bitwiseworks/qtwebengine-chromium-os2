@@ -16,6 +16,7 @@
 
 namespace angle
 {
+std::string GetExecutableName();
 std::string GetExecutablePath();
 std::string GetExecutableDirectory();
 std::string GetHelperExecutableDir();
@@ -68,6 +69,7 @@ enum class SearchType
 };
 
 Library *OpenSharedLibrary(const char *libraryName, SearchType searchType);
+Library *OpenSharedLibraryWithExtension(const char *libraryName);
 
 // Returns true if the process is currently being debugged.
 bool IsDebuggerAttached();

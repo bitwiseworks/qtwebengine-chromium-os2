@@ -6,8 +6,8 @@
 #define COMPONENTS_ARC_NET_ARC_NET_HOST_IMPL_H_
 
 #include <stdint.h>
+#include <map>
 #include <memory>
-#include <set>
 #include <string>
 #include <vector>
 
@@ -89,13 +89,11 @@ class ArcNetHostImpl : public KeyedService,
   // Overriden from chromeos::NetworkStateHandlerObserver.
   void ScanCompleted(const chromeos::DeviceState* /*unused*/) override;
   void OnShuttingDown() override;
-  void DefaultNetworkChanged(const chromeos::NetworkState* network) override;
   void NetworkConnectionStateChanged(
       const chromeos::NetworkState* network) override;
-  void ActiveNetworksChanged(
-      const std::vector<const chromeos::NetworkState*>& networks) override;
   void NetworkListChanged() override;
   void DeviceListChanged() override;
+  void NetworkPropertiesUpdated(const chromeos::NetworkState* network) override;
 
   // Overriden from chromeos::NetworkConnectionObserver.
   void DisconnectRequested(const std::string& service_path) override;
@@ -151,17 +149,17 @@ class ArcNetHostImpl : public KeyedService,
       const std::string& error_name,
       std::unique_ptr<base::DictionaryValue> error_data);
 
-  // Request properties of the Service corresponding to |service_path|.
-  void RequestUpdateForNetwork(const std::string& service_path);
+  // Callback for chromeos::NetworkHandler::GetShillProperties
+  void ReceiveShillProperties(const std::string& service_path,
+                              base::Optional<base::Value> shill_properties);
 
   ArcBridgeService* const arc_bridge_service_;  // Owned by ArcServiceManager.
 
   // True if the chrome::NetworkStateHandler is currently being observed for
   // state changes.
   bool observing_network_state_ = false;
-  // Contains all service paths for which a property update request is
-  // currently scheduled.
-  std::set<std::string> pending_service_property_requests_;
+  // Cached shill properties for all active networks, keyed by Service path.
+  std::map<std::string, base::Value> shill_network_properties_;
 
   std::string cached_service_path_;
   std::string cached_guid_;

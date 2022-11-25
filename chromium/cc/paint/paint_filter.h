@@ -5,8 +5,8 @@
 #ifndef CC_PAINT_PAINT_FILTER_H_
 #define CC_PAINT_PAINT_FILTER_H_
 
+#include "base/check_op.h"
 #include "base/containers/stack_container.h"
-#include "base/logging.h"
 #include "base/optional.h"
 #include "base/stl_util.h"
 #include "cc/paint/paint_export.h"
@@ -557,15 +557,15 @@ class CC_PAINT_EXPORT MorphologyPaintFilter final : public PaintFilter {
   enum class MorphType : uint32_t { kDilate, kErode, kMaxMorphType = kErode };
   static constexpr Type kType = Type::kMorphology;
   MorphologyPaintFilter(MorphType morph_type,
-                        int radius_x,
-                        int radius_y,
+                        float radius_x,
+                        float radius_y,
                         sk_sp<PaintFilter> input,
                         const CropRect* crop_rect = nullptr);
   ~MorphologyPaintFilter() override;
 
   MorphType morph_type() const { return morph_type_; }
-  int radius_x() const { return radius_x_; }
-  int radius_y() const { return radius_y_; }
+  float radius_x() const { return radius_x_; }
+  float radius_y() const { return radius_y_; }
   const sk_sp<PaintFilter>& input() const { return input_; }
 
   size_t SerializedSize() const override;
@@ -577,8 +577,8 @@ class CC_PAINT_EXPORT MorphologyPaintFilter final : public PaintFilter {
 
  private:
   MorphType morph_type_;
-  int radius_x_;
-  int radius_y_;
+  float radius_x_;
+  float radius_y_;
   sk_sp<PaintFilter> input_;
 };
 

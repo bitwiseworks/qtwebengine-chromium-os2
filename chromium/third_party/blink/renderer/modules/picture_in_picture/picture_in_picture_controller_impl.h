@@ -7,13 +7,13 @@
 
 #include "base/macros.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
-#include "mojo/public/cpp/bindings/receiver.h"
-#include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/mojom/picture_in_picture/picture_in_picture.mojom-blink.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/frame/picture_in_picture_controller.h"
 #include "third_party/blink/renderer/core/page/page_visibility_observer.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_receiver.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
 
 namespace blink {
 
@@ -33,10 +33,8 @@ class TreeScope;
 class MODULES_EXPORT PictureInPictureControllerImpl
     : public PictureInPictureController,
       public PageVisibilityObserver,
-      public ExecutionContextLifecycleObserver,
+      public ExecutionContextClient,
       public blink::mojom::blink::PictureInPictureSessionObserver {
-  USING_GARBAGE_COLLECTED_MIXIN(PictureInPictureControllerImpl);
-
  public:
   explicit PictureInPictureControllerImpl(Document&);
   ~PictureInPictureControllerImpl() override = default;
@@ -90,10 +88,7 @@ class MODULES_EXPORT PictureInPictureControllerImpl
   // Implementation of PageVisibilityObserver.
   void PageVisibilityChanged() override;
 
-  // Implementation of ExecutionContextLifecycleObserver.
-  void ContextDestroyed() override;
-
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   bool IsSessionObserverReceiverBoundForTesting() {
     return session_observer_receiver_.is_bound();
@@ -123,15 +118,17 @@ class MODULES_EXPORT PictureInPictureControllerImpl
   Member<PictureInPictureWindow> picture_in_picture_window_;
 
   // Mojo bindings for the session observer interface implemented by |this|.
-  mojo::Receiver<mojom::blink::PictureInPictureSessionObserver>
+  HeapMojoReceiver<mojom::blink::PictureInPictureSessionObserver,
+                   PictureInPictureControllerImpl>
       session_observer_receiver_;
 
   // Picture-in-Picture service living in the browser process.
-  mojo::Remote<mojom::blink::PictureInPictureService>
+  HeapMojoRemote<mojom::blink::PictureInPictureService>
       picture_in_picture_service_;
 
   // Instance of the Picture-in-Picture session sent back by the service.
-  mojo::Remote<mojom::blink::PictureInPictureSession>
+  HeapMojoRemote<mojom::blink::PictureInPictureSession,
+                 HeapMojoWrapperMode::kWithoutContextObserver>
       picture_in_picture_session_;
 
   DISALLOW_COPY_AND_ASSIGN(PictureInPictureControllerImpl);

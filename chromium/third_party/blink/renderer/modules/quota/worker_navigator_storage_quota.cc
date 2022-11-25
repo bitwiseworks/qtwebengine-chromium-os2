@@ -30,6 +30,7 @@
 
 #include "third_party/blink/renderer/modules/quota/worker_navigator_storage_quota.h"
 
+#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/modules/quota/deprecated_storage_quota.h"
 #include "third_party/blink/renderer/modules/quota/storage_manager.h"
 
@@ -57,12 +58,26 @@ StorageManager* WorkerNavigatorStorageQuota::storage(
 }
 
 StorageManager* WorkerNavigatorStorageQuota::storage() const {
-  if (!storage_manager_)
-    storage_manager_ = MakeGarbageCollected<StorageManager>();
+  if (!storage_manager_) {
+    mojo::Remote<mojom::blink::QuotaManagerHost> backend;
+
+    auto* supplementable = GetSupplementable();
+    auto* execution_context =
+        supplementable ? supplementable->GetExecutionContext() : nullptr;
+    if (execution_context) {
+      if (&execution_context->GetBrowserInterfaceBroker() !=
+          &GetEmptyBrowserInterfaceBroker()) {
+        execution_context->GetBrowserInterfaceBroker().GetInterface(
+            backend.BindNewPipeAndPassReceiver());
+      }
+    }
+    storage_manager_ = MakeGarbageCollected<StorageManager>(execution_context,
+                                                            std::move(backend));
+  }
   return storage_manager_.Get();
 }
 
-void WorkerNavigatorStorageQuota::Trace(Visitor* visitor) {
+void WorkerNavigatorStorageQuota::Trace(Visitor* visitor) const {
   visitor->Trace(storage_manager_);
   Supplement<WorkerNavigator>::Trace(visitor);
 }

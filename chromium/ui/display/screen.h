@@ -5,6 +5,7 @@
 #ifndef UI_DISPLAY_SCREEN_H_
 #define UI_DISPLAY_SCREEN_H_
 
+#include <set>
 #include <vector>
 
 #include "base/macros.h"
@@ -37,9 +38,10 @@ class DISPLAY_EXPORT Screen {
   // Retrieves the single Screen object.
   static Screen* GetScreen();
 
-  // Sets the global screen. NOTE: this does not take ownership of |screen|.
-  // Tests must be sure to reset any state they install.
-  static void SetScreenInstance(Screen* instance);
+  // Sets the global screen. Returns the previously installed screen, if any.
+  // NOTE: this does not take ownership of |screen|. Tests must be sure to reset
+  // any state they install.
+  static Screen* SetScreenInstance(Screen* instance);
 
   // Returns the current absolute position of the mouse pointer.
   virtual gfx::Point GetCursorScreenPoint() = 0;
@@ -49,6 +51,14 @@ class DISPLAY_EXPORT Screen {
 
   // Returns the window at the given screen coordinate |point|.
   virtual gfx::NativeWindow GetWindowAtScreenPoint(const gfx::Point& point) = 0;
+
+  // Finds the topmost visible chrome window at |screen_point|. This should
+  // return nullptr if |screen_point| is in another program's window which
+  // occludes the topmost chrome window. Ignores the windows in |ignore|, which
+  // contain windows such as the tab being dragged right now.
+  virtual gfx::NativeWindow GetLocalProcessWindowAtPoint(
+      const gfx::Point& point,
+      const std::set<gfx::NativeWindow>& ignore) = 0;
 
   // Returns the number of displays.
   // Mirrored displays are excluded; this method is intended to return the
@@ -68,10 +78,10 @@ class DISPLAY_EXPORT Screen {
   // the location of the view within that window won't influence the result).
   virtual Display GetDisplayNearestView(gfx::NativeView view) const;
 
-  // Returns the display nearest the specified point. |point| should be in DIPs.
+  // Returns the display nearest the specified DIP |point|.
   virtual Display GetDisplayNearestPoint(const gfx::Point& point) const = 0;
 
-  // Returns the display that most closely intersects the provided bounds.
+  // Returns the display that most closely intersects the DIP rect |match_rect|.
   virtual Display GetDisplayMatching(const gfx::Rect& match_rect) const = 0;
 
   // Returns the primary display. It is guaranteed that this will return a
@@ -86,20 +96,25 @@ class DISPLAY_EXPORT Screen {
   // Sets the suggested display to use when creating a new window.
   void SetDisplayForNewWindows(int64_t display_id);
 
+  // Suspends the platform-specific screensaver, if applicable.
+  virtual void SetScreenSaverSuspended(bool suspend);
+
   // Adds/Removes display observers.
   virtual void AddObserver(DisplayObserver* observer) = 0;
   virtual void RemoveObserver(DisplayObserver* observer) = 0;
 
-  // Converts |screen_rect| to DIP coordinates in the context of |view| clamping
-  // to the enclosing rect if the coordinates do not fall on pixel boundaries.
-  // If |view| is null, the primary display is used as the context.
-  virtual gfx::Rect ScreenToDIPRectInWindow(gfx::NativeView view,
+  // Converts |screen_rect| to DIP coordinates in the context of |window|
+  // clamping to the enclosing rect if the coordinates do not fall on pixel
+  // boundaries. If |window| is null, the primary display is used as the
+  // context.
+  virtual gfx::Rect ScreenToDIPRectInWindow(gfx::NativeWindow window,
                                             const gfx::Rect& screen_rect) const;
 
-  // Converts |dip_rect| to screen coordinates in the context of |view| clamping
-  // to the enclosing rect if the coordinates do not fall on pixel boundaries.
-  // If |view| is null, the primary display is used as the context.
-  virtual gfx::Rect DIPToScreenRectInWindow(gfx::NativeView view,
+  // Converts |dip_rect| to screen coordinates in the context of |window|
+  // clamping to the enclosing rect if the coordinates do not fall on pixel
+  // boundaries. If |window| is null, the primary display is used as the
+  // context.
+  virtual gfx::Rect DIPToScreenRectInWindow(gfx::NativeWindow window,
                                             const gfx::Rect& dip_rect) const;
 
   // Returns true if the display with |display_id| is found and returns that
@@ -116,9 +131,17 @@ class DISPLAY_EXPORT Screen {
   virtual std::string GetCurrentWorkspace();
 
  private:
+  friend class ScopedDisplayForNewWindows;
+
+  // Used to temporarily override the value from SetDisplayForNewWindows() by
+  // creating an instance of ScopedDisplayForNewWindows. Call with
+  // |kInvalidDisplayId| to unset.
+  void SetScopedDisplayForNewWindows(int64_t display_id);
+
   static gfx::NativeWindow GetWindowForView(gfx::NativeView view);
 
   int64_t display_id_for_new_windows_;
+  int64_t scoped_display_id_for_new_windows_ = display::kInvalidDisplayId;
 
   DISALLOW_COPY_AND_ASSIGN(Screen);
 };

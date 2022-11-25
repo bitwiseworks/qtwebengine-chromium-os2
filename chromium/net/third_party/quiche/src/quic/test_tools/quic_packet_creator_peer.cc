@@ -111,7 +111,9 @@ SerializedPacket QuicPacketCreatorPeer::SerializeAllFrames(
     bool success = creator->AddFrame(frame, NOT_RETRANSMISSION);
     DCHECK(success);
   }
-  creator->SerializePacket(buffer, buffer_len);
+  const bool success = creator->SerializePacket(
+      QuicOwnedPacketBuffer(buffer, nullptr), buffer_len);
+  DCHECK(success);
   SerializedPacket packet = std::move(creator->packet_);
   // The caller takes ownership of the QuicEncryptedPacket.
   creator->packet_.encrypted_buffer = nullptr;
@@ -119,14 +121,14 @@ SerializedPacket QuicPacketCreatorPeer::SerializeAllFrames(
 }
 
 // static
-OwningSerializedPacketPointer
+std::unique_ptr<SerializedPacket>
 QuicPacketCreatorPeer::SerializeConnectivityProbingPacket(
     QuicPacketCreator* creator) {
   return creator->SerializeConnectivityProbingPacket();
 }
 
 // static
-OwningSerializedPacketPointer
+std::unique_ptr<SerializedPacket>
 QuicPacketCreatorPeer::SerializePathChallengeConnectivityProbingPacket(
     QuicPacketCreator* creator,
     QuicPathFrameBuffer* payload) {
@@ -147,6 +149,11 @@ QuicFramer* QuicPacketCreatorPeer::framer(QuicPacketCreator* creator) {
 // static
 std::string QuicPacketCreatorPeer::GetRetryToken(QuicPacketCreator* creator) {
   return creator->retry_token_;
+}
+
+// static
+QuicFrames& QuicPacketCreatorPeer::QueuedFrames(QuicPacketCreator* creator) {
+  return creator->queued_frames_;
 }
 
 }  // namespace test

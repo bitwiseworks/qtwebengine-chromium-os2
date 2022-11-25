@@ -6,7 +6,7 @@ import("//build/config/chromeos/args.gni")
 import("//build/config/linux/pkg_config.gni")
 import("//build/config/ui.gni")
 
-assert(use_ozone && is_linux)
+assert(use_ozone && (is_linux || is_chromeos))
 
 visibility = [ ":*" ]
 
@@ -167,6 +167,7 @@ source_set("unittests") {
     "event_device_info_unittest.cc",
     "event_device_test_util.cc",
     "event_device_test_util.h",
+    "event_factory_evdev_unittest.cc",
     "gamepad_event_converter_evdev_unittest.cc",
     "input_injector_evdev_unittest.cc",
     "stylus_button_event_converter_evdev_unittest.cc",

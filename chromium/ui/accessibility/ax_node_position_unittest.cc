@@ -1260,6 +1260,59 @@ TEST_F(AXPositionTest, AtStartOfLineWithTextPosition) {
   EXPECT_FALSE(text_position->AtStartOfLine());
 }
 
+TEST_F(AXPositionTest, AtStartOfLineStaticTextExtraPrecedingSpace) {
+  // Consider the following web content:
+  //   <style>
+  //     .required-label::after {
+  //       content: " *";
+  //     }
+  //   </style>
+  //   <label class="required-label">Required </label>
+  //
+  // Which has the following AXTree, where the static text (#3)
+  // contains an extra preceding space compared to its inline text (#4).
+  // ++1 kRootWebArea
+  // ++++2 kLabelText
+  // ++++++3 kStaticText      name=" *"
+  // ++++++++4 kInlineTextBox name="*"
+  // This test ensures that this difference between static text and its inline
+  // text box does not cause a hang when AtStartOfLine is called on static text
+  // with text position " <*>".
+
+  AXNodeData root;
+  root.id = 1;
+  root.role = ax::mojom::Role::kRootWebArea;
+  // "kIsLineBreakingObject" is not strictly necessary but is added for
+  // completeness.
+  root.AddBoolAttribute(ax::mojom::BoolAttribute::kIsLineBreakingObject, true);
+  AXNodeData label_text;
+  label_text.id = 2;
+  label_text.role = ax::mojom::Role::kLabelText;
+
+  AXNodeData static_text1;
+  static_text1.id = 3;
+  static_text1.role = ax::mojom::Role::kStaticText;
+  static_text1.SetName(" *");
+
+  AXNodeData inline_text1;
+  inline_text1.id = 4;
+  inline_text1.role = ax::mojom::Role::kInlineTextBox;
+  inline_text1.SetName("*");
+
+  static_text1.child_ids = {inline_text1.id};
+  root.child_ids = {static_text1.id};
+
+  SetTree(CreateAXTree({root, static_text1, inline_text1}));
+
+  // Calling AtStartOfLine on |static_text1| with position " <*>",
+  // text_offset_=1, should not get into an infinite loop; it should be
+  // guaranteed to terminate.
+  TestPositionType text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), static_text1.id, 1 /* child_index */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_FALSE(text_position->AtStartOfLine());
+}
+
 TEST_F(AXPositionTest, AtEndOfLineWithTextPosition) {
   TestPositionType text_position = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_box1_.id, 5 /* text_offset */,
@@ -1367,6 +1420,135 @@ TEST_F(AXPositionTest, AtEndOfBlankLine) {
       ax::mojom::TextAffinity::kDownstream);
   ASSERT_NE(nullptr, text_position);
   ASSERT_TRUE(text_position->IsTextPosition());
+  EXPECT_TRUE(text_position->AtEndOfLine());
+}
+
+TEST_F(AXPositionTest, AtStartAndEndOfLineWhenAtEndOfTextSpan) {
+  // This test ensures that the "AtStartOfLine" and the "AtEndOfLine" methods
+  // return false and true respectively when we are at the end of a text span.
+  //
+  // A text span is defined by a series of inline text boxes that make up a
+  // single static text object. Lines always end at the end of static text
+  // objects, so there would never arise a situation when a position at the end
+  // of a text span would be at start of line. It should always be at end of
+  // line. On the contrary, if a position is at the end of an inline text box
+  // and the equivalent parent position is in the middle of a static text
+  // object, then the position would sometimes be at start of line, i.e., when
+  // the inline text box contains only white space that is used to separate
+  // lines in the case of lines being wrapped by a soft line break.
+  //
+  // Example accessibility tree:
+  // 0:kRootWebArea
+  // ++1:kStaticText "Hello testing "
+  // ++++2:kInlineTextBox "Hello" kNextOnLine=2
+  // ++++3:kInlineTextBox " " kPreviousOnLine=2
+  // ++++4:kInlineTextBox "testing" kNextOnLine=5
+  // ++++5:kInlineTextBox " " kPreviousOnLine=4
+  // ++6:kStaticText "here."
+  // ++++7:kInlineTextBox "here."
+  //
+  // Resulting text representation:
+  // "Hello<soft_line_break>testing <hard_line_break>here."
+  // Notice the extra space after the word "testing". This is not a line break.
+  // The hard line break is caused by the presence of the second static text
+  // object.
+  //
+  // A position at the end of inline text box 3 should be at start of line,
+  // whilst a position at the end of inline text box 5 should not.
+
+  AXNodeData root_data;
+  root_data.id = 1;
+  root_data.role = ax::mojom::Role::kRootWebArea;
+  // "kIsLineBreakingObject" is not strictly necessary but is added for
+  // completeness.
+  root_data.AddBoolAttribute(ax::mojom::BoolAttribute::kIsLineBreakingObject,
+                             true);
+
+  AXNodeData static_text_data_1;
+  static_text_data_1.id = 2;
+  static_text_data_1.role = ax::mojom::Role::kStaticText;
+  static_text_data_1.SetName("Hello testing ");
+
+  AXNodeData inline_box_data_1;
+  inline_box_data_1.id = 3;
+  inline_box_data_1.role = ax::mojom::Role::kInlineTextBox;
+  inline_box_data_1.SetName("hello");
+
+  AXNodeData inline_box_data_2;
+  inline_box_data_2.id = 4;
+  inline_box_data_2.role = ax::mojom::Role::kInlineTextBox;
+  inline_box_data_1.AddIntAttribute(ax::mojom::IntAttribute::kNextOnLineId,
+                                    inline_box_data_2.id);
+  inline_box_data_2.AddIntAttribute(ax::mojom::IntAttribute::kPreviousOnLineId,
+                                    inline_box_data_1.id);
+  // The name is a space character that we assume it turns into a soft line
+  // break by the layout engine.
+  inline_box_data_2.SetName(" ");
+
+  AXNodeData inline_box_data_3;
+  inline_box_data_3.id = 5;
+  inline_box_data_3.role = ax::mojom::Role::kInlineTextBox;
+  inline_box_data_3.SetName("testing");
+
+  AXNodeData inline_box_data_4;
+  inline_box_data_4.id = 6;
+  inline_box_data_4.role = ax::mojom::Role::kInlineTextBox;
+  inline_box_data_3.AddIntAttribute(ax::mojom::IntAttribute::kNextOnLineId,
+                                    inline_box_data_4.id);
+  inline_box_data_4.AddIntAttribute(ax::mojom::IntAttribute::kPreviousOnLineId,
+                                    inline_box_data_3.id);
+  inline_box_data_4.SetName(" ");  // Just a space character - not a line break.
+
+  AXNodeData static_text_data_2;
+  static_text_data_2.id = 7;
+  static_text_data_2.role = ax::mojom::Role::kStaticText;
+  static_text_data_2.SetName("here.");
+
+  AXNodeData inline_box_data_5;
+  inline_box_data_5.id = 8;
+  inline_box_data_5.role = ax::mojom::Role::kInlineTextBox;
+  inline_box_data_5.SetName("here.");
+
+  static_text_data_1.child_ids = {inline_box_data_1.id, inline_box_data_2.id,
+                                  inline_box_data_3.id, inline_box_data_4.id};
+  static_text_data_2.child_ids = {inline_box_data_5.id};
+  root_data.child_ids = {static_text_data_1.id, static_text_data_2.id};
+
+  SetTree(CreateAXTree({root_data, static_text_data_1, inline_box_data_1,
+                        inline_box_data_2, inline_box_data_3, inline_box_data_4,
+                        static_text_data_2, inline_box_data_5}));
+
+  // An "after text" tree position - after the soft line break.
+  TestPositionType tree_position = AXNodePosition::CreateTreePosition(
+      GetTreeID(), inline_box_data_2.id, 0 /* child_index */);
+  ASSERT_NE(nullptr, tree_position);
+  ASSERT_TRUE(tree_position->IsTreePosition());
+  EXPECT_TRUE(tree_position->AtStartOfLine());
+  EXPECT_FALSE(tree_position->AtEndOfLine());
+
+  // An "after text" tree position - after the space character and before the
+  // hard line break caused by the second static text object.
+  tree_position = AXNodePosition::CreateTreePosition(
+      GetTreeID(), inline_box_data_4.id, 0 /* child_index */);
+  ASSERT_NE(nullptr, tree_position);
+  ASSERT_TRUE(tree_position->IsTreePosition());
+  EXPECT_FALSE(tree_position->AtStartOfLine());
+  EXPECT_TRUE(tree_position->AtEndOfLine());
+
+  TestPositionType text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), inline_box_data_2.id, 1 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  ASSERT_TRUE(text_position->IsTextPosition());
+  EXPECT_TRUE(text_position->AtStartOfLine());
+  EXPECT_FALSE(text_position->AtEndOfLine());
+
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), inline_box_data_4.id, 1 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  ASSERT_TRUE(text_position->IsTextPosition());
+  EXPECT_FALSE(text_position->AtStartOfLine());
   EXPECT_TRUE(text_position->AtEndOfLine());
 }
 
@@ -1558,7 +1740,9 @@ TEST_F(AXPositionTest, AtStartOfParagraphWithTextPosition) {
   EXPECT_FALSE(text_position->AtStartOfParagraph());
 
   // An "after text" position anchored at the line break should not be the same
-  // as a text position at the start of the next paragraph.
+  // as a text position at the start of the next paragraph because in practice
+  // they should have resulted from two different ancestor positions. The former
+  // should have been an upstream position, whilst the latter a downstream one.
   text_position = AXNodePosition::CreateTextPosition(
       GetTreeID(), line_break_.id, 1 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
@@ -1581,122 +1765,6 @@ TEST_F(AXPositionTest, AtStartOfParagraphWithTextPosition) {
   ASSERT_NE(nullptr, text_position);
   ASSERT_TRUE(text_position->IsTextPosition());
   EXPECT_FALSE(text_position->AtStartOfParagraph());
-}
-
-TEST_F(AXPositionTest, AtStartOfParagraphOnAListMarkerDescendant) {
-  // This test updates the tree structure to test a specific edge case -
-  // AtStartOfParagraph should return false on the next sibling of a list marker
-  // text descendant.
-  // ++1 kRootWebArea
-  // ++++2 kList
-  // ++++++3 kListItem
-  // ++++++++4 kListMarker
-  // ++++++++++5 kStaticText
-  // ++++++++++++6 kInlineTextBox "1. "
-  // ++++++++7 kStaticText
-  // ++++++++++8 kInlineTextBox "content"
-  // ++++++9 kListItem
-  // ++++++++10 kListMarker
-  // +++++++++++11 kStaticText
-  // ++++++++++++++12 kInlineTextBox "2. "
-  // ++++13 kStaticText
-  // +++++++14 kInlineTextBox "after"
-  AXNodeData root;
-  AXNodeData list;
-  AXNodeData list_item1;
-  AXNodeData list_item2;
-  AXNodeData list_marker1;
-  AXNodeData list_marker2;
-  AXNodeData inline_box1;
-  AXNodeData inline_box2;
-  AXNodeData inline_box3;
-  AXNodeData inline_box4;
-  AXNodeData static_text1;
-  AXNodeData static_text2;
-  AXNodeData static_text3;
-  AXNodeData static_text4;
-
-  root.id = 1;
-  list.id = 2;
-  list_item1.id = 3;
-  list_marker1.id = 4;
-  static_text1.id = 5;
-  inline_box1.id = 6;
-  static_text2.id = 7;
-  inline_box2.id = 8;
-  list_item2.id = 9;
-  list_marker2.id = 10;
-  static_text3.id = 11;
-  inline_box3.id = 12;
-  static_text4.id = 13;
-  inline_box4.id = 14;
-
-  root.role = ax::mojom::Role::kRootWebArea;
-  root.child_ids = {list.id, static_text4.id};
-
-  list.role = ax::mojom::Role::kList;
-  list.child_ids = {list_item1.id, list_item2.id};
-
-  list_item1.role = ax::mojom::Role::kListItem;
-  list_item1.child_ids = {list_marker1.id, static_text2.id};
-  list_item1.AddBoolAttribute(ax::mojom::BoolAttribute::kIsLineBreakingObject,
-                              true);
-
-  list_marker1.role = ax::mojom::Role::kListMarker;
-  list_marker1.child_ids = {static_text1.id};
-
-  static_text1.role = ax::mojom::Role::kStaticText;
-  static_text1.child_ids = {inline_box1.id};
-
-  inline_box1.role = ax::mojom::Role::kInlineTextBox;
-  inline_box1.SetName("1. ");
-
-  static_text2.role = ax::mojom::Role::kStaticText;
-  static_text2.child_ids = {inline_box2.id};
-
-  inline_box2.role = ax::mojom::Role::kInlineTextBox;
-  inline_box2.SetName("content");
-  inline_box2.AddIntAttribute(ax::mojom::IntAttribute::kPreviousOnLineId,
-                              inline_box1.id);
-
-  list_item2.role = ax::mojom::Role::kListItem;
-  list_item2.child_ids = {list_marker2.id};
-  list_item2.AddBoolAttribute(ax::mojom::BoolAttribute::kIsLineBreakingObject,
-                              true);
-
-  list_marker2.role = ax::mojom::Role::kListMarker;
-  list_marker2.child_ids = {static_text3.id};
-
-  static_text3.role = ax::mojom::Role::kStaticText;
-  static_text3.child_ids = {inline_box3.id};
-
-  inline_box3.role = ax::mojom::Role::kInlineTextBox;
-  inline_box3.SetName("2. ");
-
-  static_text4.role = ax::mojom::Role::kStaticText;
-  static_text4.child_ids = {inline_box4.id};
-
-  inline_box4.role = ax::mojom::Role::kInlineTextBox;
-  inline_box4.SetName("after");
-
-  SetTree(CreateAXTree({root, list, list_item1, list_marker1, static_text1,
-                        inline_box1, static_text2, inline_box2, list_item2,
-                        list_marker2, static_text3, inline_box3, static_text4,
-                        inline_box4}));
-
-  TestPositionType text_position = AXNodePosition::CreateTextPosition(
-      GetTreeID(), inline_box2.id, 0 /* text_offset */,
-      ax::mojom::TextAffinity::kDownstream);
-  ASSERT_NE(nullptr, text_position);
-  ASSERT_TRUE(text_position->IsTextPosition());
-  ASSERT_FALSE(text_position->AtStartOfParagraph());
-
-  text_position = AXNodePosition::CreateTextPosition(
-      GetTreeID(), inline_box4.id, 0 /* text_offset */,
-      ax::mojom::TextAffinity::kDownstream);
-  ASSERT_NE(nullptr, text_position);
-  ASSERT_TRUE(text_position->IsTextPosition());
-  ASSERT_TRUE(text_position->AtStartOfParagraph());
 }
 
 TEST_F(AXPositionTest, AtEndOfParagraphWithTextPosition) {
@@ -1744,119 +1812,21 @@ TEST_F(AXPositionTest, AtEndOfParagraphWithTextPosition) {
   EXPECT_TRUE(text_position->AtEndOfParagraph());
 }
 
-TEST_F(AXPositionTest, AtEndOfParagraphOnAListMarkerDescendant) {
-  // This test updates the tree structure to test a specific edge case -
-  // AtEndOfParagraph should return false on a child of a list marker if the
-  // list item has content. When the list marker is the only child of a list
-  // item, it should return true.
-  // ++1 kRootWebArea
-  // ++++2 kList
-  // ++++++3 kListItem
-  // ++++++++4 kListMarker
-  // ++++++++++5 kStaticText
-  // ++++++++++++6 kInlineTextBox "1. "
-  // ++++++++7 kStaticText
-  // ++++++++++8 kInlineTextBox "content"
-  // ++++++9 kListItem
-  // ++++++++10 kListMarker
-  // +++++++++++11 kStaticText
-  // ++++++++++++++12 kInlineTextBox "2. "
-  AXNodeData root;
-  AXNodeData list;
-  AXNodeData list_item1;
-  AXNodeData list_item2;
-  AXNodeData list_marker1;
-  AXNodeData list_marker2;
-  AXNodeData inline_box1;
-  AXNodeData inline_box2;
-  AXNodeData inline_box3;
-  AXNodeData static_text1;
-  AXNodeData static_text2;
-  AXNodeData static_text3;
-
-  root.id = 1;
-  list.id = 2;
-  list_item1.id = 3;
-  list_marker1.id = 4;
-  static_text1.id = 5;
-  inline_box1.id = 6;
-  static_text2.id = 7;
-  inline_box2.id = 8;
-  list_item2.id = 9;
-  list_marker2.id = 10;
-  static_text3.id = 11;
-  inline_box3.id = 12;
-
-  root.role = ax::mojom::Role::kRootWebArea;
-  root.child_ids = {list.id};
-
-  list.role = ax::mojom::Role::kList;
-  list.child_ids = {list_item1.id, list_item2.id};
-
-  list_item1.role = ax::mojom::Role::kListItem;
-  list_item1.child_ids = {list_marker1.id, static_text2.id};
-  list_item1.AddBoolAttribute(ax::mojom::BoolAttribute::kIsLineBreakingObject,
-                              true);
-
-  list_marker1.role = ax::mojom::Role::kListMarker;
-  list_marker1.child_ids = {static_text1.id};
-
-  static_text1.role = ax::mojom::Role::kStaticText;
-  static_text1.child_ids = {inline_box1.id};
-
-  inline_box1.role = ax::mojom::Role::kInlineTextBox;
-  inline_box1.SetName("1. ");
-
-  static_text2.role = ax::mojom::Role::kStaticText;
-  static_text2.child_ids = {inline_box2.id};
-
-  inline_box2.role = ax::mojom::Role::kInlineTextBox;
-  inline_box2.SetName("content");
-
-  list_item2.role = ax::mojom::Role::kListItem;
-  list_item2.child_ids = {list_marker2.id};
-  list_item2.AddBoolAttribute(ax::mojom::BoolAttribute::kIsLineBreakingObject,
-                              true);
-
-  list_marker2.role = ax::mojom::Role::kListMarker;
-  list_marker2.child_ids = {static_text3.id};
-
-  static_text3.role = ax::mojom::Role::kStaticText;
-  static_text3.child_ids = {inline_box3.id};
-
-  inline_box3.role = ax::mojom::Role::kInlineTextBox;
-  inline_box3.SetName("2. ");
-
-  SetTree(CreateAXTree({root, list, list_item1, list_marker1, static_text1,
-                        inline_box1, static_text2, inline_box2, list_item2,
-                        list_marker2, static_text3, inline_box3}));
-
-  TestPositionType text_position = AXNodePosition::CreateTextPosition(
-      GetTreeID(), inline_box1.id, 3 /* text_offset */,
-      ax::mojom::TextAffinity::kDownstream);
-  ASSERT_NE(nullptr, text_position);
-  ASSERT_TRUE(text_position->IsTextPosition());
-  ASSERT_FALSE(text_position->AtEndOfParagraph());
-
-  text_position = AXNodePosition::CreateTextPosition(
-      GetTreeID(), inline_box3.id, 3 /* text_offset */,
-      ax::mojom::TextAffinity::kDownstream);
-  ASSERT_NE(nullptr, text_position);
-  ASSERT_TRUE(text_position->IsTextPosition());
-  ASSERT_TRUE(text_position->AtEndOfParagraph());
-}
-
 TEST_F(AXPositionTest, ParagraphEdgesWithPreservedNewLine) {
-  // This test updates the tree structure to test a specific edge case -
-  // At{Start|End}OfParagraph when an ancestor position can resolve to a
-  // preserved newline descendant.
+  // This test ensures that "At{Start|End}OfParagraph" work correctly when a
+  // text position is on a preserved newline character.
+  //
+  // Newline characters are used to separate paragraphs. If there is a series of
+  // newline characters, a paragraph should start after the last newline
+  // character.
   // ++1 kRootWebArea isLineBreakingObject
-  // ++++2 kStaticText
+  // ++++2 kStaticText "some text"
   // ++++++3 kInlineTextBox "some text"
   // ++++4 kGenericContainer isLineBreakingObject
-  // ++++++5 kStaticText
+  // ++++++5 kStaticText "\nmore text"
   // ++++++++6 kInlineTextBox "\n" isLineBreakingObject
   // ++++++++7 kInlineTextBox "more text"
+
   AXNodeData root_data;
   root_data.id = 1;
   root_data.role = ax::mojom::Role::kRootWebArea;
@@ -1896,69 +1866,79 @@ TEST_F(AXPositionTest, ParagraphEdgesWithPreservedNewLine) {
   more_text_data.role = ax::mojom::Role::kInlineTextBox;
   more_text_data.SetName("more text");
 
-  static_text_data_1.child_ids = {3};
-  container_data.child_ids = {5};
-  static_text_data_2.child_ids = {6, 7};
-  root_data.child_ids = {2, 4};
+  static_text_data_1.child_ids = {some_text_data.id};
+  container_data.child_ids = {static_text_data_2.id};
+  static_text_data_2.child_ids = {preserved_newline_data.id, more_text_data.id};
+  root_data.child_ids = {static_text_data_1.id, container_data.id};
 
   SetTree(CreateAXTree({root_data, static_text_data_1, some_text_data,
                         container_data, static_text_data_2,
                         preserved_newline_data, more_text_data}));
 
+  // Text position "some tex<t>\nmore text".
   TestPositionType text_position1 = AXNodePosition::CreateTextPosition(
       GetTreeID(), root_data.id, 8 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position1->AtEndOfParagraph());
   EXPECT_FALSE(text_position1->AtStartOfParagraph());
 
+  // Text position "some text<\n>more text".
   TestPositionType text_position2 = AXNodePosition::CreateTextPosition(
       GetTreeID(), root_data.id, 9 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position2->AtEndOfParagraph());
   EXPECT_FALSE(text_position2->AtStartOfParagraph());
 
+  // Text position "some text<\n>more text".
   TestPositionType text_position3 = AXNodePosition::CreateTextPosition(
       GetTreeID(), root_data.id, 9 /* text_offset */,
       ax::mojom::TextAffinity::kUpstream);
   EXPECT_FALSE(text_position3->AtEndOfParagraph());
   EXPECT_FALSE(text_position3->AtStartOfParagraph());
 
+  // Text position "some text\n<m>ore text".
   TestPositionType text_position4 = AXNodePosition::CreateTextPosition(
       GetTreeID(), root_data.id, 10 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position4->AtEndOfParagraph());
   EXPECT_TRUE(text_position4->AtStartOfParagraph());
 
+  // Text position "some text\n<m>ore text".
   TestPositionType text_position5 = AXNodePosition::CreateTextPosition(
       GetTreeID(), root_data.id, 10 /* text_offset */,
       ax::mojom::TextAffinity::kUpstream);
   EXPECT_TRUE(text_position5->AtEndOfParagraph());
   EXPECT_FALSE(text_position5->AtStartOfParagraph());
 
+  // Text position "<\n>more text".
   TestPositionType text_position6 = AXNodePosition::CreateTextPosition(
       GetTreeID(), container_data.id, 0 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position6->AtEndOfParagraph());
   EXPECT_FALSE(text_position6->AtStartOfParagraph());
 
+  // Text position "\n<m>ore text".
   TestPositionType text_position7 = AXNodePosition::CreateTextPosition(
       GetTreeID(), container_data.id, 1 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position7->AtEndOfParagraph());
   EXPECT_TRUE(text_position7->AtStartOfParagraph());
 
+  // Text position "\n<m>ore text".
   TestPositionType text_position8 = AXNodePosition::CreateTextPosition(
       GetTreeID(), container_data.id, 1 /* text_offset */,
       ax::mojom::TextAffinity::kUpstream);
   EXPECT_TRUE(text_position8->AtEndOfParagraph());
   EXPECT_FALSE(text_position8->AtStartOfParagraph());
 
+  // Text position "\n<m>ore text".
   TestPositionType text_position9 = AXNodePosition::CreateTextPosition(
       GetTreeID(), static_text_data_2.id, 1 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position9->AtEndOfParagraph());
   EXPECT_TRUE(text_position9->AtStartOfParagraph());
 
+  // Text position "\n<m>ore text".
   TestPositionType text_position10 = AXNodePosition::CreateTextPosition(
       GetTreeID(), static_text_data_2.id, 1 /* text_offset */,
       ax::mojom::TextAffinity::kUpstream);
@@ -2044,23 +2024,340 @@ TEST_F(
   EXPECT_EQ(5, test_position->text_offset());
 }
 
+TEST_F(AXPositionTest, AtStartOrEndOfParagraphOnAListMarker) {
+  // "AtStartOfParagraph" should return true before a list marker, either a
+  // Legacy Layout or an NG Layout one. It should return false on the next
+  // sibling of the list marker, i.e., before the list item's actual text
+  // contents.
+  //
+  // There are two list markers in the following test tree. The first one is a
+  // Legacy Layout one and the second an NG Layout one.
+  // ++1 kRootWebArea
+  // ++++2 kStaticText "Before list."
+  // ++++++3 kInlineTextBox "Before list."
+  // ++++4 kList
+  // ++++++5 kListItem
+  // ++++++++6 kListMarker
+  // ++++++++++7 kStaticText "1. "
+  // ++++++++++++8 kInlineTextBox "1. "
+  // ++++++++9 kStaticText "First item."
+  // ++++++++++10 kInlineTextBox "First item."
+  // ++++++11 kListItem
+  // ++++++++12 kListMarker "2. "
+  // ++++++++13 kStaticText "Second item."
+  // ++++++++++14 kInlineTextBox "Second item."
+  // ++15 kStaticText "After list."
+  // ++++16 kInlineTextBox "After list."
+
+  AXNodeData root;
+  AXNodeData list;
+  AXNodeData list_item1;
+  AXNodeData list_item2;
+  AXNodeData list_marker_legacy;
+  AXNodeData list_marker_ng;
+  AXNodeData static_text1;
+  AXNodeData static_text2;
+  AXNodeData static_text3;
+  AXNodeData static_text4;
+  AXNodeData static_text5;
+  AXNodeData inline_box1;
+  AXNodeData inline_box2;
+  AXNodeData inline_box3;
+  AXNodeData inline_box4;
+  AXNodeData inline_box5;
+
+  root.id = 1;
+  static_text1.id = 2;
+  inline_box1.id = 3;
+  list.id = 4;
+  list_item1.id = 5;
+  list_marker_legacy.id = 6;
+  static_text2.id = 7;
+  inline_box2.id = 8;
+  static_text3.id = 9;
+  inline_box3.id = 10;
+  list_item2.id = 11;
+  list_marker_ng.id = 12;
+  static_text4.id = 13;
+  inline_box4.id = 14;
+  static_text5.id = 15;
+  inline_box5.id = 16;
+
+  root.role = ax::mojom::Role::kRootWebArea;
+  root.child_ids = {static_text1.id, list.id, static_text5.id};
+  root.AddBoolAttribute(ax::mojom::BoolAttribute::kIsLineBreakingObject, true);
+
+  static_text1.role = ax::mojom::Role::kStaticText;
+  static_text1.child_ids = {inline_box1.id};
+  static_text1.SetName("Before list.");
+
+  inline_box1.role = ax::mojom::Role::kInlineTextBox;
+  inline_box1.SetName("Before list.");
+
+  list.role = ax::mojom::Role::kList;
+  list.child_ids = {list_item1.id, list_item2.id};
+
+  list_item1.role = ax::mojom::Role::kListItem;
+  list_item1.child_ids = {list_marker_legacy.id, static_text3.id};
+  list_item1.AddBoolAttribute(ax::mojom::BoolAttribute::kIsLineBreakingObject,
+                              true);
+
+  list_marker_legacy.role = ax::mojom::Role::kListMarker;
+  list_marker_legacy.child_ids = {static_text2.id};
+
+  static_text2.role = ax::mojom::Role::kStaticText;
+  static_text2.child_ids = {inline_box2.id};
+  static_text2.SetName("1. ");
+
+  inline_box2.role = ax::mojom::Role::kInlineTextBox;
+  inline_box2.SetName("1. ");
+  inline_box2.AddIntAttribute(ax::mojom::IntAttribute::kNextOnLineId,
+                              inline_box3.id);
+
+  static_text3.role = ax::mojom::Role::kStaticText;
+  static_text3.child_ids = {inline_box3.id};
+  static_text3.SetName("First item.");
+
+  inline_box3.role = ax::mojom::Role::kInlineTextBox;
+  inline_box3.SetName("First item.");
+  inline_box3.AddIntAttribute(ax::mojom::IntAttribute::kPreviousOnLineId,
+                              inline_box2.id);
+
+  list_item2.role = ax::mojom::Role::kListItem;
+  list_item2.child_ids = {list_marker_ng.id, static_text4.id};
+  list_item2.AddBoolAttribute(ax::mojom::BoolAttribute::kIsLineBreakingObject,
+                              true);
+
+  list_marker_ng.role = ax::mojom::Role::kListMarker;
+  list_marker_ng.SetName("2. ");
+  list_marker_ng.AddIntAttribute(ax::mojom::IntAttribute::kNextOnLineId,
+                                 inline_box4.id);
+
+  static_text4.role = ax::mojom::Role::kStaticText;
+  static_text4.child_ids = {inline_box4.id};
+  static_text4.SetName("Second item.");
+
+  inline_box4.role = ax::mojom::Role::kInlineTextBox;
+  inline_box4.SetName("Second item.");
+  inline_box4.AddIntAttribute(ax::mojom::IntAttribute::kPreviousOnLineId,
+                              list_marker_ng.id);
+
+  static_text5.role = ax::mojom::Role::kStaticText;
+  static_text5.child_ids = {inline_box5.id};
+  static_text5.SetName("After list.");
+
+  inline_box5.role = ax::mojom::Role::kInlineTextBox;
+  inline_box5.SetName("After list.");
+
+  SetTree(CreateAXTree({root, static_text1, inline_box1, list, list_item1,
+                        list_marker_legacy, static_text2, inline_box2,
+                        static_text3, inline_box3, list_item2, list_marker_ng,
+                        static_text4, inline_box4, static_text5, inline_box5}));
+
+  // A text position after the text "Before list.". It should not be equivalent
+  // to a position that is before the list itself, or before the first list
+  // bullet / item.
+  TestPositionType text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), static_text1.id, 12 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_FALSE(text_position->AtStartOfParagraph());
+  EXPECT_TRUE(text_position->AtEndOfParagraph());
+
+  // A text position after the text "Before list.". It should not be equivalent
+  // to a position that is before the list itself, or before the first list
+  // bullet / item.
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), inline_box1.id, 12 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_FALSE(text_position->AtStartOfParagraph());
+  EXPECT_TRUE(text_position->AtEndOfParagraph());
+
+  // A text position before the list.
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), list.id, 0 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_TRUE(text_position->AtStartOfParagraph());
+  EXPECT_FALSE(text_position->AtEndOfParagraph());
+
+  // A downstream text position after the list. It should resolve to a leaf
+  // position before the paragraph that comes after the list, so it should be
+  // "AtStartOfParagraph".
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), list.id, 14 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_TRUE(text_position->AtStartOfParagraph());
+  EXPECT_FALSE(text_position->AtEndOfParagraph());
+
+  // An upstream text position after the list. It should be "AtEndOfParagraph".
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), list.id, 14 /* text_offset */,
+      ax::mojom::TextAffinity::kUpstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_FALSE(text_position->AtStartOfParagraph());
+  EXPECT_TRUE(text_position->AtEndOfParagraph());
+
+  // A text position before the first list bullet (the Legacy Layout one).
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), list_marker_legacy.id, 0 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_TRUE(text_position->AtStartOfParagraph());
+  EXPECT_FALSE(text_position->AtEndOfParagraph());
+
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), list_marker_legacy.id, 1 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_FALSE(text_position->AtStartOfParagraph());
+  EXPECT_FALSE(text_position->AtEndOfParagraph());
+
+  // A text position before the first list bullet (the Legacy Layout one).
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), static_text2.id, 0 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_TRUE(text_position->AtStartOfParagraph());
+  EXPECT_FALSE(text_position->AtEndOfParagraph());
+
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), static_text2.id, 2 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_FALSE(text_position->AtStartOfParagraph());
+  EXPECT_FALSE(text_position->AtEndOfParagraph());
+
+  // A text position before the first list bullet (the Legacy Layout one).
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), inline_box2.id, 0 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_TRUE(text_position->AtStartOfParagraph());
+  EXPECT_FALSE(text_position->AtEndOfParagraph());
+
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), inline_box2.id, 3 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_FALSE(text_position->AtStartOfParagraph());
+  EXPECT_FALSE(text_position->AtEndOfParagraph());
+
+  // A text position before the second list bullet (the NG Layout one).
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), list_marker_ng.id, 0 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_TRUE(text_position->AtStartOfParagraph());
+  EXPECT_FALSE(text_position->AtEndOfParagraph());
+
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), list_marker_ng.id, 3 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_FALSE(text_position->AtStartOfParagraph());
+  EXPECT_FALSE(text_position->AtEndOfParagraph());
+
+  // A text position before the text contents of the first list item - not the
+  // bullet.
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), static_text3.id, 0 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_FALSE(text_position->AtStartOfParagraph());
+  EXPECT_FALSE(text_position->AtEndOfParagraph());
+
+  // A text position before the text contents of the first list item - not the
+  // bullet.
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), inline_box3.id, 0 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_FALSE(text_position->AtStartOfParagraph());
+  EXPECT_FALSE(text_position->AtEndOfParagraph());
+
+  // A text position after the text contents of the first list item.
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), static_text3.id, 11 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_FALSE(text_position->AtStartOfParagraph());
+  EXPECT_TRUE(text_position->AtEndOfParagraph());
+
+  // A text position after the text contents of the first list item.
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), inline_box3.id, 11 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_FALSE(text_position->AtStartOfParagraph());
+  EXPECT_TRUE(text_position->AtEndOfParagraph());
+
+  // A text position before the text contents of the second list item - not the
+  // bullet.
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), static_text4.id, 0 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_FALSE(text_position->AtStartOfParagraph());
+  EXPECT_FALSE(text_position->AtEndOfParagraph());
+
+  // A text position before the text contents of the second list item - not the
+  // bullet.
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), inline_box4.id, 0 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_FALSE(text_position->AtStartOfParagraph());
+  EXPECT_FALSE(text_position->AtEndOfParagraph());
+
+  // A text position after the text contents of the second list item.
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), static_text4.id, 12 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_FALSE(text_position->AtStartOfParagraph());
+  EXPECT_TRUE(text_position->AtEndOfParagraph());
+
+  // A text position after the text contents of the second list item.
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), inline_box4.id, 12 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_FALSE(text_position->AtStartOfParagraph());
+  EXPECT_TRUE(text_position->AtEndOfParagraph());
+
+  // A text position before the text "After list.".
+  text_position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), inline_box5.id, 0 /* text_offset */,
+      ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, text_position);
+  EXPECT_TRUE(text_position->AtStartOfParagraph());
+  EXPECT_FALSE(text_position->AtEndOfParagraph());
+}
+
 TEST_F(AXPositionTest,
        AtStartOrEndOfParagraphWithLeadingAndTrailingDocumentWhitespace) {
-  // This test updates the tree structure to test a specific edge case -
-  // At{Start|End}OfParagraph when an ancestor position can resolve to a
-  // preserved newline descendant.
+  // This test ensures that "At{Start|End}OfParagraph" work correctly when a
+  // text position is on a preserved newline character.
+  //
+  // Newline characters are used to separate paragraphs. If there is a series of
+  // newline characters, a paragraph should start after the last newline
+  // character.
   // ++1 kRootWebArea isLineBreakingObject
   // ++++2 kGenericContainer isLineBreakingObject
-  // ++++++3 kStaticText
+  // ++++++3 kStaticText "\n"
   // ++++++++4 kInlineTextBox "\n" isLineBreakingObject
   // ++++5 kGenericContainer isLineBreakingObject
-  // ++++++6 kStaticText
+  // ++++++6 kStaticText "some text"
   // ++++++++7 kInlineTextBox "some"
   // ++++++++8 kInlineTextBox " "
   // ++++++++9 kInlineTextBox "text"
   // ++++10 kGenericContainer isLineBreakingObject
-  // ++++++11 kStaticText
+  // ++++++11 kStaticText "\n"
   // ++++++++12 kInlineTextBox "\n" isLineBreakingObject
+
   AXNodeData root_data;
   root_data.id = 1;
   root_data.role = ax::mojom::Role::kRootWebArea;
@@ -2146,60 +2443,74 @@ TEST_F(AXPositionTest,
        inline_text_data_a, inline_text_data_b_1, inline_text_data_b_2,
        inline_text_data_b_3, inline_text_data_c}));
 
+  // Before the first "\n".
   TestPositionType text_position1 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_a.id, 0 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position1->AtEndOfParagraph());
   EXPECT_TRUE(text_position1->AtStartOfParagraph());
 
+  // After the first "\n".
+  //
+  // Since the position is an "after text" position, it is similar to pressing
+  // the End key, (or Cmd-Right on Mac), while the caret is on the line break,
+  // so it should not be "AtStartOfParagraph".
   TestPositionType text_position2 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_a.id, 1 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_TRUE(text_position2->AtEndOfParagraph());
   EXPECT_FALSE(text_position2->AtStartOfParagraph());
 
+  // Before "some".
   TestPositionType text_position3 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_b_1.id, 0 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position3->AtEndOfParagraph());
   EXPECT_TRUE(text_position3->AtStartOfParagraph());
 
+  // After "some".
   TestPositionType text_position4 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_b_1.id, 4 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position4->AtEndOfParagraph());
   EXPECT_FALSE(text_position4->AtStartOfParagraph());
 
+  // Before " ".
   TestPositionType text_position5 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_b_2.id, 0 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position5->AtEndOfParagraph());
   EXPECT_FALSE(text_position5->AtStartOfParagraph());
 
+  // After " ".
   TestPositionType text_position6 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_b_2.id, 1 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position6->AtEndOfParagraph());
   EXPECT_FALSE(text_position6->AtStartOfParagraph());
 
+  // Before "text".
   TestPositionType text_position7 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_b_3.id, 0 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position7->AtEndOfParagraph());
   EXPECT_FALSE(text_position7->AtStartOfParagraph());
 
+  // After "text".
   TestPositionType text_position8 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_b_3.id, 4 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position8->AtEndOfParagraph());
   EXPECT_FALSE(text_position8->AtStartOfParagraph());
 
+  // Before the second "\n".
   TestPositionType text_position9 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_c.id, 0 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position9->AtEndOfParagraph());
   EXPECT_FALSE(text_position9->AtStartOfParagraph());
 
+  // After the second "\n".
   TestPositionType text_position10 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_c.id, 1 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
@@ -2208,21 +2519,25 @@ TEST_F(AXPositionTest,
 }
 
 TEST_F(AXPositionTest, AtStartOrEndOfParagraphWithIgnoredNodes) {
-  // This test updates the tree structure to test a specific edge case -
-  // At{Start|End}OfParagraph when there are ignored nodes present near
-  // a paragraph boundary.
+  // This test ensures that "At{Start|End}OfParagraph" work correctly when there
+  // are ignored nodes present near a paragraph boundary.
+  //
+  // An ignored node that is between a given position and a paragraph boundary
+  // should not be taken into consideration. The position should be interpreted
+  // as being on the boundary.
   // ++1 kRootWebArea isLineBreakingObject
-  // ++++2 kGenericContainer ignored
-  // ++++++3 kStaticText ignored
-  // ++++++++4 kInlineTextBox "ignored text" ignored
-  // ++++5 kGenericContainer
-  // ++++++6 kStaticText
+  // ++++2 kGenericContainer ignored isLineBreakingObject
+  // ++++++3 kStaticText ignored "ignored text"
+  // ++++++++4 kInlineTextBox ignored "ignored text"
+  // ++++5 kGenericContainer isLineBreakingObject
+  // ++++++6 kStaticText "some text"
   // ++++++++7 kInlineTextBox "some"
   // ++++++++8 kInlineTextBox " "
   // ++++++++9 kInlineTextBox "text"
-  // ++++10 kGenericContainer ignored
-  // ++++++11 kStaticText ignored
-  // ++++++++12 kInlineTextBox "ignored text" ignored
+  // ++++10 kGenericContainer ignored isLineBreakingObject
+  // ++++++11 kStaticText ignored "ignored text"
+  // ++++++++12 kInlineTextBox ignored "ignored text"
+
   AXNodeData root_data;
   root_data.id = 1;
   root_data.role = ax::mojom::Role::kRootWebArea;
@@ -2233,6 +2548,8 @@ TEST_F(AXPositionTest, AtStartOrEndOfParagraphWithIgnoredNodes) {
   container_data_a.id = 2;
   container_data_a.role = ax::mojom::Role::kGenericContainer;
   container_data_a.AddState(ax::mojom::State::kIgnored);
+  container_data_a.AddBoolAttribute(
+      ax::mojom::BoolAttribute::kIsLineBreakingObject, true);
 
   AXNodeData static_text_data_a;
   static_text_data_a.id = 3;
@@ -2249,6 +2566,8 @@ TEST_F(AXPositionTest, AtStartOrEndOfParagraphWithIgnoredNodes) {
   AXNodeData container_data_b;
   container_data_b.id = 5;
   container_data_b.role = ax::mojom::Role::kGenericContainer;
+  container_data_b.AddBoolAttribute(
+      ax::mojom::BoolAttribute::kIsLineBreakingObject, true);
 
   AXNodeData static_text_data_b;
   static_text_data_b.id = 6;
@@ -2274,6 +2593,8 @@ TEST_F(AXPositionTest, AtStartOrEndOfParagraphWithIgnoredNodes) {
   container_data_c.id = 10;
   container_data_c.role = ax::mojom::Role::kGenericContainer;
   container_data_c.AddState(ax::mojom::State::kIgnored);
+  container_data_c.AddBoolAttribute(
+      ax::mojom::BoolAttribute::kIsLineBreakingObject, true);
 
   AXNodeData static_text_data_c;
   static_text_data_c.id = 11;
@@ -2304,60 +2625,75 @@ TEST_F(AXPositionTest, AtStartOrEndOfParagraphWithIgnoredNodes) {
        inline_text_data_a, inline_text_data_b_1, inline_text_data_b_2,
        inline_text_data_b_3, inline_text_data_c}));
 
+  // Before "ignored text".
   TestPositionType text_position1 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_a.id, 0 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position1->AtEndOfParagraph());
   EXPECT_FALSE(text_position1->AtStartOfParagraph());
 
+  // After "ignored text".
+  //
+  // Since the position is an "after text" position, it is similar to pressing
+  // the End key, (or Cmd-Right on Mac), while the caret is on "ignored text",
+  // so it should not be "AtStartOfParagraph". In practice, this situation
+  // should not arise in accessibility, because the node is ignored.
   TestPositionType text_position2 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_a.id, 12 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position2->AtEndOfParagraph());
   EXPECT_FALSE(text_position2->AtStartOfParagraph());
 
+  // Before "some".
   TestPositionType text_position3 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_b_1.id, 0 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position3->AtEndOfParagraph());
   EXPECT_TRUE(text_position3->AtStartOfParagraph());
 
+  // After "some".
   TestPositionType text_position4 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_b_1.id, 4 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position4->AtEndOfParagraph());
   EXPECT_FALSE(text_position4->AtStartOfParagraph());
 
+  // Before " ".
   TestPositionType text_position5 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_b_2.id, 0 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position5->AtEndOfParagraph());
   EXPECT_FALSE(text_position5->AtStartOfParagraph());
 
+  // After " ".
   TestPositionType text_position6 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_b_2.id, 1 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position6->AtEndOfParagraph());
   EXPECT_FALSE(text_position6->AtStartOfParagraph());
 
+  // Before "text".
   TestPositionType text_position7 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_b_3.id, 0 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position7->AtEndOfParagraph());
   EXPECT_FALSE(text_position7->AtStartOfParagraph());
 
+  // After "text".
   TestPositionType text_position8 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_b_3.id, 4 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_TRUE(text_position8->AtEndOfParagraph());
   EXPECT_FALSE(text_position8->AtStartOfParagraph());
 
+  // Before "ignored text" - the second version.
   TestPositionType text_position9 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_c.id, 0 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position9->AtEndOfParagraph());
   EXPECT_FALSE(text_position9->AtStartOfParagraph());
 
+  // After "ignored text" - the second version.
   TestPositionType text_position10 = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_text_data_c.id, 12 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
@@ -2368,16 +2704,20 @@ TEST_F(AXPositionTest, AtStartOrEndOfParagraphWithIgnoredNodes) {
 TEST_F(AXPositionTest, AtStartOrEndOfParagraphWithEmbeddedObjectCharacter) {
   g_ax_embedded_object_behavior = AXEmbeddedObjectBehavior::kExposeCharacter;
 
-  // This test updates the tree structure to test a specific edge case -
-  // At{Start|End}OfParagraph when there are ignored nodes present near
-  // a paragraph boundary.
+  // This test ensures that "At{Start|End}OfParagraph" work correctly when there
+  // are embedded objects present near a paragraph boundary.
+  //
+  // Nodes represented by an embedded object character, such as a plain text
+  // field or a check box, should create an implicit paragraph boundary for
+  // assistive software.
   // ++1 kRootWebArea isLineBreakingObject
   // ++++2 kLink
-  // ++++++3 kStaticText
+  // ++++++3 kStaticText "hello"
   // ++++++++4 kInlineTextBox "hello"
   // ++++++5 kImage
-  // ++++++6 kStaticText
+  // ++++++6 kStaticText "world"
   // ++++++++7 kInlineTextBox "world"
+
   AXNodeData root_1;
   AXNodeData link_2;
   AXNodeData static_text_3;
@@ -2396,6 +2736,8 @@ TEST_F(AXPositionTest, AtStartOrEndOfParagraphWithEmbeddedObjectCharacter) {
 
   root_1.role = ax::mojom::Role::kRootWebArea;
   root_1.child_ids = {link_2.id};
+  root_1.AddBoolAttribute(ax::mojom::BoolAttribute::kIsLineBreakingObject,
+                          true);
 
   link_2.role = ax::mojom::Role::kLink;
   link_2.child_ids = {static_text_3.id, image_5.id, static_text_6.id};
@@ -2408,6 +2750,7 @@ TEST_F(AXPositionTest, AtStartOrEndOfParagraphWithEmbeddedObjectCharacter) {
   inline_box_4.SetName("Hello");
 
   image_5.role = ax::mojom::Role::kImage;
+  // The image's inner text should be an embedded object character.
 
   static_text_6.role = ax::mojom::Role::kStaticText;
   static_text_6.child_ids = {inline_box_7.id};
@@ -2419,36 +2762,47 @@ TEST_F(AXPositionTest, AtStartOrEndOfParagraphWithEmbeddedObjectCharacter) {
   SetTree(CreateAXTree({root_1, link_2, static_text_3, inline_box_4, image_5,
                         static_text_6, inline_box_7}));
 
+  // Before "hello".
   TestPositionType text_position = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_box_4.id, 0 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position->AtEndOfParagraph());
   EXPECT_TRUE(text_position->AtStartOfParagraph());
 
+  // After "hello".
+  //
+  // Note that even though this position and a position before the image's
+  // embedded object character are conceptually equivalent, in practice they
+  // should result from two different ancestor positions. The former should have
+  // been an upstream position, whilst the latter a downstream one.
   text_position = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_box_4.id, 5 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_TRUE(text_position->AtEndOfParagraph());
   EXPECT_FALSE(text_position->AtStartOfParagraph());
 
+  // Before the image's embedded object character.
   text_position = AXNodePosition::CreateTextPosition(
       GetTreeID(), image_5.id, 0 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position->AtEndOfParagraph());
   EXPECT_TRUE(text_position->AtStartOfParagraph());
 
+  // After the image's embedded object character.
   text_position = AXNodePosition::CreateTextPosition(
       GetTreeID(), image_5.id, 1 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_TRUE(text_position->AtEndOfParagraph());
   EXPECT_FALSE(text_position->AtStartOfParagraph());
 
+  // Before "world".
   text_position = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_box_7.id, 0 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
   EXPECT_FALSE(text_position->AtEndOfParagraph());
   EXPECT_TRUE(text_position->AtStartOfParagraph());
 
+  // After "world".
   text_position = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_box_7.id, 5 /* text_offset */,
       ax::mojom::TextAffinity::kDownstream);
@@ -6795,267 +7149,6 @@ TEST_F(AXPositionTest, CreateLinePositionsMultipleAnchorsInSingleLine) {
   EXPECT_EQ(0, previous_line_end_position->text_offset());
 }
 
-TEST_F(AXPositionTest,
-       CreateNextAndPreviousWordStartAndEndPositionWithoutWordBoundaries) {
-  // This test updates the tree structure to test a specific edge case -
-  // text nodes sometimes have no word boundaries even though they are not
-  // empty. This happens with emojis and special characters. We need to
-  // "augment" the word boundaries of such nodes for them to be exposed to the
-  // text pattern and allow word navigation.
-
-  // ++1 kRootWebArea
-  // ++++2 kStaticText
-  // ++++++3 kInlineTextBox "3"
-  // ++++4 kStaticText
-  // ++++++5 kInlineTextBox "•"
-  // ++++6 kStaticText
-  // ++++++7 kInlineTextBox "14"
-  // ++++8 kStaticText
-  // ++++++9 kInlineTextBox "❤"
-  // ++++10 kStaticText
-  // ++++++11 kInlineTextBox "    " (tab)
-  // ++++12 kStaticText
-  // ++++++13 kInlineTextBox "159265358979323846264"
-  AXNodeData root_1;
-  AXNodeData static_text_2;
-  AXNodeData inline_box_3;
-  AXNodeData static_text_4;
-  AXNodeData inline_box_5;
-  AXNodeData static_text_6;
-  AXNodeData inline_box_7;
-  AXNodeData static_text_8;
-  AXNodeData inline_box_9;
-  AXNodeData static_text_10;
-  AXNodeData inline_box_11;
-  AXNodeData static_text_12;
-  AXNodeData inline_box_13;
-
-  root_1.id = 1;
-  static_text_2.id = 2;
-  inline_box_3.id = 3;
-  static_text_4.id = 4;
-  inline_box_5.id = 5;
-  static_text_6.id = 6;
-  inline_box_7.id = 7;
-  static_text_8.id = 8;
-  inline_box_9.id = 9;
-  static_text_10.id = 10;
-  inline_box_11.id = 11;
-  static_text_12.id = 12;
-  inline_box_13.id = 13;
-
-  root_1.role = ax::mojom::Role::kRootWebArea;
-  root_1.child_ids = {static_text_2.id, static_text_4.id,  static_text_6.id,
-                      static_text_8.id, static_text_10.id, static_text_12.id};
-
-  static_text_2.role = ax::mojom::Role::kStaticText;
-  static_text_2.SetName("3");
-  static_text_2.child_ids = {inline_box_3.id};
-
-  inline_box_3.role = ax::mojom::Role::kInlineTextBox;
-  inline_box_3.SetName("3");
-  inline_box_3.AddIntListAttribute(ax::mojom::IntListAttribute::kWordStarts,
-                                   std::vector<int32_t>{0});
-  inline_box_3.AddIntListAttribute(ax::mojom::IntListAttribute::kWordEnds,
-                                   std::vector<int32_t>{1});
-
-  static_text_4.role = ax::mojom::Role::kStaticText;
-  static_text_4.SetName("•");
-  static_text_4.child_ids = {inline_box_5.id};
-
-  inline_box_5.role = ax::mojom::Role::kInlineTextBox;
-  inline_box_5.SetName("•");
-  inline_box_5.AddIntListAttribute(
-      ax::mojom::IntListAttribute::kCharacterOffsets, std::vector<int32_t>{0});
-
-  static_text_6.role = ax::mojom::Role::kStaticText;
-  static_text_6.SetName("14");
-  static_text_6.child_ids = {inline_box_7.id};
-
-  inline_box_7.role = ax::mojom::Role::kInlineTextBox;
-  inline_box_7.SetName("14");
-  inline_box_7.AddIntListAttribute(ax::mojom::IntListAttribute::kWordStarts,
-                                   std::vector<int32_t>{0});
-  inline_box_7.AddIntListAttribute(ax::mojom::IntListAttribute::kWordEnds,
-                                   std::vector<int32_t>{2});
-
-  // Heart emoji.
-  static_text_8.role = ax::mojom::Role::kStaticText;
-  static_text_8.SetName("\u2764");
-  static_text_8.child_ids = {inline_box_9.id};
-
-  inline_box_9.role = ax::mojom::Role::kInlineTextBox;
-  inline_box_9.SetName("\u2764");
-  inline_box_9.AddIntListAttribute(
-      ax::mojom::IntListAttribute::kCharacterOffsets, std::vector<int32_t>{0});
-
-  // Tab character.
-  static_text_10.role = ax::mojom::Role::kStaticText;
-  static_text_10.SetName("\u0009");
-  static_text_10.child_ids = {inline_box_11.id};
-
-  inline_box_11.role = ax::mojom::Role::kInlineTextBox;
-  inline_box_11.SetName("\u0009");
-  inline_box_11.AddIntListAttribute(
-      ax::mojom::IntListAttribute::kCharacterOffsets, std::vector<int32_t>{0});
-
-  static_text_12.role = ax::mojom::Role::kStaticText;
-  static_text_12.SetName("159265358979323846264");
-  static_text_12.child_ids = {inline_box_13.id};
-
-  inline_box_13.role = ax::mojom::Role::kInlineTextBox;
-  inline_box_13.SetName("159265358979323846264");
-  inline_box_13.AddIntListAttribute(
-      ax::mojom::IntListAttribute::kCharacterOffsets, std::vector<int32_t>{0});
-
-  SetTree(CreateAXTree({root_1, static_text_2, inline_box_3, static_text_4,
-                        inline_box_5, static_text_6, inline_box_7,
-                        static_text_8, inline_box_9, static_text_10,
-                        inline_box_11, static_text_12, inline_box_13}));
-
-  // Test word start positions. Start at the first node.
-  {
-    TestPositionType text_position = AXNodePosition::CreateTextPosition(
-        GetTreeID(), inline_box_3.id, 0 /* text_offset */,
-        ax::mojom::TextAffinity::kDownstream);
-    ASSERT_NE(nullptr, text_position);
-    ASSERT_TRUE(text_position->IsTextPosition());
-    ASSERT_EQ(inline_box_3.id, text_position->anchor_id());
-    ASSERT_EQ(0, text_position->text_offset());
-
-    // Move forwards from "<3>" to "<•>".
-    text_position = text_position->CreateNextWordStartPosition(
-        AXBoundaryBehavior::StopAtLastAnchorBoundary);
-    ASSERT_NE(nullptr, text_position);
-    ASSERT_TRUE(text_position->IsTextPosition());
-    ASSERT_EQ(inline_box_5.id, text_position->anchor_id());
-    ASSERT_EQ(0, text_position->text_offset());
-
-    // Move forwards from "<•>" to "<1>4".
-    text_position = text_position->CreateNextWordStartPosition(
-        AXBoundaryBehavior::StopAtLastAnchorBoundary);
-    ASSERT_NE(nullptr, text_position);
-    ASSERT_TRUE(text_position->IsTextPosition());
-    ASSERT_EQ(inline_box_7.id, text_position->anchor_id());
-    ASSERT_EQ(0, text_position->text_offset());
-
-    // Move forwards from "<1>4" to "<\u2764>".
-    text_position = text_position->CreateNextWordStartPosition(
-        AXBoundaryBehavior::StopAtLastAnchorBoundary);
-    ASSERT_NE(nullptr, text_position);
-    ASSERT_TRUE(text_position->IsTextPosition());
-    ASSERT_EQ(inline_box_9.id, text_position->anchor_id());
-    ASSERT_EQ(0, text_position->text_offset());
-
-    // Move forwards from "<\u2764>" to "<1>59265358979323846264".
-    text_position = text_position->CreateNextWordStartPosition(
-        AXBoundaryBehavior::StopAtLastAnchorBoundary);
-    ASSERT_NE(nullptr, text_position);
-    ASSERT_TRUE(text_position->IsTextPosition());
-    ASSERT_EQ(inline_box_13.id, text_position->anchor_id());
-    ASSERT_EQ(0, text_position->text_offset());
-
-    // Move backwards from "<1>59265358979323846264" to "<\u2764>".
-    text_position = text_position->CreatePreviousWordStartPosition(
-        AXBoundaryBehavior::StopAtLastAnchorBoundary);
-    ASSERT_NE(nullptr, text_position);
-    ASSERT_TRUE(text_position->IsTextPosition());
-    ASSERT_EQ(inline_box_9.id, text_position->anchor_id());
-    ASSERT_EQ(0, text_position->text_offset());
-
-    // Move backwards from "<\u2764>" to "<1>4".
-    text_position = text_position->CreatePreviousWordStartPosition(
-        AXBoundaryBehavior::StopAtLastAnchorBoundary);
-    ASSERT_NE(nullptr, text_position);
-    ASSERT_TRUE(text_position->IsTextPosition());
-    ASSERT_EQ(inline_box_7.id, text_position->anchor_id());
-    ASSERT_EQ(0, text_position->text_offset());
-
-    // Move backwards from "<1>4" to "<•>".
-    text_position = text_position->CreatePreviousWordStartPosition(
-        AXBoundaryBehavior::StopAtLastAnchorBoundary);
-    ASSERT_NE(nullptr, text_position);
-    ASSERT_TRUE(text_position->IsTextPosition());
-    ASSERT_EQ(inline_box_5.id, text_position->anchor_id());
-    ASSERT_EQ(0, text_position->text_offset());
-  }
-
-  // Test word end positions. Start at the last node.
-  {
-    TestPositionType text_position = AXNodePosition::CreateTextPosition(
-        GetTreeID(), inline_box_13.id, 21 /* text_offset */,
-        ax::mojom::TextAffinity::kDownstream);
-    ASSERT_NE(nullptr, text_position);
-    ASSERT_TRUE(text_position->IsTextPosition());
-    ASSERT_EQ(inline_box_13.id, text_position->anchor_id());
-    ASSERT_EQ(21, text_position->text_offset());
-
-    // Move backwards from "159265358979323846264<>" to "\u2764<>"
-    text_position = text_position->CreatePreviousWordEndPosition(
-        AXBoundaryBehavior::StopAtLastAnchorBoundary);
-    ASSERT_NE(nullptr, text_position);
-    ASSERT_TRUE(text_position->IsTextPosition());
-    ASSERT_EQ(inline_box_9.id, text_position->anchor_id());
-    ASSERT_EQ(1, text_position->text_offset());
-
-    // Move backwards from "\u2764<>" to "14<>"
-    text_position = text_position->CreatePreviousWordEndPosition(
-        AXBoundaryBehavior::StopAtLastAnchorBoundary);
-    ASSERT_NE(nullptr, text_position);
-    ASSERT_TRUE(text_position->IsTextPosition());
-    ASSERT_EQ(inline_box_7.id, text_position->anchor_id());
-    ASSERT_EQ(2, text_position->text_offset());
-
-    // Move backwards from "14<>" to "•<>"
-    text_position = text_position->CreatePreviousWordEndPosition(
-        AXBoundaryBehavior::StopAtLastAnchorBoundary);
-    ASSERT_NE(nullptr, text_position);
-    ASSERT_TRUE(text_position->IsTextPosition());
-    ASSERT_EQ(inline_box_5.id, text_position->anchor_id());
-    ASSERT_EQ(1, text_position->text_offset());
-
-    // Move backwards from "•<>" to "3<>"
-    text_position = text_position->CreatePreviousWordEndPosition(
-        AXBoundaryBehavior::StopAtLastAnchorBoundary);
-    ASSERT_NE(nullptr, text_position);
-    ASSERT_TRUE(text_position->IsTextPosition());
-    ASSERT_EQ(inline_box_3.id, text_position->anchor_id());
-    ASSERT_EQ(1, text_position->text_offset());
-
-    // Move forwards from "3<>" to "•<>"
-    text_position = text_position->CreateNextWordEndPosition(
-        AXBoundaryBehavior::StopAtLastAnchorBoundary);
-    ASSERT_NE(nullptr, text_position);
-    ASSERT_TRUE(text_position->IsTextPosition());
-    ASSERT_EQ(inline_box_5.id, text_position->anchor_id());
-    ASSERT_EQ(1, text_position->text_offset());
-
-    // Move forwards from "•<>" to "14<>"
-    text_position = text_position->CreateNextWordEndPosition(
-        AXBoundaryBehavior::StopAtLastAnchorBoundary);
-    ASSERT_NE(nullptr, text_position);
-    ASSERT_TRUE(text_position->IsTextPosition());
-    ASSERT_EQ(inline_box_7.id, text_position->anchor_id());
-    ASSERT_EQ(2, text_position->text_offset());
-
-    // Move forwards from "14<>" to "\u2764<>"
-    text_position = text_position->CreateNextWordEndPosition(
-        AXBoundaryBehavior::StopAtLastAnchorBoundary);
-    ASSERT_NE(nullptr, text_position);
-    ASSERT_TRUE(text_position->IsTextPosition());
-    ASSERT_EQ(inline_box_9.id, text_position->anchor_id());
-    ASSERT_EQ(1, text_position->text_offset());
-
-    // Move forwards from "\u2764<>" to "159265358979323846264<>"
-    text_position = text_position->CreateNextWordEndPosition(
-        AXBoundaryBehavior::StopAtLastAnchorBoundary);
-    ASSERT_NE(nullptr, text_position);
-    ASSERT_TRUE(text_position->IsTextPosition());
-    ASSERT_EQ(inline_box_13.id, text_position->anchor_id());
-    ASSERT_EQ(21, text_position->text_offset());
-  }
-}
-
 TEST_F(AXPositionTest, CreateNextWordPositionInList) {
   // This test updates the tree structure to test a specific edge case -
   // next word navigation inside a list with AXListMarkers nodes.
@@ -7515,7 +7608,7 @@ TEST_F(AXPositionTest, EmptyObjectReplacedByCharacterTextNavigation) {
                         generic_container_11, generic_container_12,
                         static_text_13, button_14, generic_container_15}));
 
-  // CreateStartWordStartPosition tests.
+  // CreateNextWordStartPosition tests.
   TestPositionType position = AXNodePosition::CreateTextPosition(
       GetTreeID(), inline_box_3.id, 0 /* child_index_or_text_offset */,
       ax::mojom::TextAffinity::kDownstream);
@@ -7685,6 +7778,155 @@ TEST_F(AXPositionTest, EmptyObjectReplacedByCharacterTextNavigation) {
   EXPECT_TRUE(text_position->IsLeafTextPosition());
   EXPECT_EQ(button_14.id, text_position->anchor_id());
   EXPECT_EQ(1, text_position->text_offset());
+}
+
+TEST_F(AXPositionTest, TextNavigationWithCollapsedCombobox) {
+  // On Windows, a <select> element is replaced by a combobox that contains
+  // an AXMenuListPopup parent of AXMenuListOptions. When the select dropdown is
+  // collapsed, the subtree of that combobox needs to be hidden and, when
+  // expanded, it must be accessible in the tree. This test ensures we can't
+  // navigate into the options of a collapsed menu list popup.
+  g_ax_embedded_object_behavior = AXEmbeddedObjectBehavior::kExposeCharacter;
+
+  // ++1 kRootWebArea
+  // ++++2 kStaticText "Hi"
+  // ++++++3 kInlineTextBox "Hi"
+  // ++++4 kPopUpButton
+  // ++++++5 kMenuListPopup
+  // ++++++++6 kMenuListOption "Option"
+  // ++++7 kStaticText "3.14"
+  // ++++++8 kInlineTextBox "3.14"
+  AXNodeData root_1;
+  AXNodeData static_text_2;
+  AXNodeData inline_box_3;
+  AXNodeData popup_button_4;
+  AXNodeData menu_list_popup_5;
+  AXNodeData menu_list_option_6;
+  AXNodeData static_text_7;
+  AXNodeData inline_box_8;
+
+  root_1.id = 1;
+  static_text_2.id = 2;
+  inline_box_3.id = 3;
+  popup_button_4.id = 4;
+  menu_list_popup_5.id = 5;
+  menu_list_option_6.id = 6;
+  static_text_7.id = 7;
+  inline_box_8.id = 8;
+
+  root_1.role = ax::mojom::Role::kRootWebArea;
+  root_1.child_ids = {static_text_2.id, popup_button_4.id, static_text_7.id};
+
+  static_text_2.role = ax::mojom::Role::kStaticText;
+  static_text_2.SetName("Hi");
+  static_text_2.child_ids = {inline_box_3.id};
+
+  inline_box_3.role = ax::mojom::Role::kInlineTextBox;
+  inline_box_3.SetName("Hi");
+  inline_box_3.AddIntListAttribute(ax::mojom::IntListAttribute::kWordStarts,
+                                   {0});
+  inline_box_3.AddIntListAttribute(ax::mojom::IntListAttribute::kWordEnds, {2});
+
+  popup_button_4.role = ax::mojom::Role::kPopUpButton;
+  popup_button_4.child_ids = {menu_list_popup_5.id};
+  popup_button_4.AddState(ax::mojom::State::kCollapsed);
+
+  menu_list_popup_5.role = ax::mojom::Role::kMenuListPopup;
+  menu_list_popup_5.child_ids = {menu_list_option_6.id};
+
+  menu_list_option_6.role = ax::mojom::Role::kMenuListOption;
+  menu_list_option_6.SetName("Option");
+
+  static_text_7.role = ax::mojom::Role::kStaticText;
+  static_text_7.SetName("3.14");
+  static_text_7.child_ids = {inline_box_8.id};
+
+  inline_box_8.role = ax::mojom::Role::kInlineTextBox;
+  inline_box_8.SetName("3.14");
+  inline_box_8.AddIntListAttribute(ax::mojom::IntListAttribute::kWordStarts,
+                                   {0});
+  inline_box_8.AddIntListAttribute(ax::mojom::IntListAttribute::kWordEnds, {4});
+
+  SetTree(CreateAXTree({root_1, static_text_2, inline_box_3, popup_button_4,
+                        menu_list_popup_5, menu_list_option_6, static_text_7,
+                        inline_box_8}));
+
+  // Collapsed - Forward navigation.
+  TestPositionType position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), inline_box_3.id, 0, ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, position);
+
+  position = position->CreateNextParagraphStartPosition(
+      AXBoundaryBehavior::StopAtLastAnchorBoundary);
+  ASSERT_NE(nullptr, position);
+  EXPECT_EQ(popup_button_4.id, position->anchor_id());
+  EXPECT_EQ(0, position->text_offset());
+
+  position = position->CreateNextParagraphStartPosition(
+      AXBoundaryBehavior::StopAtLastAnchorBoundary);
+  ASSERT_NE(nullptr, position);
+  EXPECT_EQ(inline_box_8.id, position->anchor_id());
+  EXPECT_EQ(0, position->text_offset());
+
+  // Collapsed - Backward navigation.
+  position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), inline_box_8.id, 4, ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, position);
+
+  position = position->CreatePreviousParagraphEndPosition(
+      AXBoundaryBehavior::StopAtLastAnchorBoundary);
+  ASSERT_NE(nullptr, position);
+  EXPECT_EQ(popup_button_4.id, position->anchor_id());
+  // The content of this popup button should be replaced with the empty object
+  // character of length 1.
+  EXPECT_EQ(1, position->text_offset());
+
+  position = position->CreatePreviousParagraphEndPosition(
+      AXBoundaryBehavior::StopAtLastAnchorBoundary);
+  ASSERT_NE(nullptr, position);
+  EXPECT_EQ(inline_box_3.id, position->anchor_id());
+  EXPECT_EQ(2, position->text_offset());
+
+  // Expand the combobox for the rest of the test.
+  popup_button_4.RemoveState(ax::mojom::State::kCollapsed);
+  popup_button_4.AddState(ax::mojom::State::kExpanded);
+  AXTreeUpdate update;
+  update.nodes = {popup_button_4};
+  ASSERT_TRUE(GetTree()->Unserialize(update));
+
+  // Expanded - Forward navigation.
+  position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), inline_box_3.id, 0, ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, position);
+
+  position = position->CreateNextParagraphStartPosition(
+      AXBoundaryBehavior::StopAtLastAnchorBoundary);
+  ASSERT_NE(nullptr, position);
+  EXPECT_EQ(menu_list_option_6.id, position->anchor_id());
+  EXPECT_EQ(0, position->text_offset());
+
+  position = position->CreateNextParagraphStartPosition(
+      AXBoundaryBehavior::StopAtLastAnchorBoundary);
+  ASSERT_NE(nullptr, position);
+  EXPECT_EQ(inline_box_8.id, position->anchor_id());
+  EXPECT_EQ(0, position->text_offset());
+
+  // Expanded- Backward navigation.
+  position = AXNodePosition::CreateTextPosition(
+      GetTreeID(), inline_box_8.id, 4, ax::mojom::TextAffinity::kDownstream);
+  ASSERT_NE(nullptr, position);
+
+  position = position->CreatePreviousParagraphEndPosition(
+      AXBoundaryBehavior::StopAtLastAnchorBoundary);
+  ASSERT_NE(nullptr, position);
+  EXPECT_EQ(menu_list_option_6.id, position->anchor_id());
+  EXPECT_EQ(1, position->text_offset());
+
+  position = position->CreatePreviousParagraphEndPosition(
+      AXBoundaryBehavior::StopAtLastAnchorBoundary);
+  ASSERT_NE(nullptr, position);
+  EXPECT_EQ(inline_box_3.id, position->anchor_id());
+  EXPECT_EQ(2, position->text_offset());
 }
 
 //

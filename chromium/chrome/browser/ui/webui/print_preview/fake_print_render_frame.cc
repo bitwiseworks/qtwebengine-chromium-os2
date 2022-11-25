@@ -24,6 +24,9 @@ void FakePrintRenderFrame::PrintRequestedPages() {}
 
 void FakePrintRenderFrame::PrintForSystemDialog() {}
 
+void FakePrintRenderFrame::SetPrintPreviewUI(
+    mojo::PendingAssociatedRemote<mojom::PrintPreviewUI> preview) {}
+
 void FakePrintRenderFrame::InitiatePrintPreview(
     mojo::PendingAssociatedRemote<mojom::PrintRenderer> print_renderer,
     bool has_selection) {}
@@ -33,7 +36,8 @@ void FakePrintRenderFrame::PrintPreview(base::Value settings) {}
 void FakePrintRenderFrame::OnPrintPreviewDialogClosed() {}
 
 void FakePrintRenderFrame::PrintFrameContent(
-    mojom::PrintFrameContentParamsPtr params) {}
+    mojom::PrintFrameContentParamsPtr params,
+    PrintFrameContentCallback callback) {}
 
 void FakePrintRenderFrame::PrintingDone(bool success) {}
 

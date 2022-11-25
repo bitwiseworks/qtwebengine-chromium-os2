@@ -17,13 +17,12 @@
 #include "fpdfsdk/pwl/cpwl_scroll_bar.h"
 #include "fpdfsdk/pwl/cpwl_wnd.h"
 #include "public/fpdf_fwlevent.h"
-#include "third_party/base/ptr_util.h"
 
 CPWL_List_Notify::CPWL_List_Notify(CPWL_ListBox* pList) : m_pList(pList) {
   ASSERT(m_pList);
 }
 
-CPWL_List_Notify::~CPWL_List_Notify() {}
+CPWL_List_Notify::~CPWL_List_Notify() = default;
 
 void CPWL_List_Notify::IOnSetScrollInfoY(float fPlateMin,
                                          float fPlateMax,
@@ -69,13 +68,13 @@ CPWL_ListBox::CPWL_ListBox(
     const CreateParams& cp,
     std::unique_ptr<IPWL_SystemHandler::PerWindowData> pAttachedData)
     : CPWL_Wnd(cp, std::move(pAttachedData)),
-      m_pList(pdfium::MakeUnique<CPWL_ListCtrl>()) {}
+      m_pList(std::make_unique<CPWL_ListCtrl>()) {}
 
 CPWL_ListBox::~CPWL_ListBox() = default;
 
 void CPWL_ListBox::OnCreated() {
   m_pList->SetFontMap(GetFontMap());
-  m_pListNotify = pdfium::MakeUnique<CPWL_List_Notify>(this);
+  m_pListNotify = std::make_unique<CPWL_List_Notify>(this);
   m_pList->SetNotify(m_pListNotify.get());
 
   SetHoverSel(HasFlag(PLBS_HOVERSEL));
@@ -186,8 +185,8 @@ bool CPWL_ListBox::OnChar(uint16_t nChar, uint32_t nFlag) {
   return true;
 }
 
-bool CPWL_ListBox::OnLButtonDown(const CFX_PointF& point, uint32_t nFlag) {
-  CPWL_Wnd::OnLButtonDown(point, nFlag);
+bool CPWL_ListBox::OnLButtonDown(uint32_t nFlag, const CFX_PointF& point) {
+  CPWL_Wnd::OnLButtonDown(nFlag, point);
 
   if (ClientHitTest(point)) {
     m_bMouseDown = true;
@@ -200,8 +199,8 @@ bool CPWL_ListBox::OnLButtonDown(const CFX_PointF& point, uint32_t nFlag) {
   return true;
 }
 
-bool CPWL_ListBox::OnLButtonUp(const CFX_PointF& point, uint32_t nFlag) {
-  CPWL_Wnd::OnLButtonUp(point, nFlag);
+bool CPWL_ListBox::OnLButtonUp(uint32_t nFlag, const CFX_PointF& point) {
+  CPWL_Wnd::OnLButtonUp(nFlag, point);
 
   if (m_bMouseDown) {
     ReleaseCapture();
@@ -215,8 +214,8 @@ void CPWL_ListBox::SetHoverSel(bool bHoverSel) {
   m_bHoverSel = bHoverSel;
 }
 
-bool CPWL_ListBox::OnMouseMove(const CFX_PointF& point, uint32_t nFlag) {
-  CPWL_Wnd::OnMouseMove(point, nFlag);
+bool CPWL_ListBox::OnMouseMove(uint32_t nFlag, const CFX_PointF& point) {
+  CPWL_Wnd::OnMouseMove(nFlag, point);
 
   if (m_bHoverSel && !IsCaptureMouse() && ClientHitTest(point))
     m_pList->Select(m_pList->GetItemIndex(point));
@@ -366,10 +365,10 @@ CFX_FloatRect CPWL_ListBox::GetListRect() const {
   return GetWindowRect().GetDeflated(width, width);
 }
 
-bool CPWL_ListBox::OnMouseWheel(short zDelta,
+bool CPWL_ListBox::OnMouseWheel(uint32_t nFlag,
                                 const CFX_PointF& point,
-                                uint32_t nFlag) {
-  if (zDelta < 0)
+                                const CFX_Vector& delta) {
+  if (delta.y < 0)
     m_pList->OnVK_DOWN(IsSHIFTpressed(nFlag), IsCTRLpressed(nFlag));
   else
     m_pList->OnVK_UP(IsSHIFTpressed(nFlag), IsCTRLpressed(nFlag));

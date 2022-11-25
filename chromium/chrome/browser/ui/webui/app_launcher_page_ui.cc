@@ -18,6 +18,7 @@
 #include "chrome/browser/ui/webui/ntp/core_app_launcher_handler.h"
 #include "chrome/browser/ui/webui/ntp/ntp_resource_cache.h"
 #include "chrome/browser/ui/webui/theme_handler.h"
+#include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
@@ -27,6 +28,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "extensions/browser/extension_system.h"
+#include "services/network/public/mojom/content_security_policy.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
@@ -42,9 +44,13 @@ AppLauncherPageUI::AppLauncherPageUI(content::WebUI* web_ui)
   if (!GetProfile()->IsOffTheRecord()) {
     extensions::ExtensionService* service =
         extensions::ExtensionSystem::Get(GetProfile())->extension_service();
-    // We should not be launched without an ExtensionService.
+    web_app::WebAppProvider* web_app_provider =
+        web_app::WebAppProvider::Get(GetProfile());
+    DCHECK(web_app_provider);
     DCHECK(service);
-    web_ui->AddMessageHandler(std::make_unique<AppLauncherHandler>(service));
+    // We should not be launched without an ExtensionService or WebAppProvider.
+    web_ui->AddMessageHandler(
+        std::make_unique<AppLauncherHandler>(service, web_app_provider));
     web_ui->AddMessageHandler(std::make_unique<CoreAppLauncherHandler>());
     web_ui->AddMessageHandler(std::make_unique<AppIconWebUIHandler>());
     web_ui->AddMessageHandler(std::make_unique<MetricsHandler>());
@@ -132,18 +138,24 @@ bool AppLauncherPageUI::HTMLSource::AllowCaching() {
   return false;
 }
 
-std::string AppLauncherPageUI::HTMLSource::GetContentSecurityPolicyScriptSrc() {
-  // 'unsafe-inline' is added to script-src.
-  return "script-src chrome://resources 'self' 'unsafe-eval' 'unsafe-inline';";
+std::string AppLauncherPageUI::HTMLSource::GetContentSecurityPolicy(
+    network::mojom::CSPDirectiveName directive) {
+  if (directive == network::mojom::CSPDirectiveName::ScriptSrc) {
+    // 'unsafe-inline' is added to script-src.
+    return "script-src chrome://resources 'self' 'unsafe-eval' "
+           "'unsafe-inline';";
+  } else if (directive == network::mojom::CSPDirectiveName::StyleSrc) {
+    return "style-src 'self' chrome://resources chrome://theme "
+           "'unsafe-inline';";
+  } else if (directive == network::mojom::CSPDirectiveName::ImgSrc) {
+    return "img-src chrome://extension-icon chrome://app-icon chrome://theme "
+           "chrome://resources data:;";
+  } else if (directive == network::mojom::CSPDirectiveName::TrustedTypes) {
+    return "trusted-types apps-page-js cr-ui-bubble-js-static "
+           "parse-html-subset;";
+  }
+
+  return content::URLDataSource::GetContentSecurityPolicy(directive);
 }
 
-std::string AppLauncherPageUI::HTMLSource::GetContentSecurityPolicyStyleSrc() {
-  return "style-src 'self' chrome://resources chrome://theme 'unsafe-inline';";
-}
-
-std::string AppLauncherPageUI::HTMLSource::GetContentSecurityPolicyImgSrc() {
-  return "img-src chrome://extension-icon chrome://theme chrome://resources "
-      "data:;";
-}
-
-AppLauncherPageUI::HTMLSource::~HTMLSource() {}
+AppLauncherPageUI::HTMLSource::~HTMLSource() = default;

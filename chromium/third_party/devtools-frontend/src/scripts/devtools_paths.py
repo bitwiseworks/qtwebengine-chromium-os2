@@ -76,12 +76,12 @@ def eslint_path():
     return path.join(node_modules_path(), 'eslint', 'bin', 'eslint.js')
 
 
+def mocha_path():
+    return path.join(node_modules_path(), 'mocha', 'bin', 'mocha')
+
+
 def check_localizable_resources_path():
     return path.join(devtools_root_path(), 'scripts', 'localization', 'check_localizable_resources.js')
-
-
-def check_localized_strings_path():
-    return path.join(devtools_root_path(), 'scripts', 'localization', 'check_localizability.js')
 
 
 def karma_path():
@@ -90,10 +90,6 @@ def karma_path():
 
 def typescript_compiler_path():
     return path.join(node_modules_path(), 'typescript', 'bin', 'tsc')
-
-
-def boot_perf_test_path():
-    return path.join(devtools_root_path(), 'test', 'perf', 'bootperf.js')
 
 
 def hosted_mode_script_path():

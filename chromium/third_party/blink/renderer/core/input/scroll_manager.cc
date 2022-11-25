@@ -42,11 +42,11 @@ namespace {
 cc::SnapFlingController::GestureScrollType ToGestureScrollType(
     WebInputEvent::Type web_event_type) {
   switch (web_event_type) {
-    case WebInputEvent::kGestureScrollBegin:
+    case WebInputEvent::Type::kGestureScrollBegin:
       return cc::SnapFlingController::GestureScrollType::kBegin;
-    case WebInputEvent::kGestureScrollUpdate:
+    case WebInputEvent::Type::kGestureScrollUpdate:
       return cc::SnapFlingController::GestureScrollType::kUpdate;
-    case WebInputEvent::kGestureScrollEnd:
+    case WebInputEvent::Type::kGestureScrollEnd:
       return cc::SnapFlingController::GestureScrollType::kEnd;
     default:
       NOTREACHED();
@@ -77,7 +77,7 @@ void ScrollManager::Clear() {
   ClearGestureScrollState();
 }
 
-void ScrollManager::Trace(Visitor* visitor) {
+void ScrollManager::Trace(Visitor* visitor) const {
   visitor->Trace(frame_);
   visitor->Trace(scroll_gesture_handling_node_);
   visitor->Trace(previous_gesture_scrolled_node_);
@@ -189,13 +189,16 @@ void ScrollManager::RecomputeScrollChain(const Node& start_node,
 
 bool ScrollManager::CanScroll(const ScrollState& scroll_state,
                               const Node& current_node) {
-  if (!current_node.GetLayoutBox())
+  LayoutBox* scrolling_box = current_node.GetLayoutBox();
+  if (auto* element = DynamicTo<Element>(current_node))
+    scrolling_box = element->GetLayoutBoxForScrolling();
+  if (!scrolling_box)
     return false;
 
   // We need to always add the global root scroller even if it isn't scrollable
   // since we can always pinch-zoom and scroll as well as for overscroll
   // effects.
-  if (current_node.GetLayoutBox()->IsGlobalRootScroller())
+  if (scrolling_box->IsGlobalRootScroller())
     return true;
 
   // If this is the main LayoutView, and it's not the root scroller, that means
@@ -204,13 +207,12 @@ bool ScrollManager::CanScroll(const ScrollState& scroll_state,
   // so ensure it gets added to the scroll chain. See LTHI::ApplyScroll for the
   // equivalent behavior in CC. Node::NativeApplyScroll contains a special
   // handler for this case.
-  if (IsA<LayoutView>(current_node.GetLayoutBox()) &&
+  if (IsA<LayoutView>(scrolling_box) &&
       current_node.GetDocument().GetFrame()->IsMainFrame()) {
     return true;
   }
 
-  ScrollableArea* scrollable_area =
-      current_node.GetLayoutBox()->GetScrollableArea();
+  ScrollableArea* scrollable_area = scrolling_box->GetScrollableArea();
 
   if (!scrollable_area)
     return false;
@@ -226,6 +228,14 @@ bool ScrollManager::CanScroll(const ScrollState& scroll_state,
     delta_x = 0;
   if (!scrollable_area->UserInputScrollable(kVerticalScrollbar))
     delta_y = 0;
+
+  if (scroll_state.deltaGranularity() ==
+      static_cast<double>(ui::ScrollGranularity::kScrollByPercentage)) {
+    delta_x *= scrollable_area->ScrollStep(
+        ui::ScrollGranularity::kScrollByPercentage, kHorizontalScrollbar);
+    delta_y *= scrollable_area->ScrollStep(
+        ui::ScrollGranularity::kScrollByPercentage, kVerticalScrollbar);
+  }
 
   ScrollOffset current_offset = scrollable_area->GetScrollOffset();
   ScrollOffset target_offset = current_offset + ScrollOffset(delta_x, delta_y);
@@ -436,6 +446,11 @@ void ScrollManager::RecordScrollRelatedMetrics(const WebGestureDevice device) {
 WebInputEventResult ScrollManager::HandleGestureScrollBegin(
     const WebGestureEvent& gesture_event) {
   TRACE_EVENT0("input", "ScrollManager::handleGestureScrollBegin");
+  DCHECK(!RuntimeEnabledFeatures::ScrollUnificationEnabled());
+  if (RuntimeEnabledFeatures::ScrollUnificationEnabled()) {
+    return WebInputEventResult::kNotHandled;
+  }
+
   Document* document = frame_->GetDocument();
 
   if (!document->GetLayoutView())
@@ -472,6 +487,7 @@ WebInputEventResult ScrollManager::HandleGestureScrollBegin(
   scroll_state_data->position_y = position.Y();
   scroll_state_data->delta_x_hint = -gesture_event.DeltaXInRootFrame();
   scroll_state_data->delta_y_hint = -gesture_event.DeltaYInRootFrame();
+  scroll_state_data->delta_granularity = gesture_event.DeltaUnits();
   scroll_state_data->is_beginning = true;
   scroll_state_data->from_user_input = true;
   scroll_state_data->is_direct_manipulation =
@@ -526,7 +542,12 @@ WebInputEventResult ScrollManager::HandleGestureScrollBegin(
 WebInputEventResult ScrollManager::HandleGestureScrollUpdate(
     const WebGestureEvent& gesture_event) {
   TRACE_EVENT0("input", "ScrollManager::handleGestureScrollUpdate");
-  DCHECK_EQ(gesture_event.GetType(), WebInputEvent::kGestureScrollUpdate);
+  DCHECK_EQ(gesture_event.GetType(), WebInputEvent::Type::kGestureScrollUpdate);
+
+  DCHECK(!RuntimeEnabledFeatures::ScrollUnificationEnabled());
+  if (RuntimeEnabledFeatures::ScrollUnificationEnabled()) {
+    return WebInputEventResult::kNotHandled;
+  }
 
   Node* node = scroll_gesture_handling_node_.Get();
   if (!node || !node->GetLayoutObject()) {
@@ -662,6 +683,12 @@ void ScrollManager::HandleDeferredGestureScrollEnd(
 WebInputEventResult ScrollManager::HandleGestureScrollEnd(
     const WebGestureEvent& gesture_event) {
   TRACE_EVENT0("input", "ScrollManager::handleGestureScrollEnd");
+
+  DCHECK(!RuntimeEnabledFeatures::ScrollUnificationEnabled());
+  if (RuntimeEnabledFeatures::ScrollUnificationEnabled()) {
+    return WebInputEventResult::kNotHandled;
+  }
+
   GetPage()->GetBrowserControls().ScrollEnd();
 
   Node* node = scroll_gesture_handling_node_;
@@ -907,10 +934,11 @@ WebInputEventResult ScrollManager::HandleGestureScrollEvent(
 
   Node* event_target = nullptr;
   Scrollbar* scrollbar = nullptr;
-  if (gesture_event.GetType() != WebInputEvent::kGestureScrollBegin) {
+  if (gesture_event.GetType() != WebInputEvent::Type::kGestureScrollBegin) {
     scrollbar = scrollbar_handling_scroll_gesture_.Get();
     event_target = scroll_gesture_handling_node_.Get();
-  } else if (gesture_event.GetType() == WebInputEvent::kGestureScrollBegin &&
+  } else if (gesture_event.GetType() ==
+                 WebInputEvent::Type::kGestureScrollBegin &&
              gesture_event.data.scroll_begin.scrollable_area_element_id) {
     CompositorElementId element_id = CompositorElementId(
         gesture_event.data.scroll_begin.scrollable_area_element_id);
@@ -1007,14 +1035,14 @@ WebInputEventResult ScrollManager::HandleGestureScrollEvent(
     }
   }
   switch (gesture_event.GetType()) {
-    case WebInputEvent::kGestureScrollBegin:
+    case WebInputEvent::Type::kGestureScrollBegin:
       return HandleGestureScrollBegin(gesture_event);
-    case WebInputEvent::kGestureScrollUpdate:
+    case WebInputEvent::Type::kGestureScrollUpdate:
       return HandleGestureScrollUpdate(gesture_event);
-    case WebInputEvent::kGestureScrollEnd:
+    case WebInputEvent::Type::kGestureScrollEnd:
       return HandleGestureScrollEnd(gesture_event);
-    case WebInputEvent::kGestureFlingStart:
-    case WebInputEvent::kGestureFlingCancel:
+    case WebInputEvent::Type::kGestureFlingStart:
+    case WebInputEvent::Type::kGestureFlingCancel:
       return WebInputEventResult::kNotHandled;
     default:
       NOTREACHED();
@@ -1052,7 +1080,7 @@ Node* ScrollManager::NodeTargetForScrollableAreaElementId(
 
   Node* event_target = nullptr;
   if (layout_box->GetDocument().GetFrame() == frame_) {
-    event_target = scrollable_area->GetLayoutBox()->GetNode();
+    event_target = scrollable_area->EventTargetNode();
   } else {
     // The targeted ScrollableArea may not belong to this frame. If that
     // is the case, target its ancestor HTMLFrameOwnerElement that exists
@@ -1084,7 +1112,7 @@ bool ScrollManager::HandleScrollGestureOnResizer(
   if (gesture_event.SourceDevice() != WebGestureDevice::kTouchscreen)
     return false;
 
-  if (gesture_event.GetType() == WebInputEvent::kGestureScrollBegin) {
+  if (gesture_event.GetType() == WebInputEvent::Type::kGestureScrollBegin) {
     PaintLayer* layer = event_target->GetLayoutObject()
                             ? event_target->GetLayoutObject()->EnclosingLayer()
                             : nullptr;
@@ -1099,7 +1127,8 @@ bool ScrollManager::HandleScrollGestureOnResizer(
           LayoutSize(resize_scrollable_area_->OffsetFromResizeCorner(p));
       return true;
     }
-  } else if (gesture_event.GetType() == WebInputEvent::kGestureScrollUpdate) {
+  } else if (gesture_event.GetType() ==
+             WebInputEvent::Type::kGestureScrollUpdate) {
     if (resize_scrollable_area_ && resize_scrollable_area_->InResizeMode()) {
       IntPoint pos =
           RoundedIntPoint(FloatPoint(gesture_event.PositionInRootFrame()));
@@ -1108,7 +1137,8 @@ bool ScrollManager::HandleScrollGestureOnResizer(
       resize_scrollable_area_->Resize(pos, offset_from_resize_corner_);
       return true;
     }
-  } else if (gesture_event.GetType() == WebInputEvent::kGestureScrollEnd) {
+  } else if (gesture_event.GetType() ==
+             WebInputEvent::Type::kGestureScrollEnd) {
     if (resize_scrollable_area_ && resize_scrollable_area_->InResizeMode()) {
       resize_scrollable_area_->SetInResizeMode(false);
       resize_scrollable_area_ = nullptr;
@@ -1124,7 +1154,7 @@ bool ScrollManager::InResizeMode() const {
 }
 
 void ScrollManager::Resize(const WebMouseEvent& evt) {
-  if (evt.GetType() == WebInputEvent::kMouseMove) {
+  if (evt.GetType() == WebInputEvent::Type::kMouseMove) {
     if (!frame_->GetEventHandler().MousePressed())
       return;
     resize_scrollable_area_->Resize(FlooredIntPoint(evt.PositionInRootFrame()),
@@ -1166,9 +1196,9 @@ bool ScrollManager::CanHandleGestureEvent(
 
 WebGestureEvent ScrollManager::SynthesizeGestureScrollBegin(
     const WebGestureEvent& update_event) {
-  DCHECK_EQ(update_event.GetType(), WebInputEvent::kGestureScrollUpdate);
+  DCHECK_EQ(update_event.GetType(), WebInputEvent::Type::kGestureScrollUpdate);
   WebGestureEvent scroll_begin(update_event);
-  scroll_begin.SetType(WebInputEvent::kGestureScrollBegin);
+  scroll_begin.SetType(WebInputEvent::Type::kGestureScrollBegin);
   scroll_begin.data.scroll_begin.delta_x_hint =
       update_event.data.scroll_update.delta_x;
   scroll_begin.data.scroll_begin.delta_y_hint =

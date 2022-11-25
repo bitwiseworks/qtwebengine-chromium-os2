@@ -51,12 +51,13 @@ class MemoryCacheEntry final : public GarbageCollected<MemoryCacheEntry> {
  public:
   explicit MemoryCacheEntry(Resource* resource) : resource_(resource) {}
 
-  void Trace(Visitor*);
+  void Trace(Visitor*) const;
   Resource* GetResource() const { return resource_; }
 
  private:
-  void ClearResourceWeak(const WeakCallbackInfo&);
+  void ClearResourceWeak(const LivenessBroker&);
 
+  // We use UntracedMember<> here to do custom weak processing.
   UntracedMember<Resource> resource_;
 };
 
@@ -65,13 +66,11 @@ class MemoryCacheEntry final : public GarbageCollected<MemoryCacheEntry> {
 class PLATFORM_EXPORT MemoryCache final : public GarbageCollected<MemoryCache>,
                                           public MemoryCacheDumpClient,
                                           public MemoryPressureListener {
-  USING_GARBAGE_COLLECTED_MIXIN(MemoryCache);
-
  public:
   explicit MemoryCache(scoped_refptr<base::SingleThreadTaskRunner> task_runner);
   ~MemoryCache() override;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   struct TypeStatistic {
     STACK_ALLOCATED();

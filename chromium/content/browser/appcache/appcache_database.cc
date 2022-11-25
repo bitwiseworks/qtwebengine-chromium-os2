@@ -19,7 +19,7 @@
 #include "sql/meta_table.h"
 #include "sql/statement.h"
 #include "sql/transaction.h"
-#include "storage/browser/quota/padding_key.h"
+#include "third_party/blink/public/common/features.h"
 
 namespace content {
 
@@ -59,7 +59,8 @@ const char kGroupsTable[] = "Groups";
 const char kCachesTable[] = "Caches";
 const char kEntriesTable[] = "Entries";
 const char kNamespacesTable[] = "Namespaces";
-const char kOnlineWhiteListsTable[] = "OnlineWhiteLists";
+// TODO(crbug.com/1108479): Update table name, add migration.
+const char kOnlineSafeListsTable[] = "OnlineWhiteLists";
 const char kDeletableResponseIdsTable[] = "DeletableResponseIds";
 
 struct TableInfo {
@@ -116,7 +117,7 @@ const TableInfo kTables[] = {
      " token_expires INTEGER)"},
 
     // The |is_pattern| field is obsolete.
-    {kOnlineWhiteListsTable,
+    {kOnlineSafeListsTable,
      "(cache_id INTEGER,"
      " namespace_url TEXT,"
      " is_pattern INTEGER CHECK(is_pattern IN (0, 1)))"},
@@ -125,60 +126,30 @@ const TableInfo kTables[] = {
 };
 
 const IndexInfo kIndexes[] = {
-  { "GroupsOriginIndex",
-    kGroupsTable,
-    "(origin)",
-    false },
+    {"GroupsOriginIndex", kGroupsTable, "(origin)", false},
 
-  { "GroupsManifestIndex",
-    kGroupsTable,
-    "(manifest_url)",
-    true },
+    {"GroupsManifestIndex", kGroupsTable, "(manifest_url)", true},
 
-  { "CachesGroupIndex",
-    kCachesTable,
-    "(group_id)",
-    false },
+    {"CachesGroupIndex", kCachesTable, "(group_id)", false},
 
-  { "EntriesCacheIndex",
-    kEntriesTable,
-    "(cache_id)",
-    false },
+    {"EntriesCacheIndex", kEntriesTable, "(cache_id)", false},
 
-  { "EntriesCacheAndUrlIndex",
-    kEntriesTable,
-    "(cache_id, url)",
-    true },
+    {"EntriesCacheAndUrlIndex", kEntriesTable, "(cache_id, url)", true},
 
-  { "EntriesResponseIdIndex",
-    kEntriesTable,
-    "(response_id)",
-    true },
+    {"EntriesResponseIdIndex", kEntriesTable, "(response_id)", true},
 
-  { "NamespacesCacheIndex",
-    kNamespacesTable,
-    "(cache_id)",
-    false },
+    {"NamespacesCacheIndex", kNamespacesTable, "(cache_id)", false},
 
-  { "NamespacesOriginIndex",
-    kNamespacesTable,
-    "(origin)",
-    false },
+    {"NamespacesOriginIndex", kNamespacesTable, "(origin)", false},
 
-  { "NamespacesCacheAndUrlIndex",
-    kNamespacesTable,
-    "(cache_id, namespace_url)",
-    true },
+    {"NamespacesCacheAndUrlIndex", kNamespacesTable,
+     "(cache_id, namespace_url)", true},
 
-  { "OnlineWhiteListCacheIndex",
-    kOnlineWhiteListsTable,
-    "(cache_id)",
-    false },
+    // TODO(crbug.com/1108479): Update table name, add migration.
+    {"OnlineWhiteListCacheIndex", kOnlineSafeListsTable, "(cache_id)", false},
 
-  { "DeletableResponsesIdIndex",
-    kDeletableResponseIdsTable,
-    "(response_id)",
-    true },
+    {"DeletableResponsesIdIndex", kDeletableResponseIdsTable, "(response_id)",
+     true},
 };
 
 bool CreateTable(sql::Database* db, const TableInfo& info) {
@@ -503,25 +474,22 @@ bool AppCacheDatabase::CommitLazyLastAccessTimes() {
   return transaction.Commit();
 }
 
-bool AppCacheDatabase::UpdateEvictionTimesAndTokenExpires(
+bool AppCacheDatabase::UpdateEvictionTimes(
     int64_t group_id,
     base::Time last_full_update_check_time,
-    base::Time first_evictable_error_time,
-    base::Time token_expires) {
+    base::Time first_evictable_error_time) {
   if (!LazyOpen(kCreateIfNeeded))
     return false;
 
   static const char kSql[] =
       "UPDATE Groups"
       " SET last_full_update_check_time = ?,"
-      "     first_evictable_error_time = ?,"
-      "     token_expires = ?"
+      "     first_evictable_error_time = ?"
       " WHERE group_id = ?";
   sql::Statement statement(db_->GetCachedStatement(SQL_FROM_HERE, kSql));
   statement.BindInt64(0, last_full_update_check_time.ToInternalValue());
   statement.BindInt64(1, first_evictable_error_time.ToInternalValue());
-  statement.BindInt64(2, token_expires.ToInternalValue());
-  statement.BindInt64(3, group_id);
+  statement.BindInt64(2, group_id);
   return statement.Run();  // Will succeed even if group_id is invalid.
 }
 
@@ -573,9 +541,11 @@ bool AppCacheDatabase::FindCachesForOrigin(const url::Origin& origin,
   if (!FindGroupsForOrigin(origin, &group_records))
     return false;
 
-  CacheRecord cache_record;
   for (const auto& record : group_records) {
-    if (FindCacheForGroup(record.group_id, &cache_record))
+    CacheRecord cache_record;
+    if (!FindCacheForGroup(record.group_id, &cache_record))
+      continue;
+    if (HasValidOriginTrialToken(&cache_record))
       records->push_back(cache_record);
   }
   return true;
@@ -852,13 +822,14 @@ bool AppCacheDatabase::DeleteNamespacesForCache(int64_t cache_id) {
   return statement.Run();
 }
 
-bool AppCacheDatabase::FindOnlineWhiteListForCache(
+bool AppCacheDatabase::FindOnlineSafeListForCache(
     int64_t cache_id,
-    std::vector<OnlineWhiteListRecord>* records) {
+    std::vector<OnlineSafeListRecord>* records) {
   DCHECK(records && records->empty());
   if (!LazyOpen(kDontCreate))
     return false;
 
+  // TODO(crbug.com/1108479): Update table name.
   static const char kSql[] =
       "SELECT cache_id, namespace_url, is_pattern FROM OnlineWhiteLists"
       "  WHERE cache_id = ?";
@@ -867,18 +838,19 @@ bool AppCacheDatabase::FindOnlineWhiteListForCache(
   statement.BindInt64(0, cache_id);
 
   while (statement.Step()) {
-    records->push_back(OnlineWhiteListRecord());
-    this->ReadOnlineWhiteListRecord(statement, &records->back());
+    records->push_back(OnlineSafeListRecord());
+    this->ReadOnlineSafeListRecord(statement, &records->back());
     DCHECK(records->back().cache_id == cache_id);
   }
   return statement.Succeeded();
 }
 
-bool AppCacheDatabase::InsertOnlineWhiteList(
-    const OnlineWhiteListRecord* record) {
+bool AppCacheDatabase::InsertOnlineSafeList(
+    const OnlineSafeListRecord* record) {
   if (!LazyOpen(kCreateIfNeeded))
     return false;
 
+  // TODO(crbug.com/1108479): Update table name.
   static const char kSql[] =
       "INSERT INTO OnlineWhiteLists (cache_id, namespace_url, is_pattern)"
       "  VALUES (?, ?, ?)";
@@ -891,24 +863,25 @@ bool AppCacheDatabase::InsertOnlineWhiteList(
   return statement.Run();
 }
 
-bool AppCacheDatabase::InsertOnlineWhiteListRecords(
-    const std::vector<OnlineWhiteListRecord>& records) {
+bool AppCacheDatabase::InsertOnlineSafeListRecords(
+    const std::vector<OnlineSafeListRecord>& records) {
   if (records.empty())
     return true;
   sql::Transaction transaction(db_.get());
   if (!transaction.Begin())
     return false;
   for (const auto& record : records) {
-    if (!InsertOnlineWhiteList(&record))
+    if (!InsertOnlineSafeList(&record))
       return false;
   }
   return transaction.Commit();
 }
 
-bool AppCacheDatabase::DeleteOnlineWhiteListForCache(int64_t cache_id) {
+bool AppCacheDatabase::DeleteOnlineSafeListForCache(int64_t cache_id) {
   if (!LazyOpen(kDontCreate))
     return false;
 
+  // TODO(crbug.com/1108479): Update table name.
   static const char kSql[] = "DELETE FROM OnlineWhiteLists WHERE cache_id = ?";
 
   sql::Statement statement(db_->GetCachedStatement(SQL_FROM_HERE, kSql));
@@ -950,6 +923,12 @@ bool AppCacheDatabase::DeleteDeletableResponseIds(
   static const char kSql[] =
       "DELETE FROM DeletableResponseIds WHERE response_id = ?";
   return RunCachedStatementWithIds(SQL_FROM_HERE, kSql, response_ids);
+}
+
+bool AppCacheDatabase::HasValidOriginTrialToken(CacheRecord* cache_record) {
+  if (!is_origin_trial_required_)
+    return true;
+  return cache_record->token_expires > base::Time::Now();
 }
 
 bool AppCacheDatabase::RunCachedStatementWithIds(
@@ -1088,13 +1067,13 @@ void AppCacheDatabase::ReadNamespaceRecord(
   record->namespace_.target_url = GURL(statement->ColumnString(4));
   DCHECK(record->namespace_.type == APPCACHE_FALLBACK_NAMESPACE ||
          record->namespace_.type == APPCACHE_INTERCEPT_NAMESPACE);
-  // The APPCACHE_NETWORK_NAMESPACE are stored as OnlineWhiteListRecords.
+  // The APPCACHE_NETWORK_NAMESPACE are stored as OnlineSafeListRecords.
   record->token_expires =
       base::Time::FromInternalValue(statement->ColumnInt64(5));
 }
 
-void AppCacheDatabase::ReadOnlineWhiteListRecord(
-    const sql::Statement& statement, OnlineWhiteListRecord* record) {
+void AppCacheDatabase::ReadOnlineSafeListRecord(const sql::Statement& statement,
+                                                OnlineSafeListRecord* record) {
   record->cache_id = statement.ColumnInt64(0);
   record->namespace_url = GURL(statement.ColumnString(1));
 }
@@ -1287,7 +1266,7 @@ bool AppCacheDatabase::DeleteExistingAndCreateNewDatabase() {
 
   // This also deletes the disk cache data.
   base::FilePath directory = db_file_path_.DirName();
-  if (!base::DeleteFileRecursively(directory))
+  if (!base::DeletePathRecursively(directory))
     return false;
 
   // Make sure the steps above actually deleted things.

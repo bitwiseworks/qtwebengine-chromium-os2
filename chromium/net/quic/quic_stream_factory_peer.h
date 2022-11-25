@@ -22,7 +22,6 @@
 
 namespace quic {
 class QuicAlarmFactory;
-class QuicClientPushPromiseIndex;
 class QuicConfig;
 }  // namespace quic
 
@@ -51,9 +50,6 @@ class QuicStreamFactoryPeer {
   static bool HasActiveJob(QuicStreamFactory* factory,
                            const quic::QuicServerId& server_id);
 
-  static bool HasActiveCertVerifierJob(QuicStreamFactory* factory,
-                                       const quic::QuicServerId& server_id);
-
   static QuicChromiumClientSession* GetPendingSession(
       QuicStreamFactory* factory,
       const quic::QuicServerId& server_id,
@@ -79,21 +75,6 @@ class QuicStreamFactoryPeer {
 
   static quic::QuicTime::Delta GetPingTimeout(QuicStreamFactory* factory);
 
-  static bool GetRaceCertVerification(QuicStreamFactory* factory);
-
-  static void SetRaceCertVerification(QuicStreamFactory* factory,
-                                      bool race_cert_verification);
-
-  // When using this method, the caller should be holding onto a live
-  // NetworkIsolationKey, if it wants the results to stay alive in the
-  // per-NetworkIsolationKey cache.
-  static quic::QuicAsyncStatus StartCertVerifyJob(
-      QuicStreamFactory* factory,
-      const quic::QuicServerId& server_id,
-      const NetworkIsolationKey& network_isolation_key,
-      int cert_verify_flags,
-      const NetLogWithSource& net_log);
-
   static void SetYieldAfterPackets(QuicStreamFactory* factory,
                                    int yield_after_packets);
 
@@ -116,10 +97,9 @@ class QuicStreamFactoryPeer {
       const quic::QuicServerId& quic_server_id,
       const NetworkIsolationKey& network_isolation_key);
 
-  static quic::QuicClientPushPromiseIndex* GetPushPromiseIndex(
-      QuicStreamFactory* factory);
-
   static int GetNumPushStreamsCreated(QuicStreamFactory* factory);
+
+  static size_t GetNumDegradingSessions(QuicStreamFactory* factory);
 
   static void SetAlarmFactory(
       QuicStreamFactory* factory,

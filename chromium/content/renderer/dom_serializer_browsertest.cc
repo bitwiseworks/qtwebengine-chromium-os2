@@ -10,9 +10,9 @@
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/message_loop/message_loop_current.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/current_thread.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "content/public/browser/render_view_host.h"
@@ -20,14 +20,13 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/frame_load_waiter.h"
 #include "content/public/test/test_utils.h"
-#include "content/renderer/savable_resources.h"
 #include "content/shell/browser/shell.h"
 #include "net/base/filename_util.h"
-#include "net/url_request/url_request_context.h"
 #include "third_party/blink/public/platform/web_data.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_url.h"
@@ -41,6 +40,7 @@
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/public/web/web_meta_element.h"
 #include "third_party/blink/public/web/web_node.h"
+#include "third_party/blink/public/web/web_savable_resources_test_support.h"
 #include "third_party/blink/public/web/web_view.h"
 
 using blink::WebData;
@@ -492,7 +492,8 @@ class MAYBE_DomSerializerTests : public ContentBrowserTest,
         original_base_tag_count++;
       } else {
         // Get link.
-        WebString value = GetSubResourceLinkFromElement(element);
+        WebString value =
+            blink::GetSubResourceLinkFromElementForTesting(element);
         if (value.IsNull() && element.HasHTMLTagName("a")) {
           value = element.GetAttribute("href");
           if (value.IsEmpty())
@@ -538,7 +539,8 @@ class MAYBE_DomSerializerTests : public ContentBrowserTest,
         new_base_tag_count++;
       } else {
         // Get link.
-        WebString value = GetSubResourceLinkFromElement(element);
+        WebString value =
+            blink::GetSubResourceLinkFromElementForTesting(element);
         if (value.IsNull() && element.HasHTMLTagName("a")) {
           value = element.GetAttribute("href");
           if (value.IsEmpty())
@@ -615,8 +617,8 @@ class MAYBE_DomSerializerTests : public ContentBrowserTest,
     WebDocument doc = web_frame->GetDocument();
     WebNode lastNodeInBody = doc.Body().LastChild();
     ASSERT_TRUE(lastNodeInBody.IsElementNode());
-    WebString uri =
-        GetSubResourceLinkFromElement(lastNodeInBody.To<WebElement>());
+    WebString uri = blink::GetSubResourceLinkFromElementForTesting(
+        lastNodeInBody.To<WebElement>());
     EXPECT_TRUE(uri.IsNull());
   }
 

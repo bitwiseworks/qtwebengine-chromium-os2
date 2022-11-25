@@ -30,6 +30,7 @@
 #include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
 #include "net/log/net_log_with_source.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/websockets/websocket_errors.h"
 #include "net/websockets/websocket_event_interface.h"
 #include "net/websockets/websocket_frame.h"
@@ -44,11 +45,9 @@ namespace {
 
 using base::StreamingUtf8Validator;
 
-const int kDefaultSendQuotaLowWaterMark = 1 << 16;
-const int kDefaultSendQuotaHighWaterMark = 1 << 17;
-const size_t kWebSocketCloseCodeLength = 2;
+constexpr size_t kWebSocketCloseCodeLength = 2;
 // Timeout for waiting for the server to acknowledge a closing handshake.
-const int kClosingHandshakeTimeoutSeconds = 60;
+constexpr int kClosingHandshakeTimeoutSeconds = 60;
 // We wait for the server to close the underlying connection as recommended in
 // https://tools.ietf.org/html/rfc6455#section-7.1.1
 // We don't use 2MSL since there're server implementations that don't follow
@@ -56,14 +55,14 @@ const int kClosingHandshakeTimeoutSeconds = 60;
 // connection. It leads to unnecessarily long time before CloseEvent
 // invocation. We want to avoid this rather than strictly following the spec
 // recommendation.
-const int kUnderlyingConnectionCloseTimeoutSeconds = 2;
+constexpr int kUnderlyingConnectionCloseTimeoutSeconds = 2;
 
 using ChannelState = WebSocketChannel::ChannelState;
 
 // Maximum close reason length = max control frame payload -
 //                               status code length
 //                             = 125 - 2
-const size_t kMaximumCloseReasonLength = 125 - kWebSocketCloseCodeLength;
+constexpr size_t kMaximumCloseReasonLength = 125 - kWebSocketCloseCodeLength;
 
 // Check a close status code for strict compliance with RFC6455. This is only
 // used for close codes received from a renderer that we are intending to send
@@ -132,7 +131,7 @@ class DependentIOBuffer : public WrappedIOBuffer {
 
  private:
   ~DependentIOBuffer() override = default;
-  scoped_refptr<net::IOBuffer> buffer_;
+  scoped_refptr<IOBuffer> buffer_;
 };
 
 void LogCloseCodeForUma(uint16_t code) {
@@ -230,7 +229,7 @@ class WebSocketChannel::ConnectDelegate
  public:
   explicit ConnectDelegate(WebSocketChannel* creator) : creator_(creator) {}
 
-  void OnCreateRequest(net::URLRequest* request) override {
+  void OnCreateRequest(URLRequest* request) override {
     creator_->OnCreateURLRequest(request);
   }
 
@@ -286,9 +285,6 @@ WebSocketChannel::WebSocketChannel(
     URLRequestContext* url_request_context)
     : event_interface_(std::move(event_interface)),
       url_request_context_(url_request_context),
-      send_quota_low_water_mark_(kDefaultSendQuotaLowWaterMark),
-      send_quota_high_water_mark_(kDefaultSendQuotaHighWaterMark),
-      current_send_quota_(0),
       closing_handshake_timeout_(
           base::TimeDelta::FromSeconds(kClosingHandshakeTimeoutSeconds)),
       underlying_connection_close_timeout_(base::TimeDelta::FromSeconds(
@@ -315,11 +311,12 @@ void WebSocketChannel::SendAddChannelRequest(
     const std::vector<std::string>& requested_subprotocols,
     const url::Origin& origin,
     const SiteForCookies& site_for_cookies,
-    const net::NetworkIsolationKey& network_isolation_key,
-    const HttpRequestHeaders& additional_headers) {
+    const IsolationInfo& isolation_info,
+    const HttpRequestHeaders& additional_headers,
+    NetworkTrafficAnnotationTag traffic_annotation) {
   SendAddChannelRequestWithSuppliedCallback(
       socket_url, requested_subprotocols, origin, site_for_cookies,
-      network_isolation_key, additional_headers,
+      isolation_info, additional_headers, traffic_annotation,
       base::BindOnce(&WebSocketStream::CreateAndConnectStream));
 }
 
@@ -354,12 +351,6 @@ WebSocketChannel::ChannelState WebSocketChannel::SendFrame(
   }
 
   DCHECK_EQ(state_, CONNECTED);
-  if (buffer_size > base::checked_cast<size_t>(current_send_quota_)) {
-    // TODO(ricea): Kill renderer.
-    FailChannel("Send quota exceeded", kWebSocketErrorGoingAway, "");
-    return CHANNEL_DELETED;
-    // |this| has been deleted.
-  }
 
   DCHECK(WebSocketFrameHeader::IsKnownDataOpCode(op_code))
       << "Got SendFrame with bogus op_code " << op_code << " fin=" << fin
@@ -381,20 +372,10 @@ WebSocketChannel::ChannelState WebSocketChannel::SendFrame(
     sending_text_message_ = !fin;
     DCHECK(!fin || state == StreamingUtf8Validator::VALID_ENDPOINT);
   }
-  current_send_quota_ -= buffer_size;
-  // TODO(ricea): If current_send_quota_ has dropped below
-  // send_quota_low_water_mark_, it might be good to increase the "low
-  // water mark" and "high water mark", but only if the link to the WebSocket
-  // server is not saturated.
+
   return SendFrameInternal(fin, op_code, std::move(buffer), buffer_size);
   // |this| may have been deleted.
 }
-
-// Overrides default quota resend threshold size for WebSocket. This flag will
-// be used to investigate the performance issue of crbug.com/865001 and be
-// deleted later on.
-const char kWebSocketReceiveQuotaThreshold[] =
-    "websocket-renderer-receive-quota-max";
 
 ChannelState WebSocketChannel::StartClosingHandshake(
     uint16_t code,
@@ -459,12 +440,14 @@ void WebSocketChannel::SendAddChannelRequestForTesting(
     const std::vector<std::string>& requested_subprotocols,
     const url::Origin& origin,
     const SiteForCookies& site_for_cookies,
-    const net::NetworkIsolationKey& network_isolation_key,
+    const IsolationInfo& isolation_info,
     const HttpRequestHeaders& additional_headers,
+    NetworkTrafficAnnotationTag traffic_annotation,
     WebSocketStreamRequestCreationCallback callback) {
   SendAddChannelRequestWithSuppliedCallback(
       socket_url, requested_subprotocols, origin, site_for_cookies,
-      network_isolation_key, additional_headers, std::move(callback));
+      isolation_info, additional_headers, traffic_annotation,
+      std::move(callback));
 }
 
 void WebSocketChannel::SetClosingHandshakeTimeoutForTesting(
@@ -482,8 +465,9 @@ void WebSocketChannel::SendAddChannelRequestWithSuppliedCallback(
     const std::vector<std::string>& requested_subprotocols,
     const url::Origin& origin,
     const SiteForCookies& site_for_cookies,
-    const net::NetworkIsolationKey& network_isolation_key,
+    const IsolationInfo& isolation_info,
     const HttpRequestHeaders& additional_headers,
+    NetworkTrafficAnnotationTag traffic_annotation,
     WebSocketStreamRequestCreationCallback callback) {
   DCHECK_EQ(FRESHLY_CONSTRUCTED, state_);
   if (!socket_url.SchemeIsWSOrWSS()) {
@@ -497,8 +481,8 @@ void WebSocketChannel::SendAddChannelRequestWithSuppliedCallback(
   auto connect_delegate = std::make_unique<ConnectDelegate>(this);
   stream_request_ = std::move(callback).Run(
       socket_url_, requested_subprotocols, origin, site_for_cookies,
-      network_isolation_key, additional_headers, url_request_context_,
-      NetLogWithSource(), std::move(connect_delegate));
+      isolation_info, additional_headers, url_request_context_,
+      NetLogWithSource(), traffic_annotation, std::move(connect_delegate));
   SetState(CONNECTING);
 }
 
@@ -519,12 +503,8 @@ void WebSocketChannel::OnConnectSuccess(
   // |stream_request_| is not used once the connection has succeeded.
   stream_request_.reset();
 
-  // TODO(ricea): Get flow control information from the WebSocketStream once we
-  // have a multiplexing WebSocketStream.
-  current_send_quota_ = send_quota_high_water_mark_;
   event_interface_->OnAddChannelResponse(
-      std::move(response), stream_->GetSubProtocol(), stream_->GetExtensions(),
-      send_quota_high_water_mark_);
+      std::move(response), stream_->GetSubProtocol(), stream_->GetExtensions());
   // |this| may have been deleted after OnAddChannelResponse.
 }
 
@@ -599,21 +579,7 @@ ChannelState WebSocketChannel::OnWriteDone(bool synchronous, int result) {
           return WriteFrames();
       } else {
         data_being_sent_.reset();
-        if (current_send_quota_ < send_quota_low_water_mark_) {
-          // TODO(ricea): Increase low_water_mark and high_water_mark if
-          // throughput is high, reduce them if throughput is low.  Low water
-          // mark needs to be >= the bandwidth delay product *of the IPC
-          // channel*. Because factors like context-switch time, thread wake-up
-          // time, and bus speed come into play it is complex and probably needs
-          // to be determined empirically.
-          DCHECK_LE(send_quota_low_water_mark_, send_quota_high_water_mark_);
-          // TODO(ricea): Truncate quota by the quota specified by the remote
-          // server, if the protocol in use supports quota.
-          int fresh_quota = send_quota_high_water_mark_ - current_send_quota_;
-          current_send_quota_ += fresh_quota;
-          event_interface_->OnSendFlowControlQuotaAdded(fresh_quota);
-          return CHANNEL_ALIVE;
-        }
+        event_interface_->OnSendDataFrameDone();
       }
       return CHANNEL_ALIVE;
 
@@ -961,8 +927,6 @@ ChannelState WebSocketChannel::SendFrameInternal(
   if (data_being_sent_) {
     // Either the link to the WebSocket server is saturated, or several messages
     // are being sent in a batch.
-    // TODO(ricea): Keep some statistics to work out the situation and adjust
-    // quota appropriately.
     if (!data_to_send_next_)
       data_to_send_next_ = std::make_unique<SendBuffer>();
     data_to_send_next_->AddFrame(std::move(frame), std::move(buffer));
@@ -1016,6 +980,7 @@ ChannelState WebSocketChannel::SendClose(uint16_t code,
     std::copy(
         reason.begin(), reason.end(), body->data() + kWebSocketCloseCodeLength);
   }
+
   return SendFrameInternal(true, WebSocketFrameHeader::kOpCodeClose,
                            std::move(body), size);
 }

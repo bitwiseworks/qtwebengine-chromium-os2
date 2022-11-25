@@ -15,20 +15,26 @@
 #include "include/core/SkShader.h"
 #include "include/core/SkSurfaceProps.h"
 #include "include/private/SkNoncopyable.h"
+#include "src/core/SkMatrixProvider.h"
 #include "src/shaders/SkShaderBase.h"
 
 class SkBitmap;
 struct SkDrawShadowRec;
-class SkCanvasMatrix;
 class SkGlyphRun;
 class SkGlyphRunList;
+class SkImageFilter;
 class SkImageFilterCache;
 struct SkIRect;
+class SkMarkerStack;
 class SkMatrix;
 class SkRasterHandleAllocator;
 class SkSpecialImage;
 
-class SkBaseDevice : public SkRefCnt {
+namespace skif {
+    class Mapping;
+} // namespace skif
+
+class SkBaseDevice : public SkRefCnt, public SkMatrixProvider {
 public:
     SkBaseDevice(const SkImageInfo&, const SkSurfaceProps&);
 
@@ -125,21 +131,29 @@ public:
      */
     bool isPixelAlignedToGlobal() const;
     /**
-     *  Get the transformation from the input device's to this device's coordinate space. This
-     *  transform can be used to draw the input device into this device, such that once this device
-     *  is drawn to the root device, the net effect will have the input device's content drawn
-     *  transformed by the global CTM.
+     * Get the transformation from this device's coordinate system to the provided device space.
+     * This transform can be used to draw this device into the provided device, such that once
+     * that device is drawn to the root device, the net effect will be that this device's contents
+     * have been transformed by the global CTM.
      */
     SkMatrix getRelativeTransform(const SkBaseDevice&) const;
 
     virtual void* getRasterHandle() const { return nullptr; }
 
+    SkMarkerStack* markerStack() const { return fMarkerStack; }
+    void setMarkerStack(SkMarkerStack* ms) { fMarkerStack = ms; }
+
+    // SkMatrixProvider interface:
+    bool getLocalToMarker(uint32_t, SkM44* localToMarker) const override;
+
+    const SkMatrixProvider& asMatrixProvider() const { return *this; }
+
     void save() { this->onSave(); }
-    void restore(const SkCanvasMatrix& ctm) {
+    void restore(const SkM44& ctm) {
         this->onRestore();
         this->setGlobalCTM(ctm);
     }
-    void restoreLocal(const SkMatrix& localToDevice) {
+    void restoreLocal(const SkM44& localToDevice) {
         this->onRestore();
         this->setLocalToDevice(localToDevice);
     }
@@ -162,6 +176,9 @@ public:
     void clipRegion(const SkRegion& region, SkClipOp op) {
         this->onClipRegion(region, op);
     }
+    void replaceClip(const SkIRect& rect) {
+        this->onReplaceClip(rect);
+    }
     void androidFramework_setDeviceClipRestriction(SkIRect* mutableClipRestriction) {
         this->onSetDeviceClipRestriction(mutableClipRestriction);
     }
@@ -169,11 +186,11 @@ public:
         return this->onClipIsWideOpen();
     }
 
-    const SkMatrix& localToDevice() const { return fLocalToDevice; }
-    void setLocalToDevice(const SkMatrix& localToDevice) {
+    void setLocalToDevice(const SkM44& localToDevice) {
         fLocalToDevice = localToDevice;
+        fLocalToDevice33 = fLocalToDevice.asM33();
     }
-    void setGlobalCTM(const SkCanvasMatrix& ctm);
+    void setGlobalCTM(const SkM44& ctm);
     virtual void validateDevBounds(const SkIRect&) {}
 
     virtual bool android_utils_clipWithStencil() { return false; }
@@ -195,6 +212,7 @@ protected:
     virtual void onClipPath(const SkPath& path, SkClipOp, bool aa) {}
     virtual void onClipShader(sk_sp<SkShader>) {}
     virtual void onClipRegion(const SkRegion& deviceRgn, SkClipOp) {}
+    virtual void onReplaceClip(const SkIRect& rect) {}
     virtual void onSetDeviceClipRestriction(SkIRect* mutableClipRestriction) {}
     virtual bool onClipIsAA() const = 0;
     virtual bool onClipIsWideOpen() const = 0;
@@ -276,20 +294,33 @@ protected:
                                     const SkPoint dstClips[], const SkMatrix preViewMatrices[],
                                     const SkPaint& paint, SkCanvas::SrcRectConstraint);
 
-    /** The SkDevice passed will be an SkDevice which was returned by a call to
-        onCreateDevice on this device with kNeverTile_TileExpectation.
-     */
-    virtual void drawDevice(SkBaseDevice*, int x, int y, const SkPaint&) = 0;
-
     void drawGlyphRunRSXform(const SkFont&, const SkGlyphID[], const SkRSXform[], int count,
                              SkPoint origin, const SkPaint& paint);
 
     virtual void drawDrawable(SkDrawable*, const SkMatrix*, SkCanvas*);
 
-    virtual void drawSpecial(SkSpecialImage*, int x, int y, const SkPaint&,
-                             SkImage* clipImage, const SkMatrix& clipMatrix);
+    /** The SkDevice passed will be an SkDevice which was returned by a call to
+        onCreateDevice on this device with kNeverTile_TileExpectation.
+     */
+    virtual void drawDevice(SkBaseDevice*, int x, int y, const SkPaint&) = 0;
+
+    virtual void drawSpecial(SkSpecialImage*, int x, int y, const SkPaint&);
+
+    /**
+     * Evaluate 'filter' and draw the final output into this device using 'paint'. The 'mapping'
+     * defines the parameter-to-layer space transform used to evaluate the image filter on 'src',
+     * and the layer-to-device space transform that is used to draw the result into this device.
+     * Since 'mapping' fully specifies the transform, this draw function ignores the current
+     * local-to-device matrix (i.e. just like drawSpecial and drawDevice).
+     *
+     * The final paint must not have an image filter or mask filter set on it; a shader is ignored.
+     */
+    virtual void drawFilteredImage(const skif::Mapping& mapping, SkSpecialImage* src,
+                                   const SkImageFilter* filter, const SkPaint& paint);
+
     virtual sk_sp<SkSpecialImage> makeSpecial(const SkBitmap&);
     virtual sk_sp<SkSpecialImage> makeSpecial(const SkImage*);
+
     // Get a view of the entire device's current contents as an image.
     sk_sp<SkSpecialImage> snapSpecial();
     // Snap the 'subset' contents from this device, possibly as a read-only view. If 'forceCopy'
@@ -305,6 +336,7 @@ protected:
     ///////////////////////////////////////////////////////////////////////////
 
     virtual GrContext* context() const { return nullptr; }
+    virtual GrRecordingContext* recordingContext() const { return nullptr; }
 
     virtual sk_sp<SkSurface> makeSurface(const SkImageInfo&, const SkSurfaceProps&);
     virtual bool onPeekPixels(SkPixmap*) { return false; }
@@ -328,17 +360,14 @@ protected:
     virtual bool onAccessPixels(SkPixmap*) { return false; }
 
     struct CreateInfo {
-        static SkPixelGeometry AdjustGeometry(TileUsage, SkPixelGeometry);
-
-        // The constructor may change the pixel geometry based on other parameters.
         CreateInfo(const SkImageInfo& info,
-                   TileUsage tileUsage,
                    SkPixelGeometry geo,
+                   TileUsage tileUsage,
                    bool trackCoverage,
                    SkRasterHandleAllocator* allocator)
             : fInfo(info)
             , fTileUsage(tileUsage)
-            , fPixelGeometry(AdjustGeometry(tileUsage, geo))
+            , fPixelGeometry(geo)
             , fTrackCoverage(trackCoverage)
             , fAllocator(allocator)
         {}
@@ -403,11 +432,11 @@ private:
     // is anchored in the device space. The final device-to-global matrix stored by the SkDevice
     // will include a pre-translation by T(deviceOriginX, deviceOriginY), and the final
     // local-to-device matrix will have a post-translation of T(-deviceOriginX, -deviceOriginY).
-    void setDeviceCoordinateSystem(const SkMatrix& deviceToGlobal, const SkMatrix& localToDevice,
+    void setDeviceCoordinateSystem(const SkMatrix& deviceToGlobal, const SkM44& localToDevice,
                                    int bufferOriginX, int bufferOriginY);
     // Convenience to configure the device to be axis-aligned with the root canvas, but with a
     // unique origin.
-    void setOrigin(const SkMatrix& globalCTM, int x, int y) {
+    void setOrigin(const SkM44& globalCTM, int x, int y) {
         this->setDeviceCoordinateSystem(SkMatrix::I(), globalCTM, x, y);
     }
 
@@ -423,17 +452,20 @@ private:
         *const_cast<SkImageInfo*>(&fInfo) = fInfo.makeWH(w, h);
     }
 
+    SkMarkerStack* fMarkerStack = nullptr;  // does not own this, set in setMarkerStack()
+
     const SkImageInfo    fInfo;
     const SkSurfaceProps fSurfaceProps;
     // fDeviceToGlobal and fGlobalToDevice are inverses of each other; there are never that many
     // SkDevices, so pay the memory cost to avoid recalculating the inverse.
     SkMatrix             fDeviceToGlobal;
     SkMatrix             fGlobalToDevice;
-    // This is the device CTM, not the global CTM. This transform maps from local space to the
-    // device's coordinate space; fDeviceToGlobal * fLocalToDevice will match the canvas' CTM.
-    SkMatrix             fLocalToDevice;
 
-    typedef SkRefCnt INHERITED;
+    // fLocalToDevice (inherited from SkMatrixProvider) is the device CTM, not the global CTM
+    // It maps from local space to the device's coordinate space.
+    // fDeviceToGlobal * fLocalToDevice will match the canvas' CTM.
+
+    using INHERITED = SkRefCnt;
 };
 
 class SkNoPixelsDevice : public SkBaseDevice {
@@ -446,13 +478,13 @@ public:
         // this fails if we enable this assert: DiscardableImageMapTest.GetDiscardableImagesInRectMaxImage
         //SkASSERT(bounds.width() >= 0 && bounds.height() >= 0);
 
-        this->setOrigin(SkMatrix::I(), bounds.left(), bounds.top());
+        this->setOrigin(SkM44(), bounds.left(), bounds.top());
     }
 
     void resetForNextPicture(const SkIRect& bounds) {
         //SkASSERT(bounds.width() >= 0 && bounds.height() >= 0);
         this->privateResize(bounds.width(), bounds.height());
-        this->setOrigin(SkMatrix::I(), bounds.left(), bounds.top());
+        this->setOrigin(SkM44(), bounds.left(), bounds.top());
     }
 
 protected:
@@ -489,8 +521,11 @@ protected:
     void drawGlyphRunList(const SkGlyphRunList& glyphRunList) override {}
     void drawVertices(const SkVertices*, SkBlendMode, const SkPaint&) override {}
 
+    void drawFilteredImage(const skif::Mapping& mapping, SkSpecialImage* src,
+                           const SkImageFilter* filter, const SkPaint& paint) override {}
+
 private:
-    typedef SkBaseDevice INHERITED;
+    using INHERITED = SkBaseDevice;
 };
 
 class SkAutoDeviceTransformRestore : SkNoncopyable {
@@ -499,15 +534,15 @@ public:
         : fDevice(device)
         , fPrevLocalToDevice(device->localToDevice())
     {
-        fDevice->setLocalToDevice(localToDevice);
+        fDevice->setLocalToDevice(SkM44(localToDevice));
     }
     ~SkAutoDeviceTransformRestore() {
         fDevice->setLocalToDevice(fPrevLocalToDevice);
     }
 
 private:
-    SkBaseDevice*   fDevice;
-    const SkMatrix  fPrevLocalToDevice;
+    SkBaseDevice* fDevice;
+    const SkM44   fPrevLocalToDevice;
 };
 
 #endif

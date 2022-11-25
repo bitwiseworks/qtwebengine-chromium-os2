@@ -35,6 +35,7 @@
 
 #include <stdint.h>
 
+#include "base/mac/mac_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
@@ -119,7 +120,8 @@ int ModifiersFromEvent(NSEvent* event) {
 
 void SetWebEventLocationFromEventInView(blink::WebMouseEvent* result,
                                         NSEvent* event,
-                                        NSView* view) {
+                                        NSView* view,
+                                        bool unacceleratedMovement = false) {
   NSPoint screen_local = ui::ConvertPointFromWindowToScreen(
       [view window], [event locationInWindow]);
   NSScreen* primary_screen = ([[NSScreen screens] count] > 0)
@@ -137,8 +139,29 @@ void SetWebEventLocationFromEventInView(blink::WebMouseEvent* result,
   result->SetPositionInWidget(content_local.x,
                               [view frame].size.height - content_local.y);
 
-  result->movement_x = [event deltaX];
-  result->movement_y = [event deltaY];
+  CGEventRef cgEvent = nullptr;
+  if (unacceleratedMovement && (cgEvent = [event CGEvent]) != nullptr) {
+    // The caller should have already validated that we are running on a
+    // compatible OS before asking for unaccelerated movement.
+    // See RenderWidgetHostViewMac::IsUnadjustedMouseMovementSupported
+    // for the OS validation.
+#if DCHECK_IS_ON()
+    if (@available(macOS 10.15.1, *)) { /* nop */
+    } else {
+      NOTREACHED();
+    }
+#endif
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 101500
+    result->movement_x = CGEventGetIntegerValueField(
+        cgEvent, kCGEventUnacceleratedPointerMovementX);
+    result->movement_y = CGEventGetIntegerValueField(
+        cgEvent, kCGEventUnacceleratedPointerMovementY);
+#endif
+    result->is_raw_movement_event = true;
+  } else {
+    result->movement_x = [event deltaX];
+    result->movement_y = [event deltaY];
+  }
 }
 
 bool IsSystemKeyEvent(const blink::WebKeyboardEvent& event) {
@@ -241,15 +264,14 @@ blink::WebKeyboardEvent WebKeyboardEventBuilder::Build(NSEvent* event,
       ui::EventTimeStampFromSeconds([event timestamp]);
   if (record_debug_uma) {
     if (ui::EventTypeFromNative(event) == ui::ET_KEY_PRESSED) {
+      base::TimeDelta diff = (now - hardware_timestamp).magnitude();
       UMA_HISTOGRAM_CUSTOM_TIMES(
-          now > hardware_timestamp
-              ? "Event.Latency.OS_NO_VALIDATION.POSITIVE.KEY_PRESSED"
-              : "Event.Latency.OS_NO_VALIDATION.NEGATIVE.KEY_PRESSED",
-          (now - hardware_timestamp).magnitude(),
+          "Event.Latency.OS_NO_VALIDATION.POSITIVE.KEY_PRESSED", diff,
           base::TimeDelta::FromMilliseconds(1),
           base::TimeDelta::FromSeconds(60), 50);
     }
   }
+
   ui::DomCode dom_code = ui::DomCodeFromNSEvent(event);
   int modifiers =
       ModifiersFromEvent(event) | ui::DomCodeToWebInputEventModifiers(dom_code);
@@ -258,8 +280,8 @@ blink::WebKeyboardEvent WebKeyboardEventBuilder::Build(NSEvent* event,
     modifiers |= blink::WebInputEvent::kIsAutoRepeat;
 
   blink::WebKeyboardEvent result(
-      ui::IsKeyUpEvent(event) ? blink::WebInputEvent::kKeyUp
-                              : blink::WebInputEvent::kRawKeyDown,
+      ui::IsKeyUpEvent(event) ? blink::WebInputEvent::Type::kKeyUp
+                              : blink::WebInputEvent::Type::kRawKeyDown,
       modifiers, ui::EventTimeStampFromSeconds([event timestamp]));
   result.windows_key_code =
       ui::LocatedToNonLocatedKeyboardCode(ui::KeyboardCodeFromNSEvent(event));
@@ -304,17 +326,16 @@ blink::WebKeyboardEvent WebKeyboardEventBuilder::Build(NSEvent* event,
 blink::WebMouseEvent WebMouseEventBuilder::Build(
     NSEvent* event,
     NSView* view,
-    blink::WebPointerProperties::PointerType pointerType) {
+    blink::WebPointerProperties::PointerType pointerType,
+    bool unacceleratedMovement) {
   ui::ComputeEventLatencyOS(event);
   base::TimeTicks now = ui::EventTimeForNow();
   base::TimeTicks hardware_timestamp =
       ui::EventTimeStampFromSeconds([event timestamp]);
   if (ui::EventTypeFromNative(event) == ui::ET_MOUSE_PRESSED) {
+    base::TimeDelta diff = (now - hardware_timestamp).magnitude();
     UMA_HISTOGRAM_CUSTOM_TIMES(
-        now > hardware_timestamp
-            ? "Event.Latency.OS_NO_VALIDATION.POSITIVE.MOUSE_PRESSED"
-            : "Event.Latency.OS_NO_VALIDATION.NEGATIVE.MOUSE_PRESSED",
-        (now - hardware_timestamp).magnitude(),
+        "Event.Latency.OS_NO_VALIDATION.POSITIVE.MOUSE_PRESSED", diff,
         base::TimeDelta::FromMilliseconds(1), base::TimeDelta::FromSeconds(60),
         50);
   }
@@ -326,53 +347,53 @@ blink::WebMouseEvent WebMouseEventBuilder::Build(
   NSEventType type = [event type];
   switch (type) {
     case NSMouseExited:
-      event_type = blink::WebInputEvent::kMouseLeave;
+      event_type = blink::WebInputEvent::Type::kMouseLeave;
       break;
     case NSLeftMouseDown:
-      event_type = blink::WebInputEvent::kMouseDown;
+      event_type = blink::WebInputEvent::Type::kMouseDown;
       click_count = [event clickCount];
       button = blink::WebMouseEvent::Button::kLeft;
       break;
     case NSOtherMouseDown:
-      event_type = blink::WebInputEvent::kMouseDown;
+      event_type = blink::WebInputEvent::Type::kMouseDown;
       click_count = [event clickCount];
       button = ButtonFromButtonNumber(event);
       break;
     case NSRightMouseDown:
-      event_type = blink::WebInputEvent::kMouseDown;
+      event_type = blink::WebInputEvent::Type::kMouseDown;
       click_count = [event clickCount];
       button = blink::WebMouseEvent::Button::kRight;
       break;
     case NSLeftMouseUp:
-      event_type = blink::WebInputEvent::kMouseUp;
+      event_type = blink::WebInputEvent::Type::kMouseUp;
       click_count = [event clickCount];
       button = blink::WebMouseEvent::Button::kLeft;
       break;
     case NSOtherMouseUp:
-      event_type = blink::WebInputEvent::kMouseUp;
+      event_type = blink::WebInputEvent::Type::kMouseUp;
       click_count = [event clickCount];
       button = ButtonFromButtonNumber(event);
       break;
     case NSRightMouseUp:
-      event_type = blink::WebInputEvent::kMouseUp;
+      event_type = blink::WebInputEvent::Type::kMouseUp;
       click_count = [event clickCount];
       button = blink::WebMouseEvent::Button::kRight;
       break;
     case NSMouseMoved:
     case NSMouseEntered:
-      event_type = blink::WebInputEvent::kMouseMove;
+      event_type = blink::WebInputEvent::Type::kMouseMove;
       button = ButtonFromPressedMouseButtons();
       break;
     case NSLeftMouseDragged:
-      event_type = blink::WebInputEvent::kMouseMove;
+      event_type = blink::WebInputEvent::Type::kMouseMove;
       button = blink::WebMouseEvent::Button::kLeft;
       break;
     case NSOtherMouseDragged:
-      event_type = blink::WebInputEvent::kMouseMove;
+      event_type = blink::WebInputEvent::Type::kMouseMove;
       button = blink::WebMouseEvent::Button::kMiddle;
       break;
     case NSRightMouseDragged:
-      event_type = blink::WebInputEvent::kMouseMove;
+      event_type = blink::WebInputEvent::Type::kMouseMove;
       button = blink::WebMouseEvent::Button::kRight;
       break;
     default:
@@ -387,7 +408,8 @@ blink::WebMouseEvent WebMouseEventBuilder::Build(
                               0);
   result.click_count = click_count;
   result.button = button;
-  SetWebEventLocationFromEventInView(&result, event, view);
+  SetWebEventLocationFromEventInView(&result, event, view,
+                                     unacceleratedMovement);
 
   result.pointer_type = pointerType;
   if ((type == NSMouseExited || type == NSMouseEntered) ||
@@ -403,7 +425,15 @@ blink::WebMouseEvent WebMouseEventBuilder::Build(
     result.force = [event pressure];
     NSPoint tilt = [event tilt];
     result.tilt_x = lround(tilt.x * 90);
-    result.tilt_y = lround(tilt.y * 90);
+    // Pointer Events specification states that tiltY is positive when the
+    // pen is tilted towards the user.
+    // By default, in MacOS, the Y coordinate increases going up,
+    // while in Chromium the Y coordinate increases going down.
+    // https://developer.apple.com/library/archive/documentation/General/Conceptual/Devpedia-CocoaApp/CoordinateSystem.html
+    // In this case (if the coordinate system is not flipped) tiltY needs to
+    // be reversed to match Chromium's expectation that tiltY is positive
+    // towards the user
+    result.tilt_y = ([view isFlipped] ? 1 : (-1)) * lround(tilt.y * 90);
     result.tangential_pressure = [event tangentialPressure];
     // NSEvent spec doesn't specify the range of rotation, we make sure that
     // this value is in the range of [0,359].
@@ -414,8 +444,8 @@ blink::WebMouseEvent WebMouseEventBuilder::Build(
     result.twist = twist;
   } else {
     event_type = [event isEnteringProximity]
-                     ? blink::WebInputEvent::kMouseMove
-                     : blink::WebInputEvent::kMouseLeave;
+                     ? blink::WebInputEvent::Type::kMouseMove
+                     : blink::WebInputEvent::Type::kMouseLeave;
     result.SetType(event_type);
   }
   return result;
@@ -430,15 +460,13 @@ blink::WebMouseWheelEvent WebMouseWheelEventBuilder::Build(
   base::TimeTicks now = ui::EventTimeForNow();
   base::TimeTicks hardware_timestamp =
       ui::EventTimeStampFromSeconds([event timestamp]);
+  base::TimeDelta diff = (now - hardware_timestamp).magnitude();
   UMA_HISTOGRAM_CUSTOM_TIMES(
-      now > hardware_timestamp
-          ? "Event.Latency.OS_NO_VALIDATION.POSITIVE.MOUSE_WHEEL"
-          : "Event.Latency.OS_NO_VALIDATION.NEGATIVE.MOUSE_WHEEL",
-      (now - hardware_timestamp).magnitude(),
+      "Event.Latency.OS_NO_VALIDATION.POSITIVE.MOUSE_WHEEL", diff,
       base::TimeDelta::FromMilliseconds(1), base::TimeDelta::FromSeconds(60),
       50);
   blink::WebMouseWheelEvent result(
-      blink::WebInputEvent::kMouseWheel, ModifiersFromEvent(event),
+      blink::WebInputEvent::Type::kMouseWheel, ModifiersFromEvent(event),
       ui::EventTimeStampFromSeconds([event timestamp]));
   result.button = blink::WebMouseEvent::Button::kNoButton;
 
@@ -601,7 +629,7 @@ blink::WebGestureEvent WebGestureEventBuilder::Build(NSEvent* event,
       // We don't need to set the type based on |[event phase]| as the caller
       // must set the begin and end types in order to support older Mac
       // versions.
-      result.SetType(blink::WebInputEvent::kGesturePinchUpdate);
+      result.SetType(blink::WebInputEvent::Type::kGesturePinchUpdate);
       result.data.pinch_update.scale = [event magnification] + 1.0;
       result.SetNeedsWheelEvent(true);
       break;
@@ -610,7 +638,7 @@ blink::WebGestureEvent WebGestureEventBuilder::Build(NSEvent* event,
       // GestureDoubleTap, because the effect is similar to single-finger
       // double-tap zoom on mobile platforms. Note that tapCount is set to 1
       // because the gesture type already encodes that information.
-      result.SetType(blink::WebInputEvent::kGestureDoubleTap);
+      result.SetType(blink::WebInputEvent::Type::kGestureDoubleTap);
       result.data.tap.tap_count = 1;
       result.SetNeedsWheelEvent(true);
       break;
@@ -640,15 +668,16 @@ blink::WebTouchEvent WebTouchEventBuilder::Build(NSEvent* event, NSView* view) {
   blink::WebInputEvent::Type event_type =
       blink::WebInputEvent::Type::kUndefined;
   NSEventType type = [event type];
-  blink::WebTouchPoint::State state = blink::WebTouchPoint::kStateUndefined;
+  blink::WebTouchPoint::State state =
+      blink::WebTouchPoint::State::kStateUndefined;
   switch (type) {
     case NSLeftMouseDown:
-      event_type = blink::WebInputEvent::kTouchStart;
-      state = blink::WebTouchPoint::kStatePressed;
+      event_type = blink::WebInputEvent::Type::kTouchStart;
+      state = blink::WebTouchPoint::State::kStatePressed;
       break;
     case NSLeftMouseUp:
-      event_type = blink::WebInputEvent::kTouchEnd;
-      state = blink::WebTouchPoint::kStateReleased;
+      event_type = blink::WebInputEvent::Type::kTouchEnd;
+      state = blink::WebTouchPoint::State::kStateReleased;
       break;
     case NSLeftMouseDragged:
     case NSRightMouseDragged:
@@ -658,8 +687,8 @@ blink::WebTouchEvent WebTouchEventBuilder::Build(NSEvent* event, NSView* view) {
     case NSOtherMouseDown:
     case NSRightMouseUp:
     case NSOtherMouseUp:
-      event_type = blink::WebInputEvent::kTouchMove;
-      state = blink::WebTouchPoint::kStateMoved;
+      event_type = blink::WebInputEvent::Type::kTouchMove;
+      state = blink::WebTouchPoint::State::kStateMoved;
       break;
     default:
       NOTREACHED() << "Invalid types for touch events." << type;
@@ -672,15 +701,13 @@ blink::WebTouchEvent WebTouchEventBuilder::Build(NSEvent* event, NSView* view) {
     base::TimeTicks hardware_timestamp =
         ui::EventTimeStampFromSeconds([event timestamp]);
     UMA_HISTOGRAM_CUSTOM_TIMES(
-        now > hardware_timestamp
-            ? "Event.Latency.OS.NO_VALIDATION.POSITIVE.TOUCH_PRESSED"
-            : "Event.Latency.OS.NO_VALIDATION.NEGATIVE.TOUCH_PRESSED",
+        "Event.Latency.OS.NO_VALIDATION.POSITIVE.TOUCH_PRESSED",
         (now - hardware_timestamp).magnitude(),
         base::TimeDelta::FromMilliseconds(1), base::TimeDelta::FromSeconds(60),
         50);
   }
   ui::ComputeEventLatencyOS(event);
-  result.hovering = event_type == blink::WebInputEvent::kTouchEnd;
+  result.hovering = event_type == blink::WebInputEvent::Type::kTouchEnd;
   result.unique_touch_event_id = ui::GetNextTouchEventId();
   result.touches_length = 1;
 

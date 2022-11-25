@@ -25,6 +25,11 @@ extern const char kSafeBrowsingEnabled[];
 // Boolean that is true when Safe Browsing Enhanced Protection is enabled.
 extern const char kSafeBrowsingEnhanced[];
 
+// Integer indicating the state of real time URL check. This is managed
+// by enterprise policy and has no effect on users who are not managed by
+// enterprise policy.
+extern const char kSafeBrowsingEnterpriseRealTimeUrlCheckMode[];
+
 // Boolean that tells us whether users are given the option to opt in to Safe
 // Browsing extended reporting. This is exposed as a preference that can be
 // overridden by enterprise policy.
@@ -171,7 +176,6 @@ enum PasswordProtectionTrigger {
   // Password protection is off.
   PASSWORD_PROTECTION_OFF = 0,
   // Password protection triggered by password reuse event.
-  // Not used for now.
   PASSWORD_REUSE = 1,
   // Password protection triggered by password reuse event on phishing page.
   PHISHING_REUSE = 2,
@@ -237,6 +241,9 @@ enum DelayDeliveryUntilVerdictValues {
   DELAY_UPLOADS_AND_DOWNLOADS = 3,
 };
 
+// Enum representing possible values of the Safe Browsing state.
+// A Java counterpart will be generated for this enum.
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.safe_browsing
 enum SafeBrowsingState {
   // The user is not opted into Safe Browsing.
   NO_SAFE_BROWSING = 0,
@@ -246,7 +253,14 @@ enum SafeBrowsingState {
   ENHANCED_PROTECTION = 2,
 };
 
+enum EnterpriseRealTimeUrlCheckMode {
+  REAL_TIME_CHECK_DISABLED = 0,
+  REAL_TIME_CHECK_FOR_MAINFRAME_ENABLED = 1,
+};
+
 SafeBrowsingState GetSafeBrowsingState(const PrefService& prefs);
+
+void SetSafeBrowsingState(PrefService* prefs, SafeBrowsingState state);
 
 // Returns whether Safe Browsing is enabled for the user.
 bool IsSafeBrowsingEnabled(const PrefService& prefs);
@@ -277,6 +291,14 @@ bool IsExtendedReportingEnabled(const PrefService& prefs);
 // enterprise policy, meaning the user can't change it.
 bool IsExtendedReportingPolicyManaged(const PrefService& prefs);
 
+// Return whether the Safe Browsing preference is managed. It can be managed by
+// either the SafeBrowsingEnabled policy(legacy) or the
+// SafeBrowsingProtectionLevel policy(new).
+bool IsSafeBrowsingPolicyManaged(const PrefService& prefs);
+
+// Returns whether enhanced protection message is enabled in interstitials.
+bool IsEnhancedProtectionMessageInInterstitialsEnabled();
+
 // Updates UMA metrics about Safe Browsing Extended Reporting states.
 void RecordExtendedReportingMetrics(const PrefService& prefs);
 
@@ -294,11 +316,17 @@ void SetExtendedReportingPrefAndMetric(PrefService* prefs,
                                        ExtendedReportingOptInLocation location);
 
 // This variant is used to simplify test code by omitting the location.
-void SetExtendedReportingPref(PrefService* prefs, bool value);
+void SetExtendedReportingPrefForTests(PrefService* prefs, bool value);
 
 // Sets the currently active Safe Browsing Enhanced Protection to the specified
 // value.
+void SetEnhancedProtectionPrefForTests(PrefService* prefs, bool value);
+
+// Set prefs to enable Safe Browsing Enhanced Protection.
 void SetEnhancedProtectionPref(PrefService* prefs, bool value);
+
+// Set prefs to enable Safe Browsing Standard Protection.
+void SetStandardProtectionPref(PrefService* prefs, bool value);
 
 // Called when a security interstitial is closed by the user.
 // |on_show_pref_existed| indicates whether the pref existed when the
@@ -338,6 +366,12 @@ bool IsURLWhitelistedByPolicy(const GURL& url,
 // (a.k. a prefs::kSafeBrowsingWhitelistDomains).
 // Called on UI thread.
 bool IsURLWhitelistedByPolicy(const GURL& url, const PrefService& pref);
+
+// Helper function to determine if any entry on the |url_chain| matches Safe
+// Browsing whitelist domains.
+// Called on UI thread.
+bool MatchesEnterpriseWhitelist(const PrefService& pref,
+                                const std::vector<GURL>& url_chain);
 
 // Helper function to get the pref value of password protection login URLs.
 void GetPasswordProtectionLoginURLsPref(const PrefService& prefs,

@@ -40,6 +40,8 @@ content::WebUIDataSource* CreateManagementUIHtmlSource(Profile* profile) {
   content::WebUIDataSource* source =
       content::WebUIDataSource::Create(chrome::kChromeUIManagementHost);
 
+  source->DisableTrustedTypesCSP();
+
   source->AddString("pageSubtitle",
                     ManagementUI::GetManagementPageSubtitle(profile));
 
@@ -50,6 +52,8 @@ content::WebUIDataSource* CreateManagementUIHtmlSource(Profile* profile) {
     {"managementTrustRootsConfigured", IDS_MANAGEMENT_TRUST_ROOTS_CONFIGURED},
     {"deviceConfiguration", IDS_MANAGEMENT_DEVICE_CONFIGURATION},
     {"deviceReporting", IDS_MANAGEMENT_DEVICE_REPORTING},
+    {"updateRequiredEolAdminMessageTitle",
+     IDS_MANAGEMENT_UPDATE_REQUIRED_EOL_ADMIN_MESSAGE_TITLE},
     {kManagementLogUploadEnabled, IDS_MANAGEMENT_LOG_UPLOAD_ENABLED},
     {kManagementReportActivityTimes,
      IDS_MANAGEMENT_REPORT_DEVICE_ACTIVITY_TIMES},
@@ -59,6 +63,8 @@ content::WebUIDataSource* CreateManagementUIHtmlSource(Profile* profile) {
      IDS_MANAGEMENT_REPORT_DEVICE_NETWORK_INTERFACES},
     {kManagementReportUsers, IDS_MANAGEMENT_REPORT_DEVICE_USERS},
     {kManagementReportCrashReports, IDS_MANAGEMENT_REPORT_DEVICE_CRASH_REPORTS},
+    {kManagementReportAppInfoAndActivity,
+     IDS_MANAGEMENT_REPORT_APP_INFO_AND_ACTIVITY},
     {kManagementPrinting, IDS_MANAGEMENT_REPORT_PRINTING},
     {kManagementCrostini, IDS_MANAGEMENT_CROSTINI},
     {kManagementCrostiniContainerConfiguration,
@@ -66,6 +72,8 @@ content::WebUIDataSource* CreateManagementUIHtmlSource(Profile* profile) {
     {kManagementReportExtensions, IDS_MANAGEMENT_REPORT_EXTENSIONS},
     {kManagementReportAndroidApplications,
      IDS_MANAGEMENT_REPORT_ANDROID_APPLICATIONS},
+    {"proxyServerPrivacyDisclosure",
+     IDS_MANAGEMENT_PROXY_SERVER_PRIVACY_DISCLOSURE},
 #endif  // defined(OS_CHROMEOS)
     {"browserReporting", IDS_MANAGEMENT_BROWSER_REPORTING},
     {"browserReportingExplanation",
@@ -77,7 +85,7 @@ content::WebUIDataSource* CreateManagementUIHtmlSource(Profile* profile) {
     {"title", IDS_MANAGEMENT_TITLE},
     {"toolbarTitle", IDS_MANAGEMENT_TOOLBAR_TITLE},
     {"searchPrompt", IDS_SETTINGS_SEARCH_PROMPT},
-    {"clearSearch", IDS_DOWNLOAD_CLEAR_SEARCH},
+    {"clearSearch", IDS_CLEAR_SEARCH},
     {"backButton", IDS_ACCNAME_BACK},
     {kManagementExtensionReportMachineName,
      IDS_MANAGEMENT_EXTENSION_REPORT_MACHINE_NAME},
@@ -94,17 +102,24 @@ content::WebUIDataSource* CreateManagementUIHtmlSource(Profile* profile) {
     {kManagementExtensionReportUserBrowsingData,
      IDS_MANAGEMENT_EXTENSION_REPORT_USER_BROWSING_DATA},
     {kThreatProtectionTitle, IDS_MANAGEMENT_THREAT_PROTECTION},
-    {kManagementDataLossPreventionName,
-     IDS_MANAGEMENT_DATA_LOSS_PREVENTION_NAME},
-    {kManagementDataLossPreventionPermissions,
-     IDS_MANAGEMENT_DATA_LOSS_PREVENTION_PERMISSIONS},
-    {kManagementMalwareScanningName, IDS_MANAGEMENT_MALWARE_SCANNING_NAME},
-    {kManagementMalwareScanningPermissions,
-     IDS_MANAGEMENT_MALWARE_SCANNING_PERMISSIONS},
-    {kManagementEnterpriseReportingName,
-     IDS_MANAGEMENT_ENTERPRISE_REPORTING_NAME},
-    {kManagementEnterpriseReportingPermissions,
-     IDS_MANAGEMENT_ENTERPRISE_REPORTING_PERMISSIONS},
+    {"connectorEvent", IDS_MANAGEMENT_CONNECTORS_EVENT},
+    {"connectorVisibleData", IDS_MANAGEMENT_CONNECTORS_VISIBLE_DATA},
+    {kManagementEnterpriseReportingEvent,
+     IDS_MANAGEMENT_ENTERPRISE_REPORTING_EVENT},
+    {kManagementEnterpriseReportingVisibleData,
+     IDS_MANAGEMENT_ENTERPRISE_REPORTING_VISIBLE_DATA},
+    {kManagementOnFileAttachedEvent, IDS_MANAGEMENT_FILE_ATTACHED_EVENT},
+    {kManagementOnFileAttachedVisibleData,
+     IDS_MANAGEMENT_FILE_ATTACHED_VISIBLE_DATA},
+    {kManagementOnFileDownloadedEvent, IDS_MANAGEMENT_FILE_DOWNLOADED_EVENT},
+    {kManagementOnFileDownloadedVisibleData,
+     IDS_MANAGEMENT_FILE_DOWNLOADED_VISIBLE_DATA},
+    {kManagementOnBulkDataEntryEvent, IDS_MANAGEMENT_TEXT_ENTERED_EVENT},
+    {kManagementOnBulkDataEntryVisibleData,
+     IDS_MANAGEMENT_TEXT_ENTERED_VISIBLE_DATA},
+    {kManagementOnPageVisitedEvent, IDS_MANAGEMENT_PAGE_VISITED_EVENT},
+    {kManagementOnPageVisitedVisibleData,
+     IDS_MANAGEMENT_PAGE_VISITED_VISIBLE_DATA},
   };
 
   AddLocalizedStringsBulk(source, kLocalizedStrings);
@@ -118,6 +133,10 @@ content::WebUIDataSource* CreateManagementUIHtmlSource(Profile* profile) {
                     chrome::kLearnMoreEnterpriseURL);
   source->AddString("managementAccountLearnMoreUrl",
                     chrome::kManagedUiLearnMoreUrl);
+  source->AddString("pluginVmDataCollection",
+                    l10n_util::GetStringFUTF16(
+                        IDS_MANAGEMENT_REPORT_PLUGIN_VM,
+                        l10n_util::GetStringUTF16(IDS_PLUGIN_VM_APP_NAME)));
 #endif  // defined(OS_CHROMEOS)
 
   source->UseStringsJs();

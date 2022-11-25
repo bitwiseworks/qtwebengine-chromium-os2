@@ -8,7 +8,6 @@
 #include "base/trace_event/trace_event.h"
 #include "content/browser/service_worker/service_worker_consts.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
-#include "content/browser/service_worker/service_worker_disk_cache.h"
 #include "content/browser/service_worker/service_worker_script_cache_map.h"
 #include "content/browser/service_worker/service_worker_storage.h"
 
@@ -76,32 +75,34 @@ void ServiceWorkerInstalledScriptsSender::StartSendingScript(
 
   current_sending_url_ = script_url;
 
-  std::unique_ptr<ServiceWorkerResponseReader> response_reader =
-      owner_->context()->storage()->CreateResponseReader(resource_id);
+  mojo::Remote<storage::mojom::ServiceWorkerResourceReader> resource_reader;
+  owner_->context()
+      ->registry()
+      ->GetRemoteStorageControl()
+      ->CreateResourceReader(resource_id,
+                             resource_reader.BindNewPipeAndPassReceiver());
   TRACE_EVENT_NESTABLE_ASYNC_BEGIN1("ServiceWorker", "SendingScript", this,
                                     "script_url", current_sending_url_.spec());
   reader_ = std::make_unique<ServiceWorkerInstalledScriptReader>(
-      std::move(response_reader), this);
+      std::move(resource_reader), this);
   reader_->Start();
 }
 
 void ServiceWorkerInstalledScriptsSender::OnStarted(
-    scoped_refptr<HttpResponseInfoIOBuffer> http_info,
+    network::mojom::URLResponseHeadPtr response_head,
+    base::Optional<mojo_base::BigBuffer> metadata,
     mojo::ScopedDataPipeConsumerHandle body_handle,
     mojo::ScopedDataPipeConsumerHandle meta_data_handle) {
-  DCHECK(http_info);
+  DCHECK(response_head);
   DCHECK(reader_);
   DCHECK_EQ(State::kSendingScripts, state_);
-  uint64_t meta_data_size = http_info->http_info->metadata
-                                ? http_info->http_info->metadata->size()
-                                : 0;
+  uint64_t meta_data_size = metadata ? metadata->size() : 0;
   TRACE_EVENT_NESTABLE_ASYNC_INSTANT2(
       "ServiceWorker", "OnStarted", this, "body_size",
-      http_info->response_data_size, "meta_data_size", meta_data_size);
+      response_head->content_length, "meta_data_size", meta_data_size);
 
   // Create a map of response headers.
-  scoped_refptr<net::HttpResponseHeaders> headers =
-      http_info->http_info->headers;
+  scoped_refptr<net::HttpResponseHeaders> headers = response_head->headers;
   DCHECK(headers);
   base::flat_map<std::string, std::string> header_strings;
   size_t iter = 0;
@@ -121,14 +122,14 @@ void ServiceWorkerInstalledScriptsSender::OnStarted(
   script_info->headers = std::move(header_strings);
   headers->GetCharset(&script_info->encoding);
   script_info->body = std::move(body_handle);
-  script_info->body_size = http_info->response_data_size;
+  script_info->body_size = response_head->content_length;
   script_info->meta_data = std::move(meta_data_handle);
   script_info->meta_data_size = meta_data_size;
   manager_->TransferInstalledScript(std::move(script_info));
   if (IsSendingMainScript()) {
     owner_->SetMainScriptResponse(
         std::make_unique<ServiceWorkerVersion::MainScriptResponse>(
-            *http_info->http_info));
+            *response_head));
   }
 }
 

@@ -14,6 +14,7 @@
 #include "base/strings/string16.h"
 #include "base/util/type_safety/strong_alias.h"
 #include "components/autofill/core/common/mojom/autofill_types.mojom.h"
+#include "components/autofill/core/common/renderer_id.h"
 
 namespace autofill {
 class AutofillDriver;
@@ -47,8 +48,13 @@ class PasswordManagerDriver
 
   // Informs the driver that there are no saved credentials in the password
   // store for the current page.
+  // |should_show_popup_without_passwords| instructs the driver that the popup
+  // should be shown even without password suggestions. This is set to true if
+  // the popup will include another item that the driver doesn't know about
+  // (e.g. a promo to unlock passwords from the user's Google Account).
   // TODO(https://crbug.com/621355): Remove and observe FormFetcher instead.
-  virtual void InformNoSavedCredentials() {}
+  virtual void InformNoSavedCredentials(
+      bool should_show_popup_without_passwords) {}
 
   // Notifies the driver that a password can be generated on the fields
   // identified by |form|.
@@ -62,9 +68,10 @@ class PasswordManagerDriver
   // Notifies the password manager that the user has accepted a generated
   // password. The password manager can bring up some disambiguation UI in
   // response.
-  virtual void GeneratedPasswordAccepted(const autofill::FormData& form_data,
-                                         uint32_t generation_element_id,
-                                         const base::string16& password) {}
+  virtual void GeneratedPasswordAccepted(
+      const autofill::FormData& form_data,
+      autofill::FieldRendererId generation_element_id,
+      const base::string16& password) {}
 
   virtual void TouchToFillClosed(ShowVirtualKeyboard show_virtual_keyboard) {}
 

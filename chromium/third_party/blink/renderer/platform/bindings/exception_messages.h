@@ -55,6 +55,7 @@ class PLATFORM_EXPORT ExceptionMessages {
   static String ArgumentNotOfType(int argument_index,
                                   const char* expected_type);
   static String ConstructorNotCallableAsFunction(const char* type);
+  static String ConstructorCalledAsFunction();
 
   static String FailedToConvertJSValue(const char* type);
 
@@ -75,6 +76,9 @@ class PLATFORM_EXPORT ExceptionMessages {
   static String FailedToGetIndexed(const char* type, const String& detail);
   static String FailedToSetIndexed(const char* type, const String& detail);
   static String FailedToDeleteIndexed(const char* type, const String& detail);
+  static String FailedToGetNamed(const char* type, const String& detail);
+  static String FailedToSetNamed(const char* type, const String& detail);
+  static String FailedToDeleteNamed(const char* type, const String& detail);
 
   template <typename NumType>
   static String FormatNumber(NumType number) {

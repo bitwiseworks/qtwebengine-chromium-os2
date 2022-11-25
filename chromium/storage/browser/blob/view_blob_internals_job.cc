@@ -14,7 +14,7 @@
 #include "base/i18n/number_formatting.h"
 #include "base/i18n/time_formatting.h"
 #include "base/location.h"
-#include "base/logging.h"
+#include "base/notreached.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -201,7 +201,7 @@ void ViewBlobInternalsJob::GenerateHTMLForBlobData(
         break;
       case BlobDataItem::Type::kFileFilesystem:
         AddHTMLListItem(kType, "filesystem", out);
-        AddHTMLListItem(kURL, item.filesystem_url().spec(), out);
+        AddHTMLListItem(kURL, item.filesystem_url().DebugString(), out);
         if (!item.expected_modification_time().is_null()) {
           AddHTMLListItem(kModificationTime, base::UTF16ToUTF8(
               TimeFormatFriendlyDateAndTime(item.expected_modification_time())),

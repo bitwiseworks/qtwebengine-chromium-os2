@@ -16,11 +16,13 @@
 #include "crypto/signature_verifier.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
+#include "net/base/network_isolation_key.h"
 #include "net/cert/cert_status_flags.h"
 #include "net/cert/cert_verifier.h"
 #include "net/cert/ct_policy_enforcer.h"
 #include "net/cert/ct_policy_status.h"
 #include "net/cert/ct_verifier.h"
+#include "net/cert/sct_auditing_delegate.h"
 #include "net/cert/x509_util.h"
 #include "net/http/transport_security_state.h"
 #include "net/third_party/quiche/src/quic/core/crypto/crypto_protocol.h"
@@ -55,6 +57,7 @@ class ProofVerifierChromium::Job {
       CTPolicyEnforcer* ct_policy_enforcer,
       TransportSecurityState* transport_security_state,
       CTVerifier* cert_transparency_verifier,
+      SCTAuditingDelegate* sct_auditing_delegate,
       int cert_verify_flags,
       const NetLogWithSource& net_log);
   ~Job();
@@ -79,6 +82,7 @@ class ProofVerifierChromium::Job {
   // asynchronously when the verification completes.
   quic::QuicAsyncStatus VerifyCertChain(
       const std::string& hostname,
+      const uint16_t port,
       const std::vector<std::string>& certs,
       const std::string& ocsp_response,
       const std::string& cert_sct,
@@ -135,6 +139,8 @@ class ProofVerifierChromium::Job {
 
   CTVerifier* cert_transparency_verifier_;
 
+  SCTAuditingDelegate* sct_auditing_delegate_;
+
   // |hostname| specifies the hostname for which |certs| is a valid chain.
   std::string hostname_;
   // |port| specifies the target port for the connection.
@@ -155,9 +161,6 @@ class ProofVerifierChromium::Job {
   // passed to CertVerifier::Verify.
   int cert_verify_flags_;
 
-  // If set to true, enforces policy checking in DoVerifyCertComplete().
-  bool enforce_policy_checking_;
-
   State next_state_;
 
   base::TimeTicks start_time_;
@@ -173,6 +176,7 @@ ProofVerifierChromium::Job::Job(
     CTPolicyEnforcer* ct_policy_enforcer,
     TransportSecurityState* transport_security_state,
     CTVerifier* cert_transparency_verifier,
+    SCTAuditingDelegate* sct_auditing_delegate,
     int cert_verify_flags,
     const NetLogWithSource& net_log)
     : proof_verifier_(proof_verifier),
@@ -180,8 +184,8 @@ ProofVerifierChromium::Job::Job(
       policy_enforcer_(ct_policy_enforcer),
       transport_security_state_(transport_security_state),
       cert_transparency_verifier_(cert_transparency_verifier),
+      sct_auditing_delegate_(sct_auditing_delegate),
       cert_verify_flags_(cert_verify_flags),
-      enforce_policy_checking_(true),
       next_state_(STATE_NONE),
       start_time_(base::TimeTicks::Now()),
       net_log_(net_log) {
@@ -242,8 +246,8 @@ quic::QuicAsyncStatus ProofVerifierChromium::Job::VerifyProof(
 
   // We call VerifySignature first to avoid copying of server_config and
   // signature.
-  if (!signature.empty() && !VerifySignature(server_config, quic_version,
-                                             chlo_hash, signature, certs[0])) {
+  if (!VerifySignature(server_config, quic_version, chlo_hash, signature,
+                       certs[0])) {
     *error_details = "Failed to verify signature of server config";
     DLOG(WARNING) << *error_details;
     verify_details_->cert_verify_result.cert_status = CERT_STATUS_INVALID;
@@ -251,13 +255,13 @@ quic::QuicAsyncStatus ProofVerifierChromium::Job::VerifyProof(
     return quic::QUIC_FAILURE;
   }
 
-  DCHECK(enforce_policy_checking_);
   return VerifyCert(hostname, port, /*ocsp_response=*/std::string(), cert_sct,
                     error_details, verify_details, std::move(callback));
 }
 
 quic::QuicAsyncStatus ProofVerifierChromium::Job::VerifyCertChain(
     const string& hostname,
+    const uint16_t port,
     const std::vector<string>& certs,
     const std::string& ocsp_response,
     const std::string& cert_sct,
@@ -282,10 +286,15 @@ quic::QuicAsyncStatus ProofVerifierChromium::Job::VerifyCertChain(
   if (!GetX509Certificate(certs, error_details, verify_details))
     return quic::QUIC_FAILURE;
 
-  enforce_policy_checking_ = false;
-  // |port| is not needed because |enforce_policy_checking_| is false.
-  return VerifyCert(hostname, /*port=*/0, ocsp_response, cert_sct,
-                    error_details, verify_details, std::move(callback));
+  // Note that this is a completely synchronous operation: The CT Log Verifier
+  // gets all the data it needs for SCT verification and does not do any
+  // external communication.
+  cert_transparency_verifier_->Verify(
+      hostname, cert_.get(), std::string(), cert_sct,
+      &verify_details_->ct_verify_result.scts, net_log_);
+
+  return VerifyCert(hostname, port, ocsp_response, cert_sct, error_details,
+                    verify_details, std::move(callback));
 }
 
 bool ProofVerifierChromium::Job::GetX509Certificate(
@@ -301,9 +310,9 @@ bool ProofVerifierChromium::Job::GetX509Certificate(
   }
 
   // Convert certs to X509Certificate.
-  std::vector<quiche::QuicheStringPiece> cert_pieces(certs.size());
+  std::vector<base::StringPiece> cert_pieces(certs.size());
   for (unsigned i = 0; i < certs.size(); i++) {
-    cert_pieces[i] = quiche::QuicheStringPiece(certs[i]);
+    cert_pieces[i] = base::StringPiece(certs[i]);
   }
   cert_ = X509Certificate::CreateFromDERCertChain(cert_pieces);
   if (!cert_.get()) {
@@ -411,7 +420,7 @@ int ProofVerifierChromium::Job::DoVerifyCertComplete(int result) {
 
   // If the connection was good, check HPKP and CT status simultaneously,
   // but prefer to treat the HPKP error as more serious, if there was one.
-  if (enforce_policy_checking_ && result == OK) {
+  if (result == OK) {
     ct::SCTList verified_scts = ct::SCTsMatchingStatus(
         verify_details_->ct_verify_result.scts, ct::SCT_STATUS_OK);
 
@@ -457,7 +466,8 @@ int ProofVerifierChromium::Job::DoVerifyCertComplete(int result) {
             cert_verify_result.verified_cert.get(), cert_.get(),
             verify_details_->ct_verify_result.scts,
             TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
-            verify_details_->ct_verify_result.policy_compliance);
+            verify_details_->ct_verify_result.policy_compliance,
+            proof_verifier_->network_isolation_key_);
     if (ct_requirement_status != TransportSecurityState::CT_NOT_REQUIRED) {
       verify_details_->ct_verify_result.policy_compliance_required = true;
       if (verify_details_->cert_verify_result.is_issued_by_known_root) {
@@ -473,6 +483,15 @@ int ProofVerifierChromium::Job::DoVerifyCertComplete(int result) {
       }
     } else {
       verify_details_->ct_verify_result.policy_compliance_required = false;
+    }
+
+    if (sct_auditing_delegate_ &&
+        sct_auditing_delegate_->IsSCTAuditingEnabled() &&
+        cert_verify_result.is_issued_by_known_root) {
+      sct_auditing_delegate_->MaybeEnqueueReport(
+          HostPortPair(hostname_, port_),
+          cert_verify_result.verified_cert.get(),
+          verify_details_->ct_verify_result.scts);
     }
 
     switch (ct_requirement_status) {
@@ -558,6 +577,11 @@ bool ProofVerifierChromium::Job::VerifySignature(
       return false;
   }
 
+  if (signature.empty()) {
+    DLOG(WARNING) << "Signature is empty, thus cannot possibly be valid";
+    return false;
+  }
+
   crypto::SignatureVerifier verifier;
   if (!x509_util::SignatureVerifierInitWithCertificate(
           &verifier, algorithm, base::as_bytes(base::make_span(signature)),
@@ -587,12 +611,16 @@ ProofVerifierChromium::ProofVerifierChromium(
     CTPolicyEnforcer* ct_policy_enforcer,
     TransportSecurityState* transport_security_state,
     CTVerifier* cert_transparency_verifier,
-    std::set<std::string> hostnames_to_allow_unknown_roots)
+    SCTAuditingDelegate* sct_auditing_delegate,
+    std::set<std::string> hostnames_to_allow_unknown_roots,
+    const NetworkIsolationKey& network_isolation_key)
     : cert_verifier_(cert_verifier),
       ct_policy_enforcer_(ct_policy_enforcer),
       transport_security_state_(transport_security_state),
       cert_transparency_verifier_(cert_transparency_verifier),
-      hostnames_to_allow_unknown_roots_(hostnames_to_allow_unknown_roots) {
+      sct_auditing_delegate_(sct_auditing_delegate),
+      hostnames_to_allow_unknown_roots_(hostnames_to_allow_unknown_roots),
+      network_isolation_key_(network_isolation_key) {
   DCHECK(cert_verifier_);
   DCHECK(ct_policy_enforcer_);
   DCHECK(transport_security_state_);
@@ -623,8 +651,8 @@ quic::QuicAsyncStatus ProofVerifierChromium::VerifyProof(
       reinterpret_cast<const ProofVerifyContextChromium*>(verify_context);
   std::unique_ptr<Job> job = std::make_unique<Job>(
       this, cert_verifier_, ct_policy_enforcer_, transport_security_state_,
-      cert_transparency_verifier_, chromium_context->cert_verify_flags,
-      chromium_context->net_log);
+      cert_transparency_verifier_, sct_auditing_delegate_,
+      chromium_context->cert_verify_flags, chromium_context->net_log);
   quic::QuicAsyncStatus status = job->VerifyProof(
       hostname, port, server_config, quic_version, chlo_hash, certs, cert_sct,
       signature, error_details, verify_details, std::move(callback));
@@ -637,6 +665,7 @@ quic::QuicAsyncStatus ProofVerifierChromium::VerifyProof(
 
 quic::QuicAsyncStatus ProofVerifierChromium::VerifyCertChain(
     const std::string& hostname,
+    const uint16_t port,
     const std::vector<std::string>& certs,
     const std::string& ocsp_response,
     const std::string& cert_sct,
@@ -652,10 +681,10 @@ quic::QuicAsyncStatus ProofVerifierChromium::VerifyCertChain(
       reinterpret_cast<const ProofVerifyContextChromium*>(verify_context);
   std::unique_ptr<Job> job = std::make_unique<Job>(
       this, cert_verifier_, ct_policy_enforcer_, transport_security_state_,
-      cert_transparency_verifier_, chromium_context->cert_verify_flags,
-      chromium_context->net_log);
+      cert_transparency_verifier_, sct_auditing_delegate_,
+      chromium_context->cert_verify_flags, chromium_context->net_log);
   quic::QuicAsyncStatus status =
-      job->VerifyCertChain(hostname, certs, ocsp_response, cert_sct,
+      job->VerifyCertChain(hostname, port, certs, ocsp_response, cert_sct,
                            error_details, verify_details, std::move(callback));
   if (status == quic::QUIC_PENDING) {
     Job* job_ptr = job.get();

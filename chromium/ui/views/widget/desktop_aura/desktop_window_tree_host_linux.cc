@@ -14,12 +14,13 @@
 #include "ui/aura/scoped_window_targeter.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_delegate.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/events/event.h"
 #include "ui/platform_window/extensions/x11_extension.h"
-#include "ui/platform_window/platform_window_handler/wm_move_resize_handler.h"
 #include "ui/platform_window/platform_window_init_properties.h"
+#include "ui/platform_window/wm/wm_move_resize_handler.h"
 #include "ui/views/linux_ui/linux_ui.h"
 #include "ui/views/views_delegate.h"
 #include "ui/views/widget/desktop_aura/window_event_filter_linux.h"
@@ -29,16 +30,10 @@
 #include "ui/accessibility/platform/atk_util_auralinux.h"
 #endif
 
-DEFINE_UI_CLASS_PROPERTY_TYPE(views::DesktopWindowTreeHostLinux*)
-
 namespace views {
 
 std::list<gfx::AcceleratedWidget>* DesktopWindowTreeHostLinux::open_windows_ =
     nullptr;
-
-DEFINE_UI_CLASS_PROPERTY_KEY(DesktopWindowTreeHostLinux*,
-                             kHostForRootWindow,
-                             nullptr)
 
 namespace {
 
@@ -82,30 +77,13 @@ DesktopWindowTreeHostLinux::DesktopWindowTreeHostLinux(
     : DesktopWindowTreeHostPlatform(native_widget_delegate,
                                     desktop_native_widget_aura) {}
 
-DesktopWindowTreeHostLinux::~DesktopWindowTreeHostLinux() {
-  window()->ClearProperty(kHostForRootWindow);
-}
-
-// static
-aura::Window* DesktopWindowTreeHostLinux::GetContentWindowForWidget(
-    gfx::AcceleratedWidget widget) {
-  auto* host = DesktopWindowTreeHostLinux::GetHostForWidget(widget);
-  return host ? host->GetContentWindow() : nullptr;
-}
-
-// static
-DesktopWindowTreeHostLinux* DesktopWindowTreeHostLinux::GetHostForWidget(
-    gfx::AcceleratedWidget widget) {
-  aura::WindowTreeHost* host =
-      aura::WindowTreeHost::GetForAcceleratedWidget(widget);
-  return host ? host->window()->GetProperty(kHostForRootWindow) : nullptr;
-}
+DesktopWindowTreeHostLinux::~DesktopWindowTreeHostLinux() = default;
 
 // static
 std::vector<aura::Window*> DesktopWindowTreeHostLinux::GetAllOpenWindows() {
   std::vector<aura::Window*> windows(open_windows().size());
   std::transform(open_windows().begin(), open_windows().end(), windows.begin(),
-                 GetContentWindowForWidget);
+                 DesktopWindowTreeHostPlatform::GetContentWindowForWidget);
   return windows;
 }
 
@@ -116,7 +94,7 @@ void DesktopWindowTreeHostLinux::CleanUpWindowList(
     return;
   while (!open_windows_->empty()) {
     gfx::AcceleratedWidget widget = open_windows_->front();
-    func(GetContentWindowForWidget(widget));
+    func(DesktopWindowTreeHostPlatform::GetContentWindowForWidget(widget));
     if (!open_windows_->empty() && open_windows_->front() == widget)
       open_windows_->erase(open_windows_->begin());
   }
@@ -175,14 +153,14 @@ void DesktopWindowTreeHostLinux::Init(const Widget::InitParams& params) {
 
 void DesktopWindowTreeHostLinux::OnNativeWidgetCreated(
     const Widget::InitParams& params) {
-  window()->SetProperty(kHostForRootWindow, this);
-
   CreateNonClientEventFilter();
   DesktopWindowTreeHostPlatform::OnNativeWidgetCreated(params);
 }
 
 base::flat_map<std::string, std::string>
 DesktopWindowTreeHostLinux::GetKeyboardLayoutMap() {
+  if (features::IsUsingOzonePlatform())
+    return DesktopWindowTreeHostPlatform::GetKeyboardLayoutMap();
   if (views::LinuxUI::instance())
     return views::LinuxUI::instance()->GetKeyboardLayoutMap();
   return {};
@@ -200,21 +178,13 @@ void DesktopWindowTreeHostLinux::InitModalType(ui::ModalType modal_type) {
   }
 }
 
-void DesktopWindowTreeHostLinux::OnDisplayMetricsChanged(
-    const display::Display& display,
-    uint32_t changed_metrics) {
-  aura::WindowTreeHost::OnDisplayMetricsChanged(display, changed_metrics);
-
-  if ((changed_metrics & DISPLAY_METRIC_DEVICE_SCALE_FACTOR) &&
-      display::Screen::GetScreen()->GetDisplayNearestWindow(window()).id() ==
-          display.id()) {
-    // When the scale factor changes, also pretend that a resize
-    // occurred so that the window layout will be refreshed and a
-    // compositor redraw will be scheduled.  This is weird, but works.
-    // TODO(thomasanderson): Figure out a more direct way of doing
-    // this.
-    OnHostResizedInPixels(GetBoundsInPixels().size());
-  }
+Widget::MoveLoopResult DesktopWindowTreeHostLinux::RunMoveLoop(
+    const gfx::Vector2d& drag_offset,
+    Widget::MoveLoopSource source,
+    Widget::MoveLoopEscapeBehavior escape_behavior) {
+  GetContentWindow()->SetCapture();
+  return DesktopWindowTreeHostPlatform::RunMoveLoop(drag_offset, source,
+                                                    escape_behavior);
 }
 
 void DesktopWindowTreeHostLinux::DispatchEvent(ui::Event* event) {
@@ -302,15 +272,16 @@ const ui::X11Extension* DesktopWindowTreeHostLinux::GetX11Extension() const {
 }
 
 #if BUILDFLAG(USE_ATK)
-bool DesktopWindowTreeHostLinux::OnAtkKeyEvent(AtkKeyEventStruct* atk_event) {
-  if (!IsActive() && !HasCapture())
+bool DesktopWindowTreeHostLinux::OnAtkKeyEvent(AtkKeyEventStruct* atk_event,
+                                               bool transient) {
+  if (!transient && !IsActive() && !HasCapture())
     return false;
   return ui::AtkUtilAuraLinux::HandleAtkKeyEvent(atk_event) ==
          ui::DiscardAtkKeyEvent::Discard;
 }
 #endif
 
-bool DesktopWindowTreeHostLinux::IsOverrideRedirect() const {
+bool DesktopWindowTreeHostLinux::IsOverrideRedirect(bool is_tiling_wm) const {
   // BrowserDesktopWindowTreeHostLinux implements this for browser windows.
   return false;
 }
@@ -395,11 +366,6 @@ std::list<gfx::AcceleratedWidget>& DesktopWindowTreeHostLinux::open_windows() {
   return *open_windows_;
 }
 
-// As DWTHX11 subclasses DWTHPlatform through DWTHLinux now (during transition
-// period. see https://crbug.com/990756), we need to guard this factory method.
-// TODO(msisov): remove this guard once DWTHX11 is finally merged into
-// DWTHPlatform and .
-#if !defined(USE_X11)
 // static
 DesktopWindowTreeHost* DesktopWindowTreeHost::Create(
     internal::NativeWidgetDelegate* native_widget_delegate,
@@ -407,6 +373,5 @@ DesktopWindowTreeHost* DesktopWindowTreeHost::Create(
   return new DesktopWindowTreeHostLinux(native_widget_delegate,
                                         desktop_native_widget_aura);
 }
-#endif
 
 }  // namespace views

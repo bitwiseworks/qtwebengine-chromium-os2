@@ -5,6 +5,7 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/shell/browser/shell.h"
@@ -26,7 +27,7 @@ class CommandLineFlagsBrowserTest : public ContentBrowserTest {
 IN_PROC_BROWSER_TEST_F(CommandLineFlagsBrowserTest, Port79DefaultBlocked) {
   EXPECT_EQ(net::ERR_UNSAFE_PORT,
             content::LoadBasicRequest(network_context(),
-                                      GURL("http://127.0.0.1:79"), 0, 0, 0));
+                                      GURL("http://127.0.0.1:79")));
 }
 
 class ExplicitlyAllowPort79BrowserTest : public CommandLineFlagsBrowserTest {
@@ -46,7 +47,7 @@ class ExplicitlyAllowPort79BrowserTest : public CommandLineFlagsBrowserTest {
 IN_PROC_BROWSER_TEST_F(ExplicitlyAllowPort79BrowserTest, Load) {
   EXPECT_NE(net::ERR_UNSAFE_PORT,
             content::LoadBasicRequest(network_context(),
-                                      GURL("http://127.0.0.1:79"), 0, 0, 0));
+                                      GURL("http://127.0.0.1:79")));
 }
 
 }  // namespace content

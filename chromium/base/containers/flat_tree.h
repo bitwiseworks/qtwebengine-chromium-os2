@@ -36,8 +36,8 @@ struct IsTransparentCompare<T, void_t<typename T::is_transparent>>
 
 // Implementation -------------------------------------------------------------
 
-// Implementation of a sorted vector for backing flat_set and flat_map. Do not
-// use directly.
+// Implementation for the sorted associative flat_set and flat_map using a
+// sorted vector as the backing store. Do not use directly.
 //
 // The use of "value" in this is like std::map uses, meaning it's the thing
 // contained (in the case of map it's a <Kay, Mapped> pair). The Key is how
@@ -125,7 +125,8 @@ class flat_tree {
   // Assume that move assignment invalidates iterators and references.
 
   flat_tree& operator=(const flat_tree&);
-  flat_tree& operator=(flat_tree&&);
+  flat_tree& operator=(flat_tree&&) noexcept(
+      std::is_nothrow_move_assignable<underlying_type>::value);
   // Takes the first if there are duplicates in the initializer list.
   flat_tree& operator=(std::initializer_list<value_type> ilist);
 
@@ -155,6 +156,9 @@ class flat_tree {
 
   // --------------------------------------------------------------------------
   // Iterators.
+  //
+  // Iterators follow the ordering defined by the key comparator used in
+  // construction of the flat_tree.
 
   iterator begin();
   const_iterator begin() const;
@@ -518,7 +522,9 @@ auto flat_tree<Key, Value, GetKeyFromValue, KeyCompare>::operator=(
     const flat_tree&) -> flat_tree& = default;
 
 template <class Key, class Value, class GetKeyFromValue, class KeyCompare>
-auto flat_tree<Key, Value, GetKeyFromValue, KeyCompare>::operator=(flat_tree &&)
+auto flat_tree<Key, Value, GetKeyFromValue, KeyCompare>::
+operator=(flat_tree&&) noexcept(
+    std::is_nothrow_move_assignable<underlying_type>::value)
     -> flat_tree& = default;
 
 template <class Key, class Value, class GetKeyFromValue, class KeyCompare>

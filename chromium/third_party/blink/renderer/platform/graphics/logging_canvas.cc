@@ -176,20 +176,6 @@ String FillTypeName(SkPathFillType type) {
   };
 }
 
-String ConvexityName(SkPathConvexityType convexity) {
-  switch (convexity) {
-    case SkPathConvexityType::kUnknown:
-      return "Unknown";
-    case SkPathConvexityType::kConvex:
-      return "Convex";
-    case SkPathConvexityType::kConcave:
-      return "Concave";
-    default:
-      NOTREACHED();
-      return "?";
-  };
-}
-
 VerbParams SegmentParams(SkPath::Verb verb) {
   switch (verb) {
     case SkPath::kMove_Verb:
@@ -215,9 +201,9 @@ VerbParams SegmentParams(SkPath::Verb verb) {
 std::unique_ptr<JSONObject> ObjectForSkPath(const SkPath& path) {
   auto path_item = std::make_unique<JSONObject>();
   path_item->SetString("fillType", FillTypeName(path.getFillType()));
-  path_item->SetString("convexity", ConvexityName(path.getConvexityType()));
+  path_item->SetBoolean("convex", path.isConvex());
   path_item->SetBoolean("isRect", path.isRect(nullptr));
-  SkPath::Iter iter(path, false);
+  SkPath::RawIter iter(path);
   SkPoint points[4];
   auto path_points_array = std::make_unique<JSONArray>();
   for (SkPath::Verb verb = iter.next(points); verb != SkPath::kDone_Verb;
@@ -341,8 +327,6 @@ String StyleName(SkPaint::Style style) {
       return "Fill";
     case SkPaint::kStroke_Style:
       return "Stroke";
-    case SkPaint::kStrokeAndFill_Style:
-      return "StrokeAndFill";
     default:
       NOTREACHED();
       return "?";
@@ -582,7 +566,9 @@ void LoggingCanvas::didSetMatrix(const SkMatrix& matrix) {
   params->SetArray("matrix", ArrayForSkMatrix(matrix));
 }
 
-void LoggingCanvas::didConcat44(const SkScalar m[16]) {
+void LoggingCanvas::didConcat44(const SkM44& matrix) {
+  SkScalar m[16];
+  matrix.getColMajor(m);
   AutoLogger logger(this);
   JSONObject* params = logger.LogItemWithParams("concat44");
   params->SetArray("matrix44", ArrayForSkScalars(16, m));

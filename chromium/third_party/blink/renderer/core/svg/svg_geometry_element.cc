@@ -34,6 +34,7 @@
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_path.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_shape.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_layout_support.h"
+#include "third_party/blink/renderer/core/svg/svg_animated_number.h"
 #include "third_party/blink/renderer/core/svg/svg_point_tear_off.h"
 #include "third_party/blink/renderer/core/svg_names.h"
 #include "third_party/blink/renderer/platform/graphics/stroke_data.h"
@@ -75,7 +76,7 @@ void SVGGeometryElement::SvgAttributeChanged(const QualifiedName& attr_name) {
   SVGGraphicsElement::SvgAttributeChanged(attr_name);
 }
 
-void SVGGeometryElement::Trace(Visitor* visitor) {
+void SVGGeometryElement::Trace(Visitor* visitor) const {
   visitor->Trace(path_length_);
   SVGGraphicsElement::Trace(visitor);
 }
@@ -118,9 +119,17 @@ bool SVGGeometryElement::isPointInStroke(SVGPointTearOff* point) const {
         layout_shape.ComputeNonScalingStrokeTransform();
     path.Transform(transform);
     local_point = transform.MapPoint(local_point);
+
+    // Un-scale to get back to the root-transform (cheaper than re-computing
+    // the root transform from scratch).
+    AffineTransform root_transform;
+    root_transform.Scale(layout_shape.StyleRef().EffectiveZoom())
+        .Multiply(transform);
+    return path.StrokeContains(local_point, stroke_data, root_transform);
   }
   // Path::StrokeContains will reject points with a non-finite component.
-  return path.StrokeContains(local_point, stroke_data);
+  return path.StrokeContains(local_point, stroke_data,
+                             layout_shape.ComputeRootTransform());
 }
 
 Path SVGGeometryElement::ToClipPath() const {
@@ -146,22 +155,36 @@ float SVGGeometryElement::getTotalLength(ExceptionState& exception_state) {
   return AsPath().length();
 }
 
-SVGPointTearOff* SVGGeometryElement::getPointAtLength(float length) {
+SVGPointTearOff* SVGGeometryElement::getPointAtLength(
+    float length,
+    ExceptionState& exception_state) {
   GetDocument().UpdateStyleAndLayoutForNode(this,
                                             DocumentUpdateReason::kJavaScript);
 
-  FloatPoint point;
-  if (GetLayoutObject()) {
-    const Path& path = AsPath();
-    if (length < 0) {
-      length = 0;
-    } else {
-      float computed_length = path.length();
-      if (length > computed_length)
-        length = computed_length;
-    }
-    point = path.PointAtLength(length);
+  if (!EnsureComputedStyle()) {
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kInvalidStateError,
+        "The element is in an inactive document.");
+    return nullptr;
   }
+
+  const Path& path = AsPath();
+
+  if (path.IsEmpty()) {
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      "The element's path is empty.");
+    return nullptr;
+  }
+
+  if (length < 0) {
+    length = 0;
+  } else {
+    float computed_length = path.length();
+    if (length > computed_length)
+      length = computed_length;
+  }
+  FloatPoint point = path.PointAtLength(length);
+
   return SVGPointTearOff::CreateDetached(point);
 }
 

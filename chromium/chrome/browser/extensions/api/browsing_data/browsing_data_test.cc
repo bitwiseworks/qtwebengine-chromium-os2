@@ -24,10 +24,12 @@
 #include "components/sync/driver/sync_service.h"
 #include "components/sync/driver/sync_user_settings.h"
 #include "content/public/browser/storage_partition.h"
+#include "content/public/test/browser_test.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "net/cookies/canonical_cookie.h"
+#include "net/cookies/cookie_inclusion_status.h"
 #include "url/gurl.h"
 
 using extension_function_test_utils::RunFunctionAndReturnSingleResult;
@@ -60,22 +62,21 @@ bool SetGaiaCookieForProfile(Profile* profile) {
   bool success = false;
   base::RunLoop loop;
   base::OnceClosure loop_quit = loop.QuitClosure();
-  base::OnceCallback<void(net::CanonicalCookie::CookieInclusionStatus)>
-      callback = base::BindLambdaForTesting(
-          [&success,
-           &loop_quit](net::CanonicalCookie::CookieInclusionStatus s) {
-            success = s.IsInclude();
+  base::OnceCallback<void(net::CookieAccessResult)> callback =
+      base::BindLambdaForTesting(
+          [&success, &loop_quit](net::CookieAccessResult r) {
+            success = r.status.IsInclude();
             std::move(loop_quit).Run();
           });
   network::mojom::CookieManager* cookie_manager =
       content::BrowserContext::GetDefaultStoragePartition(profile)
           ->GetCookieManagerForBrowserProcess();
   cookie_manager->SetCanonicalCookie(
-      cookie, google_url.scheme(), net::CookieOptions::MakeAllInclusive(),
+      cookie, google_url, net::CookieOptions::MakeAllInclusive(),
       mojo::WrapCallbackWithDefaultInvokeIfNotRun(
-          std::move(callback), net::CanonicalCookie::CookieInclusionStatus(
-                                   net::CanonicalCookie::CookieInclusionStatus::
-                                       EXCLUDE_UNKNOWN_ERROR)));
+          std::move(callback),
+          net::CookieAccessResult(net::CookieInclusionStatus(
+              net::CookieInclusionStatus::EXCLUDE_UNKNOWN_ERROR))));
   loop.Run();
   return success;
 }

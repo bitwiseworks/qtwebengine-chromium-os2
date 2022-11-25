@@ -6,7 +6,7 @@
 
 #include <fuzzer/FuzzedDataProvider.h>
 
-#include "base/logging.h"
+#include "base/notreached.h"
 #include "net/base/address_list.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
@@ -123,6 +123,7 @@ std::unique_ptr<TransportClientSocket>
 FuzzedSocketFactory::CreateTransportClientSocket(
     const AddressList& addresses,
     std::unique_ptr<SocketPerformanceWatcher> socket_performance_watcher,
+    NetworkQualityEstimator* network_quality_estimator,
     NetLog* net_log,
     const NetLogSource& source) {
   std::unique_ptr<FuzzedSocket> socket(

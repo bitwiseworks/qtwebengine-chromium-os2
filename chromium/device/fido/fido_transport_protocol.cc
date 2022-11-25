@@ -4,6 +4,8 @@
 
 #include "device/fido/fido_transport_protocol.h"
 
+#include "base/notreached.h"
+
 namespace device {
 
 const char kUsbHumanInterfaceDevice[] = "usb";
@@ -11,14 +13,6 @@ const char kNearFieldCommunication[] = "nfc";
 const char kBluetoothLowEnergy[] = "ble";
 const char kCloudAssistedBluetoothLowEnergy[] = "cable";
 const char kInternal[] = "internal";
-
-base::flat_set<FidoTransportProtocol> GetAllTransportProtocols() {
-  return {FidoTransportProtocol::kUsbHumanInterfaceDevice,
-          FidoTransportProtocol::kBluetoothLowEnergy,
-          FidoTransportProtocol::kCloudAssistedBluetoothLowEnergy,
-          FidoTransportProtocol::kNearFieldCommunication,
-          FidoTransportProtocol::kInternal};
-}
 
 base::Optional<FidoTransportProtocol> ConvertToFidoTransportProtocol(
     base::StringPiece protocol) {
@@ -49,6 +43,10 @@ std::string ToString(FidoTransportProtocol protocol) {
       return kCloudAssistedBluetoothLowEnergy;
     case FidoTransportProtocol::kInternal:
       return kInternal;
+    case FidoTransportProtocol::kAndroidAccessory:
+      // The Android accessory transport is not exposed to the outside world and
+      // is considered a flavour of caBLE.
+      return kCloudAssistedBluetoothLowEnergy;
   }
   NOTREACHED();
   return "";

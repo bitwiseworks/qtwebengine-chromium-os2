@@ -6,8 +6,8 @@
 
 #include <utility>
 
+#include "base/check_op.h"
 #include "base/feature_list.h"
-#include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/task/task_features.h"
 #include "base/task/thread_pool/task_tracker.h"
@@ -30,10 +30,6 @@ TaskSource::Transaction::~Transaction() {
     task_source_->lock_.AssertAcquired();
     task_source_->lock_.Release();
   }
-}
-
-SequenceSortKey TaskSource::Transaction::GetSortKey() const {
-  return task_source_->GetSortKey();
 }
 
 void TaskSource::Transaction::UpdatePriority(TaskPriority priority) {

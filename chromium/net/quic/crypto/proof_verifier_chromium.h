@@ -13,6 +13,7 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "net/base/net_export.h"
+#include "net/base/network_isolation_key.h"
 #include "net/cert/cert_verify_result.h"
 #include "net/cert/ct_verify_result.h"
 #include "net/cert/x509_certificate.h"
@@ -24,6 +25,7 @@ namespace net {
 class CTPolicyEnforcer;
 class CertVerifier;
 class CTVerifier;
+class SCTAuditingDelegate;
 class TransportSecurityState;
 
 // ProofVerifyDetailsChromium is the implementation-specific information that a
@@ -74,7 +76,9 @@ class NET_EXPORT_PRIVATE ProofVerifierChromium : public quic::ProofVerifier {
                         CTPolicyEnforcer* ct_policy_enforcer,
                         TransportSecurityState* transport_security_state,
                         CTVerifier* cert_transparency_verifier,
-                        std::set<std::string> hostnames_to_allow_unknown_roots);
+                        SCTAuditingDelegate* sct_auditing_delegate,
+                        std::set<std::string> hostnames_to_allow_unknown_roots,
+                        const NetworkIsolationKey& network_isolation_key);
   ~ProofVerifierChromium() override;
 
   // quic::ProofVerifier interface
@@ -93,6 +97,7 @@ class NET_EXPORT_PRIVATE ProofVerifierChromium : public quic::ProofVerifier {
       std::unique_ptr<quic::ProofVerifierCallback> callback) override;
   quic::QuicAsyncStatus VerifyCertChain(
       const std::string& hostname,
+      const uint16_t port,
       const std::vector<std::string>& certs,
       const std::string& ocsp_response,
       const std::string& cert_sct,
@@ -117,7 +122,11 @@ class NET_EXPORT_PRIVATE ProofVerifierChromium : public quic::ProofVerifier {
   TransportSecurityState* const transport_security_state_;
   CTVerifier* const cert_transparency_verifier_;
 
+  SCTAuditingDelegate* const sct_auditing_delegate_;
+
   std::set<std::string> hostnames_to_allow_unknown_roots_;
+
+  const NetworkIsolationKey network_isolation_key_;
 
   DISALLOW_COPY_AND_ASSIGN(ProofVerifierChromium);
 };

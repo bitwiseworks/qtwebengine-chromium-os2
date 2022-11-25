@@ -20,7 +20,11 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_FONT_METRICS_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_FONT_METRICS_H_
 
+#include <base/optional.h>
+
 #include "third_party/blink/renderer/platform/fonts/font_baseline.h"
+#include "third_party/blink/renderer/platform/fonts/font_height.h"
+#include "third_party/blink/renderer/platform/fonts/font_metrics_override.h"
 #include "third_party/blink/renderer/platform/geometry/layout_unit.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
@@ -44,8 +48,6 @@ class FontMetrics {
         line_spacing_(0),
         x_height_(0),
         zero_width_(0),
-        underlinethickness_(0),
-        underline_position_(0),
         ascent_int_(0),
         descent_int_(0),
         has_x_height_(false),
@@ -132,6 +134,16 @@ class FontMetrics {
     return LayoutUnit::FromFloatRound(line_spacing_);
   }
 
+  FontHeight GetFontHeight(
+      FontBaseline baseline_type = kAlphabeticBaseline) const {
+    // TODO(kojii): In future, we'd like to use LayoutUnit metrics to support
+    // sub-CSS-pixel layout.
+    if (baseline_type == kAlphabeticBaseline)
+      return FontHeight(LayoutUnit(ascent_int_), LayoutUnit(descent_int_));
+    int height = ascent_int_ + descent_int_;
+    return FontHeight(LayoutUnit(height - height / 2), LayoutUnit(height / 2));
+  }
+
   bool HasIdenticalAscentDescentAndLineGap(const FontMetrics& other) const {
     return Ascent() == other.Ascent() && Descent() == other.Descent() &&
            LineGap() == other.LineGap();
@@ -148,12 +160,16 @@ class FontMetrics {
     has_zero_width_ = has_zero_width;
   }
 
-  float UnderlineThickness() const { return underlinethickness_; }
+  base::Optional<float> UnderlineThickness() const {
+    return underline_thickness_;
+  }
   void SetUnderlineThickness(float underline_thickness) {
-    underlinethickness_ = underline_thickness;
+    underline_thickness_ = underline_thickness;
   }
 
-  float UnderlinePosition() const { return underline_position_; }
+  base::Optional<float> UnderlinePosition() const {
+    return underline_position_;
+  }
   void SetUnderlinePosition(float underline_position) {
     underline_position_ = underline_position;
   }
@@ -169,7 +185,9 @@ class FontMetrics {
       unsigned& visual_overflow_inflation_for_descent,
       const FontPlatformData&,
       const SkFont&,
-      bool subpixel_ascent_descent = false);
+      bool subpixel_ascent_descent = false,
+      base::Optional<float> ascent_override = base::nullopt,
+      base::Optional<float> descent_override = base::nullopt);
 
  private:
   friend class SimpleFontData;
@@ -184,8 +202,8 @@ class FontMetrics {
     line_spacing_ = 0;
     x_height_ = 0;
     has_x_height_ = false;
-    underlinethickness_ = 0;
-    underline_position_ = 0;
+    underline_thickness_.reset();
+    underline_position_.reset();
   }
 
   unsigned units_per_em_;
@@ -195,8 +213,8 @@ class FontMetrics {
   float line_spacing_;
   float x_height_;
   float zero_width_;
-  float underlinethickness_;
-  float underline_position_;
+  base::Optional<float> underline_thickness_ = base::nullopt;
+  base::Optional<float> underline_position_ = base::nullopt;
   int ascent_int_;
   int descent_int_;
   bool has_x_height_;

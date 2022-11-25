@@ -18,8 +18,8 @@
 #include "utils/SystemUtils.h"
 #include "utils/WGPUHelpers.h"
 
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 wgpu::Device device;
@@ -50,7 +50,7 @@ static std::vector<ShaderData> shaderData;
 void init() {
     device = CreateCppDawnDevice();
 
-    queue = device.CreateQueue();
+    queue = device.GetDefaultQueue();
     swapchain = GetSwapChain(device);
     swapchain.Configure(GetPreferredSwapChainTextureFormat(), wgpu::TextureUsage::OutputAttachment,
                         640, 480);
@@ -138,8 +138,7 @@ void init() {
     bufferDesc.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::Uniform;
     ubo = device.CreateBuffer(&bufferDesc);
 
-    bindGroup =
-        utils::MakeBindGroup(device, bgl, {{0, ubo, 0, sizeof(ShaderData)}});
+    bindGroup = utils::MakeBindGroup(device, bgl, {{0, ubo, 0, sizeof(ShaderData)}});
 }
 
 void frame() {
@@ -150,7 +149,7 @@ void frame() {
     for (auto& data : shaderData) {
         data.time = f / 60.0f;
     }
-    ubo.SetSubData(0, kNumTriangles * sizeof(ShaderData), shaderData.data());
+    queue.WriteBuffer(ubo, 0, shaderData.data(), kNumTriangles * sizeof(ShaderData));
 
     utils::ComboRenderPassDescriptor renderPass({backbufferView});
     wgpu::CommandEncoder encoder = device.CreateCommandEncoder();

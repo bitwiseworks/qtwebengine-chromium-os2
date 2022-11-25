@@ -7,11 +7,11 @@
 #include <memory>
 
 #include "base/files/file_path.h"
+#include "base/logging.h"
 #include "base/native_library.h"
 #include "gpu/vulkan/vulkan_function_pointers.h"
 #include "gpu/vulkan/vulkan_image.h"
 #include "gpu/vulkan/vulkan_instance.h"
-#include "gpu/vulkan/vulkan_posix_util.h"
 #include "gpu/vulkan/vulkan_surface.h"
 #include "gpu/vulkan/vulkan_util.h"
 #include "ui/gfx/gpu_fence.h"
@@ -134,10 +134,8 @@ std::unique_ptr<gfx::GpuFence> VulkanImplementationGbm::ExportVkFenceToGpuFence(
   }
 
   gfx::GpuFenceHandle gpu_fence_handle;
-  gpu_fence_handle.type = gfx::GpuFenceHandleType::kAndroidNativeFenceSync;
-  gpu_fence_handle.native_fd =
-      base::FileDescriptor(fence_fd, true /* auto_close */);
-  return std::make_unique<gfx::GpuFence>(gpu_fence_handle);
+  gpu_fence_handle.owned_fd = base::ScopedFD(fence_fd);
+  return std::make_unique<gfx::GpuFence>(std::move(gpu_fence_handle));
 }
 
 VkSemaphore VulkanImplementationGbm::CreateExternalSemaphore(
@@ -149,13 +147,13 @@ VkSemaphore VulkanImplementationGbm::CreateExternalSemaphore(
 VkSemaphore VulkanImplementationGbm::ImportSemaphoreHandle(
     VkDevice vk_device,
     gpu::SemaphoreHandle sync_handle) {
-  return gpu::ImportVkSemaphoreHandlePosix(vk_device, std::move(sync_handle));
+  return gpu::ImportVkSemaphoreHandle(vk_device, std::move(sync_handle));
 }
 
 gpu::SemaphoreHandle VulkanImplementationGbm::GetSemaphoreHandle(
     VkDevice vk_device,
     VkSemaphore vk_semaphore) {
-  return gpu::GetVkSemaphoreHandlePosix(
+  return gpu::GetVkSemaphoreHandle(
       vk_device, vk_semaphore, VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT);
 }
 

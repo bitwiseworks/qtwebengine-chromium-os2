@@ -35,6 +35,7 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_periodic_wave_constraints.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/html/media/html_media_element.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
@@ -85,7 +86,7 @@ namespace blink {
 // Constructor for rendering to the audio hardware.
 BaseAudioContext::BaseAudioContext(Document* document,
                                    enum ContextType context_type)
-    : ExecutionContextLifecycleStateObserver(document),
+    : ExecutionContextLifecycleStateObserver(document->GetExecutionContext()),
       InspectorHelperMixin(*AudioGraphTracer::FromDocument(*document),
                            String()),
       destination_node_(nullptr),
@@ -140,10 +141,8 @@ void BaseAudioContext::Initialize() {
 }
 
 void BaseAudioContext::Clear() {
-  destination_node_.Clear();
-  // The audio rendering thread is dead.  Nobody will schedule AudioHandler
-  // deletion.  Let's do it ourselves.
-  GetDeferredTaskHandler().ClearHandlersToBeDeleted();
+  // Make a note that we've cleared out the context so that there's no pending
+  // activity.
   is_cleared_ = true;
 }
 
@@ -670,7 +669,8 @@ void BaseAudioContext::NotifySourceNodeFinishedProcessing(
 }
 
 Document* BaseAudioContext::GetDocument() const {
-  return Document::From(GetExecutionContext());
+  LocalDOMWindow* window = To<LocalDOMWindow>(GetExecutionContext());
+  return window ? window->document() : nullptr;
 }
 
 void BaseAudioContext::NotifySourceNodeStartedProcessing(AudioNode* node) {
@@ -806,7 +806,7 @@ void BaseAudioContext::StartRendering() {
   }
 }
 
-void BaseAudioContext::Trace(Visitor* visitor) {
+void BaseAudioContext::Trace(Visitor* visitor) const {
   visitor->Trace(destination_node_);
   visitor->Trace(listener_);
   visitor->Trace(resume_resolvers_);

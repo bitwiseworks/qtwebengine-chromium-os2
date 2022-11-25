@@ -23,6 +23,7 @@
 #include "media/base/timestamp_constants.h"
 #include "media/base/video_frame.h"
 #include "media/base/video_transformation.h"
+#include "media/renderers/video_frame_yuv_converter.h"
 
 namespace gfx {
 class RectF;
@@ -62,7 +63,9 @@ class MEDIA_EXPORT PaintCanvasVideoRenderer {
              VideoTransformation video_transformation,
              viz::RasterContextProvider* raster_context_provider);
 
-  // Paints |video_frame| scaled to its visible size on |canvas|.
+  // Paints |video_frame|, scaled to its |video_frame->visible_rect().size()|
+  // on |canvas|. Note that the origin of |video_frame->visible_rect()| is
+  // ignored -- the copy is done to the origin of |canvas|.
   //
   // If the format of |video_frame| is PIXEL_FORMAT_NATIVE_TEXTURE, |context_3d|
   // and |context_support| must be provided.
@@ -72,10 +75,18 @@ class MEDIA_EXPORT PaintCanvasVideoRenderer {
 
   // Convert the contents of |video_frame| to raw RGB pixels. |rgb_pixels|
   // should point into a buffer large enough to hold as many 32 bit RGBA pixels
-  // as are in the visible_rect() area of the frame.
+  // as are in the visible_rect() area of the frame. |premultiply_alpha|
+  // indicates whether the R, G, B samples in |rgb_pixels| should be multiplied
+  // by alpha.
+  //
+  // NOTE: If |video_frame| doesn't have an alpha plane, all the A samples in
+  // |rgb_pixels| will be 255 (equivalent to an alpha of 1.0) and therefore the
+  // value of |premultiply_alpha| has no effect on the R, G, B samples in
+  // |rgb_pixels|.
   static void ConvertVideoFrameToRGBPixels(const media::VideoFrame* video_frame,
                                            void* rgb_pixels,
-                                           size_t row_bytes);
+                                           size_t row_bytes,
+                                           bool premultiply_alpha = true);
 
   // Copy the visible rect size contents of texture of |video_frame| to
   // texture |texture|. |level|, |internal_format|, |type| specify target
@@ -246,8 +257,18 @@ class MEDIA_EXPORT PaintCanvasVideoRenderer {
 
   bool PrepareVideoFrame(scoped_refptr<VideoFrame> video_frame,
                          viz::RasterContextProvider* raster_context_provider,
-                         unsigned int textureTarget,
-                         unsigned int texture);
+                         const gpu::MailboxHolder& dest_holder);
+
+  bool UploadVideoFrameToGLTexture(
+      viz::RasterContextProvider* raster_context_provider,
+      gpu::gles2::GLES2Interface* destination_gl,
+      scoped_refptr<VideoFrame> video_frame,
+      unsigned int target,
+      unsigned int texture,
+      unsigned int internal_format,
+      unsigned int format,
+      unsigned int type,
+      bool flip_y);
 
   base::Optional<Cache> cache_;
 
@@ -273,8 +294,9 @@ class MEDIA_EXPORT PaintCanvasVideoRenderer {
     // The shared image backing the texture.
     gpu::Mailbox mailbox;
 
-    // The GL texture.
-    uint32_t texture = 0;
+    // Used to perform YUV->RGB conversion on video frames. Internally caches
+    // shared images that are created to upload CPU video frame data to the GPU.
+    VideoFrameYUVConverter yuv_converter;
 
     // A SyncToken after last usage, used for reusing or destroying texture and
     // shared image.

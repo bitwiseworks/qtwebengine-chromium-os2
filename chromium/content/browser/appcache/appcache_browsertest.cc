@@ -17,6 +17,7 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_client.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -97,8 +98,9 @@ IN_PROC_BROWSER_TEST_F(
 }
 
 // Regression test for crbug.com/937761.
+// Disabled due to flakiness https://crbug.com/1031090.
 IN_PROC_BROWSER_TEST_F(AppCacheNetworkServiceBrowserTest,
-                       SSLCertificateCachedCorrectly) {
+                       DISABLED_SSLCertificateCachedCorrectly) {
   net::EmbeddedTestServer embedded_test_server(
       net::EmbeddedTestServer::TYPE_HTTPS);
   embedded_test_server.SetSSLConfig(net::EmbeddedTestServer::CERT_OK,
@@ -206,6 +208,7 @@ class LoaderFactoryInterceptingBrowserClient : public TestContentBrowserClient {
       URLLoaderFactoryType type,
       const url::Origin& request_initiator,
       base::Optional<int64_t> navigation_id,
+      base::UkmSourceId ukm_source_id,
       mojo::PendingReceiver<network::mojom::URLLoaderFactory>* factory_receiver,
       mojo::PendingRemote<network::mojom::TrustedURLLoaderHeaderClient>*
           header_client,
@@ -272,8 +275,9 @@ class LoaderFactoryInterceptingBrowserClient : public TestContentBrowserClient {
   std::vector<std::unique_ptr<PassThroughURLLoaderFactory>> proxies_;
 };
 
+// Timeout waiting for "AppCache updated" title (http://crbug.com/1080708).
 IN_PROC_BROWSER_TEST_F(AppCacheNetworkServiceBrowserTest,
-                       AppCacheRequestsAreProxied) {
+                       DISABLED_AppCacheRequestsAreProxied) {
   LoaderFactoryInterceptingBrowserClient browser_client;
   ContentBrowserClient* original_client =
       SetBrowserClientForTesting(&browser_client);

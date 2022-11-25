@@ -73,8 +73,21 @@ class RASTER_EXPORT RasterImplementationGLES : public RasterInterface {
                    int dst_x_offset,
                    int dst_y_offset,
                    GLenum texture_target,
+                   GLuint row_bytes,
                    const SkImageInfo& src_info,
                    const void* src_pixels) override;
+
+  void ConvertYUVMailboxesToRGB(const gpu::Mailbox& dest_mailbox,
+                                SkYUVColorSpace planes_yuv_color_space,
+                                const gpu::Mailbox& y_plane_mailbox,
+                                const gpu::Mailbox& u_plane_mailbox,
+                                const gpu::Mailbox& v_plane_mailbox) override;
+
+  void ConvertNV12MailboxesToRGB(
+      const gpu::Mailbox& dest_mailbox,
+      SkYUVColorSpace planes_yuv_color_space,
+      const gpu::Mailbox& y_plane_mailbox,
+      const gpu::Mailbox& uv_planes_mailbox) override;
 
   // OOP-Raster
   void BeginRasterCHROMIUM(GLuint sk_color,
@@ -123,6 +136,13 @@ class RASTER_EXPORT RasterImplementationGLES : public RasterInterface {
       const gfx::Point& paste_location,
       base::OnceCallback<void()> release_mailbox,
       base::OnceCallback<void(bool)> readback_done) override;
+
+  void ReadbackImagePixels(const gpu::Mailbox& source_mailbox,
+                           const SkImageInfo& dst_info,
+                           GLuint dst_row_bytes,
+                           int src_x,
+                           int src_y,
+                           void* dst_pixels) override;
 
   // Raster via GrContext.
   GLuint CreateAndConsumeForGpuRaster(const gpu::Mailbox& mailbox) override;

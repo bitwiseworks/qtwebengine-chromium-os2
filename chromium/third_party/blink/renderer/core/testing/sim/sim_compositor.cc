@@ -59,6 +59,9 @@ SimCanvas::Commands SimCompositor::BeginFrame(double time_delta_in_seconds) {
 SimCanvas::Commands SimCompositor::PaintFrame() {
   DCHECK(web_view_);
 
+  if (!web_view_->MainFrameImpl())
+    return SimCanvas::Commands();
+
   auto* frame = web_view_->MainFrameImpl()->GetFrame();
   DocumentLifecycle::AllowThrottlingScope throttling_scope(
       frame->GetDocument()->Lifecycle());
@@ -73,8 +76,7 @@ SimCanvas::Commands SimCompositor::PaintFrame() {
   return canvas.GetCommands();
 }
 
-void SimCompositor::UpdateVisualState() {
-  TestWebWidgetClient::UpdateVisualState();
+void SimCompositor::DidBeginMainFrame() {
   *paint_commands_ = PaintFrame();
 }
 

@@ -28,7 +28,7 @@ namespace safe_browsing {
 
 class UrlCheckerDelegate;
 
-class RealTimeUrlLookupService;
+class RealTimeUrlLookupServiceBase;
 
 // BrowserURLLoaderThrottle is used in the browser process to query
 // SafeBrowsing to determine whether a URL and also its redirect URLs are safe
@@ -49,18 +49,20 @@ class BrowserURLLoaderThrottle : public blink::URLLoaderThrottle {
       const base::RepeatingCallback<content::WebContents*()>&
           web_contents_getter,
       int frame_tree_node_id,
-      base::WeakPtr<RealTimeUrlLookupService> url_lookup_service);
+      base::WeakPtr<RealTimeUrlLookupServiceBase> url_lookup_service);
 
   ~BrowserURLLoaderThrottle() override;
 
   // blink::URLLoaderThrottle implementation.
   void WillStartRequest(network::ResourceRequest* request,
                         bool* defer) override;
-  void WillRedirectRequest(net::RedirectInfo* redirect_info,
-                           const network::mojom::URLResponseHead& response_head,
-                           bool* defer,
-                           std::vector<std::string>* to_be_removed_headers,
-                           net::HttpRequestHeaders* modified_headers) override;
+  void WillRedirectRequest(
+      net::RedirectInfo* redirect_info,
+      const network::mojom::URLResponseHead& response_head,
+      bool* defer,
+      std::vector<std::string>* to_be_removed_headers,
+      net::HttpRequestHeaders* modified_headers,
+      net::HttpRequestHeaders* modified_cors_exempt_headers) override;
   void WillProcessResponse(const GURL& response_url,
                            network::mojom::URLResponseHead* response_head,
                            bool* defer) override;
@@ -84,7 +86,7 @@ class BrowserURLLoaderThrottle : public blink::URLLoaderThrottle {
       const base::RepeatingCallback<content::WebContents*()>&
           web_contents_getter,
       int frame_tree_node_id,
-      base::WeakPtr<RealTimeUrlLookupService> url_lookup_service);
+      base::WeakPtr<RealTimeUrlLookupServiceBase> url_lookup_service);
 
   // |slow_check| indicates whether it reports the result of a slow check.
   // (Please see comments of CheckerOnIO::OnCheckUrlResult() for what slow check

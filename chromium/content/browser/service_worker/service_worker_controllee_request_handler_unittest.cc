@@ -10,7 +10,6 @@
 #include "base/bind_helpers.h"
 #include "base/callback_helpers.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/logging.h"
 #include "base/run_loop.h"
 #include "base/test/bind_test_util.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -20,7 +19,7 @@
 #include "content/browser/service_worker/service_worker_container_host.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
-#include "content/browser/service_worker/service_worker_provider_host.h"
+#include "content/browser/service_worker/service_worker_host.h"
 #include "content/browser/service_worker/service_worker_registration.h"
 #include "content/browser/service_worker/service_worker_test_utils.h"
 #include "content/public/browser/resource_context.h"
@@ -59,7 +58,8 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
               test->context()->AsWeakPtr(),
               test->container_host_,
               type,
-              /*skip_service_worker=*/false)) {}
+              /*skip_service_worker=*/false,
+              base::DoNothing())) {}
 
     void MaybeCreateLoader() {
       network::ResourceRequest resource_request;
@@ -70,7 +70,7 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
                                   base::DoNothing(), base::DoNothing());
     }
 
-    ServiceWorkerNavigationLoader* loader() { return handler_->loader(); }
+    ServiceWorkerMainResourceLoader* loader() { return handler_->loader(); }
 
     void SetHandler(
         std::unique_ptr<ServiceWorkerControlleeRequestHandler> handler) {
@@ -102,15 +102,15 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
     options.scope = scope_;
     registration_ =
         new ServiceWorkerRegistration(options, 1L, context()->AsWeakPtr());
-    version_ = new ServiceWorkerVersion(registration_.get(), script_url_,
-                                        blink::mojom::ScriptType::kClassic, 1L,
-                                        context()->AsWeakPtr());
-    context()->storage()->LazyInitializeForTest();
+    version_ = new ServiceWorkerVersion(
+        registration_.get(), script_url_, blink::mojom::ScriptType::kClassic,
+        1L, mojo::PendingRemote<storage::mojom::ServiceWorkerLiveVersionRef>(),
+        context()->AsWeakPtr());
 
     std::vector<storage::mojom::ServiceWorkerResourceRecordPtr> records;
     records.push_back(WriteToDiskCacheSync(
-        context()->storage(), version_->script_url(), {} /* headers */,
-        "I'm a body", "I'm a meta data"));
+        context()->GetStorageControl(), version_->script_url(),
+        {} /* headers */, "I'm a body", "I'm a meta data"));
     version_->script_cache_map()->SetResources(records);
     version_->SetMainScriptResponse(
         EmbeddedWorkerTestHelper::CreateMainScriptResponse());
@@ -130,6 +130,11 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
 
   ServiceWorkerContextCore* context() const { return helper_->context(); }
 
+  void CloseRemotes() {
+    for (auto& remote_endpoint : remote_endpoints_)
+      remote_endpoint.host_remote()->reset();
+  }
+
  protected:
   BrowserTaskEnvironment task_environment_;
   std::unique_ptr<EmbeddedWorkerTestHelper> helper_;
@@ -140,30 +145,28 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
   net::TestDelegate url_request_delegate_;
   GURL scope_;
   GURL script_url_;
-  std::vector<ServiceWorkerRemoteProviderEndpoint> remote_endpoints_;
+  std::vector<ServiceWorkerRemoteContainerEndpoint> remote_endpoints_;
 };
 
 class ServiceWorkerTestContentBrowserClient : public TestContentBrowserClient {
  public:
-  ServiceWorkerTestContentBrowserClient() {}
-  bool AllowServiceWorkerOnIO(
+  ServiceWorkerTestContentBrowserClient() = default;
+  AllowServiceWorkerResult AllowServiceWorkerOnIO(
       const GURL& scope,
       const GURL& site_for_cookies,
       const base::Optional<url::Origin>& top_frame_origin,
       const GURL& script_url,
-      content::ResourceContext* context,
-      base::RepeatingCallback<WebContents*()> wc_getter) override {
-    return false;
+      content::ResourceContext* context) override {
+    return AllowServiceWorkerResult::No();
   }
 
-  bool AllowServiceWorkerOnUI(
+  AllowServiceWorkerResult AllowServiceWorkerOnUI(
       const GURL& scope,
       const GURL& site_for_cookies,
       const base::Optional<url::Origin>& top_frame_origin,
       const GURL& script_url,
-      content::BrowserContext* context,
-      base::RepeatingCallback<WebContents*()> wc_getter) override {
-    return false;
+      content::BrowserContext* context) override {
+    return AllowServiceWorkerResult::No();
   }
 };
 
@@ -223,6 +226,8 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, DoesNotExist) {
   test_resources.MaybeCreateLoader();
   EXPECT_FALSE(test_resources.loader());
 
+  base::RunLoop().RunUntilIdle();
+
   histogram_tester.ExpectTotalCount(
       "ServiceWorker.LookupRegistration.MainResource.Time.DoesNotExist", 1);
 
@@ -233,7 +238,7 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, Error) {
   base::HistogramTester histogram_tester;
 
   // Disabling the storage makes looking up the registration return an error.
-  context()->storage()->Disable();
+  context()->GetStorageControl()->Disable();
 
   histogram_tester.ExpectTotalCount(
       "ServiceWorker.LookupRegistration.MainResource.Time.Error", 0);
@@ -244,6 +249,8 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, Error) {
       blink::mojom::ResourceType::kMainFrame);
   test_resources.MaybeCreateLoader();
   EXPECT_FALSE(test_resources.loader());
+
+  base::RunLoop().RunUntilIdle();
 
   histogram_tester.ExpectTotalCount(
       "ServiceWorker.LookupRegistration.MainResource.Time.Error", 1);
@@ -385,9 +392,9 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, DeletedContainerHost) {
 
   // Shouldn't crash if the ProviderHost is deleted prior to completion of
   // the database lookup.
-  context()->UnregisterContainerHostByClientID(container_host_->client_uuid());
-  EXPECT_FALSE(container_host_);
+  CloseRemotes();
   base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(container_host_);
   EXPECT_FALSE(test_resources.loader());
 }
 
@@ -412,7 +419,7 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, SkipServiceWorker) {
       std::make_unique<ServiceWorkerControlleeRequestHandler>(
           context()->AsWeakPtr(), container_host_,
           blink::mojom::ResourceType::kMainFrame,
-          /*skip_service_worker=*/true));
+          /*skip_service_worker=*/true, base::DoNothing()));
 
   // Conduct a main resource load.
   test_resources.MaybeCreateLoader();
@@ -453,7 +460,7 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, NullContext) {
       std::make_unique<ServiceWorkerControlleeRequestHandler>(
           context()->AsWeakPtr(), container_host_,
           blink::mojom::ResourceType::kMainFrame,
-          /*skip_service_worker=*/false));
+          /*skip_service_worker=*/false, base::DoNothing()));
 
   // Destroy the context and make a new one.
   helper_->context_wrapper()->DeleteAndStartOver();

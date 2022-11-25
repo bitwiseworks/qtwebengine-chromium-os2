@@ -38,6 +38,7 @@
 #include "third_party/blink/renderer/core/css/selector_filter.h"
 #include "third_party/blink/renderer/core/css/style_rule_import.h"
 #include "third_party/blink/renderer/core/css/style_sheet_contents.h"
+#include "third_party/blink/renderer/core/html/shadow/shadow_element_names.h"
 #include "third_party/blink/renderer/core/html/track/text_track_cue.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
@@ -231,7 +232,7 @@ bool RuleSet::FindBestRuleSetAndAdd(const CSSSelector& component,
       if (it->FollowsPart()) {
         part_pseudo_rules_.push_back(rule_data);
       } else {
-        AddToRuleSet(AtomicString("-webkit-input-placeholder"),
+        AddToRuleSet(shadow_element_names::kPseudoInputPlaceholder,
                      EnsurePendingRules()->shadow_pseudo_element_rules,
                      rule_data);
       }
@@ -293,6 +294,11 @@ void RuleSet::AddPropertyRule(StyleRuleProperty* rule) {
   property_rules_.push_back(rule);
 }
 
+void RuleSet::AddScrollTimelineRule(StyleRuleScrollTimeline* rule) {
+  EnsurePendingRules();  // So that property_rules_.ShrinkToFit() gets called.
+  scroll_timeline_rules_.push_back(rule);
+}
+
 void RuleSet::AddChildRules(const HeapVector<Member<StyleRuleBase>>& rules,
                             const MediaQueryEvaluator& medium,
                             AddRuleFlags add_rule_flags) {
@@ -328,6 +334,9 @@ void RuleSet::AddChildRules(const HeapVector<Member<StyleRuleBase>>& rules,
       AddKeyframesRule(keyframes_rule);
     } else if (auto* property_rule = DynamicTo<StyleRuleProperty>(rule)) {
       AddPropertyRule(property_rule);
+    } else if (auto* scroll_timeline_rule =
+                   DynamicTo<StyleRuleScrollTimeline>(rule)) {
+      AddScrollTimelineRule(scroll_timeline_rule);
     } else if (auto* supports_rule = DynamicTo<StyleRuleSupports>(rule)) {
       if (supports_rule->ConditionIsSupported())
         AddChildRules(supports_rule->ChildRules(), medium, add_rule_flags);
@@ -429,22 +438,22 @@ bool RuleSet::DidMediaQueryResultsChange(
   return false;
 }
 
-void MinimalRuleData::Trace(Visitor* visitor) {
+void MinimalRuleData::Trace(Visitor* visitor) const {
   visitor->Trace(rule_);
 }
 
-void RuleData::Trace(Visitor* visitor) {
+void RuleData::Trace(Visitor* visitor) const {
   visitor->Trace(rule_);
 }
 
-void RuleSet::PendingRuleMaps::Trace(Visitor* visitor) {
+void RuleSet::PendingRuleMaps::Trace(Visitor* visitor) const {
   visitor->Trace(id_rules);
   visitor->Trace(class_rules);
   visitor->Trace(tag_rules);
   visitor->Trace(shadow_pseudo_element_rules);
 }
 
-void RuleSet::Trace(Visitor* visitor) {
+void RuleSet::Trace(Visitor* visitor) const {
   visitor->Trace(id_rules_);
   visitor->Trace(class_rules_);
   visitor->Trace(tag_rules_);
@@ -459,6 +468,7 @@ void RuleSet::Trace(Visitor* visitor) {
   visitor->Trace(font_face_rules_);
   visitor->Trace(keyframes_rules_);
   visitor->Trace(property_rules_);
+  visitor->Trace(scroll_timeline_rules_);
   visitor->Trace(deep_combinator_or_shadow_pseudo_rules_);
   visitor->Trace(part_pseudo_rules_);
   visitor->Trace(content_pseudo_element_rules_);

@@ -11,10 +11,10 @@
 #include <utility>
 #include <vector>
 
+#include "base/check_op.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
-#include "base/logging.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -38,23 +38,19 @@ const char* const kChildKinds[] = {"functions", "events"};
 std::unique_ptr<base::DictionaryValue> LoadSchemaDictionary(
     const std::string& name,
     const base::StringPiece& schema) {
-  std::string error_message;
-  std::unique_ptr<base::Value> result(
-      base::JSONReader::ReadAndReturnErrorDeprecated(
-          schema,
-          base::JSON_PARSE_RFC,  // options
-          NULL,                  // error code
-          &error_message));
+  base::JSONReader::ValueWithError result =
+      base::JSONReader::ReadAndReturnValueWithError(schema);
 
   // Tracking down http://crbug.com/121424
   char buf[128];
   base::snprintf(buf, base::size(buf), "%s: (%d) '%s'", name.c_str(),
-                 result.get() ? static_cast<int>(result->type()) : -1,
-                 error_message.c_str());
+                 result.value ? static_cast<int>(result.value->type()) : -1,
+                 result.error_message.c_str());
 
-  CHECK(result.get()) << error_message << " for schema " << schema;
-  CHECK(result->is_dict()) << " for schema " << schema;
-  return base::DictionaryValue::From(std::move(result));
+  CHECK(result.value) << result.error_message << " for schema " << schema;
+  CHECK(result.value->is_dict()) << " for schema " << schema;
+  return base::DictionaryValue::From(
+      base::Value::ToUniquePtrValue(std::move(*result.value)));
 }
 
 const base::DictionaryValue* FindListItem(const base::ListValue* list,
@@ -156,9 +152,10 @@ ExtensionAPI::~ExtensionAPI() {
 }
 
 void ExtensionAPI::InitDefaultConfiguration() {
-  const char* names[] = {"api", "manifest", "permission"};
-  for (size_t i = 0; i < base::size(names); ++i)
-    RegisterDependencyProvider(names[i], FeatureProvider::GetByName(names[i]));
+  const constexpr char* const names[] = {"api", "behavior", "manifest",
+                                         "permission"};
+  for (const char* const name : names)
+    RegisterDependencyProvider(name, FeatureProvider::GetByName(name));
 
   default_configuration_initialized_ = true;
 }
@@ -227,18 +224,12 @@ Feature::Availability ExtensionAPI::IsAvailable(const std::string& full_name,
 base::StringPiece ExtensionAPI::GetSchemaStringPiece(
     const std::string& api_name) {
   DCHECK_EQ(api_name, GetAPINameFromFullName(api_name, nullptr));
-  auto cached = schema_strings_.find(api_name);
-  if (cached != schema_strings_.end())
-    return cached->second;
-
   ExtensionsClient* client = ExtensionsClient::Get();
   DCHECK(client);
   if (!default_configuration_initialized_)
     return base::StringPiece();
 
   base::StringPiece schema = client->GetAPISchema(api_name);
-  if (!schema.empty())
-    schema_strings_[api_name] = schema;
   return schema;
 }
 

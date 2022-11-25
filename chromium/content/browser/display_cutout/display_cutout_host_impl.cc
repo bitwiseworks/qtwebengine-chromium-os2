@@ -47,18 +47,6 @@ void DisplayCutoutHostImpl::DidExitFullscreen() {
   SetCurrentRenderFrameHost(nullptr);
 }
 
-void DisplayCutoutHostImpl::DidStartNavigation(
-    NavigationHandle* navigation_handle) {
-  // If the navigation is not in the main frame or if we are a same document
-  // navigation then we should stop now.
-  if (!navigation_handle->IsInMainFrame() ||
-      navigation_handle->IsSameDocument()) {
-    return;
-  }
-
-  RecordPendingUKMEvents();
-}
-
 void DisplayCutoutHostImpl::DidFinishNavigation(
     NavigationHandle* navigation_handle) {
   // If the navigation is not in the main frame or if we are a same document
@@ -68,12 +56,12 @@ void DisplayCutoutHostImpl::DidFinishNavigation(
     return;
   }
 
+  RecordPendingUKMEvents();
+
   // If we finish a main frame navigation and the |WebDisplayMode| is
   // fullscreen then we should make the main frame the current
   // |RenderFrameHost|.
-  RenderWidgetHostImpl* rwh =
-      web_contents_impl_->GetRenderViewHost()->GetWidget();
-  blink::mojom::DisplayMode mode = web_contents_impl_->GetDisplayMode(rwh);
+  blink::mojom::DisplayMode mode = web_contents_impl_->GetDisplayMode();
   if (mode == blink::mojom::DisplayMode::kFullscreen)
     SetCurrentRenderFrameHost(web_contents_impl_->GetMainFrame());
 }
@@ -184,6 +172,7 @@ void DisplayCutoutHostImpl::MaybeQueueUKMEvent(RenderFrameHost* frame) {
 
   // Adds the UKM event to the list of pending events.
   PendingUKMEvent pending_event;
+  pending_event.source_id = frame->GetPageUkmSourceId();
   pending_event.is_main_frame = !frame->GetParent();
   pending_event.applied_value = applied_value;
   pending_event.supplied_value = supplied_value;
@@ -195,8 +184,7 @@ void DisplayCutoutHostImpl::MaybeQueueUKMEvent(RenderFrameHost* frame) {
 
 void DisplayCutoutHostImpl::RecordPendingUKMEvents() {
   for (const auto& event : pending_ukm_events_) {
-    ukm::builders::Layout_DisplayCutout_StateChanged builder(
-        web_contents_impl_->GetUkmSourceIdForLastCommittedSource());
+    ukm::builders::Layout_DisplayCutout_StateChanged builder(event.source_id);
     builder.SetIsMainFrame(event.is_main_frame);
     builder.SetViewportFit_Applied(static_cast<int>(event.applied_value));
     builder.SetViewportFit_Supplied(static_cast<int>(event.supplied_value));

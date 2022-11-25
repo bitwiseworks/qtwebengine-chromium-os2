@@ -30,9 +30,16 @@ class ScenicSurface;
 
 class ScenicSurfaceFactory : public SurfaceFactoryOzone {
  public:
-  explicit ScenicSurfaceFactory(
-      mojo::PendingRemote<mojom::ScenicGpuHost> gpu_host);
+  ScenicSurfaceFactory();
   ~ScenicSurfaceFactory() override;
+
+  // Initializes the surface factory. Binds the surface factory to the
+  // current thread (and thus must run with a message loop).
+  void Initialize(mojo::PendingRemote<mojom::ScenicGpuHost> gpu_host);
+
+  // Disconnects from ScenicGpuHost and detaches from the current thread.
+  // After shutting down, it is safe to call Initialize() again.
+  void Shutdown();
 
   // SurfaceFactoryOzone implementation.
   std::vector<gl::GLImplementation> GetAllowedGLImplementations() override;
@@ -40,8 +47,7 @@ class ScenicSurfaceFactory : public SurfaceFactoryOzone {
   std::unique_ptr<PlatformWindowSurface> CreatePlatformWindowSurface(
       gfx::AcceleratedWidget widget) override;
   std::unique_ptr<SurfaceOzoneCanvas> CreateCanvasForWidget(
-      gfx::AcceleratedWidget widget,
-      scoped_refptr<base::SequencedTaskRunner> task_runner) override;
+      gfx::AcceleratedWidget widget) override;
   scoped_refptr<gfx::NativePixmap> CreateNativePixmap(
       gfx::AcceleratedWidget widget,
       VkDevice vk_device,
@@ -79,15 +85,10 @@ class ScenicSurfaceFactory : public SurfaceFactoryOzone {
   ScenicSurface* GetSurface(gfx::AcceleratedWidget widget)
       LOCKS_EXCLUDED(surface_lock_);
 
- private:
   // Creates a new scenic session on any thread.
   scenic::SessionPtrAndListenerRequest CreateScenicSession();
 
-  // Creates a new scenic session on the main thread.
-  void CreateScenicSessionOnMainThread(
-      fidl::InterfaceRequest<fuchsia::ui::scenic::Session> session_request,
-      fidl::InterfaceHandle<fuchsia::ui::scenic::SessionListener> listener);
-
+ private:
   // Links a surface to its parent window in the host process.
   void AttachSurfaceToWindow(
       gfx::AcceleratedWidget window,
@@ -97,7 +98,7 @@ class ScenicSurfaceFactory : public SurfaceFactoryOzone {
       GUARDED_BY(surface_lock_);
   base::Lock surface_lock_;
 
-  mojo::Remote<mojom::ScenicGpuHost> const gpu_host_;
+  mojo::Remote<mojom::ScenicGpuHost> gpu_host_;
   std::unique_ptr<GLOzone> egl_implementation_;
 
   fuchsia::ui::scenic::ScenicPtr scenic_;

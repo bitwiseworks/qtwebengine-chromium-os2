@@ -151,7 +151,8 @@ class CastMessageHandler : public CastSocket::Observer {
   // in order to receive messages sooner.
   virtual void EnsureConnection(int channel_id,
                                 const std::string& source_id,
-                                const std::string& destination_id);
+                                const std::string& destination_id,
+                                VirtualConnectionType connection_type);
 
   // Closes any virtual connection on (|source_id|, |destination_id|) on the
   // device given by |channel_id|, sending a virtual connection close request to
@@ -173,17 +174,20 @@ class CastMessageHandler : public CastSocket::Observer {
 
   // Sends a broadcast message containing |app_ids| and |request| to the socket
   // given by |channel_id|.
-  virtual void SendBroadcastMessage(int channel_id,
-                                    const std::vector<std::string>& app_ids,
-                                    const BroadcastRequest& request);
+  virtual Result SendBroadcastMessage(int channel_id,
+                                      const std::vector<std::string>& app_ids,
+                                      const BroadcastRequest& request);
 
   // Requests a session launch for |app_id| on the device given by |channel_id|.
   // |callback| will be invoked with the response or with a timed out result if
   // no response comes back before |launch_timeout|.
-  virtual void LaunchSession(int channel_id,
-                             const std::string& app_id,
-                             base::TimeDelta launch_timeout,
-                             LaunchSessionCallback callback);
+  virtual void LaunchSession(
+      int channel_id,
+      const std::string& app_id,
+      base::TimeDelta launch_timeout,
+      const std::vector<std::string>& supported_app_types,
+      const base::Optional<base::Value>& app_params,
+      LaunchSessionCallback callback);
 
   // Stops the session given by |session_id| on the device given by
   // |channel_id|. |callback| will be invoked with the result of the stop
@@ -298,7 +302,8 @@ class CastMessageHandler : public CastSocket::Observer {
   // for (|source_id|, |destination_id|) does not yet exist.
   void DoEnsureConnection(CastSocket* socket,
                           const std::string& source_id,
-                          const std::string& destination_id);
+                          const std::string& destination_id,
+                          VirtualConnectionType connection_type);
 
   // Callback for CastTransport::SendMessage.
   void OnMessageSent(int result);

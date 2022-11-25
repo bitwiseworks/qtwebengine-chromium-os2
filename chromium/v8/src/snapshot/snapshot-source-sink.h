@@ -8,7 +8,7 @@
 #include <utility>
 
 #include "src/base/logging.h"
-#include "src/snapshot/serializer-common.h"
+#include "src/snapshot/snapshot-utils.h"
 #include "src/utils/utils.h"
 
 namespace v8 {
@@ -39,6 +39,11 @@ class SnapshotByteSource final {
     return data_[position_++];
   }
 
+  byte Peek() const {
+    DCHECK(position_ < length_);
+    return data_[position_];
+  }
+
   void Advance(int by) { position_ += by; }
 
   void CopyRaw(void* to, int number_of_bytes) {
@@ -54,24 +59,6 @@ class SnapshotByteSource final {
     answer |= data_[position_ + 1] << 8;
     answer |= data_[position_ + 2] << 16;
     answer |= data_[position_ + 3] << 24;
-    int bytes = (answer & 3) + 1;
-    Advance(bytes);
-    uint32_t mask = 0xffffffffu;
-    mask >>= 32 - (bytes << 3);
-    answer &= mask;
-    answer >>= 2;
-    return answer;
-  }
-
-  int GetIntSlow() {
-    // Unlike GetInt, this reads only up to the end of the blob, even if less
-    // than 4 bytes are remaining.
-    // TODO(jgruber): Remove once the use in MakeFromScriptsSource is gone.
-    DCHECK(position_ < length_);
-    uint32_t answer = data_[position_];
-    if (position_ + 1 < length_) answer |= data_[position_ + 1] << 8;
-    if (position_ + 2 < length_) answer |= data_[position_ + 2] << 16;
-    if (position_ + 3 < length_) answer |= data_[position_ + 3] << 24;
     int bytes = (answer & 3) + 1;
     Advance(bytes);
     uint32_t mask = 0xffffffffu;
@@ -99,11 +86,10 @@ class SnapshotByteSource final {
   DISALLOW_COPY_AND_ASSIGN(SnapshotByteSource);
 };
 
-
 /**
  * Sink to write snapshot files to.
  *
- * Subclasses must implement actual storage or i/o.
+ * Users must implement actual storage or i/o.
  */
 class SnapshotByteSink {
  public:
@@ -113,11 +99,6 @@ class SnapshotByteSink {
   ~SnapshotByteSink() = default;
 
   void Put(byte b, const char* description) { data_.push_back(b); }
-
-  void PutSection(int b, const char* description) {
-    DCHECK_LE(b, kMaxUInt8);
-    Put(static_cast<byte>(b), description);
-  }
 
   void PutInt(uintptr_t integer, const char* description);
   void PutRaw(const byte* data, int number_of_bytes, const char* description);

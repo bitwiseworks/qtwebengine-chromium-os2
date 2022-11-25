@@ -8,10 +8,11 @@
 #include "base/base_paths.h"
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/check_op.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "base/logging.h"
 #include "base/macros.h"
+#include "base/notreached.h"
 #include "base/optional.h"
 #include "base/path_service.h"
 #include "base/process/process.h"
@@ -83,7 +84,7 @@ void PrepareToPassRemoteEndpoint(PlatformChannel* channel,
   std::string value;
 #if defined(OS_FUCHSIA)
   channel->PrepareToPassRemoteEndpoint(&options->handles_to_transfer, &value);
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
   channel->PrepareToPassRemoteEndpoint(&options->mach_ports_for_rendezvous,
                                        &value);
 #elif defined(OS_POSIX)

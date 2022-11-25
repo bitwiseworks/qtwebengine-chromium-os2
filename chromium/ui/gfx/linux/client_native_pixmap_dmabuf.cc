@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/posix/eintr_wrapper.h"
@@ -102,6 +103,20 @@ bool ClientNativePixmapDmaBuf::IsConfigurationSupported(
   }
 #endif
 
+  bool disable_yuv_biplanar = true;
+#if defined(OS_CHROMEOS) || BUILDFLAG(IS_CHROMECAST)
+  // IsConfigurationSupported(SCANOUT_CPU_READ_WRITE) is used by the renderer
+  // to tell whether the platform supports sampling a given format. Zero-copy
+  // video capture and encoding requires gfx::BufferFormat::YUV_420_BIPLANAR to
+  // be supported by the renderer. Most of Chrome OS platforms support it, so
+  // enable it by default, with a switch that allows an explicit disable on
+  // platforms known to have problems, e.g. the Tegra-based nyan."
+  // TODO(crbug.com/982201): move gfx::BufferFormat::YUV_420_BIPLANAR out
+  // of if defined(ARCH_CPU_X86_FAMLIY) when Tegra is no longer supported.
+  disable_yuv_biplanar = base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kDisableYuv420Biplanar);
+#endif
+
   switch (usage) {
     case gfx::BufferUsage::GPU_READ:
       return format == gfx::BufferFormat::BGR_565 ||
@@ -124,10 +139,15 @@ bool ClientNativePixmapDmaBuf::IsConfigurationSupported(
       if (format == gfx::BufferFormat::RG_88 && !AllowCpuMappableBuffers())
         return false;
 
+      if (!disable_yuv_biplanar &&
+          format == gfx::BufferFormat::YUV_420_BIPLANAR) {
+        return true;
+      }
+
       return
 #if defined(ARCH_CPU_X86_FAMILY)
-          // Currently only Intel driver (i.e. minigbm and Mesa) supports
-          // R_8 RG_88, NV12 and XB30/XR30.
+          // The minigbm backends and Mesa drivers commonly used on x86 systems
+          // support the following formats.
           format == gfx::BufferFormat::R_8 ||
           format == gfx::BufferFormat::RG_88 ||
           format == gfx::BufferFormat::YUV_420_BIPLANAR ||
@@ -145,10 +165,16 @@ bool ClientNativePixmapDmaBuf::IsConfigurationSupported(
     case gfx::BufferUsage::GPU_READ_CPU_READ_WRITE:
       if (!AllowCpuMappableBuffers())
         return false;
+
+      if (!disable_yuv_biplanar &&
+          format == gfx::BufferFormat::YUV_420_BIPLANAR) {
+        return true;
+      }
+
       return
 #if defined(ARCH_CPU_X86_FAMILY)
-          // Only the Intel stack (i.e. minigbm and Mesa) supports the formats
-          // below.
+          // The minigbm backends and Mesa drivers commonly used on x86 systems
+          // support the following formats.
           format == gfx::BufferFormat::R_8 ||
           format == gfx::BufferFormat::RG_88 ||
           format == gfx::BufferFormat::YUV_420_BIPLANAR ||
@@ -187,6 +213,8 @@ ClientNativePixmapDmaBuf::ImportFromDmabuf(gfx::NativePixmapHandle handle,
 
   for (size_t i = 0; i < handle.planes.size(); ++i) {
     // Verify that the plane buffer has appropriate size.
+    const size_t plane_stride =
+        base::strict_cast<size_t>(handle.planes[i].stride);
     size_t min_stride = 0;
     size_t subsample_factor = SubsamplingFactorForBufferFormat(format, i);
     base::CheckedNumeric<size_t> plane_height =
@@ -194,12 +222,18 @@ ClientNativePixmapDmaBuf::ImportFromDmabuf(gfx::NativePixmapHandle handle,
         subsample_factor;
     if (!gfx::RowSizeForBufferFormatChecked(size.width(), format, i,
                                             &min_stride) ||
-        handle.planes[i].stride < min_stride) {
+        plane_stride < min_stride) {
       return nullptr;
     }
     base::CheckedNumeric<size_t> min_size =
-        base::CheckedNumeric<size_t>(handle.planes[i].stride) * plane_height;
+        base::CheckedNumeric<size_t>(plane_stride) * plane_height;
     if (!min_size.IsValid() || handle.planes[i].size < min_size.ValueOrDie())
+      return nullptr;
+
+    // The stride must be a valid integer in order to be consistent with the
+    // GpuMemoryBuffer::stride() API. Also, refer to http://crbug.com/1093644#c1
+    // for some comments on this check and others in this method.
+    if (!base::IsValueInRangeForNumericType<int>(plane_stride))
       return nullptr;
 
     const size_t map_size = base::checked_cast<size_t>(handle.planes[i].size);

@@ -4,9 +4,8 @@
 
 import("../../../third_party/typescript/typescript.gni")
 
-ts_library("search") {
-  testonly = true
-  sources = [ "search-scope.ts" ]
+node_ts_library("search") {
+  sources = [ "search-scope_test.ts" ]
 
   deps = [
     "../../shared",

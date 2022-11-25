@@ -6,17 +6,13 @@ import("//build/config/jumbo.gni")
 import("//build/config/ui.gni")
 import("//testing/test.gni")
 
-# Reset sources_assignment_filter for the BUILD.gn file to prevent
-# regression during the migration of Chromium away from the feature.
-# See docs/no_sources_assignment_filter.md for more information.
-# TODO(crbug.com/1018739): remove this when migration is done.
-set_sources_assignment_filter([])
-
 jumbo_component("compositor") {
   sources = [
     "animation_metrics_recorder.cc",
     "animation_metrics_recorder.h",
     "animation_metrics_reporter.h",
+    "animation_throughput_reporter.cc",
+    "animation_throughput_reporter.h",
     "callback_layer_animation_observer.cc",
     "callback_layer_animation_observer.h",
     "canvas_painter.cc",
@@ -36,8 +32,6 @@ jumbo_component("compositor") {
     "compositor_switches.h",
     "debug_utils.cc",
     "debug_utils.h",
-    "dip_util.cc",
-    "dip_util.h",
     "float_animation_curve_adapter.cc",
     "float_animation_curve_adapter.h",
     "layer.cc",
@@ -76,6 +70,9 @@ jumbo_component("compositor") {
     "scoped_animation_duration_scale_mode.h",
     "scoped_layer_animation_settings.cc",
     "scoped_layer_animation_settings.h",
+    "throughput_tracker.cc",
+    "throughput_tracker.h",
+    "throughput_tracker_host.h",
     "transform_animation_curve_adapter.cc",
     "transform_animation_curve_adapter.h",
     "transform_recorder.cc",
@@ -190,7 +187,6 @@ jumbo_static_library("test_support") {
   ]
 
   if (use_x11) {
-    configs += [ "//build/config/linux:x11" ]
     deps += [
       "//ui/events/x",
       "//ui/gfx/x",
@@ -205,19 +201,34 @@ jumbo_static_library("test_support") {
   }
 
   if (use_ozone) {
-    sources += [ "test/test_compositor_host_ozone.cc" ]
+    sources += [
+      "test/test_compositor_host_ozone.cc",
+      "test/test_compositor_host_ozone.h",
+    ]
 
     deps += [
       "//ui/ozone",
       "//ui/platform_window",
     ]
-  } else if (use_x11) {
-    sources += [ "test/test_compositor_host_x11.cc" ]
+  }
+
+  if (use_x11) {
+    sources += [
+      "test/test_compositor_host_x11.cc",
+      "test/test_compositor_host_x11.h",
+    ]
+  }
+
+  if (is_linux || is_chromeos) {
+    sources += [ "test/test_compositor_host_linux.cc" ]
   }
 }
 
 test("compositor_unittests") {
+  use_xvfb = use_xvfb_in_this_config
+
   sources = [
+    "animation_throughput_reporter_unittest.cc",
     "callback_layer_animation_observer_unittest.cc",
     "canvas_painter_unittest.cc",
     "compositor_lock_unittest.cc",
@@ -253,7 +264,7 @@ test("compositor_unittests") {
     "//ui/resources",
   ]
 
-  if (is_linux) {
+  if (is_linux || is_chromeos) {
     deps += [ "//third_party/mesa_headers" ]
   }
 }

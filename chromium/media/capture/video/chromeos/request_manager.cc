@@ -20,6 +20,7 @@
 #include "media/capture/video/chromeos/camera_buffer_factory.h"
 #include "media/capture/video/chromeos/camera_device_context.h"
 #include "media/capture/video/chromeos/camera_metadata_utils.h"
+#include "media/capture/video/chromeos/video_capture_features_chromeos.h"
 #include "mojo/public/cpp/platform/platform_handle.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 
@@ -227,11 +228,10 @@ void RequestManager::UnsetRepeatingCaptureMetadata(
 }
 
 void RequestManager::SetJpegOrientation(
-    cros::mojom::CameraMetadataPtr* settings) {
+    cros::mojom::CameraMetadataPtr* settings,
+    int32_t orientation) {
   auto e = BuildMetadataEntry(
-      cros::mojom::CameraMetadataTag::ANDROID_JPEG_ORIENTATION,
-      base::checked_cast<int32_t>(
-          device_context_->GetCameraFrameOrientation()));
+      cros::mojom::CameraMetadataTag::ANDROID_JPEG_ORIENTATION, orientation);
   AddOrUpdateMetadataEntry(settings, std::move(e));
 }
 
@@ -319,6 +319,7 @@ void RequestManager::PrepareCaptureRequest() {
   pending_result.input_buffer_id = input_buffer_id;
   pending_result.reprocess_effect = reprocess_effect;
   pending_result.still_capture_callback = std::move(callback);
+  pending_result.orientation = device_context_->GetCameraFrameRotation();
 
   // For reprocess supported devices, bind the ReprocessTaskQueue with this
   // frame number. Once the shot result is returned, we will rebind the
@@ -377,7 +378,7 @@ bool RequestManager::TryPrepareReprocessRequest(
   // Prepare metadata by adding extra metadata.
   *settings = reprocess_job_info->metadata.Clone();
   SetSensorTimestamp(settings, reprocess_job_info->shutter_timestamp);
-  SetJpegOrientation(settings);
+  SetJpegOrientation(settings, reprocess_job_info->orientation);
   for (auto& metadata : task.extra_metadata) {
     AddOrUpdateMetadataEntry(settings, std::move(metadata));
   }
@@ -440,7 +441,7 @@ bool RequestManager::TryPrepareOneShotRequest(
     take_photo_callback_queue_.pop();
 
     *settings = std::move(take_photo_settings_queue_.front());
-    SetJpegOrientation(settings);
+    SetJpegOrientation(settings, device_context_->GetCameraFrameRotation());
   }
   SetZeroShutterLag(settings, true);
   take_photo_settings_queue_.pop();
@@ -753,7 +754,7 @@ void RequestManager::SubmitCaptureResult(
   DVLOG(2) << "Submit capture result of frame " << frame_number
            << " for stream " << static_cast<int>(stream_type);
   for (auto* observer : result_metadata_observers_) {
-    observer->OnResultMetadataAvailable(pending_result.metadata);
+    observer->OnResultMetadataAvailable(frame_number, pending_result.metadata);
   }
 
   if (camera_app_device_) {
@@ -795,7 +796,8 @@ void RequestManager::SubmitCaptureResult(
       DCHECK_GT(pending_result.shutter_timestamp, 0UL);
       ReprocessJobInfo reprocess_job_info(
           std::move(frame_number_reprocess_tasks_map_[frame_number]),
-          std::move(pending_result.metadata), pending_result.shutter_timestamp);
+          std::move(pending_result.metadata), pending_result.shutter_timestamp,
+          pending_result.orientation);
       buffer_id_reprocess_job_info_map_.emplace(buffer_ipc_id,
                                                 std::move(reprocess_job_info));
       frame_number_reprocess_tasks_map_.erase(frame_number);
@@ -830,12 +832,40 @@ void RequestManager::SubmitCapturedPreviewBuffer(uint32_t frame_number,
     VideoCaptureFormat format;
     base::Optional<VideoCaptureDevice::Client::Buffer> buffer =
         stream_buffer_manager_->AcquireBufferForClientById(
-            StreamType::kPreviewOutput, buffer_ipc_id,
-            device_context_->GetCameraFrameOrientation(), &format);
+            StreamType::kPreviewOutput, buffer_ipc_id, &format);
     CHECK(buffer);
+
+    // TODO: Figure out the right color space for the camera frame.  We may need
+    // to populate the camera metadata with the color space reported by the V4L2
+    // device.
+    VideoFrameMetadata metadata;
+    if (base::FeatureList::IsEnabled(
+            features::kDisableCameraFrameRotationAtSource)) {
+      // Camera frame rotation at source is disabled, so we record the intended
+      // video frame rotation in the metadata.  The consumer of the video frame
+      // is responsible for taking care of the frame rotation.
+      auto translate_rotation = [](const int rotation) -> VideoRotation {
+        switch (rotation) {
+          case 0:
+            return VideoRotation::VIDEO_ROTATION_0;
+          case 90:
+            return VideoRotation::VIDEO_ROTATION_90;
+          case 180:
+            return VideoRotation::VIDEO_ROTATION_180;
+          case 270:
+            return VideoRotation::VIDEO_ROTATION_270;
+        }
+        return VideoRotation::VIDEO_ROTATION_0;
+      };
+      metadata.rotation =
+          translate_rotation(device_context_->GetRotationForDisplay());
+    } else {
+      // All frames are pre-rotated to the display orientation.
+      metadata.rotation = VideoRotation::VIDEO_ROTATION_0;
+    }
     device_context_->SubmitCapturedVideoCaptureBuffer(
         std::move(*buffer), format, pending_result.reference_time,
-        pending_result.timestamp);
+        pending_result.timestamp, metadata);
     // |buffer| ownership is transferred to client, so we need to reserve a
     // new video buffer.
     stream_buffer_manager_->ReserveBuffer(StreamType::kPreviewOutput);
@@ -947,15 +977,18 @@ RequestManager::CaptureResult::~CaptureResult() = default;
 RequestManager::ReprocessJobInfo::ReprocessJobInfo(
     ReprocessTaskQueue queue,
     cros::mojom::CameraMetadataPtr metadata,
-    uint64_t timestamp)
+    uint64_t timestamp,
+    int32_t orientation)
     : task_queue(std::move(queue)),
       metadata(std::move(metadata)),
-      shutter_timestamp(timestamp) {}
+      shutter_timestamp(timestamp),
+      orientation(orientation) {}
 
 RequestManager::ReprocessJobInfo::ReprocessJobInfo(ReprocessJobInfo&& info)
     : task_queue(std::move(info.task_queue)),
       metadata(std::move(info.metadata)),
-      shutter_timestamp(info.shutter_timestamp) {}
+      shutter_timestamp(info.shutter_timestamp),
+      orientation(info.orientation) {}
 
 RequestManager::ReprocessJobInfo::~ReprocessJobInfo() = default;
 

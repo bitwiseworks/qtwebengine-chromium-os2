@@ -52,10 +52,11 @@ TEST_F(NGInlineLayoutAlgorithmTest, BreakToken) {
   NGConstraintSpace constraint_space = builder.ToConstraintSpace();
 
   NGInlineChildLayoutContext context;
-  NGBoxFragmentBuilder container_builder(block_flow, block_flow->Style(),
-                                         block_flow->Style()->GetWritingMode(),
-                                         block_flow->Style()->Direction());
-  NGFragmentItemsBuilder items_builder(&container_builder);
+  NGBoxFragmentBuilder container_builder(
+      block_flow, block_flow->Style(),
+      block_flow->Style()->GetWritingDirection());
+  NGFragmentItemsBuilder items_builder(inline_node,
+                                       container_builder.GetWritingDirection());
   if (RuntimeEnabledFeatures::LayoutNGFragmentItemEnabled()) {
     container_builder.SetItemsBuilder(&items_builder);
     context.SetItemsBuilder(&items_builder);
@@ -459,15 +460,6 @@ TEST_F(NGInlineLayoutAlgorithmTest, InkOverflow) {
   PhysicalRect ink_overflow = cursor.Current().InkOverflow();
   EXPECT_EQ(LayoutUnit(-5), ink_overflow.offset.top);
   EXPECT_EQ(LayoutUnit(20), ink_overflow.size.height);
-
-  if (paint_fragment) {
-    // |ContentsInkOverflow| should match to |InkOverflow|, except the width
-    // because |<div id=container>| might be wider than the content.
-    const PhysicalRect contents_ink_overflow =
-        paint_fragment->ContentsInkOverflow();
-    EXPECT_EQ(ink_overflow.offset, contents_ink_overflow.offset);
-    EXPECT_EQ(ink_overflow.size.height, contents_ink_overflow.size.height);
-  }
 }
 
 #undef MAYBE_VerticalAlignBottomReplaced

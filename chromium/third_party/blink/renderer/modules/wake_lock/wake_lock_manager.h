@@ -19,7 +19,7 @@ class ExecutionContext;
 class ScriptPromiseResolver;
 class WakeLockSentinel;
 
-// https://w3c.github.io/wake-lock/#concepts-and-state-record
+// https://w3c.github.io/screen-wake-lock/#concepts-and-state-record
 // Per-document and per-wake lock type internal data.
 class MODULES_EXPORT WakeLockManager final
     : public GarbageCollected<WakeLockManager> {
@@ -31,7 +31,7 @@ class MODULES_EXPORT WakeLockManager final
 
   void UnregisterSentinel(WakeLockSentinel*);
 
-  void Trace(Visitor* visitor);
+  void Trace(Visitor* visitor) const;
 
  private:
   // Handle connection errors from |wake_lock_|.

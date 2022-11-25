@@ -5,8 +5,9 @@
 #include "content/browser/appcache/appcache_backfillers.h"
 
 #include "content/browser/appcache/appcache_update_job.h"
+#include "net/http/http_request_headers.h"
 #include "sql/statement.h"
-#include "storage/browser/quota/padding_key.h"
+#include "storage/common/quota/padding_key.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -17,9 +18,7 @@ int64_t ComputeEntryPaddingSize(std::string response_url,
                                 std::string manifest_url) {
   if (GURL(response_url).GetOrigin() == GURL(manifest_url).GetOrigin())
     return 0;
-  return storage::ComputeResponsePadding(
-      response_url, storage::GetDefaultPaddingKey(), /*has_metadata=*/false,
-      /*loaded_with_credentials=*/false);
+  return storage::ComputeRandomResponsePadding();
 }
 
 // Iterates over each Cache record; execute |callable| on each iteration.

@@ -5,7 +5,9 @@
 #ifndef UI_VIEWS_EXAMPLES_EXAMPLE_BASE_H_
 #define UI_VIEWS_EXAMPLES_EXAMPLE_BASE_H_
 
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "base/macros.h"
 #include "ui/views/examples/views_examples_export.h"
@@ -23,7 +25,7 @@ class VIEWS_EXAMPLES_EXPORT ExampleBase {
   virtual void CreateExampleView(View* parent) = 0;
 
   const std::string& example_title() const { return example_title_; }
-  View* example_view() { return container_; }
+  View* example_view() { return container_.get(); }
 
  protected:
   explicit ExampleBase(const char* title);
@@ -33,10 +35,12 @@ class VIEWS_EXAMPLES_EXPORT ExampleBase {
   std::string example_title_;
 
   // The view that contains the views example.
-  View* container_;
+  std::unique_ptr<View> container_;
 
   DISALLOW_COPY_AND_ASSIGN(ExampleBase);
 };
+
+using ExampleVector = std::vector<std::unique_ptr<ExampleBase>>;
 
 }  // namespace examples
 }  // namespace views

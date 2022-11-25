@@ -218,6 +218,9 @@ class QUIC_EXPORT_PRIVATE QuicFramerVisitorInterface {
   // Called when a handshake done frame has been parsed.
   virtual bool OnHandshakeDoneFrame(const QuicHandshakeDoneFrame& frame) = 0;
 
+  // Called when an AckFrequencyFrame has been parsed.
+  virtual bool OnAckFrequencyFrame(const QuicAckFrequencyFrame& frame) = 0;
+
   // Called when a packet has been completely processed.
   virtual void OnPacketComplete() = 0;
 
@@ -312,19 +315,17 @@ class QUIC_EXPORT_PRIVATE QuicFramer {
                                     QuicByteCount length);
   // Size in bytes of all ack frame fields without the missing packets or ack
   // blocks.
-  // TODO(fayang): Remove |largest_observed_length| when deprecating
-  // quic_use_ack_frame_to_get_min_size.
-  static size_t GetMinAckFrameSize(
-      QuicTransportVersion version,
-      const QuicAckFrame& ack_frame,
-      uint32_t local_ack_delay_exponent,
-      QuicPacketNumberLength largest_observed_length);
+  static size_t GetMinAckFrameSize(QuicTransportVersion version,
+                                   const QuicAckFrame& ack_frame,
+                                   uint32_t local_ack_delay_exponent);
   // Size in bytes of a stop waiting frame.
   static size_t GetStopWaitingFrameSize(
       QuicPacketNumberLength packet_number_length);
   // Size in bytes of all reset stream frame fields.
   static size_t GetRstStreamFrameSize(QuicTransportVersion version,
                                       const QuicRstStreamFrame& frame);
+  // Size in bytes of all ack frenquency frame fields.
+  static size_t GetAckFrequencyFrameSize(const QuicAckFrequencyFrame& frame);
   // Size in bytes of all connection close frame fields, including the error
   // details.
   static size_t GetConnectionCloseFrameSize(
@@ -485,14 +486,16 @@ class QUIC_EXPORT_PRIVATE QuicFramer {
   bool AppendTypeByte(const QuicFrame& frame,
                       bool last_frame_in_packet,
                       QuicDataWriter* writer);
-  bool AppendIetfTypeByte(const QuicFrame& frame,
-                          bool last_frame_in_packet,
-                          QuicDataWriter* writer);
+  bool AppendIetfFrameType(const QuicFrame& frame,
+                           bool last_frame_in_packet,
+                           QuicDataWriter* writer);
   size_t AppendIetfFrames(const QuicFrames& frames, QuicDataWriter* writer);
   bool AppendStreamFrame(const QuicStreamFrame& frame,
                          bool last_frame_in_packet,
                          QuicDataWriter* writer);
   bool AppendCryptoFrame(const QuicCryptoFrame& frame, QuicDataWriter* writer);
+  bool AppendAckFrequencyFrame(const QuicAckFrequencyFrame& frame,
+                               QuicDataWriter* writer);
 
   // SetDecrypter sets the primary decrypter, replacing any that already exists.
   // If an alternative decrypter is in place then the function DCHECKs. This is
@@ -575,6 +578,11 @@ class QUIC_EXPORT_PRIVATE QuicFramer {
 
   // Returns true if encrypter of |level| is available.
   bool HasEncrypterOfEncryptionLevel(EncryptionLevel level) const;
+  // Returns true if decrypter of |level| is available.
+  bool HasDecrypterOfEncryptionLevel(EncryptionLevel level) const;
+
+  // Returns true if an encrypter of |space| is available.
+  bool HasAnEncrypterForSpace(PacketNumberSpace space) const;
 
   void set_validate_flags(bool value) { validate_flags_ = value; }
 
@@ -919,7 +927,8 @@ class QUIC_EXPORT_PRIVATE QuicFramer {
   bool ProcessCryptoFrame(QuicDataReader* reader,
                           EncryptionLevel encryption_level,
                           QuicCryptoFrame* frame);
-
+  bool ProcessAckFrequencyFrame(QuicDataReader* reader,
+                                QuicAckFrequencyFrame* frame);
   // IETF frame appending methods.  All methods append the type byte as well.
   bool AppendIetfStreamFrame(const QuicStreamFrame& frame,
                              bool last_frame_in_packet,
@@ -1097,9 +1106,10 @@ class QUIC_EXPORT_PRIVATE QuicFramer {
 // This text, inserted by the peer if it's using Google's QUIC implementation,
 // contains additional error information that narrows down the exact error. The
 // extracted error code and (possibly updated) error_details string are returned
-// in |*frame|. If an error code is not found in the error details then the
-// extracted_error_code is set to QuicErrorCode::QUIC_IETF_GQUIC_ERROR_MISSING.
-// If there is an error code in the string then it is removed from the string.
+// in |*frame|. If an error code is not found in the error details, then
+// frame->quic_error_code is set to
+// QuicErrorCode::QUIC_IETF_GQUIC_ERROR_MISSING.  If there is an error code in
+// the string then it is removed from the string.
 QUIC_EXPORT_PRIVATE void MaybeExtractQuicErrorCode(
     QuicConnectionCloseFrame* frame);
 

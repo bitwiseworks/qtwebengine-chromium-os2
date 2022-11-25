@@ -8,10 +8,11 @@
 #include <string>
 #include <vector>
 
-#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/task/post_task.h"
+#include "components/web_package/web_bundle_utils.h"
 #include "content/browser/web_package/web_bundle_reader.h"
+#include "content/browser/web_package/web_bundle_source.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
@@ -29,39 +30,9 @@ namespace content {
 
 namespace {
 
-constexpr char kCrLf[] = "\r\n";
-
-network::mojom::URLResponseHeadPtr CreateResourceResponse(
-    const data_decoder::mojom::BundleResponsePtr& response) {
-  DCHECK_EQ(net::HTTP_OK, response->response_code);
-
-  std::vector<std::string> header_strings;
-  header_strings.push_back("HTTP/1.1 ");
-  header_strings.push_back(base::NumberToString(response->response_code));
-  header_strings.push_back(" ");
-  header_strings.push_back(net::GetHttpReasonPhrase(
-      static_cast<net::HttpStatusCode>(response->response_code)));
-  header_strings.push_back(kCrLf);
-  for (const auto& it : response->response_headers) {
-    header_strings.push_back(it.first);
-    header_strings.push_back(": ");
-    header_strings.push_back(it.second);
-    header_strings.push_back(kCrLf);
-  }
-  header_strings.push_back(kCrLf);
-
-  auto response_head = network::mojom::URLResponseHead::New();
-
-  response_head->headers = base::MakeRefCounted<net::HttpResponseHeaders>(
-      net::HttpUtil::AssembleRawHeaders(base::JoinString(header_strings, "")));
-  response_head->headers->GetMimeTypeAndCharset(&response_head->mime_type,
-                                                &response_head->charset);
-  return response_head;
-}
-
 void AddResponseParseErrorMessageToConsole(
     int frame_tree_node_id,
-    const data_decoder::mojom::BundleResponseParseErrorPtr& error) {
+    const web_package::mojom::BundleResponseParseErrorPtr& error) {
   WebContents* web_contents =
       WebContents::FromFrameTreeNodeId(frame_tree_node_id);
   if (!web_contents)
@@ -110,16 +81,18 @@ class WebBundleURLLoaderFactory::EntryLoader final
 
  private:
   // network::mojom::URLLoader implementation
-  void FollowRedirect(const std::vector<std::string>& removed_headers,
-                      const net::HttpRequestHeaders& modified_headers,
-                      const base::Optional<GURL>& new_url) override {}
+  void FollowRedirect(
+      const std::vector<std::string>& removed_headers,
+      const net::HttpRequestHeaders& modified_headers,
+      const net::HttpRequestHeaders& modified_cors_exempt_headers,
+      const base::Optional<GURL>& new_url) override {}
   void SetPriority(net::RequestPriority priority,
                    int intra_priority_value) override {}
   void PauseReadingBodyFromNet() override {}
   void ResumeReadingBodyFromNet() override {}
 
-  void OnResponseReady(data_decoder::mojom::BundleResponsePtr response,
-                       data_decoder::mojom::BundleResponseParseErrorPtr error) {
+  void OnResponseReady(web_package::mojom::BundleResponsePtr response,
+                       web_package::mojom::BundleResponseParseErrorPtr error) {
     if (!factory_ || !loader_client_.is_connected())
       return;
 
@@ -133,7 +106,7 @@ class WebBundleURLLoaderFactory::EntryLoader final
       return;
     }
 
-    auto response_head = CreateResourceResponse(response);
+    auto response_head = web_package::CreateResourceResponse(response);
     if (byte_range_) {
       if (byte_range_->ComputeBounds(response->payload_length)) {
         response_head->headers->UpdateWithNewRange(
@@ -226,9 +199,7 @@ void WebBundleURLLoaderFactory::CreateLoaderAndStart(
     const network::ResourceRequest& resource_request,
     mojo::PendingRemote<network::mojom::URLLoaderClient> loader_client,
     const net::MutableNetworkTrafficAnnotationTag& traffic_annotation) {
-  if (base::EqualsCaseInsensitiveASCII(resource_request.method,
-                                       net::HttpRequestHeaders::kGetMethod) &&
-      reader_->HasEntry(resource_request.url)) {
+  if (CanHandleRequest(resource_request)) {
     auto loader = std::make_unique<EntryLoader>(
         weak_factory_.GetWeakPtr(), std::move(loader_client), resource_request,
         frame_tree_node_id_);
@@ -249,6 +220,24 @@ void WebBundleURLLoaderFactory::CreateLoaderAndStart(
 void WebBundleURLLoaderFactory::Clone(
     mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver) {
   receivers_.Add(this, std::move(receiver));
+}
+
+bool WebBundleURLLoaderFactory::CanHandleRequest(
+    const network::ResourceRequest& resource_request) const {
+  if (!base::EqualsCaseInsensitiveASCII(resource_request.method,
+                                        net::HttpRequestHeaders::kGetMethod)) {
+    return false;
+  }
+  if (reader_->source().is_network() &&
+      !reader_->source().IsPathRestrictionSatisfied(resource_request.url)) {
+    // For network served bundle, subresources are loaded from the bundle only
+    // when their URLs are inside the bundle's scope.
+    // https://github.com/WICG/webpackage/blob/master/explainers/navigation-to-unsigned-bundles.md#loading-an-authoritative-unsigned-bundle
+    // 'Subsequent subresource requests will also only be served from the bundle
+    // if they're inside its scope.'
+    return false;
+  }
+  return reader_->HasEntry(resource_request.url);
 }
 
 }  // namespace content

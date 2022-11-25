@@ -31,7 +31,7 @@ class OnceTestEventModel : public EventModel {
  public:
   OnceTestEventModel() : ready_(false) { kValidFeatureConfig.valid = true; }
 
-  void Initialize(const OnModelInitializationFinished& callback,
+  void Initialize(OnModelInitializationFinished callback,
                   uint32_t current_day) override {}
 
   bool IsReady() const override { return ready_; }
@@ -40,6 +40,12 @@ class OnceTestEventModel : public EventModel {
 
   const Event* GetEvent(const std::string& event_name) const override {
     return nullptr;
+  }
+
+  uint32_t GetEventCount(const std::string& event_name,
+                         uint32_t current_day,
+                         uint32_t window_size) const override {
+    return 0;
   }
 
   void IncrementEvent(const std::string& event_name, uint32_t day) override {}

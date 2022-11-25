@@ -24,6 +24,7 @@
 #include "components/autofill/core/common/autofill_switches.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/password_generation_util.h"
+#include "components/autofill/core/common/renderer_id.h"
 #include "components/password_manager/core/common/password_manager_features.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
@@ -894,21 +895,20 @@ TEST_F(PasswordGenerationAgentTest, FallbackForSaving) {
   LoadHTMLWithUserGesture(kAccountCreationFormHTML);
   SimulateElementRightClick("first_password");
   SelectGenerationFallbackAndExpect(true);
-  EXPECT_EQ(0, fake_driver_.called_show_manual_fallback_for_saving_count());
+  EXPECT_EQ(0, fake_driver_.called_inform_about_user_input_count());
   base::string16 password = base::ASCIIToUTF16("random_password");
   EXPECT_CALL(fake_pw_client_, PresaveGeneratedPassword(_, Eq(password)))
       .WillOnce(testing::InvokeWithoutArgs([this]() {
         // Make sure that generation event was propagated to the browser before
         // the fallback showing. Otherwise, the fallback for saving provides a
         // save bubble instead of a confirmation bubble.
-        EXPECT_EQ(0,
-                  fake_driver_.called_show_manual_fallback_for_saving_count());
+        EXPECT_EQ(0, fake_driver_.called_inform_about_user_input_count());
       }));
   password_generation_->GeneratedPasswordAccepted(password);
   fake_driver_.Flush();
   // Two fallback requests are expected because generation changes either new
   // password and confirmation fields.
-  EXPECT_EQ(2, fake_driver_.called_show_manual_fallback_for_saving_count());
+  EXPECT_EQ(2, fake_driver_.called_inform_about_user_input_count());
 }
 
 TEST_F(PasswordGenerationAgentTest, FormClassifierDisabled) {
@@ -1146,8 +1146,8 @@ TEST_F(PasswordGenerationAgentTest, GenerationAvailableByRendererIds) {
   // Simulate that the browser informs about eligible for generation form.
   // Check that generation is available only on new password field of this form.
   PasswordFormGenerationData generation_data;
-  generation_data.new_password_renderer_id =
-      password_elements[0].UniqueRendererFormControlId();
+  generation_data.new_password_renderer_id = autofill::FieldRendererId(
+      password_elements[0].UniqueRendererFormControlId());
 
   password_generation_->FoundFormEligibleForGeneration(generation_data);
   ExpectAutomaticGenerationAvailable(kPasswordElementsIds[0], kAvailable);
@@ -1156,8 +1156,8 @@ TEST_F(PasswordGenerationAgentTest, GenerationAvailableByRendererIds) {
 
   // Simulate that the browser informs about the second eligible for generation
   // form. Check that generation is available on both forms.
-  generation_data.new_password_renderer_id =
-      password_elements[2].UniqueRendererFormControlId();
+  generation_data.new_password_renderer_id = autofill::FieldRendererId(
+      password_elements[2].UniqueRendererFormControlId());
   password_generation_->FoundFormEligibleForGeneration(generation_data);
   ExpectAutomaticGenerationAvailable(kPasswordElementsIds[0], kAvailable);
   ExpectGenerationElementLostFocus(kPasswordElementsIds[1]);

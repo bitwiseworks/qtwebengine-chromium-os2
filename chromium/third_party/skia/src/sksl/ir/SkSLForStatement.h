@@ -18,10 +18,12 @@ namespace SkSL {
  * A 'for' statement.
  */
 struct ForStatement : public Statement {
+    static constexpr Kind kStatementKind = Kind::kFor;
+
     ForStatement(int offset, std::unique_ptr<Statement> initializer,
                  std::unique_ptr<Expression> test, std::unique_ptr<Expression> next,
                  std::unique_ptr<Statement> statement, std::shared_ptr<SymbolTable> symbols)
-    : INHERITED(offset, kFor_Kind)
+    : INHERITED(offset, kStatementKind)
     , fSymbols(symbols)
     , fInitializer(std::move(initializer))
     , fTest(std::move(test))
@@ -29,16 +31,20 @@ struct ForStatement : public Statement {
     , fStatement(std::move(statement)) {}
 
     std::unique_ptr<Statement> clone() const override {
-        return std::unique_ptr<Statement>(new ForStatement(fOffset, fInitializer->clone(),
-                                                           fTest->clone(), fNext->clone(),
-                                                           fStatement->clone(), fSymbols));
+        return std::unique_ptr<Statement>(new ForStatement(fOffset,
+                                                     fInitializer ? fInitializer->clone() : nullptr,
+                                                     fTest ? fTest->clone() : nullptr,
+                                                     fNext ? fNext->clone() : nullptr,
+                                                     fStatement->clone(),
+                                                     fSymbols));
     }
 
-#ifdef SK_DEBUG
     String description() const override {
         String result("for (");
         if (fInitializer) {
             result += fInitializer->description();
+        } else {
+            result += ";";
         }
         result += " ";
         if (fTest) {
@@ -51,7 +57,6 @@ struct ForStatement : public Statement {
         result += ") " + fStatement->description();
         return result;
     }
-#endif
 
     // it's important to keep fSymbols defined first (and thus destroyed last) because destroying
     // the other fields can update symbol reference counts
@@ -61,9 +66,9 @@ struct ForStatement : public Statement {
     std::unique_ptr<Expression> fNext;
     std::unique_ptr<Statement> fStatement;
 
-    typedef Statement INHERITED;
+    using INHERITED = Statement;
 };
 
-} // namespace
+}  // namespace SkSL
 
 #endif

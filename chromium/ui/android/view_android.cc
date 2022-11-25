@@ -14,17 +14,20 @@
 #include "base/stl_util.h"
 #include "cc/layers/layer.h"
 #include "components/viz/common/frame_sinks/copy_output_request.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/android/event_forwarder.h"
 #include "ui/android/ui_android_jni_headers/ViewAndroidDelegate_jni.h"
 #include "ui/android/window_android.h"
+#include "ui/base/cursor/cursor.h"
+#include "ui/base/cursor/mojom/cursor_type.mojom-shared.h"
 #include "ui/base/layout.h"
-#include "ui/base/mojom/cursor_type.mojom-shared.h"
 #include "ui/events/android/drag_event_android.h"
 #include "ui/events/android/event_handler_android.h"
 #include "ui/events/android/gesture_event_android.h"
 #include "ui/events/android/key_event_android.h"
 #include "ui/events/android/motion_event_android.h"
 #include "ui/gfx/android/java_bitmap.h"
+#include "ui/gfx/geometry/point.h"
 #include "url/gurl.h"
 
 namespace ui {
@@ -139,6 +142,8 @@ void ViewAndroid::AddChild(ViewAndroid* child) {
   // accidentally overwrite the valid ones in the children.
   if (!physical_size_.IsEmpty())
     child->OnPhysicalBackingSizeChanged(physical_size_);
+
+  child->OnControlsResizeViewChanged(controls_resize_view_);
 
   // Empty view size also need not propagating down in order to prevent
   // spurious events with empty size from being sent down.
@@ -389,25 +394,25 @@ bool ViewAndroid::StartDragAndDrop(const JavaRef<jstring>& jtext,
                                                    jimage);
 }
 
-void ViewAndroid::OnCursorChanged(int type,
-                                  const SkBitmap& custom_image,
-                                  const gfx::Point& hotspot) {
+void ViewAndroid::OnCursorChanged(const Cursor& cursor) {
   ScopedJavaLocalRef<jobject> delegate(GetViewAndroidDelegate());
   if (delegate.is_null())
     return;
   JNIEnv* env = base::android::AttachCurrentThread();
-  if (type == static_cast<int>(ui::mojom::CursorType::kCustom)) {
-    if (custom_image.drawsNothing()) {
+  if (cursor.type() == mojom::CursorType::kCustom) {
+    const SkBitmap& bitmap = cursor.custom_bitmap();
+    const gfx::Point& hotspot = cursor.custom_hotspot();
+    if (bitmap.drawsNothing()) {
       Java_ViewAndroidDelegate_onCursorChanged(
-          env, delegate, static_cast<int>(ui::mojom::CursorType::kPointer));
+          env, delegate, static_cast<int>(mojom::CursorType::kPointer));
       return;
     }
-    ScopedJavaLocalRef<jobject> java_bitmap =
-        gfx::ConvertToJavaBitmap(&custom_image);
+    ScopedJavaLocalRef<jobject> java_bitmap = gfx::ConvertToJavaBitmap(&bitmap);
     Java_ViewAndroidDelegate_onCursorChangedToCustom(env, delegate, java_bitmap,
                                                      hotspot.x(), hotspot.y());
   } else {
-    Java_ViewAndroidDelegate_onCursorChanged(env, delegate, type);
+    Java_ViewAndroidDelegate_onCursorChanged(env, delegate,
+                                             static_cast<int>(cursor.type()));
   }
 }
 
@@ -434,7 +439,6 @@ void ViewAndroid::OnTopControlsChanged(float top_controls_offset,
 
 void ViewAndroid::OnBottomControlsChanged(
     float bottom_controls_offset,
-    float bottom_content_offset,
     float bottom_controls_min_height_offset) {
   ScopedJavaLocalRef<jobject> delegate(GetViewAndroidDelegate());
   if (delegate.is_null())
@@ -442,7 +446,6 @@ void ViewAndroid::OnBottomControlsChanged(
   JNIEnv* env = base::android::AttachCurrentThread();
   Java_ViewAndroidDelegate_onBottomControlsChanged(
       env, delegate, std::round(bottom_controls_offset),
-      std::round(bottom_content_offset),
       std::round(bottom_controls_min_height_offset));
 }
 
@@ -461,6 +464,16 @@ void ViewAndroid::OnBrowserControlsHeightChanged() {
     if (child->match_parent())
       child->OnBrowserControlsHeightChanged();
   }
+}
+
+void ViewAndroid::OnVerticalScrollDirectionChanged(bool direction_up,
+                                                   float current_scroll_ratio) {
+  ScopedJavaLocalRef<jobject> delegate(GetViewAndroidDelegate());
+  if (delegate.is_null())
+    return;
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_ViewAndroidDelegate_onVerticalScrollDirectionChanged(
+      env, delegate, direction_up, current_scroll_ratio);
 }
 
 void ViewAndroid::OnSizeChanged(int width, int height) {
@@ -498,15 +511,32 @@ void ViewAndroid::DispatchOnSizeChanged() {
   }
 }
 
-void ViewAndroid::OnPhysicalBackingSizeChanged(const gfx::Size& size) {
+void ViewAndroid::OnPhysicalBackingSizeChanged(
+    const gfx::Size& size,
+    base::Optional<base::TimeDelta> deadline_override) {
   if (physical_size_ == size)
     return;
   physical_size_ = size;
   if (event_handler_)
-    event_handler_->OnPhysicalBackingSizeChanged();
+    event_handler_->OnPhysicalBackingSizeChanged(deadline_override);
 
   for (auto* child : children_)
-    child->OnPhysicalBackingSizeChanged(size);
+    child->OnPhysicalBackingSizeChanged(size, deadline_override);
+}
+
+void ViewAndroid::OnControlsResizeViewChanged(bool controls_resize_view) {
+  if (controls_resize_view == controls_resize_view_)
+    return;
+  controls_resize_view_ = controls_resize_view;
+  if (event_handler_)
+    event_handler_->OnControlsResizeViewChanged();
+
+  for (auto* child : children_)
+    child->OnControlsResizeViewChanged(controls_resize_view);
+}
+
+bool ViewAndroid::ControlsResizeView() {
+  return controls_resize_view_;
 }
 
 gfx::Size ViewAndroid::GetPhysicalBackingSize() const {
@@ -663,46 +693,6 @@ bool ViewAndroid::HitTest(EventHandlerCallback<E> handler_callback,
 
 void ViewAndroid::SetLayoutForTesting(int x, int y, int width, int height) {
   bounds_.SetRect(x, y, width, height);
-}
-
-bool ViewAndroid::HasTouchlessEventHandler() {
-  JNIEnv* env = base::android::AttachCurrentThread();
-  static bool s_has_touchless_event_handler =
-      Java_ViewAndroidDelegate_hasTouchlessEventHandler(env);
-
-  return s_has_touchless_event_handler;
-}
-
-bool ViewAndroid::OnUnconsumedKeyboardEventAck(int native_code) {
-  if (!HasTouchlessEventHandler())
-    return false;
-
-  JNIEnv* env = base::android::AttachCurrentThread();
-
-  return Java_ViewAndroidDelegate_onUnconsumedKeyboardEventAck(env,
-                                                               native_code);
-}
-
-void ViewAndroid::FallbackCursorModeLockCursor(bool left,
-                                               bool right,
-                                               bool up,
-                                               bool down) {
-  if (!HasTouchlessEventHandler())
-    return;
-
-  JNIEnv* env = base::android::AttachCurrentThread();
-
-  Java_ViewAndroidDelegate_fallbackCursorModeLockCursor(env, left, right, up,
-                                                        down);
-}
-
-void ViewAndroid::FallbackCursorModeSetCursorVisibility(bool visible) {
-  if (!HasTouchlessEventHandler())
-    return;
-
-  JNIEnv* env = base::android::AttachCurrentThread();
-
-  Java_ViewAndroidDelegate_fallbackCursorModeSetCursorVisibility(env, visible);
 }
 
 }  // namespace ui

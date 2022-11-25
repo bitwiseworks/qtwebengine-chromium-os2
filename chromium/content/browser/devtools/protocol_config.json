@@ -10,6 +10,10 @@
         "export_header": "content/common/content_export.h",
         "options": [
             {
+                "domain": "Audits",
+                "include": ["enable", "disable"]
+            },
+            {
                 "domain": "BackgroundService",
                 "async": ["startObserving"]
             },
@@ -24,7 +28,7 @@
             },
             {
                 "domain": "Emulation",
-                "include": ["setGeolocationOverride", "clearGeolocationOverride", "setEmitTouchEventsForMouse", "canEmulate", "setDeviceMetricsOverride", "clearDeviceMetricsOverride", "setVisibleSize", "setUserAgentOverride"]
+                "include": ["setIdleOverride", "clearIdleOverride", "setGeolocationOverride", "clearGeolocationOverride", "setEmitTouchEventsForMouse", "canEmulate", "setDeviceMetricsOverride", "clearDeviceMetricsOverride", "setVisibleSize", "setUserAgentOverride", "setFocusEmulationEnabled"]
             },
             {
                 "domain": "Input",
@@ -39,15 +43,19 @@
                 "exclude": ["resolveBlob"]
             },
             {
+                "domain": "Log",
+                "include": ["LogEntry", "entryAdded", "enable", "disable"]
+            },
+            {
                 "domain": "Memory",
                 "include": ["getBrowserSamplingProfile", "setPressureNotificationsSuppressed", "simulatePressureNotification", "prepareForLeakDetection"],
                 "async": ["prepareForLeakDetection"]
             },
             {
                 "domain": "Network",
-                "include": ["enable", "disable", "clearBrowserCache", "clearBrowserCookies", "getCookies", "getAllCookies", "deleteCookies", "setCookie", "setCookies", "setExtraHTTPHeaders", "canEmulateNetworkConditions", "emulateNetworkConditions", "setBypassServiceWorker", "setRequestInterception", "continueInterceptedRequest", "getResponseBodyForInterception", "setCacheDisabled", "takeResponseBodyForInterceptionAsStream"],
+                "include": ["enable", "disable", "clearBrowserCache", "clearBrowserCookies", "getCookies", "getAllCookies", "deleteCookies", "setCookie", "setCookies", "setExtraHTTPHeaders", "canEmulateNetworkConditions", "emulateNetworkConditions", "setBypassServiceWorker", "setRequestInterception", "continueInterceptedRequest", "getResponseBodyForInterception", "setCacheDisabled", "takeResponseBodyForInterceptionAsStream", "getSecurityIsolationStatus", "loadNetworkResource"],
                 "include_events": ["requestWillBeSent", "responseReceived", "loadingFinished", "loadingFailed", "requestIntercepted", "signedExchangeReceived", "requestWillBeSentExtraInfo", "responseReceivedExtraInfo"],
-                "async": ["clearBrowserCookies", "clearBrowserCache", "getCookies", "getAllCookies", "deleteCookies", "setCookie", "setCookies", "continueInterceptedRequest", "getResponseBodyForInterception", "takeResponseBodyForInterceptionAsStream"]
+                "async": ["clearBrowserCookies", "clearBrowserCache", "getCookies", "getAllCookies", "deleteCookies", "setCookie", "setCookies", "continueInterceptedRequest", "getResponseBodyForInterception", "takeResponseBodyForInterceptionAsStream", "loadNetworkResource"]
             },
             {
                 "domain": "Overlay",
@@ -86,7 +94,7 @@
             },
             {
                 "domain": "Target",
-                "async": ["disposeBrowserContext", "setAutoAttach"]
+                "async": ["createBrowserContext", "disposeBrowserContext", "setAutoAttach"]
             },
             {
                 "domain": "Tethering",
@@ -102,7 +110,7 @@
             },
             {
                 "domain": "WebAuthn",
-                "include": ["enable", "disable", "addVirtualAuthenticator", "removeVirtualAuthenticator", "addCredential", "removeCredential", "clearCredentials", "getCredential", "getCredentials", "setUserVerified"]
+                "include": ["enable", "disable", "addVirtualAuthenticator", "removeVirtualAuthenticator", "addCredential", "removeCredential", "clearCredentials", "getCredential", "getCredentials", "setUserVerified", "setAutomaticPresenceSimulation"]
             }
         ]
     },

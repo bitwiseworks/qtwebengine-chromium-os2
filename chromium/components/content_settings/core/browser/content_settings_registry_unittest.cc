@@ -5,27 +5,30 @@
 #include <string>
 #include <vector>
 
-#include "base/logging.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/content_settings/core/browser/content_settings_info.h"
 #include "components/content_settings/core/browser/content_settings_registry.h"
-#include "components/content_settings/core/browser/content_settings_utils.h"
 #include "components/content_settings/core/browser/website_settings_info.h"
 #include "components/content_settings/core/browser/website_settings_registry.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_registry.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "url/gurl.h"
-#include "url/origin.h"
 
+// Cannot use an anonymous namespace because WebsiteSettingsRegistry's
+// constructor and destructor are private.
 namespace content_settings {
+
+using ::testing::Contains;
+using ::testing::ElementsAre;
 
 class ContentSettingsRegistryTest : public testing::Test {
  protected:
   ContentSettingsRegistryTest() : registry_(&website_settings_registry_) {}
+
   ContentSettingsRegistry* registry() { return &registry_; }
   WebsiteSettingsRegistry* website_settings_registry() {
     return &website_settings_registry_;
@@ -65,11 +68,7 @@ TEST_F(ContentSettingsRegistryTest, Properties) {
       registry()->Get(ContentSettingsType::COOKIES);
   ASSERT_TRUE(info);
 
-  // Check that the whitelisted types are correct.
-  std::vector<std::string> expected_whitelist;
-  expected_whitelist.push_back("chrome");
-  expected_whitelist.push_back("devtools");
-  EXPECT_EQ(expected_whitelist, info->whitelisted_schemes());
+  EXPECT_THAT(info->whitelisted_schemes(), ElementsAre("chrome", "devtools"));
 
   // Check the other properties are populated correctly.
   EXPECT_TRUE(info->IsSettingValid(CONTENT_SETTING_SESSION_ONLY));
@@ -133,20 +132,22 @@ TEST_F(ContentSettingsRegistryTest, Inheritance) {
   // These settings are safe to inherit in incognito mode because they only
   // disable features like popup blocking, download blocking or ad blocking.
   // They do not allow access to user data.
-  const ContentSettingsType whitelist[] = {
-      ContentSettingsType::PLUGINS,              //
-      ContentSettingsType::POPUPS,               //
-      ContentSettingsType::AUTOMATIC_DOWNLOADS,  //
-      ContentSettingsType::ADS,                  //
-      ContentSettingsType::DURABLE_STORAGE,      //
+  const ContentSettingsType safe_types[] = {
+      ContentSettingsType::PLUGINS,
+      ContentSettingsType::POPUPS,
+      ContentSettingsType::AUTOMATIC_DOWNLOADS,
+      ContentSettingsType::ADS,
+      ContentSettingsType::DURABLE_STORAGE,
       ContentSettingsType::LEGACY_COOKIE_ACCESS,
       ContentSettingsType::STORAGE_ACCESS,
+      ContentSettingsType::INSECURE_PRIVATE_NETWORK,
   };
 
   for (const ContentSettingsInfo* info : *registry()) {
     SCOPED_TRACE("Content setting: " + info->website_settings_info()->name());
     // TODO(crbug.com/781756): Check IsSettingValid() because "protocol-handler"
     // and "mixed-script" don't have a proper initial default value.
+
     if (info->IsSettingValid(CONTENT_SETTING_ALLOW) &&
         info->GetInitialDefaultSetting() == CONTENT_SETTING_ALLOW) {
       // ALLOW-by-default settings are not affected by incognito_behavior, so
@@ -155,10 +156,11 @@ TEST_F(ContentSettingsRegistryTest, Inheritance) {
                 ContentSettingsInfo::INHERIT_IN_INCOGNITO);
       continue;
     }
+
     if (info->incognito_behavior() ==
-            ContentSettingsInfo::INHERIT_IN_INCOGNITO &&
-        !base::Contains(whitelist, info->website_settings_info()->type()))
-      FAIL() << "Content setting not whitelisted.";
+        ContentSettingsInfo::INHERIT_IN_INCOGNITO) {
+      EXPECT_THAT(safe_types, Contains(info->website_settings_info()->type()));
+    }
   }
 }
 
@@ -181,7 +183,7 @@ TEST_F(ContentSettingsRegistryTest, IsDefaultSettingValid) {
 #endif
 
 #if !defined(OS_IOS) && !defined(OS_ANDROID)
-  info = registry()->Get(ContentSettingsType::NATIVE_FILE_SYSTEM_WRITE_GUARD);
+  info = registry()->Get(ContentSettingsType::FILE_SYSTEM_WRITE_GUARD);
   EXPECT_FALSE(info->IsDefaultSettingValid(CONTENT_SETTING_ALLOW));
 #endif
 }
@@ -204,24 +206,11 @@ TEST_F(ContentSettingsRegistryTest, GetInitialDefaultSetting) {
   const ContentSettingsInfo* popups =
       registry()->Get(ContentSettingsType::POPUPS);
   EXPECT_EQ(CONTENT_SETTING_BLOCK, popups->GetInitialDefaultSetting());
-}
 
-TEST_F(ContentSettingsRegistryTest, OriginAllowlist) {
-// On iOS, CLIPBOARD_READ_WRITE and chrome-untrusted:// are not available. Skip
-// testing here.
-#if !defined(OS_IOS)
-  const ContentSettingsInfo* info =
-      registry()->Get(ContentSettingsType::CLIPBOARD_READ_WRITE);
-  ASSERT_TRUE(info);
-  EXPECT_TRUE(info->force_allowed_origins().contains(
-      url::Origin::Create(GURL(kChromeUIUntrustedTerminalAppURL))));
-  EXPECT_EQ(1U, info->force_allowed_origins().size());
-#endif
-
-  // We don't auto grant POPUPS permission.
-  const ContentSettingsInfo* info_popups =
-      registry()->Get(ContentSettingsType::POPUPS);
-  EXPECT_EQ(0U, info_popups->force_allowed_origins().size());
+  const ContentSettingsInfo* insecure_private_network =
+      registry()->Get(ContentSettingsType::INSECURE_PRIVATE_NETWORK);
+  EXPECT_EQ(CONTENT_SETTING_BLOCK,
+            insecure_private_network->GetInitialDefaultSetting());
 }
 
 }  // namespace content_settings

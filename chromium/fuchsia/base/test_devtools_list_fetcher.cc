@@ -16,7 +16,7 @@
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request_test_util.h"
 
-namespace {
+namespace cr_fuchsia {
 
 // Utility class to get the JSON value of the list URL for a DevTools service on
 // localhost.
@@ -40,7 +40,7 @@ class DevToolsListFetcher : public net::URLFetcherDelegate {
     on_url_fetch_complete_ack_ = run_loop.QuitClosure();
     run_loop.Run();
 
-    if (fetcher->GetStatus().status() != net::URLRequestStatus::SUCCESS)
+    if (fetcher->GetError() != net::OK)
       return base::Value();
 
     if (fetcher->GetResponseCode() != net::HTTP_OK)
@@ -65,10 +65,6 @@ class DevToolsListFetcher : public net::URLFetcherDelegate {
 
   DISALLOW_COPY_AND_ASSIGN(DevToolsListFetcher);
 };
-
-}  // namespace
-
-namespace cr_fuchsia {
 
 base::Value GetDevToolsListFromPort(uint16_t port) {
   DevToolsListFetcher devtools_fetcher;

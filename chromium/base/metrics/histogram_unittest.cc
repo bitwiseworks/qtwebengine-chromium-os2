@@ -28,6 +28,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/test/gtest_util.h"
 #include "base/time/time.h"
+#include "base/values.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -98,6 +99,15 @@ class HistogramTest : public testing::TestWithParam<bool> {
 
   std::unique_ptr<SampleVector> SnapshotAllSamples(Histogram* h) {
     return h->SnapshotAllSamples();
+  }
+
+  void GetCountAndBucketData(Histogram* histogram,
+                             base::Histogram::Count* count,
+                             int64_t* sum,
+                             base::ListValue* buckets) {
+    // A simple wrapper around |GetCountAndBucketData| to make it visible for
+    // testing.
+    histogram->GetCountAndBucketData(count, sum, buckets);
   }
 
   const bool use_persistent_histogram_allocator_;
@@ -772,7 +782,7 @@ TEST_P(HistogramTest, ScaledLinearHistogram) {
   scaled.AddScaledCount(6, 140);
 
   std::unique_ptr<SampleVector> samples =
-      SnapshotAllSamples(scaled.histogram());
+      SnapshotAllSamples(static_cast<Histogram*>(scaled.histogram()));
   EXPECT_EQ(0, samples->GetCountAtIndex(0));
   EXPECT_EQ(0, samples->GetCountAtIndex(1));
   EXPECT_EQ(1, samples->GetCountAtIndex(2));
@@ -862,6 +872,13 @@ TEST_P(HistogramTest, ExpiredHistogramTest) {
   samples = linear_expired->SnapshotDelta();
   EXPECT_EQ(0, samples->TotalCount());
 
+  ScaledLinearHistogram scaled_linear_expired(kExpiredHistogramName, 1, 5, 6,
+                                              100, HistogramBase::kNoFlags);
+  scaled_linear_expired.AddScaledCount(0, 1);
+  scaled_linear_expired.AddScaledCount(1, 49);
+  samples = scaled_linear_expired.histogram()->SnapshotDelta();
+  EXPECT_EQ(0, samples->TotalCount());
+
   std::vector<int> custom_ranges;
   custom_ranges.push_back(1);
   custom_ranges.push_back(5);
@@ -898,6 +915,46 @@ TEST_P(HistogramTest, ExpiredHistogramTest) {
   EXPECT_EQ(2, samples->TotalCount());
 }
 
+TEST_P(HistogramTest, CheckGetCountAndBucketData) {
+  const size_t kBucketCount = 50;
+  Histogram* histogram = static_cast<Histogram*>(Histogram::FactoryGet(
+      "AddCountHistogram", 10, 100, kBucketCount, HistogramBase::kNoFlags));
+  // Add samples in reverse order and make sure the output is in correct order.
+  histogram->AddCount(/*sample=*/30, /*value=*/14);
+  histogram->AddCount(/*sample=*/20, /*value=*/15);
+  histogram->AddCount(/*sample=*/20, /*value=*/15);
+  histogram->AddCount(/*sample=*/30, /*value=*/14);
+
+  base::Histogram::Count total_count;
+  int64_t sum;
+  base::ListValue buckets;
+  GetCountAndBucketData(histogram, &total_count, &sum, &buckets);
+  EXPECT_EQ(58, total_count);
+  EXPECT_EQ(1440, sum);
+  EXPECT_EQ(2u, buckets.GetSize());
+
+  int low, high, count;
+  // Check the first bucket.
+  base::DictionaryValue* bucket1;
+  EXPECT_TRUE(buckets.GetDictionary(0, &bucket1));
+  EXPECT_TRUE(bucket1->GetInteger("low", &low));
+  EXPECT_TRUE(bucket1->GetInteger("high", &high));
+  EXPECT_TRUE(bucket1->GetInteger("count", &count));
+  EXPECT_EQ(20, low);
+  EXPECT_EQ(21, high);
+  EXPECT_EQ(30, count);
+
+  // Check the second bucket.
+  base::DictionaryValue* bucket2;
+  EXPECT_TRUE(buckets.GetDictionary(1, &bucket2));
+  EXPECT_TRUE(bucket2->GetInteger("low", &low));
+  EXPECT_TRUE(bucket2->GetInteger("high", &high));
+  EXPECT_TRUE(bucket2->GetInteger("count", &count));
+  EXPECT_EQ(30, low);
+  EXPECT_EQ(31, high);
+  EXPECT_EQ(28, count);
+}
+
 TEST_P(HistogramTest, WriteAscii) {
   HistogramBase* histogram =
       LinearHistogram::FactoryGet("AsciiOut", /*minimum=*/1, /*maximum=*/10,
@@ -916,22 +973,24 @@ TEST_P(HistogramTest, WriteAscii) {
   EXPECT_THAT(output, testing::MatchesRegex(kOutputFormatRe));
 }
 
-TEST_P(HistogramTest, WriteHTMLGraph) {
+TEST_P(HistogramTest, ToGraphDict) {
   HistogramBase* histogram =
       LinearHistogram::FactoryGet("HTMLOut", /*minimum=*/1, /*maximum=*/10,
                                   /*bucket_count=*/5, HistogramBase::kNoFlags);
   histogram->AddCount(/*sample=*/4, /*value=*/5);
 
-  std::string output;
-  histogram->WriteHTMLGraph(&output);
+  base::DictionaryValue output = histogram->ToGraphDict();
+  std::string* header = output.FindStringKey("header");
+  std::string* body = output.FindStringKey("body");
 
-  const char kOutputFormatRe[] =
-      R"(<PRE><h4>Histogram: HTMLOut recorded 5 samples, mean = 4\.0.*<\/h4>)"
-      R"(0  \.\.\. <br>)"
-      R"(4  -+O \(5 = 100\.0%\) \{0\.0%\}<br>)"
-      R"(7  \.\.\. <br><\/PRE>)";
+  const char kOutputHeaderFormatRe[] =
+      R"(Histogram: HTMLOut recorded 5 samples, mean = 4\.0.*)";
+  const char kOutputBodyFormatRe[] = R"(0  \.\.\. \n)"
+                                     R"(4  -+O \(5 = 100\.0%\) \{0\.0%\}\n)"
+                                     R"(7  \.\.\. \n)";
 
-  EXPECT_THAT(output, testing::MatchesRegex(kOutputFormatRe));
+  EXPECT_THAT(*header, testing::MatchesRegex(kOutputHeaderFormatRe));
+  EXPECT_THAT(*body, testing::MatchesRegex(kOutputBodyFormatRe));
 }
 
 }  // namespace base

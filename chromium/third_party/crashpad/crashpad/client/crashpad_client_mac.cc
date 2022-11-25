@@ -14,6 +14,7 @@
 
 #include "client/crashpad_client.h"
 
+#include <Availability.h>
 #include <errno.h>
 #include <mach/mach.h>
 #include <pthread.h>
@@ -26,6 +27,7 @@
 #include "base/mac/mach_logging.h"
 #include "base/strings/stringprintf.h"
 #include "util/mac/mac_util.h"
+#include "util/mach/bootstrap.h"
 #include "util/mach/child_port_handshake.h"
 #include "util/mach/exception_ports.h"
 #include "util/mach/mach_extensions.h"
@@ -445,18 +447,23 @@ bool CrashpadClient::StartHandler(
     const std::map<std::string, std::string>& annotations,
     const std::vector<std::string>& arguments,
     bool restartable,
-    bool asynchronous_start) {
+    bool asynchronous_start,
+    const std::vector<base::FilePath>& attachments) {
+  // Attachments are not implemented on MacOS yet.
+  DCHECK(attachments.empty());
+
   // The “restartable” behavior can only be selected on OS X 10.10 and later. In
   // previous OS versions, if the initial client were to crash while attempting
   // to restart the handler, it would become an unkillable process.
-  base::mac::ScopedMachSendRight exception_port(
-      HandlerStarter::InitialStart(handler,
-                                   database,
-                                   metrics_dir,
-                                   url,
-                                   annotations,
-                                   arguments,
-                                   restartable && MacOSXMinorVersion() >= 10));
+  base::mac::ScopedMachSendRight exception_port(HandlerStarter::InitialStart(
+      handler,
+      database,
+      metrics_dir,
+      url,
+      annotations,
+      arguments,
+      restartable && (__MAC_OS_X_VERSION_MIN_REQUIRED >= __MAC_10_10 ||
+                      MacOSVersionNumber() >= 10'10'00)));
   if (!exception_port.is_valid()) {
     return false;
   }

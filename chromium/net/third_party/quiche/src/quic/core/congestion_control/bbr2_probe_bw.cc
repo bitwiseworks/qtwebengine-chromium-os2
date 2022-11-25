@@ -9,6 +9,7 @@
 #include "net/third_party/quiche/src/quic/core/quic_bandwidth.h"
 #include "net/third_party/quiche/src/quic/core/quic_time.h"
 #include "net/third_party/quiche/src/quic/core/quic_types.h"
+#include "net/third_party/quiche/src/quic/platform/api/quic_flag_utils.h"
 #include "net/third_party/quiche/src/quic/platform/api/quic_flags.h"
 #include "net/third_party/quiche/src/quic/platform/api/quic_logging.h"
 
@@ -79,12 +80,36 @@ Bbr2Mode Bbr2ProbeBwMode::OnCongestionEvent(
 }
 
 Limits<QuicByteCount> Bbr2ProbeBwMode::GetCwndLimits() const {
-  if (cycle_.phase == CyclePhase::PROBE_CRUISE) {
+  if (!GetQuicReloadableFlag(quic_bbr2_avoid_too_low_probe_bw_cwnd)) {
+    if (cycle_.phase == CyclePhase::PROBE_CRUISE) {
+      return NoGreaterThan(
+          std::min(model_->inflight_lo(), model_->inflight_hi_with_headroom()));
+    }
+
     return NoGreaterThan(
-        std::min(model_->inflight_lo(), model_->inflight_hi_with_headroom()));
+        std::min(model_->inflight_lo(), model_->inflight_hi()));
   }
 
-  return NoGreaterThan(std::min(model_->inflight_lo(), model_->inflight_hi()));
+  QUIC_RELOADABLE_FLAG_COUNT(quic_bbr2_avoid_too_low_probe_bw_cwnd);
+
+  QuicByteCount upper_limit =
+      std::min(model_->inflight_lo(), cycle_.phase == CyclePhase::PROBE_CRUISE
+                                          ? model_->inflight_hi_with_headroom()
+                                          : model_->inflight_hi());
+
+  if (Params().avoid_too_low_probe_bw_cwnd) {
+    // Ensure upper_limit is at least BDP + AckHeight.
+    QuicByteCount bdp_with_ack_height =
+        model_->BDP(model_->MaxBandwidth()) + model_->MaxAckHeight();
+    if (upper_limit < bdp_with_ack_height) {
+      QUIC_DVLOG(3) << sender_ << " Rasing upper_limit from " << upper_limit
+                    << " to " << bdp_with_ack_height;
+      QUIC_CODE_COUNT(quic_bbr2_avoid_too_low_probe_bw_cwnd_in_effect);
+      upper_limit = bdp_with_ack_height;
+    }
+  }
+
+  return NoGreaterThan(upper_limit);
 }
 
 bool Bbr2ProbeBwMode::IsProbingForBandwidth() const {
@@ -141,18 +166,26 @@ void Bbr2ProbeBwMode::UpdateProbeDown(
   QUIC_DVLOG(3)
       << sender_
       << " Checking if have enough inflight headroom. prior_in_flight:"
-      << prior_in_flight
+      << prior_in_flight << " congestion_event.bytes_in_flight:"
+      << congestion_event.bytes_in_flight
       << ", inflight_with_headroom:" << inflight_with_headroom;
-  if (prior_in_flight > inflight_with_headroom) {
+  QuicByteCount bytes_in_flight = prior_in_flight;
+  if (GetQuicReloadableFlag(quic_bbr2_use_post_inflight_to_detect_queuing)) {
+    // TODO(ianswett): Remove prior_in_flight from UpdateProbeDown.
+    QUIC_RELOADABLE_FLAG_COUNT_N(quic_bbr2_use_post_inflight_to_detect_queuing,
+                                 2, 2);
+    bytes_in_flight = congestion_event.bytes_in_flight;
+  }
+  if (bytes_in_flight > inflight_with_headroom) {
     // Stay in PROBE_DOWN.
     return;
   }
 
   // Transition to PROBE_CRUISE iff we've drained to target.
   QuicByteCount bdp = model_->BDP(model_->MaxBandwidth());
-  QUIC_DVLOG(3) << sender_ << " Checking if drained to target. prior_in_flight:"
-                << prior_in_flight << ", bdp:" << bdp;
-  if (prior_in_flight < bdp) {
+  QUIC_DVLOG(3) << sender_ << " Checking if drained to target. bytes_in_flight:"
+                << bytes_in_flight << ", bdp:" << bdp;
+  if (bytes_in_flight < bdp) {
     EnterProbeCruise(congestion_event.event_time);
   }
 }
@@ -174,9 +207,9 @@ Bbr2ProbeBwMode::AdaptUpperBoundsResult Bbr2ProbeBwMode::MaybeAdaptUpperBounds(
       cycle_.is_sample_from_probing = false;
 
       if (!send_state.is_app_limited) {
-        QuicByteCount inflight_at_send = BytesInFlight(send_state);
+        const QuicByteCount inflight_at_send = BytesInFlight(send_state);
 
-        QuicByteCount inflight_target =
+        const QuicByteCount inflight_target =
             sender_->GetTargetBytesInflight() * (1.0 - Params().beta);
         if (inflight_at_send >= inflight_target) {
           // The new code does not change behavior.
@@ -185,7 +218,20 @@ Bbr2ProbeBwMode::AdaptUpperBoundsResult Bbr2ProbeBwMode::MaybeAdaptUpperBounds(
           // The new code actually cuts inflight_hi slower than before.
           QUIC_CODE_COUNT(quic_bbr2_cut_inflight_hi_gradually_in_effect);
         }
-        model_->set_inflight_hi(std::max(inflight_at_send, inflight_target));
+        if (Params().limit_inflight_hi_by_cwnd) {
+          const QuicByteCount cwnd_target =
+              sender_->GetCongestionWindow() * (1.0 - Params().beta);
+          if (inflight_at_send >= cwnd_target) {
+            // The new code does not change behavior.
+            QUIC_CODE_COUNT(quic_bbr2_cut_inflight_hi_cwnd_noop);
+          } else {
+            // The new code actually cuts inflight_hi slower than before.
+            QUIC_CODE_COUNT(quic_bbr2_cut_inflight_hi_cwnd_in_effect);
+          }
+          model_->set_inflight_hi(std::max(inflight_at_send, cwnd_target));
+        } else {
+          model_->set_inflight_hi(std::max(inflight_at_send, inflight_target));
+        }
       }
 
       QUIC_DVLOG(3) << sender_ << " " << cycle_.phase
@@ -394,17 +440,23 @@ void Bbr2ProbeBwMode::UpdateProbeUp(
     const QuicByteCount bdp = model_->BDP(model_->MaxBandwidth());
     QuicByteCount queuing_threshold_extra_bytes = 2 * kDefaultTCPMSS;
     if (Params().add_ack_height_to_queueing_threshold) {
-      QUIC_RELOADABLE_FLAG_COUNT(
-          quic_bbr2_add_ack_height_to_queueing_threshold);
       queuing_threshold_extra_bytes += model_->MaxAckHeight();
     }
     QuicByteCount queuing_threshold =
         (Params().probe_bw_probe_inflight_gain * bdp) +
         queuing_threshold_extra_bytes;
-    is_queuing = prior_in_flight >= queuing_threshold;
+    if (GetQuicReloadableFlag(quic_bbr2_use_post_inflight_to_detect_queuing)) {
+      QUIC_RELOADABLE_FLAG_COUNT_N(
+          quic_bbr2_use_post_inflight_to_detect_queuing, 1, 2);
+      is_queuing = congestion_event.bytes_in_flight >= queuing_threshold;
+    } else {
+      is_queuing = prior_in_flight >= queuing_threshold;
+    }
     QUIC_DVLOG(3) << sender_
                   << " Checking if building up a queue. prior_in_flight:"
-                  << prior_in_flight << ", threshold:" << queuing_threshold
+                  << prior_in_flight
+                  << ", post_in_flight:" << congestion_event.bytes_in_flight
+                  << ", threshold:" << queuing_threshold
                   << ", is_queuing:" << is_queuing
                   << ", max_bw:" << model_->MaxBandwidth()
                   << ", min_rtt:" << model_->MinRtt();

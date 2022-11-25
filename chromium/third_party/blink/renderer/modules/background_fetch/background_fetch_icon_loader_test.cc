@@ -10,6 +10,7 @@
 #include "third_party/blink/public/platform/web_url_loader_mock_factory.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_image_resource.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
@@ -42,7 +43,7 @@ class BackgroundFetchIconLoaderTest : public PageTestBase {
       : loader_(MakeGarbageCollected<BackgroundFetchIconLoader>()) {}
   ~BackgroundFetchIconLoaderTest() override {
     loader_->Stop();
-    platform_->GetURLLoaderMockFactory()
+    WebURLLoaderMockFactory::GetSingletonInstance()
         ->UnregisterAllURLsAndClearMemoryCache();
   }
 
@@ -115,9 +116,7 @@ class BackgroundFetchIconLoaderTest : public PageTestBase {
         maximum_size);
   }
 
-  ExecutionContext* GetContext() const {
-    return GetDocument().ToExecutionContext();
-  }
+  ExecutionContext* GetContext() const { return GetFrame().DomWindow(); }
 
  protected:
   ScopedTestingPlatformSupport<TestingPlatformSupport> platform_;
@@ -135,7 +134,7 @@ TEST_F(BackgroundFetchIconLoaderTest, SuccessTest) {
   LoadIcon(KURL(kBackgroundFetchImageLoaderIcon500x500FullPath), maximum_size,
            run_loop.QuitClosure());
 
-  platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
+  WebURLLoaderMockFactory::GetSingletonInstance()->ServeAsynchronousRequests();
 
   run_loop.Run();
 
@@ -195,7 +194,7 @@ TEST_F(BackgroundFetchIconLoaderTest, EmptySizes) {
   LoadIcon(KURL(kBackgroundFetchImageLoaderIcon500x500FullPath), maximum_size,
            run_loop.QuitClosure(), "", "ANY");
 
-  platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
+  WebURLLoaderMockFactory::GetSingletonInstance()->ServeAsynchronousRequests();
 
   run_loop.Run();
 
@@ -210,7 +209,7 @@ TEST_F(BackgroundFetchIconLoaderTest, EmptyPurpose) {
   LoadIcon(KURL(kBackgroundFetchImageLoaderIcon500x500FullPath), maximum_size,
            run_loop.QuitClosure(), "500X500", "");
 
-  platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
+  WebURLLoaderMockFactory::GetSingletonInstance()->ServeAsynchronousRequests();
 
   run_loop.Run();
 

@@ -5,25 +5,18 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_COMMON_FEATURE_POLICY_FEATURE_POLICY_H_
 #define THIRD_PARTY_BLINK_PUBLIC_COMMON_FEATURE_POLICY_FEATURE_POLICY_H_
 
-#include <memory>
-#include <utility>
+#include <map>
 #include <vector>
 
-#include "base/containers/flat_map.h"
-#include "base/containers/flat_set.h"
-#include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "services/network/public/mojom/web_sandbox_flags.mojom-shared.h"
 #include "third_party/blink/public/common/common_export.h"
-#include "third_party/blink/public/common/feature_policy/policy_value.h"
+#include "third_party/blink/public/common/feature_policy/feature_policy_features.h"
 #include "third_party/blink/public/mojom/feature_policy/feature_policy.mojom-forward.h"
 #include "third_party/blink/public/mojom/feature_policy/feature_policy_feature.mojom-forward.h"
 #include "url/origin.h"
 
 namespace blink {
-
-namespace mojom {
-enum class WebSandboxFlags;
-}
 
 // Feature Policy is a mechanism for controlling the availability of web
 // platform features in a frame, including all embedded frames. It can be used
@@ -77,9 +70,10 @@ enum class WebSandboxFlags;
 // feature is available when no policy has been declared, ans determines how the
 // feature is inherited across origin boundaries.
 //
-// If the default policy  is in effect for a frame, then it controls how the
+// If the default policy is in effect for a frame, then it controls how the
 // feature is inherited by any cross-origin iframes embedded by the frame. (See
-// the comments below in FeaturePolicy::FeatureDefault for specifics)
+// the comments in |FeaturePolicyFeatureDefault| in feature_policy_features.h
+// for specifics)
 //
 // Policy Inheritance
 // ------------------
@@ -88,12 +82,7 @@ enum class WebSandboxFlags;
 // receive the same set of enables features as the parent frame. Whether or not
 // features are inherited by cross-origin iframes without an explicit policy is
 // determined by the feature's default policy. (Again, see the comments in
-// FeaturePolicy::FeatureDefault for details)
-
-// ListValue (PolicyValue)
-// ----------------------
-// PolicyValue is a union of types (int / double / set<int> / bool ) that can be
-// used to specify the parameter of a policy.
+// |FeaturePolicyFeatureDefault| in feature_policy_features.h for details)
 
 // This struct holds feature policy allowlist data that needs to be replicated
 // between a RenderFrame and any of its associated RenderFrameProxies. A list of
@@ -102,30 +91,28 @@ enum class WebSandboxFlags;
 
 struct BLINK_COMMON_EXPORT ParsedFeaturePolicyDeclaration {
   ParsedFeaturePolicyDeclaration();
+  explicit ParsedFeaturePolicyDeclaration(mojom::FeaturePolicyFeature feature);
   ParsedFeaturePolicyDeclaration(mojom::FeaturePolicyFeature feature,
-                                 mojom::PolicyValueType type);
-  ParsedFeaturePolicyDeclaration(
-      mojom::FeaturePolicyFeature feature,
-      const std::map<url::Origin, PolicyValue> values,
-      const PolicyValue& fallback_value,
-      const PolicyValue& opaque_value);
+                                 const std::vector<url::Origin>& values,
+                                 bool matches_all_origins,
+                                 bool matches_opaque_src);
   ParsedFeaturePolicyDeclaration(const ParsedFeaturePolicyDeclaration& rhs);
   ParsedFeaturePolicyDeclaration& operator=(
       const ParsedFeaturePolicyDeclaration& rhs);
   ~ParsedFeaturePolicyDeclaration();
 
   mojom::FeaturePolicyFeature feature;
+
+  // An alphabetically sorted list of all the origins allowed.
+  std::vector<url::Origin> allowed_origins;
+  // Fallback value is used when feature is enabled for all or disabled for all.
+  bool matches_all_origins{false};
   // This flag is set true for a declared policy on an <iframe sandbox>
   // container, for a feature which is supposed to be allowed in the sandboxed
   // document. Usually, the 'src' keyword in a declaration will cause the origin
   // of the iframe to be present in |origins|, but for sandboxed iframes, this
   // flag is set instead.
-
-  // This map records all the allowed origins and their corresponding values.
-  std::map<url::Origin, PolicyValue> values;
-  // Fallback value is used when feature is enabled for all or disabled for all.
-  PolicyValue fallback_value;
-  PolicyValue opaque_value;
+  bool matches_opaque_src{false};
 };
 
 using ParsedFeaturePolicy = std::vector<ParsedFeaturePolicyDeclaration>;
@@ -135,77 +122,45 @@ bool BLINK_COMMON_EXPORT operator==(const ParsedFeaturePolicyDeclaration& lhs,
 
 class BLINK_COMMON_EXPORT FeaturePolicy {
  public:
-  // TODO(iclelland): Generate, instead of this map, a set of bool flags, one
-  // for each feature, as all features are supposed to be represented here.
-  using FeatureState = std::map<mojom::FeaturePolicyFeature, PolicyValue>;
-
   // Represents a collection of origins which make up an allowlist in a feature
   // policy. This collection may be set to match every origin (corresponding to
   // the "*" syntax in the policy string, in which case the Contains() method
   // will always return true.
   class BLINK_COMMON_EXPORT Allowlist final {
    public:
-    Allowlist(mojom::PolicyValueType type);
+    Allowlist();
     Allowlist(const Allowlist& rhs);
     ~Allowlist();
 
     // Adds a single origin to the allowlist.
-    void Add(const url::Origin& origin, const PolicyValue& value);
+    void Add(const url::Origin& origin);
 
-    // Returns the value of the given origin if specified, fallback value
-    // otherwise.
-    // fallback value should be set to maximum unless it is set to 'none'.
-    PolicyValue GetValueForOrigin(const url::Origin& origin) const;
+    // Adds all origins to the allowlist.
+    void AddAll();
 
-    // Returns the fallback value.
-    const PolicyValue& GetFallbackValue() const;
+    // Sets the allowlist to match the opaque origin implied by the 'src'
+    // keyword.
+    void AddOpaqueSrc();
 
-    // Sets the fallback value.
-    void SetFallbackValue(const PolicyValue& fallback_value);
+    // Returns true if the given origin has been added to the allowlist.
+    bool Contains(const url::Origin& origin) const;
 
-    // Returns the opaque value.
-    const PolicyValue& GetOpaqueValue() const;
+    // Returns true if the allowlist matches all origins.
+    bool MatchesAll() const;
 
-    // Sets the opaque value.
-    void SetOpaqueValue(const PolicyValue& opaque_value);
+    // Returns true if the allowlist should match the opaque origin implied by
+    // the 'src' keyword.
+    bool MatchesOpaqueSrc() const;
 
-    // Returns set of origins in the allowlist.
-    const base::flat_set<url::Origin>& Origins() const;
-
-    // Returns set of <origin, value> pair in the allowlist.
-    const base::flat_map<url::Origin, PolicyValue>& Values() const;
+    const std::vector<url::Origin>& AllowedOrigins() const {
+      return allowed_origins_;
+    }
 
    private:
-    base::flat_map<url::Origin, PolicyValue> values_;
-    PolicyValue fallback_value_;
-    PolicyValue opaque_value_;
+    std::vector<url::Origin> allowed_origins_;
+    bool matches_all_origins_{false};
+    bool matches_opaque_src_{false};
   };
-
-  // The FeaturePolicy::FeatureDefault enum defines the default enable state for
-  // a feature when neither it nor any parent frame have declared an explicit
-  // policy. The three possibilities map directly to Feature Policy Allowlist
-  // semantics.
-  //
-  // The default values for each feature are set in GetDefaultFeatureList.
-  enum class FeatureDefault {
-    // Equivalent to []. If this default policy is in effect for a frame, then
-    // the feature will not be enabled for that frame or any of its children.
-    DisableForAll,
-
-    // Equivalent to ["self"]. If this default policy is in effect for a frame,
-    // then the feature will be enabled for that frame, and any same-origin
-    // child frames, but not for any cross-origin child frames.
-    EnableForSelf,
-
-    // Equivalent to ["*"]. If in effect for a frame, then the feature is
-    // enabled for that frame and all of its children.
-    EnableForAll
-  };
-
-  using FeatureDefaultValue =
-      std::pair<FeaturePolicy::FeatureDefault, mojom::PolicyValueType>;
-  using FeatureList =
-      std::map<mojom::FeaturePolicyFeature, FeaturePolicy::FeatureDefaultValue>;
 
   ~FeaturePolicy();
 
@@ -215,29 +170,15 @@ class BLINK_COMMON_EXPORT FeaturePolicy {
       const url::Origin& origin);
 
   static std::unique_ptr<FeaturePolicy> CreateWithOpenerPolicy(
-      const FeatureState& inherited_policies,
+      const FeaturePolicyFeatureState& inherited_policies,
       const url::Origin& origin);
 
   bool IsFeatureEnabled(mojom::FeaturePolicyFeature feature) const;
-
-  bool IsFeatureEnabled(mojom::FeaturePolicyFeature feature,
-                        const PolicyValue& threshold_value) const;
 
   // Returns whether or not the given feature is enabled by this policy for a
   // specific origin.
   bool IsFeatureEnabledForOrigin(mojom::FeaturePolicyFeature feature,
                                  const url::Origin& origin) const;
-  bool IsFeatureEnabledForOrigin(mojom::FeaturePolicyFeature feature,
-                                 const url::Origin& origin,
-                                 const PolicyValue& threshold_value) const;
-
-  // Returns the value of the given feature on the given origin.
-  PolicyValue GetFeatureValueForOrigin(mojom::FeaturePolicyFeature feature,
-                                       const url::Origin& origin) const;
-
-  PolicyValue GetProposedFeatureValueForOrigin(
-      mojom::FeaturePolicyFeature feature,
-      const url::Origin& origin) const;
 
   // Returns the allowlist of a given feature by this policy.
   const Allowlist GetAllowlistForFeature(
@@ -249,31 +190,36 @@ class BLINK_COMMON_EXPORT FeaturePolicy {
 
   // Returns the current state of feature policies for |origin_|. This includes
   // the |inherited_policies_| as well as the header policies.
-  FeatureState GetFeatureState() const;
+  FeaturePolicyFeatureState GetFeatureState() const;
 
-  const url::Origin& GetOriginForTest() { return origin_; }
+  const url::Origin& GetOriginForTest() const { return origin_; }
 
   // Returns the list of features which can be controlled by Feature Policy.
-  const FeatureList& GetFeatureList() const;
-  static const FeatureList& GetDefaultFeatureList();
+  const FeaturePolicyFeatureList& GetFeatureList() const;
 
   static mojom::FeaturePolicyFeature FeatureForSandboxFlag(
-      mojom::WebSandboxFlags flag);
+      network::mojom::WebSandboxFlags flag);
 
  private:
   friend class FeaturePolicyTest;
 
-  FeaturePolicy(url::Origin origin, const FeatureList& feature_list);
+  FeaturePolicy(url::Origin origin,
+                const FeaturePolicyFeatureList& feature_list);
   static std::unique_ptr<FeaturePolicy> CreateFromParentPolicy(
       const FeaturePolicy* parent_policy,
       const ParsedFeaturePolicy& container_policy,
       const url::Origin& origin,
-      const FeatureList& features);
+      const FeaturePolicyFeatureList& features);
 
-  // Updates the inherited policy with the declarations from the iframe allow*
-  // attributes.
-  void AddContainerPolicy(const ParsedFeaturePolicy& container_policy,
-                          const FeaturePolicy* parent_policy);
+  bool InheritedValueForFeature(
+      const FeaturePolicy* parent_policy,
+      std::pair<mojom::FeaturePolicyFeature, FeaturePolicyFeatureDefault>
+          feature,
+      const ParsedFeaturePolicy& container_policy) const;
+
+  // Returns the value of the given feature on the given origin.
+  bool GetFeatureValueForOrigin(mojom::FeaturePolicyFeature feature,
+                                const url::Origin& origin) const;
 
   // The origin of the document with which this policy is associated.
   url::Origin origin_;
@@ -284,14 +230,9 @@ class BLINK_COMMON_EXPORT FeaturePolicy {
 
   // Records whether or not each feature was enabled for this frame by its
   // parent frame.
-  FeatureState inherited_policies_;
+  FeaturePolicyFeatureState inherited_policies_;
 
-  // Temporary member to support metrics. These are the values which would be
-  // stored in |inherited_policies_| under the proposal in
-  // https://crbug.com/937131.
-  FeatureState proposed_inherited_policies_;
-
-  const FeatureList& feature_list_;
+  const FeaturePolicyFeatureList& feature_list_;
 
   DISALLOW_COPY_AND_ASSIGN(FeaturePolicy);
 };

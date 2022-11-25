@@ -16,6 +16,7 @@
 #include "core/fpdfapi/parser/cpdf_document.h"
 #include "core/fxcrt/observed_ptr.h"
 #include "core/fxcrt/timerhandler_iface.h"
+#include "core/fxcrt/unowned_ptr.h"
 #include "fpdfsdk/cpdfsdk_annot.h"
 #include "fpdfsdk/pwl/ipwl_systemhandler.h"
 #include "public/fpdf_formfill.h"
@@ -95,7 +96,7 @@ class CPDFSDK_FormFillEnvironment final : public Observable,
   void OnSetFieldInputFocus(FPDF_WIDESTRING focusText,
                             FPDF_DWORD nTextLen,
                             bool bFocus);
-  void DoURIAction(const char* bsURI);
+  void DoURIAction(const char* bsURI, uint32_t modifiers);
   void DoGoToAction(int nPageIndex,
                     int zoomMode,
                     float* fPosArray,
@@ -107,6 +108,9 @@ class CPDFSDK_FormFillEnvironment final : public Observable,
   }
 
   bool IsJSPlatformPresent() const { return m_pInfo && m_pInfo->m_pJsPlatform; }
+  IPDF_JSPLATFORM* GetJSPlatform() const {
+    return m_pInfo ? m_pInfo->m_pJsPlatform : nullptr;
+  }
 
 #ifdef PDF_ENABLE_V8
   CPDFSDK_PageView* GetCurrentView();
@@ -163,9 +167,7 @@ class CPDFSDK_FormFillEnvironment final : public Observable,
 
   void GotoURL(const WideString& wsURL);
   FS_RECTF GetPageViewRect(IPDF_Page* page);
-  bool PopupMenu(IPDF_Page* page,
-                 int menuFlag,
-                 const CFX_PointF& pt);
+  bool PopupMenu(IPDF_Page* page, int menuFlag, const CFX_PointF& pt);
   void EmailTo(FPDF_FILEHANDLER* fileHandler,
                FPDF_WIDESTRING pTo,
                FPDF_WIDESTRING pSubject,

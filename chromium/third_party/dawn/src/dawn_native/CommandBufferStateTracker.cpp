@@ -24,6 +24,21 @@
 
 namespace dawn_native {
 
+    namespace {
+        bool BufferSizesAtLeastAsBig(const ityp::span<uint32_t, uint64_t> unverifiedBufferSizes,
+                                     const std::vector<uint64_t>& pipelineMinBufferSizes) {
+            ASSERT(unverifiedBufferSizes.size() == pipelineMinBufferSizes.size());
+
+            for (uint32_t i = 0; i < unverifiedBufferSizes.size(); ++i) {
+                if (unverifiedBufferSizes[i] < pipelineMinBufferSizes[i]) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+    }  // namespace
+
     enum ValidationAspect {
         VALIDATION_ASPECT_PIPELINE,
         VALIDATION_ASPECT_BIND_GROUPS,
@@ -46,7 +61,8 @@ namespace dawn_native {
         1 << VALIDATION_ASPECT_VERTEX_BUFFERS | 1 << VALIDATION_ASPECT_INDEX_BUFFER;
 
     static constexpr CommandBufferStateTracker::ValidationAspects kLazyAspects =
-        1 << VALIDATION_ASPECT_BIND_GROUPS | 1 << VALIDATION_ASPECT_VERTEX_BUFFERS;
+        1 << VALIDATION_ASPECT_BIND_GROUPS | 1 << VALIDATION_ASPECT_VERTEX_BUFFERS |
+        1 << VALIDATION_ASPECT_INDEX_BUFFER;
 
     MaybeError CommandBufferStateTracker::ValidateCanDispatch() {
         return ValidateOperation(kDispatchAspects);
@@ -69,16 +85,11 @@ namespace dawn_native {
 
         // Generate an error immediately if a non-lazy aspect is missing as computing lazy aspects
         // requires the pipeline to be set.
-        if ((missingAspects & ~kLazyAspects).any()) {
-            return GenerateAspectError(missingAspects);
-        }
+        DAWN_TRY(CheckMissingAspects(missingAspects & ~kLazyAspects));
 
         RecomputeLazyAspects(missingAspects);
 
-        missingAspects = requiredAspects & ~mAspects;
-        if (missingAspects.any()) {
-            return GenerateAspectError(missingAspects);
-        }
+        DAWN_TRY(CheckMissingAspects(requiredAspects & ~mAspects));
 
         return {};
     }
@@ -90,9 +101,11 @@ namespace dawn_native {
         if (aspects[VALIDATION_ASPECT_BIND_GROUPS]) {
             bool matches = true;
 
-            for (uint32_t i : IterateBitSet(mLastPipelineLayout->GetBindGroupLayoutsMask())) {
+            for (BindGroupIndex i : IterateBitSet(mLastPipelineLayout->GetBindGroupLayoutsMask())) {
                 if (mBindgroups[i] == nullptr ||
-                    mLastPipelineLayout->GetBindGroupLayout(i) != mBindgroups[i]->GetLayout()) {
+                    mLastPipelineLayout->GetBindGroupLayout(i) != mBindgroups[i]->GetLayout() ||
+                    !BufferSizesAtLeastAsBig(mBindgroups[i]->GetUnverifiedBufferSizes(),
+                                             (*mMinBufferSizes)[i])) {
                     matches = false;
                     break;
                 }
@@ -106,19 +119,60 @@ namespace dawn_native {
         if (aspects[VALIDATION_ASPECT_VERTEX_BUFFERS]) {
             ASSERT(mLastRenderPipeline != nullptr);
 
-            const std::bitset<kMaxVertexBuffers>& requiredVertexBuffers =
+            const ityp::bitset<VertexBufferSlot, kMaxVertexBuffers>& requiredVertexBuffers =
                 mLastRenderPipeline->GetVertexBufferSlotsUsed();
             if ((mVertexBufferSlotsUsed & requiredVertexBuffers) == requiredVertexBuffers) {
                 mAspects.set(VALIDATION_ASPECT_VERTEX_BUFFERS);
             }
         }
-    }
-
-    MaybeError CommandBufferStateTracker::GenerateAspectError(ValidationAspects aspects) {
-        ASSERT(aspects.any());
 
         if (aspects[VALIDATION_ASPECT_INDEX_BUFFER]) {
-            return DAWN_VALIDATION_ERROR("Missing index buffer");
+            if (mIndexBufferSet) {
+                wgpu::IndexFormat pipelineIndexFormat =
+                    mLastRenderPipeline->GetVertexStateDescriptor()->indexFormat;
+                if (mIndexFormat != wgpu::IndexFormat::Undefined) {
+                    if (!IsStripPrimitiveTopology(mLastRenderPipeline->GetPrimitiveTopology()) ||
+                        mIndexFormat == pipelineIndexFormat) {
+                        mAspects.set(VALIDATION_ASPECT_INDEX_BUFFER);
+                    }
+                } else if (pipelineIndexFormat != wgpu::IndexFormat::Undefined) {
+                    // TODO(crbug.com/dawn/502): Deprecated path. Remove once setIndexFormat always
+                    // requires an index format.
+                    mAspects.set(VALIDATION_ASPECT_INDEX_BUFFER);
+                }
+            }
+        }
+    }
+
+    MaybeError CommandBufferStateTracker::CheckMissingAspects(ValidationAspects aspects) {
+        if (!aspects.any()) {
+            return {};
+        }
+
+        if (aspects[VALIDATION_ASPECT_INDEX_BUFFER]) {
+            wgpu::IndexFormat pipelineIndexFormat =
+                mLastRenderPipeline->GetVertexStateDescriptor()->indexFormat;
+            if (!mIndexBufferSet) {
+                return DAWN_VALIDATION_ERROR("Missing index buffer");
+            } else if (mIndexFormat != wgpu::IndexFormat::Undefined &&
+                IsStripPrimitiveTopology(mLastRenderPipeline->GetPrimitiveTopology()) &&
+                mIndexFormat != pipelineIndexFormat) {
+                return DAWN_VALIDATION_ERROR(
+                    "Pipeline strip index format does not match index buffer format");
+            } else if (mIndexFormat == wgpu::IndexFormat::Undefined &&
+                       pipelineIndexFormat == wgpu::IndexFormat::Undefined) {
+                // TODO(crbug.com/dawn/502): Deprecated path. Remove once setIndexFormat always
+                // requires an index format.
+                return DAWN_VALIDATION_ERROR(
+                    "Index format must be specified on the pipeline or in setIndexBuffer");
+            }
+
+            // The chunk of code above should be similar to the one in |RecomputeLazyAspects|.
+            // It returns the first invalid state found. We shouldn't be able to reach this line
+            // because to have invalid aspects one of the above conditions must have failed earlier.
+            // If this is reached, make sure lazy aspects and the error checks above are consistent.
+            UNREACHABLE();
+            return DAWN_VALIDATION_ERROR("Index buffer invalid");
         }
 
         if (aspects[VALIDATION_ASPECT_VERTEX_BUFFERS]) {
@@ -126,7 +180,28 @@ namespace dawn_native {
         }
 
         if (aspects[VALIDATION_ASPECT_BIND_GROUPS]) {
-            return DAWN_VALIDATION_ERROR("Missing bind group");
+            for (BindGroupIndex i : IterateBitSet(mLastPipelineLayout->GetBindGroupLayoutsMask())) {
+                if (mBindgroups[i] == nullptr) {
+                    return DAWN_VALIDATION_ERROR("Missing bind group " +
+                                                 std::to_string(static_cast<uint32_t>(i)));
+                } else if (mLastPipelineLayout->GetBindGroupLayout(i) !=
+                           mBindgroups[i]->GetLayout()) {
+                    return DAWN_VALIDATION_ERROR(
+                        "Pipeline and bind group layout doesn't match for bind group " +
+                        std::to_string(static_cast<uint32_t>(i)));
+                } else if (!BufferSizesAtLeastAsBig(mBindgroups[i]->GetUnverifiedBufferSizes(),
+                                                    (*mMinBufferSizes)[i])) {
+                    return DAWN_VALIDATION_ERROR("Binding sizes too small for bind group " +
+                                                 std::to_string(static_cast<uint32_t>(i)));
+                }
+            }
+
+            // The chunk of code above should be similar to the one in |RecomputeLazyAspects|.
+            // It returns the first invalid state found. We shouldn't be able to reach this line
+            // because to have invalid aspects one of the above conditions must have failed earlier.
+            // If this is reached, make sure lazy aspects and the error checks above are consistent.
+            UNREACHABLE();
+            return DAWN_VALIDATION_ERROR("Bind groups invalid");
         }
 
         if (aspects[VALIDATION_ASPECT_PIPELINE]) {
@@ -145,20 +220,23 @@ namespace dawn_native {
         SetPipelineCommon(pipeline);
     }
 
-    void CommandBufferStateTracker::SetBindGroup(uint32_t index, BindGroupBase* bindgroup) {
+    void CommandBufferStateTracker::SetBindGroup(BindGroupIndex index, BindGroupBase* bindgroup) {
         mBindgroups[index] = bindgroup;
+        mAspects.reset(VALIDATION_ASPECT_BIND_GROUPS);
     }
 
-    void CommandBufferStateTracker::SetIndexBuffer() {
-        mAspects.set(VALIDATION_ASPECT_INDEX_BUFFER);
+    void CommandBufferStateTracker::SetIndexBuffer(wgpu::IndexFormat format) {
+        mIndexBufferSet = true;
+        mIndexFormat = format;
     }
 
-    void CommandBufferStateTracker::SetVertexBuffer(uint32_t slot) {
+    void CommandBufferStateTracker::SetVertexBuffer(VertexBufferSlot slot) {
         mVertexBufferSlotsUsed.set(slot);
     }
 
     void CommandBufferStateTracker::SetPipelineCommon(PipelineBase* pipeline) {
         mLastPipelineLayout = pipeline->GetLayout();
+        mMinBufferSizes = &pipeline->GetMinBufferSizes();
 
         mAspects.set(VALIDATION_ASPECT_PIPELINE);
 

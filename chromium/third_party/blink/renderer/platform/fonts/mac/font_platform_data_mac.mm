@@ -26,21 +26,23 @@
 #import <AppKit/NSFont.h>
 #import <AvailabilityMacros.h>
 
-#include "base/mac/foundation_util.h"
-#include "base/mac/scoped_nsobject.h"
+#import "base/mac/foundation_util.h"
+#import "base/mac/scoped_nsobject.h"
 #include "base/stl_util.h"
-#import "third_party/blink/public/platform/mac/web_sandbox_support.h"
-#import "third_party/blink/public/platform/platform.h"
-#import "third_party/blink/renderer/platform/fonts/font.h"
-#import "third_party/blink/renderer/platform/fonts/font_platform_data.h"
-#import "third_party/blink/renderer/platform/fonts/mac/core_text_font_format_support.h"
-#import "third_party/blink/renderer/platform/fonts/opentype/font_settings.h"
-#import "third_party/blink/renderer/platform/fonts/shaping/harfbuzz_face.h"
-#import "third_party/blink/renderer/platform/web_test_support.h"
-#import "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
-#import "third_party/skia/include/core/SkFont.h"
-#import "third_party/skia/include/core/SkStream.h"
-#import "third_party/skia/include/core/SkTypes.h"
+#include "third_party/blink/public/platform/mac/web_sandbox_support.h"
+#include "third_party/blink/public/platform/platform.h"
+#include "third_party/blink/renderer/platform/fonts/font.h"
+#include "third_party/blink/renderer/platform/fonts/font_platform_data.h"
+#include "third_party/blink/renderer/platform/fonts/mac/core_text_font_format_support.h"
+#include "third_party/blink/renderer/platform/fonts/opentype/font_settings.h"
+#include "third_party/blink/renderer/platform/fonts/shaping/harfbuzz_face.h"
+#include "third_party/blink/renderer/platform/web_test_support.h"
+#include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
+#include "third_party/blink/renderer/platform/wtf/vector.h"
+#include "third_party/skia/include/core/SkFont.h"
+#include "third_party/skia/include/core/SkStream.h"
+#include "third_party/skia/include/core/SkTypeface.h"
+#include "third_party/skia/include/core/SkTypes.h"
 #import "third_party/skia/include/ports/SkTypeface_mac.h"
 
 namespace {
@@ -48,6 +50,50 @@ constexpr SkFourByteTag kOpszTag = SkSetFourByteTag('o', 'p', 's', 'z');
 }
 
 namespace blink {
+
+bool VariableAxisChangeEffective(SkTypeface* typeface,
+                                 SkFourByteTag axis,
+                                 float new_value) {
+  // First clamp new value to within range of min and max of variable axis.
+  int num_axes = typeface->getVariationDesignParameters(nullptr, 0);
+  if (num_axes <= 0)
+    return false;
+
+  Vector<SkFontParameters::Variation::Axis> axes_parameters(num_axes);
+  int returned_axes =
+      typeface->getVariationDesignParameters(axes_parameters.data(), num_axes);
+  DCHECK_EQ(num_axes, returned_axes);
+  DCHECK_GE(num_axes, 0);
+
+  float clamped_new_value = new_value;
+  for (auto& axis_parameters : axes_parameters) {
+    if (axis_parameters.tag == axis) {
+      clamped_new_value = std::min(new_value, axis_parameters.max);
+      clamped_new_value = std::max(clamped_new_value, axis_parameters.min);
+    }
+  }
+
+  int num_coordinates = typeface->getVariationDesignPosition(nullptr, 0);
+  if (num_coordinates <= 0)
+    return true;  // Font has axes, but no positions, setting one would have an
+                  // effect.
+
+  // Then compare if clamped value differs from what is set on the font.
+  Vector<SkFontArguments::VariationPosition::Coordinate> coordinates(
+      num_coordinates);
+  int returned_coordinates =
+      typeface->getVariationDesignPosition(coordinates.data(), num_coordinates);
+
+  if (returned_coordinates != num_coordinates)
+    return false;  // Something went wrong in retrieving actual axis positions,
+                   // font broken?
+
+  for (auto& coordinate : coordinates) {
+    if (coordinate.axis == axis)
+      return coordinate.value != clamped_new_value;
+  }
+  return false;
+}
 
 static bool CanLoadInProcess(NSFont* ns_font) {
   base::ScopedCFTypeRef<CGFontRef> cg_font(
@@ -169,22 +215,22 @@ std::unique_ptr<FontPlatformData> FontPlatformDataFromNSFont(
   }
 
   // Iterate over the font's axes and find a missing tag from variation
-  // settings, special case opsz, track the number of axes reconfigured.
+  // settings, special case 'opsz', track the number of axes reconfigured.
   bool axes_reconfigured = false;
   for (auto& coordinate : coordinates_to_set) {
-    // Set opsz to font size but allow having it overriden by
+    // Set 'opsz' to font size but allow having it overridden by
     // font-variation-settings in case it has 'opsz'.
     if (coordinate.axis == kOpszTag && optical_sizing == kAutoOpticalSizing) {
-      if (coordinate.value != SkFloatToScalar(size)) {
+      if (VariableAxisChangeEffective(typeface.get(), coordinate.axis, size)) {
         coordinate.value = SkFloatToScalar(size);
         axes_reconfigured = true;
       }
     }
-    FontVariationAxis found_variation_setting(AtomicString(), 0);
-    if (variation_settings &&
-        variation_settings->FindPair(FourByteTagToAtomicString(coordinate.axis),
-                                     &found_variation_setting)) {
-      if (coordinate.value != found_variation_setting.Value()) {
+    FontVariationAxis found_variation_setting(0, 0);
+    if (variation_settings && variation_settings->FindPair(
+                                  coordinate.axis, &found_variation_setting)) {
+      if (VariableAxisChangeEffective(typeface.get(), coordinate.axis,
+                                      found_variation_setting.Value())) {
         coordinate.value = found_variation_setting.Value();
         axes_reconfigured = true;
       }
@@ -203,7 +249,7 @@ std::unique_ptr<FontPlatformData> FontPlatformDataFromNSFont(
       SkFontArguments().setVariationDesignPosition(variation_design_position)));
 
   if (!cloned_typeface) {
-    // Applying varition parameters failed, return original typeface.
+    // Applying variation parameters failed, return original typeface.
     return make_typeface_fontplatformdata();
   }
   typeface = cloned_typeface;

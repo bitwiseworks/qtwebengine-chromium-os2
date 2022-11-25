@@ -17,6 +17,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
 #include "base/strings/string16.h"
+#include "base/strings/string_util.h"
 #include "services/device/usb/usb_descriptors.h"
 #include "url/gurl.h"
 
@@ -144,11 +145,13 @@ class UsbDevice : public base::RefCountedThreadSafe<UsbDevice> {
  private:
   friend class base::RefCountedThreadSafe<UsbDevice>;
   friend class UsbDeviceHandleImpl;
+  friend class UsbDeviceHandleMac;
   friend class UsbDeviceHandleUsbfs;
   friend class UsbDeviceHandleWin;
   friend class UsbServiceAndroid;
   friend class UsbServiceImpl;
   friend class UsbServiceLinux;
+  friend class UsbServiceMac;
   friend class UsbServiceWin;
 
   void OnDisconnect();

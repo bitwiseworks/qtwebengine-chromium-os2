@@ -18,6 +18,7 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/net/dns_probe_runner.h"
 #include "chrome/browser/net/dns_probe_service.h"
+#include "chrome/browser/net/secure_dns_config.h"
 #include "chrome/browser/net/stub_resolver_config_reader.h"
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
@@ -31,6 +32,7 @@
 #include "net/base/ip_endpoint.h"
 #include "net/dns/public/dns_over_https_server_config.h"
 #include "net/dns/public/dns_protocol.h"
+#include "net/dns/public/secure_dns_mode.h"
 #include "services/network/public/mojom/network_service.mojom.h"
 
 namespace chrome_browser_net {
@@ -80,8 +82,7 @@ net::DnsConfigOverrides GoogleConfigOverrides() {
       net::IPEndPoint(net::IPAddress(kGooglePublicDns2),
                       net::dns_protocol::kDefaultPort)};
   overrides.attempts = 1;
-  overrides.randomize_ports = false;
-  overrides.secure_dns_mode = net::DnsConfig::SecureDnsMode::OFF;
+  overrides.secure_dns_mode = net::SecureDnsMode::kOff;
   return overrides;
 }
 
@@ -147,8 +148,7 @@ class DnsProbeServiceImpl
   NetworkContextGetter network_context_getter_;
   DnsConfigChangeManagerGetter dns_config_change_manager_getter_;
   mojo::Receiver<network::mojom::DnsConfigChangeManagerClient> receiver_{this};
-  net::DnsConfig::SecureDnsMode current_config_secure_dns_mode_ =
-      net::DnsConfig::SecureDnsMode::OFF;
+  net::SecureDnsMode current_config_secure_dns_mode_ = net::SecureDnsMode::kOff;
 
   // DnsProbeRunners for the current DNS configuration and a Google DNS
   // configuration. Both runners will have the insecure async resolver enabled
@@ -223,35 +223,28 @@ void DnsProbeServiceImpl::OnDnsConfigChanged() {
 }
 
 void DnsProbeServiceImpl::SetUpCurrentConfigRunner() {
-  bool insecure_stub_resolver_enabled;
-  std::vector<net::DnsOverHttpsServerConfig> dns_over_https_servers;
-  SystemNetworkContextManager::GetStubResolverConfigReader()->GetConfiguration(
-      false /* force_check_parental_controls_for_automatic_mode */,
-      &insecure_stub_resolver_enabled, &current_config_secure_dns_mode_,
-      &dns_over_https_servers);
+  SecureDnsConfig secure_dns_config =
+      SystemNetworkContextManager::GetStubResolverConfigReader()
+          ->GetSecureDnsConfiguration(
+              false /* force_check_parental_controls_for_automatic_mode */);
+
+  current_config_secure_dns_mode_ = secure_dns_config.mode();
 
   net::DnsConfigOverrides current_config_overrides;
   current_config_overrides.search = std::vector<std::string>();
   current_config_overrides.attempts = 1;
-  current_config_overrides.randomize_ports = false;
 
-  if (current_config_secure_dns_mode_ ==
-      net::DnsConfig::SecureDnsMode::SECURE) {
-    if (!dns_over_https_servers.empty()) {
-      current_config_overrides.dns_over_https_servers.emplace();
-      for (auto& doh_server : dns_over_https_servers) {
-        current_config_overrides.dns_over_https_servers.value().push_back(
-            std::move(doh_server));
-      }
+  if (current_config_secure_dns_mode_ == net::SecureDnsMode::kSecure) {
+    if (!secure_dns_config.servers().empty()) {
+      current_config_overrides.dns_over_https_servers.emplace(
+          secure_dns_config.servers());
     }
-    current_config_overrides.secure_dns_mode =
-        net::DnsConfig::SecureDnsMode::SECURE;
+    current_config_overrides.secure_dns_mode = net::SecureDnsMode::kSecure;
   } else {
     // A DNS error that occurred in automatic mode must have had an insecure
     // DNS failure. For efficiency, probe queries in this case can just be
     // issued in OFF mode.
-    current_config_overrides.secure_dns_mode =
-        net::DnsConfig::SecureDnsMode::OFF;
+    current_config_overrides.secure_dns_mode = net::SecureDnsMode::kOff;
   }
 
   current_config_runner_ = std::make_unique<DnsProbeRunner>(
@@ -315,8 +308,7 @@ error_page::DnsProbeStatus DnsProbeServiceImpl::EvaluateResults(
   // current DNS config is in secure mode, return an error indicating that this
   // is a secure DNS config issue.
   if (google_config_result == DnsProbeRunner::CORRECT) {
-    return (current_config_secure_dns_mode_ ==
-            net::DnsConfig::SecureDnsMode::SECURE)
+    return (current_config_secure_dns_mode_ == net::SecureDnsMode::kSecure)
                ? error_page::DNS_PROBE_FINISHED_BAD_SECURE_CONFIG
                : error_page::DNS_PROBE_FINISHED_BAD_CONFIG;
   }
@@ -385,7 +377,7 @@ void DnsProbeServiceImpl::SetupDnsConfigChangeNotifications() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   dns_config_change_manager_getter_.Run()->RequestNotifications(
       receiver_.BindNewPipeAndPassRemote());
-  receiver_.set_disconnect_handler(base::BindRepeating(
+  receiver_.set_disconnect_handler(base::BindOnce(
       &DnsProbeServiceImpl::OnDnsConfigChangeManagerConnectionError,
       base::Unretained(this)));
 }

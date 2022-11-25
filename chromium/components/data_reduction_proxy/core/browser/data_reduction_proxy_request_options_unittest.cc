@@ -17,10 +17,8 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "build/build_config.h"
-#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_config_test_utils.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_test_utils.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_features.h"
-#include "components/data_reduction_proxy/core/common/data_reduction_proxy_params_test_utils.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_switches.h"
 #include "components/variations/variations_associated_data.h"
 #include "net/base/auth.h"
@@ -56,13 +54,13 @@ const char kClientStr[] = "android";
 #elif defined(OS_IOS)
 const Client kClient = Client::CHROME_IOS;
 const char kClientStr[] = "ios";
-#elif defined(OS_MACOSX)
+#elif defined(OS_APPLE)
 const Client kClient = Client::CHROME_MAC;
 const char kClientStr[] = "mac";
 #elif defined(OS_CHROMEOS)
 const Client kClient = Client::CHROME_CHROMEOS;
 const char kClientStr[] = "chromeos";
-#elif defined(OS_LINUX)
+#elif defined(OS_LINUX) || defined(OS_CHROMEOS)
 const Client kClient = Client::CHROME_LINUX;
 const char kClientStr[] = "linux";
 #elif defined(OS_WIN)
@@ -132,8 +130,8 @@ class DataReductionProxyRequestOptionsTest : public testing::Test {
   }
 
   void CreateRequestOptions(const std::string& version) {
-    request_options_.reset(new TestDataReductionProxyRequestOptions(
-        kClient, version, test_context_->config()));
+    request_options_.reset(
+        new TestDataReductionProxyRequestOptions(kClient, version));
     request_options_->Init();
   }
 
@@ -148,9 +146,6 @@ class DataReductionProxyRequestOptionsTest : public testing::Test {
     callback_headers_ = headers;
   }
 
-  TestDataReductionProxyParams* params() {
-    return test_context_->config()->test_params();
-  }
 
   TestDataReductionProxyRequestOptions* request_options() {
     return request_options_.get();

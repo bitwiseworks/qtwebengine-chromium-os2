@@ -26,7 +26,11 @@
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
 
 #include <stdio.h>
+
+#include "base/auto_reset.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
+#include "third_party/blink/renderer/core/accessibility/blink_ax_event_intent.h"
+#include "third_party/blink/renderer/core/accessibility/scoped_blink_ax_event_intent.h"
 #include "third_party/blink/renderer/core/css/css_property_value_set.h"
 #include "third_party/blink/renderer/core/display_lock/display_lock_utilities.h"
 #include "third_party/blink/renderer/core/dom/character_data.h"
@@ -83,6 +87,7 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/geometry/float_quad.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
+#include "third_party/blink/renderer/platform/text/text_direction.h"
 #include "third_party/blink/renderer/platform/text/unicode_utilities.h"
 
 #define EDIT_DEBUG 0
@@ -107,9 +112,9 @@ FrameSelection::FrameSelection(LocalFrame& frame)
 
 FrameSelection::~FrameSelection() = default;
 
-const DisplayItemClient& FrameSelection::CaretDisplayItemClientForTesting()
+const CaretDisplayItemClient& FrameSelection::CaretDisplayItemClientForTesting()
     const {
-  return frame_caret_->GetDisplayItemClient();
+  return frame_caret_->CaretDisplayItemClientForTesting();
 }
 
 bool FrameSelection::IsAvailable() const {
@@ -153,12 +158,12 @@ VisibleSelection FrameSelection::ComputeVisibleSelectionInDOMTreeDeprecated()
     const {
   // TODO(editing-dev): Hoist UpdateStyleAndLayout
   // to caller. See http://crbug.com/590369 for more details.
+  DisplayLockUtilities::ScopedForcedUpdate base_scope(
+      GetSelectionInDOMTree().Base().AnchorNode());
+  DisplayLockUtilities::ScopedForcedUpdate extent_scope(
+      GetSelectionInDOMTree().Extent().AnchorNode());
   GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kSelection);
   return ComputeVisibleSelectionInDOMTree();
-}
-
-VisibleSelectionInFlatTree FrameSelection::GetSelectionInFlatTree() const {
-  return ComputeVisibleSelectionInFlatTree();
 }
 
 void FrameSelection::MoveCaretSelection(const IntPoint& point) {
@@ -186,7 +191,7 @@ void FrameSelection::MoveCaretSelection(const IntPoint& point) {
 void FrameSelection::SetSelection(const SelectionInDOMTree& selection,
                                   const SetSelectionOptions& data) {
   if (SetSelectionDeprecated(selection, data))
-    DidSetSelectionDeprecated(data);
+    DidSetSelectionDeprecated(selection, data);
 }
 
 void FrameSelection::SetSelectionAndEndTyping(
@@ -267,9 +272,28 @@ bool FrameSelection::SetSelectionDeprecated(
 }
 
 void FrameSelection::DidSetSelectionDeprecated(
+    const SelectionInDOMTree& new_selection,
     const SetSelectionOptions& options) {
-  const Document& current_document = GetDocument();
-  if (!GetSelectionInDOMTree().IsNone() && !options.DoNotSetFocus()) {
+  Document& current_document = GetDocument();
+  const SetSelectionBy set_selection_by = options.GetSetSelectionBy();
+
+  // Provides details to accessibility about the selection change throughout the
+  // current call stack.
+  //
+  // If the selection is currently being modified via the "Modify" method, we
+  // should already have more detailed information on the stack than can be
+  // deduced in this method.
+  ScopedBlinkAXEventIntent scoped_blink_ax_event_intent(
+      is_being_modified_
+          ? BlinkAXEventIntent()
+          : new_selection.IsNone()
+                ? BlinkAXEventIntent::FromClearedSelection(set_selection_by)
+                : BlinkAXEventIntent::FromNewSelection(
+                      options.Granularity(), new_selection.IsBaseFirst(),
+                      set_selection_by),
+      &current_document);
+
+  if (!new_selection.IsNone() && !options.DoNotSetFocus()) {
     SetFocusedNodeIfNeeded();
     // |setFocusedNodeIfNeeded()| dispatches sync events "FocusOut" and
     // "FocusIn", |frame_| may associate to another document.
@@ -298,7 +322,7 @@ void FrameSelection::DidSetSelectionDeprecated(
       return;
     }
   }
-  const SetSelectionBy set_selection_by = options.GetSetSelectionBy();
+
   NotifyTextControlOfSelectionChange(set_selection_by);
   if (set_selection_by == SetSelectionBy::kUser) {
     const CursorAlignOnScroll align = options.GetCursorAlignOnScroll();
@@ -327,6 +351,17 @@ void FrameSelection::DidSetSelectionDeprecated(
   frame_->DomWindow()->EnqueueDocumentEvent(
       *Event::Create(event_type_names::kSelectionchange),
       TaskType::kMiscPlatformAPI);
+}
+
+void FrameSelection::SetSelectionForAccessibility(
+    const SelectionInDOMTree& selection,
+    const SetSelectionOptions& options) {
+  ClearDocumentCachedRange();
+
+  const bool did_set = SetSelectionDeprecated(selection, options);
+  CacheRangeOfDocument(CreateRange(selection.ComputeRange()));
+  if (did_set)
+    DidSetSelectionDeprecated(selection, options);
 }
 
 void FrameSelection::NodeChildrenWillBeRemoved(ContainerNode& container) {
@@ -397,6 +432,19 @@ bool FrameSelection::Modify(SelectionModifyAlteration alter,
     // scroll window when caret is at end of content editable.
     return true;
   }
+
+  // Provides details to accessibility about the selection change throughout the
+  // current call stack.
+  base::AutoReset<bool> is_being_modified_resetter(&is_being_modified_, true);
+  const PlatformWordBehavior platform_word_behavior =
+      frame_->GetEditor().Behavior().ShouldSkipSpaceWhenMovingRight()
+          ? PlatformWordBehavior::kWordSkipSpaces
+          : PlatformWordBehavior::kWordDontSkipSpaces;
+  ScopedBlinkAXEventIntent scoped_blink_ax_event_intent(
+      BlinkAXEventIntent::FromModifiedSelection(
+          alter, direction, granularity, set_selection_by,
+          selection_modifier.DirectionOfSelection(), platform_word_behavior),
+      &GetDocument());
 
   // For MacOS only selection is directionless at the beginning.
   // Selection gets direction on extent.
@@ -510,10 +558,6 @@ void FrameSelection::ContextDestroyed() {
   layout_selection_->ContextDestroyed();
 
   frame_->GetEditor().ClearTypingStyle();
-}
-
-void FrameSelection::ClearPreviousCaretVisualRect(const LayoutBlock& block) {
-  frame_caret_->ClearPreviousVisualRect(block);
 }
 
 void FrameSelection::LayoutBlockWillBeDestroyed(const LayoutBlock& block) {
@@ -834,9 +878,7 @@ void FrameSelection::FocusedOrActiveStateChanged() {
   // Caret appears in the active frame.
   if (active_and_focused)
     SetSelectionFromNone();
-  frame_caret_->SetCaretVisibility(active_and_focused
-                                       ? CaretVisibility::kVisible
-                                       : CaretVisibility::kHidden);
+  frame_caret_->SetCaretEnabled(active_and_focused);
 
   // Update for caps lock state
   frame_->GetEventHandler().CapsLockStateMayHaveChanged();
@@ -985,7 +1027,6 @@ PhysicalRect FrameSelection::AbsoluteUnclippedBounds() const {
   if (!view || !layout_view)
     return PhysicalRect();
 
-  view->UpdateLifecycleToLayoutClean(DocumentUpdateReason::kSelection);
   return PhysicalRect(layout_selection_->AbsoluteSelectionBounds());
 }
 
@@ -1086,7 +1127,7 @@ void FrameSelection::ShowTreeForThis() const {
 
 #endif
 
-void FrameSelection::Trace(Visitor* visitor) {
+void FrameSelection::Trace(Visitor* visitor) const {
   visitor->Trace(frame_);
   visitor->Trace(layout_selection_);
   visitor->Trace(selection_editor_);
@@ -1229,9 +1270,8 @@ void FrameSelection::MoveRangeSelectionInternal(
                                     .Build());
 }
 
-void FrameSelection::SetCaretVisible(bool caret_is_visible) {
-  frame_caret_->SetCaretVisibility(caret_is_visible ? CaretVisibility::kVisible
-                                                    : CaretVisibility::kHidden);
+void FrameSelection::SetCaretEnabled(bool enabled) {
+  frame_caret_->SetCaretEnabled(enabled);
 }
 
 void FrameSelection::SetCaretBlinkingSuspended(bool suspended) {

@@ -63,7 +63,10 @@ class Error {
     kSocketReadFailure,
     kSocketSendFailure,
 
+    // MDNS errors.
     kMdnsRegisterFailure,
+    kMdnsReadFailure,
+    kMdnsNonConformingFailure,
 
     kParseError,
     kUnknownMessageType,
@@ -117,6 +120,9 @@ class Error {
     // The certificate failed to chain to a trusted root.
     kErrCertsVerifyGeneric,
 
+    // The certificate was not found in the trust store.
+    kErrCertsVerifyUntrustedCert,
+
     // The CRL is missing or failed to verify.
     kErrCrlInvalid,
 
@@ -161,6 +167,7 @@ class Error {
     // Discovery errors.
     kUpdateReceivedRecordFailure,
     kRecordPublicationError,
+    kProcessReceivedRecordFailure,
 
     // Generic errors.
     kUnknownError,
@@ -190,6 +197,13 @@ class Error {
   Error& operator=(Error&& other);
   bool operator==(const Error& other) const;
   bool operator!=(const Error& other) const;
+
+  // Special case comparison with codes. Without this case, comparisons will
+  // not work as expected, e.g.
+  // const Error foo(Error::Code::kItemNotFound, "Didn't find an item");
+  // foo == Error::Code::kItemNotFound is actually false.
+  bool operator==(Code code) const;
+  bool operator!=(Code code) const;
   bool ok() const { return code_ == Code::kNone; }
 
   Code code() const { return code_; }
@@ -252,6 +266,7 @@ class ErrorOr {
     assert(error_.code() != Error::Code::kNone);
   }
 
+  ErrorOr(const ErrorOr& other) = delete;
   ErrorOr(ErrorOr&& other) noexcept : is_value_(other.is_value_) {
     // NB: Both |value_| and |error_| are uninitialized memory at this point!
     // Unlike the other constructors, the compiler will not auto-generate
@@ -264,6 +279,7 @@ class ErrorOr {
     }
   }
 
+  ErrorOr& operator=(const ErrorOr& other) = delete;
   ErrorOr& operator=(ErrorOr&& other) noexcept {
     this->~ErrorOr<ValueType>();
     new (this) ErrorOr<ValueType>(std::move(other));
@@ -305,6 +321,22 @@ class ErrorOr {
     return value_;
   }
 
+  // Move only value or fallback
+  ValueType&& value(ValueType&& fallback) {
+    if (is_value()) {
+      return std::move(value());
+    }
+    return std::forward<ValueType>(fallback);
+  }
+
+  // Copy only value or fallback
+  ValueType value(ValueType fallback) const {
+    if (is_value()) {
+      return value();
+    }
+    return std::move(fallback);
+  }
+
  private:
   // Only one of these is an active member, determined by |is_value_|. Since
   // they are union'ed, they must be explicitly constructed and destroyed.
@@ -317,6 +349,60 @@ class ErrorOr {
   // initialized and active.
   const bool is_value_;
 };
+
+// Define comparison operators using SFINAE.
+template <typename ValueType>
+bool operator<(const ErrorOr<ValueType>& lhs, const ErrorOr<ValueType>& rhs) {
+  // Handle the cases where one side is an error.
+  if (lhs.is_error() != rhs.is_error()) {
+    return lhs.is_error();
+  }
+
+  // Handle the case where both sides are errors.
+  if (lhs.is_error()) {
+    return static_cast<int8_t>(lhs.error().code()) <
+           static_cast<int8_t>(rhs.error().code());
+  }
+
+  // Handle the case where both are values.
+  return lhs.value() < rhs.value();
+}
+
+template <typename ValueType>
+bool operator>(const ErrorOr<ValueType>& lhs, const ErrorOr<ValueType>& rhs) {
+  return rhs < lhs;
+}
+
+template <typename ValueType>
+bool operator<=(const ErrorOr<ValueType>& lhs, const ErrorOr<ValueType>& rhs) {
+  return !(lhs > rhs);
+}
+
+template <typename ValueType>
+bool operator>=(const ErrorOr<ValueType>& lhs, const ErrorOr<ValueType>& rhs) {
+  return !(rhs < lhs);
+}
+
+template <typename ValueType>
+bool operator==(const ErrorOr<ValueType>& lhs, const ErrorOr<ValueType>& rhs) {
+  // Handle the cases where one side is an error.
+  if (lhs.is_error() != rhs.is_error()) {
+    return false;
+  }
+
+  // Handle the case where both sides are errors.
+  if (lhs.is_error()) {
+    return lhs.error() == rhs.error();
+  }
+
+  // Handle the case where both are values.
+  return lhs.value() == rhs.value();
+}
+
+template <typename ValueType>
+bool operator!=(const ErrorOr<ValueType>& lhs, const ErrorOr<ValueType>& rhs) {
+  return !(lhs == rhs);
+}
 
 }  // namespace openscreen
 

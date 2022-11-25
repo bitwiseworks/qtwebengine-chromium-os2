@@ -16,8 +16,8 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/check.h"
 #include "base/cpu.h"
-#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
@@ -37,10 +37,8 @@
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/screen_info.h"
 #include "content/public/common/webplugininfo.h"
 #include "gpu/config/gpu_info.h"
-#include "mojo/public/cpp/bindings/interface_request.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "ppapi/buildflags/buildflags.h"
 #include "services/device/public/cpp/geolocation/geoposition.h"
@@ -51,6 +49,7 @@
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/geometry/rect.h"
+#include "url/gurl.h"
 
 #if BUILDFLAG(ENABLE_PLUGINS)
 #include "content/public/browser/plugin_service.h"
@@ -136,7 +135,7 @@ void AddAcceptLanguagesToFingerprint(
 //   (d) the size of the screen unavailable to web page content,
 //       i.e. the Taskbar size on Windows
 // into the |machine|.
-void AddScreenInfoToFingerprint(const content::ScreenInfo& screen_info,
+void AddScreenInfoToFingerprint(const blink::ScreenInfo& screen_info,
                                 Fingerprint::MachineCharacteristics* machine) {
   machine->set_screen_count(display::Screen::GetScreen()->GetNumDisplays());
 
@@ -188,7 +187,7 @@ class FingerprintDataLoader : public content::GpuDataManagerObserver {
       uint64_t obfuscated_gaia_id,
       const gfx::Rect& window_bounds,
       const gfx::Rect& content_bounds,
-      const content::ScreenInfo& screen_info,
+      const blink::ScreenInfo& screen_info,
       const std::string& version,
       const std::string& charset,
       const std::string& accept_languages,
@@ -230,7 +229,7 @@ class FingerprintDataLoader : public content::GpuDataManagerObserver {
   const uint64_t obfuscated_gaia_id_;
   const gfx::Rect window_bounds_;
   const gfx::Rect content_bounds_;
-  const content::ScreenInfo screen_info_;
+  const blink::ScreenInfo screen_info_;
   const std::string version_;
   const std::string charset_;
   const std::string accept_languages_;
@@ -264,7 +263,7 @@ FingerprintDataLoader::FingerprintDataLoader(
     uint64_t obfuscated_gaia_id,
     const gfx::Rect& window_bounds,
     const gfx::Rect& content_bounds,
-    const content::ScreenInfo& screen_info,
+    const blink::ScreenInfo& screen_info,
     const std::string& version,
     const std::string& charset,
     const std::string& accept_languages,
@@ -316,7 +315,7 @@ FingerprintDataLoader::FingerprintDataLoader(
   content::GetDeviceService().BindGeolocationContext(
       geolocation_context_.BindNewPipeAndPassReceiver());
   geolocation_context_->BindGeolocation(
-      geolocation_.BindNewPipeAndPassReceiver());
+      geolocation_.BindNewPipeAndPassReceiver(), GURL::EmptyGURL());
   geolocation_->SetHighAccuracy(false);
   geolocation_->QueryNextPosition(
       base::BindOnce(&FingerprintDataLoader::OnGotGeoposition,
@@ -447,7 +446,7 @@ void GetFingerprintInternal(
     uint64_t obfuscated_gaia_id,
     const gfx::Rect& window_bounds,
     const gfx::Rect& content_bounds,
-    const content::ScreenInfo& screen_info,
+    const blink::ScreenInfo& screen_info,
     const std::string& version,
     const std::string& charset,
     const std::string& accept_languages,
@@ -479,7 +478,7 @@ void GetFingerprint(
     base::OnceCallback<void(std::unique_ptr<Fingerprint>)> callback) {
   gfx::Rect content_bounds = web_contents->GetContainerBounds();
 
-  content::ScreenInfo screen_info;
+  blink::ScreenInfo screen_info;
   content::RenderWidgetHostView* host_view =
       web_contents->GetRenderWidgetHostView();
   if (host_view)

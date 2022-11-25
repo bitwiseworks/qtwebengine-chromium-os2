@@ -20,17 +20,20 @@ namespace {
 
 class MockNetworkWaiter final : public SocketHandleWaiter {
  public:
+  using ReadyHandle = SocketHandleWaiter::ReadyHandle;
+
   MockNetworkWaiter() : SocketHandleWaiter(&FakeClock::now) {}
 
   MOCK_METHOD2(
       AwaitSocketsReadable,
-      ErrorOr<std::vector<SocketHandleRef>>(const std::vector<SocketHandleRef>&,
-                                            const Clock::duration&));
+      ErrorOr<std::vector<ReadyHandle>>(const std::vector<SocketHandleRef>&,
+                                        const Clock::duration&));
 };
 
 class MockSocket : public StreamSocketPosix {
  public:
-  MockSocket(int fd) : StreamSocketPosix(IPAddress::Version::kV4), handle(fd) {}
+  explicit MockSocket(int fd)
+      : StreamSocketPosix(IPAddress::Version::kV4), handle(fd) {}
 
   const SocketHandle& socket_handle() const override { return handle; }
 
@@ -113,21 +116,23 @@ TEST_F(TlsNetworkingManagerPosixTest, CallsReadySocket) {
   network_manager()->RegisterConnection(&connection2);
   network_manager()->RegisterConnection(&connection3);
 
-  EXPECT_CALL(connection1, SendAvailableBytes()).Times(1);
+  EXPECT_CALL(connection1, SendAvailableBytes()).Times(0);
   EXPECT_CALL(connection1, TryReceiveMessage()).Times(1);
   EXPECT_CALL(connection2, SendAvailableBytes()).Times(0);
   EXPECT_CALL(connection2, TryReceiveMessage()).Times(0);
   EXPECT_CALL(connection3, SendAvailableBytes()).Times(0);
   EXPECT_CALL(connection3, TryReceiveMessage()).Times(0);
-  network_manager()->ProcessReadyHandle(connection1.socket_handle());
+  network_manager()->ProcessReadyHandle(connection1.socket_handle(),
+                                        SocketHandleWaiter::Flags::kReadable);
 
   EXPECT_CALL(connection1, SendAvailableBytes()).Times(0);
   EXPECT_CALL(connection1, TryReceiveMessage()).Times(0);
   EXPECT_CALL(connection2, SendAvailableBytes()).Times(1);
-  EXPECT_CALL(connection2, TryReceiveMessage()).Times(1);
+  EXPECT_CALL(connection2, TryReceiveMessage()).Times(0);
   EXPECT_CALL(connection3, SendAvailableBytes()).Times(0);
   EXPECT_CALL(connection3, TryReceiveMessage()).Times(0);
-  network_manager()->ProcessReadyHandle(connection2.socket_handle());
+  network_manager()->ProcessReadyHandle(connection2.socket_handle(),
+                                        SocketHandleWaiter::Flags::kWriteable);
 }
 
 }  // namespace openscreen

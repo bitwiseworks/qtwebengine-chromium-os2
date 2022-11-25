@@ -14,7 +14,7 @@
 #include <utility>
 #include <vector>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/macros.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/optional.h"
@@ -1392,9 +1392,16 @@ TEST_F(NetworkQualityEstimatorTest, TestGetMetricsSince) {
   }
 }
 
+#if defined(OS_IOS)
+// Flaky on iOS: crbug.com/672917.
+#define MAYBE_TestThroughputNoRequestOverlap \
+  DISABLED_TestThroughputNoRequestOverlap
+#else
+#define MAYBE_TestThroughputNoRequestOverlap TestThroughputNoRequestOverlap
+#endif
 // Tests if the throughput observation is taken correctly when local and network
 // requests do not overlap.
-TEST_F(NetworkQualityEstimatorTest, TestThroughputNoRequestOverlap) {
+TEST_F(NetworkQualityEstimatorTest, MAYBE_TestThroughputNoRequestOverlap) {
   base::HistogramTester histogram_tester;
   std::map<std::string, std::string> variation_params;
   variation_params["throughput_min_requests_in_flight"] = "1";
@@ -3051,11 +3058,24 @@ TEST_F(NetworkQualityEstimatorTest, TestPeerToPeerConnectionsCountObserver) {
   EXPECT_EQ(3u, observer.count());
 }
 
+// Fails only for Android. https://crbug.com/1130720
+#if defined(OS_ANDROID)
+#define MAYBE_CheckSignalStrength DISABLED_CheckSignalStrength
+#else
+#define MAYBE_CheckSignalStrength CheckSignalStrength
+#endif
+
 // Tests that the signal strength API is not called too frequently.
-TEST_F(NetworkQualityEstimatorTest, CheckSignalStrength) {
+TEST_F(NetworkQualityEstimatorTest, MAYBE_CheckSignalStrength) {
+  base::HistogramTester histogram_tester;
+  constexpr char histogram_name[] = "NQE.SignalStrengthQueried.WiFi";
+  constexpr int kWiFiSignalStrengthQueryIntervalSeconds = 30 * 60;
+
   std::map<std::string, std::string> variation_params;
   variation_params["get_signal_strength_and_detailed_network_id"] = "true";
   TestNetworkQualityEstimator estimator(variation_params);
+  estimator.SimulateNetworkChange(
+      NetworkChangeNotifier::ConnectionType::CONNECTION_WIFI, "test");
 
   base::SimpleTestTickClock tick_clock;
   tick_clock.SetNowTicks(base::TimeTicks::Now());
@@ -3064,47 +3084,47 @@ TEST_F(NetworkQualityEstimatorTest, CheckSignalStrength) {
 
   base::Optional<int32_t> signal_strength =
       estimator.GetCurrentSignalStrengthWithThrottling();
-  EXPECT_FALSE(signal_strength);
 
   signal_strength = estimator.GetCurrentSignalStrengthWithThrottling();
-  EXPECT_FALSE(signal_strength);
+  histogram_tester.ExpectTotalCount(histogram_name, 1);
 
-  // Advance clock by 30 seconds. The signal strength API should now be called.
-  tick_clock.Advance(base::TimeDelta::FromSeconds(30));
+  // Advance clock by |kWiFiSignalStrengthQueryIntervalSeconds|. The signal
+  // strength API should now be called.
+  tick_clock.Advance(
+      base::TimeDelta::FromSeconds(kWiFiSignalStrengthQueryIntervalSeconds));
   signal_strength = estimator.GetCurrentSignalStrengthWithThrottling();
-  EXPECT_TRUE(signal_strength);
+  histogram_tester.ExpectTotalCount(histogram_name, 2);
 
   // Calling it again should return no value.
   signal_strength = estimator.GetCurrentSignalStrengthWithThrottling();
-  EXPECT_FALSE(signal_strength);
 
-  tick_clock.Advance(base::TimeDelta::FromSeconds(27));
+  tick_clock.Advance(base::TimeDelta::FromSeconds(
+      kWiFiSignalStrengthQueryIntervalSeconds - 3));
   signal_strength = estimator.GetCurrentSignalStrengthWithThrottling();
-  EXPECT_FALSE(signal_strength);
+  histogram_tester.ExpectTotalCount(histogram_name, 2);
 
   // Move the clock by another 4 seconds. Since it's more than 30 seconds since
   // the strength was last available, it should be available again.
-  tick_clock.Advance(base::TimeDelta::FromSeconds(4));
+  tick_clock.Advance(base::TimeDelta::FromSeconds(3));
   signal_strength = estimator.GetCurrentSignalStrengthWithThrottling();
-  EXPECT_TRUE(signal_strength);
+  histogram_tester.ExpectTotalCount(histogram_name, 3);
 
   signal_strength = estimator.GetCurrentSignalStrengthWithThrottling();
-  EXPECT_FALSE(signal_strength);
+  histogram_tester.ExpectTotalCount(histogram_name, 3);
 
   // Changing the connection type should make the signal strength available
   // again.
   estimator.SimulateNetworkChange(
-      NetworkChangeNotifier::ConnectionType::CONNECTION_UNKNOWN, "test");
-  signal_strength = estimator.GetCurrentSignalStrengthWithThrottling();
-  EXPECT_TRUE(signal_strength);
+      NetworkChangeNotifier::ConnectionType::CONNECTION_WIFI, "test");
+  histogram_tester.ExpectTotalCount(histogram_name, 5);
 
   tick_clock.Advance(base::TimeDelta::FromMilliseconds(2));
   signal_strength = estimator.GetCurrentSignalStrengthWithThrottling();
-  EXPECT_TRUE(signal_strength);
+  histogram_tester.ExpectTotalCount(histogram_name, 6);
 
   tick_clock.Advance(base::TimeDelta::FromMilliseconds(2));
   signal_strength = estimator.GetCurrentSignalStrengthWithThrottling();
-  EXPECT_FALSE(signal_strength);
+  histogram_tester.ExpectTotalCount(histogram_name, 6);
 }
 
 TEST_F(NetworkQualityEstimatorTest, CheckSignalStrengthDisabledByDefault) {

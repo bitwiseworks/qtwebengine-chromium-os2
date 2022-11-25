@@ -405,7 +405,7 @@ void sqlite3VtabBeginParse(
 #ifndef SQLITE_OMIT_AUTHORIZATION
   /* Creating a virtual table invokes the authorization callback twice.
   ** The first invocation, to obtain permission to INSERT a row into the
-  ** sqlite_master table, has already been made by sqlite3StartTable().
+  ** sqlite_schema table, has already been made by sqlite3StartTable().
   ** The second call, to obtain permission to create the table, is made now.
   */
   if( pTable->azModuleArg ){
@@ -446,9 +446,9 @@ void sqlite3VtabFinishParse(Parse *pParse, Token *pEnd){
   
   /* If the CREATE VIRTUAL TABLE statement is being entered for the
   ** first time (in other words if the virtual table is actually being
-  ** created now instead of just being read out of sqlite_master) then
+  ** created now instead of just being read out of sqlite_schema) then
   ** do additional initialization work and store the statement text
-  ** in the sqlite_master table.
+  ** in the sqlite_schema table.
   */
   if( !db->init.busy ){
     char *zStmt;
@@ -466,19 +466,19 @@ void sqlite3VtabFinishParse(Parse *pParse, Token *pEnd){
     zStmt = sqlite3MPrintf(db, "CREATE VIRTUAL TABLE %T", &pParse->sNameToken);
 
     /* A slot for the record has already been allocated in the 
-    ** SQLITE_MASTER table.  We just need to update that slot with all
+    ** schema table.  We just need to update that slot with all
     ** the information we've collected.  
     **
     ** The VM register number pParse->regRowid holds the rowid of an
-    ** entry in the sqlite_master table tht was created for this vtab
+    ** entry in the sqlite_schema table tht was created for this vtab
     ** by sqlite3StartTable().
     */
     iDb = sqlite3SchemaToIndex(db, pTab->pSchema);
     sqlite3NestedParse(pParse,
-      "UPDATE %Q.%s "
+      "UPDATE %Q." DFLT_SCHEMA_TABLE " "
          "SET type='table', name=%Q, tbl_name=%Q, rootpage=0, sql=%Q "
        "WHERE rowid=#%d",
-      db->aDb[iDb].zDbSName, MASTER_NAME,
+      db->aDb[iDb].zDbSName,
       pTab->zName,
       pTab->zName,
       zStmt,
@@ -489,7 +489,7 @@ void sqlite3VtabFinishParse(Parse *pParse, Token *pEnd){
 
     sqlite3VdbeAddOp0(v, OP_Expire);
     zWhere = sqlite3MPrintf(db, "name=%Q AND sql=%Q", pTab->zName, zStmt);
-    sqlite3VdbeAddParseSchemaOp(v, iDb, zWhere);
+    sqlite3VdbeAddParseSchemaOp(v, iDb, zWhere, 0);
     sqlite3DbFree(db, zStmt);
 
     iReg = ++pParse->nMem;
@@ -497,7 +497,7 @@ void sqlite3VtabFinishParse(Parse *pParse, Token *pEnd){
     sqlite3VdbeAddOp2(v, OP_VCreate, iDb, iReg);
   }
 
-  /* If we are rereading the sqlite_master table create the in-memory
+  /* If we are rereading the sqlite_schema table create the in-memory
   ** record of the table. The xConnect() method is not called until
   ** the first time the virtual table is used in an SQL statement. This
   ** allows a schema that contains virtual tables to be loaded before
@@ -660,6 +660,7 @@ static int vtabCallConstructor(
             zType[i-1] = '\0';
           }
           pTab->aCol[iCol].colFlags |= COLFLAG_HIDDEN;
+          pTab->tabFlags |= TF_HasHidden;
           oooHidden = TF_OOOHidden;
         }else{
           pTab->tabFlags |= oooHidden;
@@ -828,7 +829,7 @@ int sqlite3_declare_vtab(sqlite3 *db, const char *zCreateTable){
       Table *pNew = sParse.pNewTable;
       Index *pIdx;
       pTab->aCol = pNew->aCol;
-      pTab->nCol = pNew->nCol;
+      pTab->nNVCol = pTab->nCol = pNew->nCol;
       pTab->tabFlags |= pNew->tabFlags & (TF_WithoutRowid|TF_NoVisibleRowid);
       pNew->nCol = 0;
       pNew->aCol = 0;
@@ -1177,7 +1178,7 @@ void sqlite3VtabMakeWritable(Parse *pParse, Table *pTab){
     if( pTab==pToplevel->apVtabLock[i] ) return;
   }
   n = (pToplevel->nVtabLock+1)*sizeof(pToplevel->apVtabLock[0]);
-  apVtabLock = sqlite3_realloc64(pToplevel->apVtabLock, n);
+  apVtabLock = sqlite3Realloc(pToplevel->apVtabLock, n);
   if( apVtabLock ){
     pToplevel->apVtabLock = apVtabLock;
     pToplevel->apVtabLock[pToplevel->nVtabLock++] = pTab;

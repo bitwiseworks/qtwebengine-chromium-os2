@@ -51,10 +51,15 @@ class QuicEndpoint : public QuicEndpointBase,
   void OnCryptoFrame(const QuicCryptoFrame& frame) override;
   void OnCanWrite() override;
   bool SendProbingData() override;
+  bool ValidateStatelessReset(
+      const quic::QuicSocketAddress& /*self_address*/,
+      const quic::QuicSocketAddress& /*peer_address*/) override {
+    return true;
+  }
   bool WillingAndAbleToWrite() const override;
-  bool HasPendingHandshake() const override;
   bool ShouldKeepConnectionAlive() const override;
 
+  std::string GetStreamsInfoForLogging() const override { return ""; }
   void OnWindowUpdateFrame(const QuicWindowUpdateFrame& /*frame*/) override {}
   void OnBlockedFrame(const QuicBlockedFrame& /*frame*/) override {}
   void OnRstStream(const QuicRstStreamFrame& /*frame*/) override {}
@@ -72,11 +77,11 @@ class QuicEndpoint : public QuicEndpointBase,
   void OnCongestionWindowChange(QuicTime /*now*/) override {}
   void OnConnectionMigration(AddressChangeType /*type*/) override {}
   void OnPathDegrading() override {}
+  void OnForwardProgressMadeAfterPathDegrading() override {}
   void OnAckNeedsRetransmittableFrame() override {}
   void SendPing() override {}
   bool AllowSelfAddressChange() const override;
   HandshakeState GetHandshakeState() const override;
-  void OnForwardProgressConfirmed() override {}
   bool OnMaxStreamsFrame(const QuicMaxStreamsFrame& /*frame*/) override {
     return true;
   }
@@ -87,6 +92,7 @@ class QuicEndpoint : public QuicEndpointBase,
   void OnStopSendingFrame(const QuicStopSendingFrame& /*frame*/) override {}
   void OnPacketDecrypted(EncryptionLevel /*level*/) override {}
   void OnOneRttPacketAcknowledged() override {}
+  void OnHandshakePacketSent() override {}
 
   // End QuicConnectionVisitorInterface implementation.
 

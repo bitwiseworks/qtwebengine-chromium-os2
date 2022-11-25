@@ -13,8 +13,10 @@
 #include "cast/common/channel/proto/cast_channel.pb.h"
 #include "gtest/gtest.h"
 #include "platform/api/time.h"
+#include "platform/test/paths.h"
 #include "testing/util/read_file.h"
-#include "util/logging.h"
+#include "util/crypto/pem_helpers.h"
+#include "util/osp_logging.h"
 
 namespace openscreen {
 namespace cast {
@@ -107,7 +109,10 @@ bool ConvertTimeSeconds(const DateTime& time, uint64_t* seconds) {
   return true;
 }
 
-#define TEST_DATA_PREFIX OPENSCREEN_TEST_DATA_DIR "cast/common/certificate/"
+const std::string& GetSpecificTestDataPath() {
+  static std::string data_path = GetTestDataPath() + "cast/common/certificate/";
+  return data_path;
+}
 
 class CastAuthUtilTest : public ::testing::Test {
  public:
@@ -120,12 +125,12 @@ class CastAuthUtilTest : public ::testing::Test {
   static AuthResponse CreateAuthResponse(
       std::vector<uint8_t>* signed_data,
       ::cast::channel::HashAlgorithm digest_algorithm) {
-    std::vector<std::string> chain = testing::ReadCertificatesFromPemFile(
-        TEST_DATA_PREFIX "certificates/chromecast_gen1.pem");
+    std::vector<std::string> chain = ReadCertificatesFromPemFile(
+        GetSpecificTestDataPath() + "certificates/chromecast_gen1.pem");
     OSP_CHECK(!chain.empty());
 
     testing::SignatureTestData signatures = testing::ReadSignatureTestData(
-        TEST_DATA_PREFIX "signeddata/2ZZBG9_FA8FCA3EF91A.pem");
+        GetSpecificTestDataPath() + "signeddata/2ZZBG9_FA8FCA3EF91A.pem");
 
     AuthResponse response;
 
@@ -161,6 +166,8 @@ class CastAuthUtilTest : public ::testing::Test {
   static void MangleData(std::vector<uint8_t>* data) {
     (*data)[0] = ~(*data)[0];
   }
+
+  const std::string& data_path_{GetSpecificTestDataPath()};
 };
 
 // Note on expiration: VerifyCredentials() depends on the system clock. In
@@ -286,8 +293,8 @@ TEST_F(CastAuthUtilTest, VerifySenderNonceMissing) {
 }
 
 TEST_F(CastAuthUtilTest, VerifyTLSCertificateSuccess) {
-  std::vector<std::string> tls_cert_der = testing::ReadCertificatesFromPemFile(
-      TEST_DATA_PREFIX "certificates/test_tls_cert.pem");
+  std::vector<std::string> tls_cert_der = ReadCertificatesFromPemFile(
+      data_path_ + "certificates/test_tls_cert.pem");
   std::string& der_cert = tls_cert_der[0];
   const uint8_t* data = (const uint8_t*)der_cert.data();
   X509* tls_cert = d2i_X509(nullptr, &data, der_cert.size());
@@ -304,8 +311,8 @@ TEST_F(CastAuthUtilTest, VerifyTLSCertificateSuccess) {
 }
 
 TEST_F(CastAuthUtilTest, VerifyTLSCertificateTooEarly) {
-  std::vector<std::string> tls_cert_der = testing::ReadCertificatesFromPemFile(
-      TEST_DATA_PREFIX "certificates/test_tls_cert.pem");
+  std::vector<std::string> tls_cert_der = ReadCertificatesFromPemFile(
+      data_path_ + "certificates/test_tls_cert.pem");
   std::string& der_cert = tls_cert_der[0];
   const uint8_t* data = (const uint8_t*)der_cert.data();
   X509* tls_cert = d2i_X509(nullptr, &data, der_cert.size());
@@ -325,8 +332,8 @@ TEST_F(CastAuthUtilTest, VerifyTLSCertificateTooEarly) {
 }
 
 TEST_F(CastAuthUtilTest, VerifyTLSCertificateTooLate) {
-  std::vector<std::string> tls_cert_der = testing::ReadCertificatesFromPemFile(
-      TEST_DATA_PREFIX "certificates/test_tls_cert.pem");
+  std::vector<std::string> tls_cert_der = ReadCertificatesFromPemFile(
+      data_path_ + "certificates/test_tls_cert.pem");
   std::string& der_cert = tls_cert_der[0];
   const uint8_t* data = (const uint8_t*)der_cert.data();
   X509* tls_cert = d2i_X509(nullptr, &data, der_cert.size());
@@ -386,16 +393,16 @@ ErrorOr<CastDeviceCertPolicy> TestVerifyRevocation(
 
 // Runs a single test case.
 bool RunTest(const DeviceCertTest& test_case) {
-  std::unique_ptr<TrustStore> crl_trust_store;
-  std::unique_ptr<TrustStore> cast_trust_store;
+  TrustStore crl_trust_store;
+  TrustStore cast_trust_store;
   if (test_case.use_test_trust_anchors()) {
-    crl_trust_store = testing::CreateTrustStoreFromPemFile(
-        TEST_DATA_PREFIX "certificates/cast_crl_test_root_ca.pem");
-    cast_trust_store = testing::CreateTrustStoreFromPemFile(
-        TEST_DATA_PREFIX "certificates/cast_test_root_ca.pem");
+    crl_trust_store = TrustStore::CreateInstanceFromPemFile(
+        GetSpecificTestDataPath() + "certificates/cast_crl_test_root_ca.pem");
+    cast_trust_store = TrustStore::CreateInstanceFromPemFile(
+        GetSpecificTestDataPath() + "certificates/cast_test_root_ca.pem");
 
-    EXPECT_FALSE(crl_trust_store->certs.empty());
-    EXPECT_FALSE(cast_trust_store->certs.empty());
+    EXPECT_FALSE(crl_trust_store.certs.empty());
+    EXPECT_FALSE(cast_trust_store.certs.empty());
   }
 
   std::vector<std::string> certificate_chain;
@@ -415,9 +422,9 @@ bool RunTest(const DeviceCertTest& test_case) {
   ErrorOr<CastDeviceCertPolicy> result(CastDeviceCertPolicy::kUnrestricted);
   switch (test_case.expected_result()) {
     case ::cast::certificate::PATH_VERIFICATION_FAILED:
-      result = TestVerifyRevocation(
-          certificate_chain, crl_bundle, verification_time, false,
-          cast_trust_store.get(), crl_trust_store.get());
+      result =
+          TestVerifyRevocation(certificate_chain, crl_bundle, verification_time,
+                               false, &cast_trust_store, &cast_trust_store);
       EXPECT_EQ(result.error().code(),
                 Error::Code::kCastV2CertNotSignedByTrustedCa);
       return result.error().code() ==
@@ -425,9 +432,9 @@ bool RunTest(const DeviceCertTest& test_case) {
     case ::cast::certificate::CRL_VERIFICATION_FAILED:
     // Fall-through intended.
     case ::cast::certificate::REVOCATION_CHECK_FAILED_WITHOUT_CRL:
-      result = TestVerifyRevocation(
-          certificate_chain, crl_bundle, verification_time, true,
-          cast_trust_store.get(), crl_trust_store.get());
+      result =
+          TestVerifyRevocation(certificate_chain, crl_bundle, verification_time,
+                               true, &cast_trust_store, &cast_trust_store);
       EXPECT_EQ(result.error().code(), Error::Code::kErrCrlInvalid);
       return result.error().code() == Error::Code::kErrCrlInvalid;
     case ::cast::certificate::CRL_EXPIRED_AFTER_INITIAL_VERIFICATION:
@@ -435,15 +442,15 @@ bool RunTest(const DeviceCertTest& test_case) {
       // certificate is verified.
       return true;
     case ::cast::certificate::REVOCATION_CHECK_FAILED:
-      result = TestVerifyRevocation(
-          certificate_chain, crl_bundle, verification_time, true,
-          cast_trust_store.get(), crl_trust_store.get());
+      result =
+          TestVerifyRevocation(certificate_chain, crl_bundle, verification_time,
+                               true, &cast_trust_store, &cast_trust_store);
       EXPECT_EQ(result.error().code(), Error::Code::kErrCertsRevoked);
       return result.error().code() == Error::Code::kErrCertsRevoked;
     case ::cast::certificate::SUCCESS:
-      result = TestVerifyRevocation(
-          certificate_chain, crl_bundle, verification_time, false,
-          cast_trust_store.get(), crl_trust_store.get());
+      result =
+          TestVerifyRevocation(certificate_chain, crl_bundle, verification_time,
+                               false, &cast_trust_store, &cast_trust_store);
       EXPECT_EQ(result.error().code(), Error::Code::kCastV2SignedBlobsMismatch);
       return result.error().code() == Error::Code::kCastV2SignedBlobsMismatch;
     case ::cast::certificate::UNSPECIFIED:

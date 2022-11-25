@@ -7,6 +7,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/blink/renderer/core/paint/compositing/composited_layer_mapping.h"
 #include "third_party/blink/renderer/core/paint/paint_controller_paint_test.h"
+#include "third_party/blink/renderer/platform/testing/paint_property_test_helpers.h"
 
 using testing::ElementsAre;
 
@@ -44,19 +45,28 @@ TEST_P(BoxPainterTest, EmptyDecorationBackground) {
                           IsSameId(div1, kBackgroundType),
                           IsSameId(div2, DisplayItem::PaintPhaseToDrawingType(
                                              PaintPhase::kSelfOutlineOnly))));
-  EXPECT_THAT(
-      RootPaintController().PaintChunks(),
-      ElementsAre(
-          IsPaintChunk(0, 1,
-                       PaintChunk::Id(ViewScrollingBackgroundClient(),
-                                      kDocumentBackgroundType),
-                       GetLayoutView().FirstFragment().ContentsProperties(),
-                       nullptr, IntRect(0, 0, 800, 600)),
-          // Empty backgrounds contribute to bounds of paint chunks.
-          IsPaintChunk(1, 3,
-                       PaintChunk::Id(*body->Layer(), DisplayItem::kLayerChunk),
-                       body->FirstFragment().LocalBorderBoxProperties(),
-                       nullptr, IntRect(-2, 0, 202, 350))));
+
+  if (RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
+    EXPECT_THAT(
+        RootPaintController().PaintChunks(),
+        ElementsAre(
+            IsPaintChunk(0, 0), IsPaintChunk(0, 1),  // LayoutView chunks.
+            // Empty backgrounds contribute to bounds of paint chunks.
+            IsPaintChunk(
+                1, 3, PaintChunk::Id(*body->Layer(), DisplayItem::kLayerChunk),
+                body->FirstFragment().LocalBorderBoxProperties(), nullptr,
+                IntRect(-2, 0, 202, 350))));
+  } else {
+    EXPECT_THAT(
+        RootPaintController().PaintChunks(),
+        ElementsAre(
+            IsPaintChunk(0, 1),  // LayoutView chunks.
+            // Empty backgrounds contribute to bounds of paint chunks.
+            IsPaintChunk(
+                1, 3, PaintChunk::Id(*body->Layer(), DisplayItem::kLayerChunk),
+                body->FirstFragment().LocalBorderBoxProperties(), nullptr,
+                IntRect(-2, 0, 202, 350))));
+  }
 }
 
 TEST_P(BoxPainterTest, ScrollHitTestOrderWithScrollBackgroundAttachment) {
@@ -96,15 +106,12 @@ TEST_P(BoxPainterTest, ScrollHitTestOrderWithScrollBackgroundAttachment) {
                             IsSameId(&child, kBackgroundType)));
     HitTestData scroll_hit_test;
     scroll_hit_test.scroll_translation =
-        &container.FirstFragment().ContentsProperties().Transform();
+        container.FirstFragment().PaintProperties()->ScrollTranslation();
     scroll_hit_test.scroll_hit_test_rect = IntRect(0, 0, 200, 200);
     EXPECT_THAT(
         RootPaintController().PaintChunks(),
         ElementsAre(
-            IsPaintChunk(0, 1,
-                         PaintChunk::Id(ViewScrollingBackgroundClient(),
-                                        kDocumentBackgroundType),
-                         GetLayoutView().FirstFragment().ContentsProperties()),
+            IsPaintChunk(0, 0), IsPaintChunk(0, 1),  // LayoutView chunks.
             IsPaintChunk(
                 1, 2,
                 PaintChunk::Id(*container.Layer(), DisplayItem::kLayerChunk),
@@ -171,15 +178,12 @@ TEST_P(BoxPainterTest, ScrollHitTestOrderWithLocalBackgroundAttachment) {
             IsSameId(&child, kBackgroundType)));
     HitTestData scroll_hit_test;
     scroll_hit_test.scroll_translation =
-        &container.FirstFragment().ContentsProperties().Transform();
+        container.FirstFragment().PaintProperties()->ScrollTranslation();
     scroll_hit_test.scroll_hit_test_rect = IntRect(0, 0, 200, 200);
     EXPECT_THAT(
         RootPaintController().PaintChunks(),
         ElementsAre(
-            IsPaintChunk(0, 1,
-                         PaintChunk::Id(ViewScrollingBackgroundClient(),
-                                        kDocumentBackgroundType),
-                         GetLayoutView().FirstFragment().ContentsProperties()),
+            IsPaintChunk(0, 0), IsPaintChunk(0, 1),  // LayoutView chunks.
             IsPaintChunk(
                 1, 1,
                 PaintChunk::Id(*container.Layer(), DisplayItem::kLayerChunk),
@@ -217,7 +221,7 @@ TEST_P(BoxPainterTest, ScrollHitTestProperties) {
         width: 200px;
         height: 200px;
         overflow-y: scroll;
-        background: green;
+        background: rgba(0, 128, 0, 0.5);  /* to prevent compositing */
       }
       #child { width: 100px; height: 300px; background: green; }
     </style>
@@ -232,9 +236,8 @@ TEST_P(BoxPainterTest, ScrollHitTestProperties) {
 
   // The scroll hit test should be after the container background but before the
   // scrolled contents.
-  EXPECT_EQ(
-      kBackgroundPaintInGraphicsLayer | kBackgroundPaintInScrollingContents,
-      container.ComputeBackgroundPaintLocationIfComposited());
+  EXPECT_EQ(kBackgroundPaintInGraphicsLayer,
+            container.ComputeBackgroundPaintLocationIfComposited());
   EXPECT_EQ(kBackgroundPaintInGraphicsLayer,
             container.GetBackgroundPaintLocation());
   EXPECT_THAT(
@@ -248,57 +251,79 @@ TEST_P(BoxPainterTest, ScrollHitTestProperties) {
   const auto& scrolling_contents_properties =
       container.FirstFragment().ContentsProperties();
   scroll_hit_test_data.scroll_translation =
-      &scrolling_contents_properties.Transform();
+      container.FirstFragment().PaintProperties()->ScrollTranslation();
   scroll_hit_test_data.scroll_hit_test_rect = IntRect(0, 0, 200, 200);
-  EXPECT_THAT(
-      paint_chunks,
-      ElementsAre(
-          IsPaintChunk(0, 1,
-                       PaintChunk::Id(ViewScrollingBackgroundClient(),
-                                      kDocumentBackgroundType),
-                       GetLayoutView().FirstFragment().ContentsProperties()),
-          IsPaintChunk(
-              1, 2,
-              PaintChunk::Id(*container.Layer(), DisplayItem::kLayerChunk),
-              container.FirstFragment().LocalBorderBoxProperties()),
-          IsPaintChunk(2, 2,
-                       PaintChunk::Id(container, DisplayItem::kScrollHitTest),
-                       container.FirstFragment().LocalBorderBoxProperties(),
-                       &scroll_hit_test_data, IntRect(0, 0, 200, 200)),
-          IsPaintChunk(
-              2, 3,
-              PaintChunk::Id(container, kClippedContentsBackgroundChunkType),
-              scrolling_contents_properties)));
+  if (RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
+    EXPECT_THAT(
+        paint_chunks,
+        ElementsAre(
+            IsPaintChunk(0, 0), IsPaintChunk(0, 1),  // LayoutView chunks.
+            IsPaintChunk(
+                1, 2,
+                PaintChunk::Id(*container.Layer(), DisplayItem::kLayerChunk),
+                container.FirstFragment().LocalBorderBoxProperties()),
+            IsPaintChunk(2, 2,
+                         PaintChunk::Id(container, DisplayItem::kScrollHitTest),
+                         container.FirstFragment().LocalBorderBoxProperties(),
+                         &scroll_hit_test_data, IntRect(0, 0, 200, 200)),
+            IsPaintChunk(
+                2, 3,
+                PaintChunk::Id(container, kClippedContentsBackgroundChunkType),
+                scrolling_contents_properties)));
+  } else {
+    EXPECT_THAT(
+        paint_chunks,
+        ElementsAre(
+            IsPaintChunk(0, 1),  // LayoutView.
+            IsPaintChunk(
+                1, 2,
+                PaintChunk::Id(*container.Layer(), DisplayItem::kLayerChunk),
+                container.FirstFragment().LocalBorderBoxProperties()),
+            IsPaintChunk(2, 2,
+                         PaintChunk::Id(container, DisplayItem::kScrollHitTest),
+                         container.FirstFragment().LocalBorderBoxProperties(),
+                         &scroll_hit_test_data, IntRect(0, 0, 200, 200)),
+            IsPaintChunk(
+                2, 3,
+                PaintChunk::Id(container, kClippedContentsBackgroundChunkType),
+                scrolling_contents_properties)));
+  }
 
   // We always create scroll node for the root layer.
-  const auto& root_transform = paint_chunks[0].properties.Transform();
+  wtf_size_t chunk_index =
+      RuntimeEnabledFeatures::CompositeAfterPaintEnabled() ? 1 : 0;
+  const auto& root_transform =
+      ToUnaliased(paint_chunks[chunk_index].properties.Transform());
   EXPECT_NE(nullptr, root_transform.ScrollNode());
 
   // The container's background chunk should not scroll and therefore should use
   // the root transform. Its local transform is actually a paint offset
   // transform.
-  const auto& container_transform = paint_chunks[1].properties.Transform();
+  const auto& container_transform =
+      ToUnaliased(paint_chunks[++chunk_index].properties.Transform());
   EXPECT_EQ(&root_transform, container_transform.Parent());
   EXPECT_EQ(nullptr, container_transform.ScrollNode());
 
   // The scroll hit test should not be scrolled and should not be clipped.
   // Its local transform is actually a paint offset transform.
-  const auto& scroll_hit_test_chunk = paint_chunks[2];
+  const auto& scroll_hit_test_chunk = paint_chunks[++chunk_index];
   const auto& scroll_hit_test_transform =
-      scroll_hit_test_chunk.properties.Transform();
+      ToUnaliased(scroll_hit_test_chunk.properties.Transform());
   EXPECT_EQ(nullptr, scroll_hit_test_transform.ScrollNode());
   EXPECT_EQ(&root_transform, scroll_hit_test_transform.Parent());
-  const auto& scroll_hit_test_clip = scroll_hit_test_chunk.properties.Clip();
+  const auto& scroll_hit_test_clip =
+      ToUnaliased(scroll_hit_test_chunk.properties.Clip());
   EXPECT_EQ(FloatRect(0, 0, 800, 600),
             scroll_hit_test_clip.UnsnappedClipRect().Rect());
 
   // The scrolled contents should be scrolled and clipped.
-  const auto& contents_chunk = paint_chunks[3];
-  const auto& contents_transform = contents_chunk.properties.Transform();
+  const auto& contents_chunk = paint_chunks[++chunk_index];
+  const auto& contents_transform =
+      ToUnaliased(contents_chunk.properties.Transform());
   const auto* contents_scroll = contents_transform.ScrollNode();
   EXPECT_EQ(IntSize(200, 300), contents_scroll->ContentsSize());
   EXPECT_EQ(IntRect(0, 0, 200, 200), contents_scroll->ContainerRect());
-  const auto& contents_clip = contents_chunk.properties.Clip();
+  const auto& contents_clip = ToUnaliased(contents_chunk.properties.Clip());
   EXPECT_EQ(FloatRect(0, 0, 200, 200),
             contents_clip.UnsnappedClipRect().Rect());
 

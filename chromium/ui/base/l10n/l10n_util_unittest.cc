@@ -27,7 +27,7 @@
 #include "ui/base/l10n/l10n_util_collator.h"
 #include "ui/base/ui_base_paths.h"
 
-#if defined(OS_POSIX) && !defined(OS_MACOSX)
+#if defined(OS_POSIX) && !defined(OS_APPLE)
 #include <cstdlib>
 #endif
 
@@ -68,7 +68,7 @@ TEST_F(L10nUtilTest, GetString) {
   EXPECT_EQ(UTF8ToUTF16("You owe me $$1."), s16);
 }
 
-#if !defined(OS_MACOSX) && !defined(OS_ANDROID)
+#if !defined(OS_APPLE) && !defined(OS_ANDROID)
 // On Mac, we are disabling this test because GetApplicationLocale() as an
 // API isn't something that we'll easily be able to unit test in this manner.
 // The meaning of that API, on the Mac, is "the locale used by Cocoa's main
@@ -115,7 +115,7 @@ TEST_F(L10nUtilTest, GetAppLocale) {
   for (size_t i = 0; i < base::size(filenames); ++i) {
     base::FilePath filename = new_locale_dir.AppendASCII(
         filenames[i] + ".pak");
-    base::WriteFile(filename, "", 0);
+    base::WriteFile(filename, "");
   }
 
   // Keep a copy of ICU's default locale before we overwrite it.
@@ -380,7 +380,7 @@ TEST_F(L10nUtilTest, GetAppLocale) {
   // Clean up.
   base::i18n::SetICUDefaultLocale(original_locale);
 }
-#endif  // !defined(OS_MACOSX)
+#endif  // !defined(OS_APPLE)
 
 TEST_F(L10nUtilTest, SortStringsUsingFunction) {
   std::vector<std::unique_ptr<StringWrapper>> strings;
@@ -546,7 +546,7 @@ TEST_F(L10nUtilTest, IsValidLocaleSyntax) {
   EXPECT_TRUE(l10n_util::IsValidLocaleSyntax("en_IE_u_cu_IEP"));
   EXPECT_TRUE(l10n_util::IsValidLocaleSyntax("en_IE@currency=IEP"));
   EXPECT_TRUE(l10n_util::IsValidLocaleSyntax("fr@x=y"));
-  EXPECT_TRUE(l10n_util::IsValidLocaleSyntax("zn_CN@foo=bar"));
+  EXPECT_TRUE(l10n_util::IsValidLocaleSyntax("zh_CN@foo=bar"));
   EXPECT_TRUE(l10n_util::IsValidLocaleSyntax(
       "fr@collation=phonebook;calendar=islamic-civil"));
   EXPECT_TRUE(l10n_util::IsValidLocaleSyntax(

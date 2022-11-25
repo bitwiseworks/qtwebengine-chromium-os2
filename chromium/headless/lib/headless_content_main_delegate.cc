@@ -32,9 +32,10 @@
 #include "headless/lib/browser/headless_content_browser_client.h"
 #include "headless/lib/headless_crash_reporter_client.h"
 #include "headless/lib/headless_macros.h"
+#include "headless/lib/renderer/headless_content_renderer_client.h"
 #include "headless/lib/utility/headless_content_utility_client.h"
-#include "services/service_manager/embedder/switches.h"
-#include "services/service_manager/sandbox/switches.h"
+#include "sandbox/policy/switches.h"
+#include "third_party/blink/public/common/switches.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_switches.h"
@@ -46,16 +47,12 @@
 #include "headless/embedded_resource_pak.h"
 #endif
 
-#if defined(OS_MACOSX) || defined(OS_WIN)
+#if defined(OS_MAC) || defined(OS_WIN)
 #include "components/crash/core/app/crashpad.h"
 #endif
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
 #include "components/crash/core/app/breakpad_linux.h"
-#endif
-
-#if !defined(CHROME_MULTIPLE_DLL_BROWSER)
-#include "headless/lib/renderer/headless_content_renderer_client.h"
 #endif
 
 #if defined(OS_POSIX)
@@ -75,10 +72,8 @@ const base::FilePath::CharType kDefaultProfileName[] =
 namespace {
 
 // Keep in sync with content/common/content_constants_internal.h.
-#if !defined(CHROME_MULTIPLE_DLL_CHILD)
 // TODO(skyostil): Add a tracing test for this.
 const int kTraceEventBrowserProcessSortIndex = -6;
-#endif
 
 HeadlessContentMainDelegate* g_current_headless_content_main_delegate = nullptr;
 
@@ -104,9 +99,15 @@ void InitializeResourceBundle(const base::CommandLine& command_line) {
       ui::SCALE_FACTOR_NONE);
 
 #else
-
   base::FilePath dir_module;
+
+// Fuchsia doesn't implement DIR_MODULE
+#if !defined(OS_FUCHSIA)
   bool result = base::PathService::Get(base::DIR_MODULE, &dir_module);
+#else
+  bool result = base::PathService::Get(base::DIR_ASSETS, &dir_module);
+#endif  // !defined(OS_FUCHSIA)
+
   DCHECK(result);
 
   // Try loading the headless library pak file first. If it doesn't exist (i.e.,
@@ -128,7 +129,7 @@ void InitializeResourceBundle(const base::CommandLine& command_line) {
   base::FilePath chrome_200_pak =
       dir_module.Append(FILE_PATH_LITERAL("chrome_200_percent.pak"));
 
-#if defined(OS_MACOSX) && !defined(COMPONENT_BUILD)
+#if defined(OS_MAC) && !defined(COMPONENT_BUILD)
   // In non component builds, check if fall back in Resources/ folder is
   // available.
   if (!base::PathExists(resources_pak)) {
@@ -196,7 +197,7 @@ bool HeadlessContentMainDelegate::BasicStartupComplete(int* exit_code) {
     command_line->AppendSwitch(::switches::kSingleProcess);
 
   if (options()->disable_sandbox)
-    command_line->AppendSwitch(service_manager::switches::kNoSandbox);
+    command_line->AppendSwitch(sandbox::policy::switches::kNoSandbox);
 
   if (!options()->enable_resource_scheduler)
     command_line->AppendSwitch(::switches::kDisableResourceScheduler);
@@ -227,11 +228,11 @@ bool HeadlessContentMainDelegate::BasicStartupComplete(int* exit_code) {
 
   // When running headless there is no need to suppress input until content
   // is ready for display (because it isn't displayed to users).
-  command_line->AppendSwitch(::switches::kAllowPreCommitInput);
+  command_line->AppendSwitch(::blink::switches::kAllowPreCommitInput);
 
 #if defined(OS_WIN)
   command_line->AppendSwitch(
-      ::switches::kDisableGpuProcessForDX12VulkanInfoCollection);
+      ::switches::kDisableGpuProcessForDX12InfoCollection);
 #endif
 
   content::Profiling::ProcessStarted();
@@ -340,14 +341,14 @@ void HeadlessContentMainDelegate::InitCrashReporter(
     DCHECK(!breakpad::IsCrashReporterEnabled());
     return;
   }
-  if (process_type != service_manager::switches::kZygoteProcess)
+  if (process_type != switches::kZygoteProcess)
     breakpad::InitCrashReporter(process_type);
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
   crash_reporter::InitializeCrashpad(process_type.empty(), process_type);
 // Avoid adding this dependency in Windows Chrome non component builds, since
 // crashpad is already enabled.
 // TODO(dvallet): Ideally we would also want to avoid this for component builds.
-#elif defined(OS_WIN) && !defined(CHROME_MULTIPLE_DLL)
+#elif defined(OS_WIN)
   crash_reporter::InitializeCrashpadWithEmbeddedHandler(
       process_type.empty(), process_type, "", base::FilePath());
 #endif  // defined(HEADLESS_USE_BREAKPAD)
@@ -376,7 +377,6 @@ void HeadlessContentMainDelegate::PreSandboxStartup() {
   InitApplicationLocale(command_line);
 }
 
-#if !defined(CHROME_MULTIPLE_DLL_CHILD)
 int HeadlessContentMainDelegate::RunProcess(
     const std::string& process_type,
     const content::MainFunctionParams& main_function_params) {
@@ -403,9 +403,8 @@ int HeadlessContentMainDelegate::RunProcess(
   // Return value >=0 here to disable calling content::BrowserMain.
   return 0;
 }
-#endif  // !defined(CHROME_MULTIPLE_DLL_CHILD)
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
 void SIGTERMProfilingShutdown(int signal) {
   content::Profiling::Stop();
   struct sigaction sigact;
@@ -440,7 +439,7 @@ void HeadlessContentMainDelegate::ZygoteForked() {
   breakpad::InitCrashReporter(process_type);
 #endif
 }
-#endif  // defined(OS_LINUX)
+#endif  // defined(OS_LINUX) || defined(OS_CHROMEOS)
 
 // static
 HeadlessContentMainDelegate* HeadlessContentMainDelegate::GetInstance() {
@@ -457,16 +456,13 @@ content::ContentClient* HeadlessContentMainDelegate::CreateContentClient() {
   return &content_client_;
 }
 
-#if !defined(CHROME_MULTIPLE_DLL_CHILD)
 content::ContentBrowserClient*
 HeadlessContentMainDelegate::CreateContentBrowserClient() {
   browser_client_ =
       std::make_unique<HeadlessContentBrowserClient>(browser_.get());
   return browser_client_.get();
 }
-#endif  // !defined(CHROME_MULTIPLE_DLL_CHILD)
 
-#if !defined(CHROME_MULTIPLE_DLL_BROWSER)
 content::ContentRendererClient*
 HeadlessContentMainDelegate::CreateContentRendererClient() {
   renderer_client_ = std::make_unique<HeadlessContentRendererClient>();
@@ -479,7 +475,6 @@ HeadlessContentMainDelegate::CreateContentUtilityClient() {
       std::make_unique<HeadlessContentUtilityClient>(options()->user_agent);
   return utility_client_.get();
 }
-#endif  // !defined(CHROME_MULTIPLE_DLL_BROWSER)
 
 void HeadlessContentMainDelegate::PostEarlyInitialization(
     bool is_running_tests) {
@@ -496,13 +491,13 @@ void HeadlessContentMainDelegate::PostEarlyInitialization(
         ::switches::kRunAllCompositorStagesBeforeDraw,
         ::switches::kDisableNewContentRenderingTimeout,
         cc::switches::kDisableThreadedAnimation,
-        ::switches::kDisableThreadedScrolling,
         // Animtion-only BeginFrames are only supported when updates from the
         // impl-thread are disabled, see go/headless-rendering.
         cc::switches::kDisableCheckerImaging,
+        blink::switches::kDisableThreadedScrolling,
         // Ensure that image animations don't resync their animation timestamps
         // when looping back around.
-        ::switches::kDisableImageAnimationResync,
+        blink::switches::kDisableImageAnimationResync,
     };
     for (const auto* flag : switches)
       base::CommandLine::ForCurrentProcess()->AppendSwitch(flag);

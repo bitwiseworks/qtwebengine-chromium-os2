@@ -19,6 +19,7 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/modules/service_worker/navigator_service_worker.h"
@@ -46,7 +47,7 @@ struct StubScriptFunction {
 
   size_t CallCount() { return call_count_; }
   ScriptValue Arg() { return arg_; }
-  void Trace(Visitor* visitor) { visitor->Trace(arg_); }
+  void Trace(Visitor* visitor) const { visitor->Trace(arg_); }
 
  private:
   size_t call_count_;
@@ -160,7 +161,7 @@ class NotReachedWebServiceWorkerProvider : public WebServiceWorkerProvider {
   void RegisterServiceWorker(
       const WebURL& scope,
       const WebURL& script_url,
-      blink::mojom::ScriptType script_type,
+      blink::mojom::blink::ScriptType script_type,
       mojom::ServiceWorkerUpdateViaCache update_via_cache,
       const WebFetchClientSettingsObject& fetch_client_settings_object,
       std::unique_ptr<WebServiceWorkerRegistrationCallbacks> callbacks)
@@ -181,7 +182,7 @@ class ServiceWorkerContainerTest : public PageTestBase {
   void SetUp() override { PageTestBase::SetUp(IntSize()); }
 
   ~ServiceWorkerContainerTest() override {
-    V8GCController::CollectAllGarbageForTesting(GetIsolate());
+    ThreadState::Current()->CollectAllGarbageForTesting();
   }
 
   v8::Isolate* GetIsolate() { return v8::Isolate::GetCurrent(); }
@@ -191,11 +192,6 @@ class ServiceWorkerContainerTest : public PageTestBase {
 
   void SetPageURL(const String& url) {
     NavigateTo(KURL(NullURL(), url));
-
-    if (url.StartsWith("https://") || url.StartsWith("http://localhost/")) {
-      GetDocument().SetSecureContextModeForTesting(
-          SecureContextMode::kSecureContext);
-    }
   }
 
   void TestRegisterRejected(const String& script_url,
@@ -205,7 +201,7 @@ class ServiceWorkerContainerTest : public PageTestBase {
     // the provider.
     ServiceWorkerContainer* container =
         ServiceWorkerContainer::CreateForTesting(
-            &GetDocument(),
+            *GetFrame().DomWindow(),
             std::make_unique<NotReachedWebServiceWorkerProvider>());
     ScriptState::Scope script_scope(GetScriptState());
     RegistrationOptions* options = RegistrationOptions::Create();
@@ -219,7 +215,7 @@ class ServiceWorkerContainerTest : public PageTestBase {
                                    const ScriptValueTest& value_test) {
     ServiceWorkerContainer* container =
         ServiceWorkerContainer::CreateForTesting(
-            &GetDocument(),
+            *GetFrame().DomWindow(),
             std::make_unique<NotReachedWebServiceWorkerProvider>());
     ScriptState::Scope script_scope(GetScriptState());
     ScriptPromise promise =
@@ -280,7 +276,7 @@ class StubWebServiceWorkerProvider {
   StubWebServiceWorkerProvider()
       : register_call_count_(0),
         get_registration_call_count_(0),
-        script_type_(mojom::ScriptType::kClassic),
+        script_type_(mojom::blink::ScriptType::kClassic),
         update_via_cache_(mojom::ServiceWorkerUpdateViaCache::kImports) {}
 
   // Creates a WebServiceWorkerProvider. This can outlive the
@@ -296,7 +292,7 @@ class StubWebServiceWorkerProvider {
   const WebURL& RegisterScriptURL() { return register_script_url_; }
   size_t GetRegistrationCallCount() { return get_registration_call_count_; }
   const WebURL& GetRegistrationURL() { return get_registration_url_; }
-  mojom::ScriptType ScriptType() const { return script_type_; }
+  mojom::blink::ScriptType ScriptType() const { return script_type_; }
   mojom::ServiceWorkerUpdateViaCache UpdateViaCache() const {
     return update_via_cache_;
   }
@@ -312,7 +308,7 @@ class StubWebServiceWorkerProvider {
     void RegisterServiceWorker(
         const WebURL& scope,
         const WebURL& script_url,
-        blink::mojom::ScriptType script_type,
+        blink::mojom::blink::ScriptType script_type,
         mojom::ServiceWorkerUpdateViaCache update_via_cache,
         const WebFetchClientSettingsObject& fetch_client_settings_object,
         std::unique_ptr<WebServiceWorkerRegistrationCallbacks> callbacks)
@@ -354,7 +350,7 @@ class StubWebServiceWorkerProvider {
   WebURL register_script_url_;
   size_t get_registration_call_count_;
   WebURL get_registration_url_;
-  mojom::ScriptType script_type_;
+  mojom::blink::ScriptType script_type_;
   mojom::ServiceWorkerUpdateViaCache update_via_cache_;
 };
 
@@ -364,7 +360,7 @@ TEST_F(ServiceWorkerContainerTest,
 
   StubWebServiceWorkerProvider stub_provider;
   ServiceWorkerContainer* container = ServiceWorkerContainer::CreateForTesting(
-      &GetDocument(), stub_provider.Provider());
+      *GetFrame().DomWindow(), stub_provider.Provider());
 
   // register
   {
@@ -379,7 +375,7 @@ TEST_F(ServiceWorkerContainerTest,
               stub_provider.RegisterScope());
     EXPECT_EQ(WebURL(KURL("http://localhost/x/y/worker.js")),
               stub_provider.RegisterScriptURL());
-    EXPECT_EQ(mojom::ScriptType::kClassic, stub_provider.ScriptType());
+    EXPECT_EQ(mojom::blink::ScriptType::kClassic, stub_provider.ScriptType());
     EXPECT_EQ(mojom::ServiceWorkerUpdateViaCache::kImports,
               stub_provider.UpdateViaCache());
   }
@@ -391,7 +387,7 @@ TEST_F(ServiceWorkerContainerTest,
 
   StubWebServiceWorkerProvider stub_provider;
   ServiceWorkerContainer* container = ServiceWorkerContainer::CreateForTesting(
-      &GetDocument(), stub_provider.Provider());
+      *GetFrame().DomWindow(), stub_provider.Provider());
 
   {
     ScriptState::Scope script_scope(GetScriptState());
@@ -399,7 +395,7 @@ TEST_F(ServiceWorkerContainerTest,
     EXPECT_EQ(1ul, stub_provider.GetRegistrationCallCount());
     EXPECT_EQ(WebURL(KURL("http://localhost/x/index.html")),
               stub_provider.GetRegistrationURL());
-    EXPECT_EQ(mojom::ScriptType::kClassic, stub_provider.ScriptType());
+    EXPECT_EQ(mojom::blink::ScriptType::kClassic, stub_provider.ScriptType());
     EXPECT_EQ(mojom::ServiceWorkerUpdateViaCache::kImports,
               stub_provider.UpdateViaCache());
   }
@@ -411,7 +407,7 @@ TEST_F(ServiceWorkerContainerTest,
 
   StubWebServiceWorkerProvider stub_provider;
   ServiceWorkerContainer* container = ServiceWorkerContainer::CreateForTesting(
-      &GetDocument(), stub_provider.Provider());
+      *GetFrame().DomWindow(), stub_provider.Provider());
 
   // register
   {
@@ -426,7 +422,7 @@ TEST_F(ServiceWorkerContainerTest,
               stub_provider.RegisterScope());
     EXPECT_EQ(WebURL(KURL(KURL(), "http://localhost/x/y/worker.js")),
               stub_provider.RegisterScriptURL());
-    EXPECT_EQ(mojom::ScriptType::kClassic, stub_provider.ScriptType());
+    EXPECT_EQ(mojom::blink::ScriptType::kClassic, stub_provider.ScriptType());
     EXPECT_EQ(mojom::ServiceWorkerUpdateViaCache::kNone,
               stub_provider.UpdateViaCache());
   }
@@ -437,7 +433,7 @@ TEST_F(ServiceWorkerContainerTest, Register_TypeOptionDelegatesToProvider) {
 
   StubWebServiceWorkerProvider stub_provider;
   ServiceWorkerContainer* container = ServiceWorkerContainer::CreateForTesting(
-      &GetDocument(), stub_provider.Provider());
+      *GetFrame().DomWindow(), stub_provider.Provider());
 
   // register
   {
@@ -452,7 +448,7 @@ TEST_F(ServiceWorkerContainerTest, Register_TypeOptionDelegatesToProvider) {
               stub_provider.RegisterScope());
     EXPECT_EQ(WebURL(KURL(KURL(), "http://localhost/x/y/worker.js")),
               stub_provider.RegisterScriptURL());
-    EXPECT_EQ(mojom::ScriptType::kModule, stub_provider.ScriptType());
+    EXPECT_EQ(mojom::blink::ScriptType::kModule, stub_provider.ScriptType());
     EXPECT_EQ(mojom::ServiceWorkerUpdateViaCache::kImports,
               stub_provider.UpdateViaCache());
   }

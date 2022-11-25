@@ -9,6 +9,7 @@
 
 #include "base/containers/span.h"
 #include "base/macros.h"
+#include "base/memory/aligned_memory.h"
 #include "base/memory/ref_counted.h"
 #include "base/process/process_handle.h"
 #include "base/single_thread_task_runner.h"
@@ -61,6 +62,7 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
   struct Message;
 
   using MessagePtr = std::unique_ptr<Message>;
+  using AlignedBuffer = std::unique_ptr<char, base::AlignedFreeDeleter>;
 
   // A message to be written to a channel.
   struct MOJO_SYSTEM_IMPL_EXPORT Message {
@@ -114,7 +116,7 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
       char padding[6];
     };
 
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MAC)
     struct MachPortsEntry {
       // The PlatformHandle::Type.
       uint8_t type;
@@ -176,7 +178,7 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
         size_t data_num_bytes,
         base::ProcessHandle from_process = base::kNullProcessHandle);
 
-    const void* data() const { return data_; }
+    const void* data() const { return data_.get(); }
     size_t data_num_bytes() const { return size_; }
 
     // The current capacity of the message buffer, not counting internal header
@@ -216,6 +218,7 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
     void SetHandles(std::vector<PlatformHandle> new_handles);
     void SetHandles(std::vector<PlatformHandleInTransit> new_handles);
     std::vector<PlatformHandleInTransit> TakeHandles();
+    size_t NumHandlesForTransit() const;
 
     void SetVersionForTest(uint16_t version_number);
 
@@ -223,7 +226,7 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
     Message();
 
     // The message data buffer.
-    char* data_ = nullptr;
+    AlignedBuffer data_;
 
     // The capacity of the buffer at |data_|.
     size_t capacity_ = 0;
@@ -241,7 +244,7 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
 #if defined(OS_WIN)
     // On Windows, handles are serialised into the extra header section.
     HandleEntry* handles_ = nullptr;
-#elif defined(OS_MACOSX) && !defined(OS_IOS)
+#elif defined(OS_MAC)
     // On OSX, handles are serialised into the extra header section.
     MachPortsExtraHeader* mach_ports_header_ = nullptr;
 #endif
@@ -268,7 +271,7 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
   // was created (see Channel::Create).
   class Delegate {
    public:
-    virtual ~Delegate() {}
+    virtual ~Delegate() = default;
 
     // Notify of a received message. |payload| is not owned and must not be
     // retained; it will be null if |payload_size| is 0. |handles| are

@@ -61,6 +61,19 @@ class AXTreeSource {
   // Serialize one node in the tree.
   virtual void SerializeNode(AXNodeSource node, AXNodeData* out_data) const = 0;
 
+  // Return a string useful for debugging a node.
+  virtual std::string GetDebugString(AXNodeSource node) const {
+    AXNodeData node_data;
+    SerializeNode(node, &node_data);
+    return node_data.ToString();
+  }
+
+  // This is called by AXTreeSerializer when it serializes a tree and
+  // discovers that a node previously in the tree is no longer part of
+  // the tree. It can be used to allow an AXTreeSource to keep a cache
+  // indexed by node ID and delete nodes when they're no longer needed.
+  virtual void SerializerClearedNode(int32_t node_id) {}
+
  protected:
   AXTreeSource() {}
 };

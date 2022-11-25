@@ -9,6 +9,8 @@
 #include <memory>
 
 #include "base/lazy_instance.h"
+#include "base/logging.h"
+#include "base/notreached.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
@@ -130,7 +132,8 @@ bool AddName(CBB* cbb, base::StringPiece name) {
         !CBB_add_asn1(&rdn, &attr, CBS_ASN1_SEQUENCE) ||
         !CBB_add_asn1(&attr, &type, CBS_ASN1_OBJECT) ||
         !CBB_add_bytes(&type, type_bytes.data(), type_bytes.size()) ||
-        !CBB_add_asn1(&attr, &value, CBS_ASN1_UTF8STRING) ||
+        !CBB_add_asn1(&attr, &value, type_string == "C" ?
+                          CBS_ASN1_PRINTABLESTRING : CBS_ASN1_UTF8STRING) ||
         !CBB_add_bytes(&value,
                        reinterpret_cast<const uint8_t*>(value_string.data()),
                        value_string.size()) ||
@@ -144,7 +147,22 @@ bool AddName(CBB* cbb, base::StringPiece name) {
   return true;
 }
 
-bool AddTime(CBB* cbb, base::Time time) {
+class BufferPoolSingleton {
+ public:
+  BufferPoolSingleton() : pool_(CRYPTO_BUFFER_POOL_new()) {}
+  CRYPTO_BUFFER_POOL* pool() { return pool_; }
+
+ private:
+  // The singleton is leaky, so there is no need to use a smart pointer.
+  CRYPTO_BUFFER_POOL* pool_;
+};
+
+base::LazyInstance<BufferPoolSingleton>::Leaky g_buffer_pool_singleton =
+    LAZY_INSTANCE_INITIALIZER;
+
+}  // namespace
+
+bool CBBAddTime(CBB* cbb, base::Time time) {
   der::GeneralizedTime generalized_time;
   if (!der::EncodeTimeAsGeneralizedTime(time, &generalized_time))
     return false;
@@ -163,21 +181,6 @@ bool AddTime(CBB* cbb, base::Time time) {
          CBB_add_space(&child, &out, der::kGeneralizedTimeLength) &&
          der::EncodeGeneralizedTime(generalized_time, out) && CBB_flush(cbb);
 }
-
-class BufferPoolSingleton {
- public:
-  BufferPoolSingleton() : pool_(CRYPTO_BUFFER_POOL_new()) {}
-  CRYPTO_BUFFER_POOL* pool() { return pool_; }
-
- private:
-  // The singleton is leaky, so there is no need to use a smart pointer.
-  CRYPTO_BUFFER_POOL* pool_;
-};
-
-base::LazyInstance<BufferPoolSingleton>::Leaky g_buffer_pool_singleton =
-    LAZY_INSTANCE_INITIALIZER;
-
-}  // namespace
 
 bool GetTLSServerEndPointChannelBinding(const X509Certificate& certificate,
                                         std::string* token) {
@@ -296,8 +299,8 @@ bool CreateSelfSignedCert(EVP_PKEY* key,
       !AddRSASignatureAlgorithm(&tbs_cert, alg) ||  // signature
       !AddName(&tbs_cert, subject) ||               // issuer
       !CBB_add_asn1(&tbs_cert, &validity, CBS_ASN1_SEQUENCE) ||
-      !AddTime(&validity, not_valid_before) ||
-      !AddTime(&validity, not_valid_after) ||
+      !CBBAddTime(&validity, not_valid_before) ||
+      !CBBAddTime(&validity, not_valid_after) ||
       !AddName(&tbs_cert, subject) ||             // subject
       !EVP_marshal_public_key(&tbs_cert, key)) {  // subjectPublicKeyInfo
     return false;

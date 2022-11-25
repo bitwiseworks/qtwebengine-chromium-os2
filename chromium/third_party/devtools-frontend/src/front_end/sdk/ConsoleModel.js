@@ -28,6 +28,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as HostModule from '../host/host.js';
 
@@ -163,7 +166,8 @@ export class ConsoleModel extends Common.ObjectWrapper.ObjectWrapper {
           silent: false,
           returnByValue: false,
           generatePreview: true,
-          replMode: true
+          replMode: true,
+          allowUnsafeEvalBlockedByCSP: false
         },
         Common.Settings.Settings.instance().moduleSetting('consoleUserActivationEval').get(), /* awaitPromise */ false);
     HostModule.userMetrics.actionTaken(Host.UserMetrics.Action.ConsoleEvaluated);
@@ -488,7 +492,7 @@ export class ConsoleMessage {
    * @param {?string=} url
    * @param {number=} line
    * @param {number=} column
-   * @param {!Array.<!Protocol.Runtime.RemoteObject>=} parameters
+   * @param {!Array.<!Protocol.Runtime.RemoteObject|string>=} parameters
    * @param {!Protocol.Runtime.StackTrace=} stackTrace
    * @param {number=} timestamp
    * @param {!Protocol.Runtime.ExecutionContextId=} executionContextId
@@ -517,6 +521,7 @@ export class ConsoleMessage {
     this.executionContextId = executionContextId || 0;
     this.scriptId = scriptId || null;
     this.workerId = workerId || null;
+    this.frameId = null;
 
     if (!this.executionContextId && this._runtimeModel) {
       if (this.scriptId) {
@@ -524,6 +529,11 @@ export class ConsoleMessage {
       } else if (this.stackTrace) {
         this.executionContextId = this._runtimeModel.executionContextForStackTrace(this.stackTrace);
       }
+    }
+
+    if (this.executionContextId && this._runtimeModel) {
+      const executionContext = this._runtimeModel.executionContext(this.executionContextId);
+      this.frameId = executionContext ? executionContext.frameId : null;
     }
 
     if (context) {
@@ -665,8 +675,7 @@ export class ConsoleMessage {
 
     return (this.runtimeModel() === msg.runtimeModel()) && (this.source === msg.source) && (this.type === msg.type) &&
         (this.level === msg.level) && (this.line === msg.line) && (this.url === msg.url) &&
-        (this.messageText === msg.messageText) && (this.request === msg.request) &&
-        (this.executionContextId === msg.executionContextId);
+        (this.messageText === msg.messageText) && (this.executionContextId === msg.executionContextId);
   }
 
   /**

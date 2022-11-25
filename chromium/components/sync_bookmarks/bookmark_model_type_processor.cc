@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/feature_list.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/trace_event/memory_usage_estimator.h"
@@ -78,15 +79,6 @@ void LogMissingPermanentNodes(
   UMA_HISTOGRAM_ENUMERATION("Sync.MissingBookmarkPermanentNodes",
                             missing_nodes);
 }
-
-// Enables scheduling bookmark model saving only upon changes in entity sync
-// metadata. This would stop persisting changes to the model type state that
-// doesn't involve changes to the entity metadata as well.
-// TODO(crbug.com/945820): This should be removed in M80 if not issues are
-// observed.
-const base::Feature kSyncScheduleForEntityMetadataChangesOnly{
-    "SyncScheduleForEntityMetadataChangesOnly",
-    base::FEATURE_ENABLED_BY_DEFAULT};
 
 class ScopedRemoteUpdateBookmarks {
  public:
@@ -243,15 +235,22 @@ void BookmarkModelTypeProcessor::OnUpdateReceived(
       bookmark_tracker_->model_type_state().encryption_key_name() !=
       model_type_state.encryption_key_name();
   bookmark_tracker_->set_model_type_state(model_type_state);
+  bookmark_tracker_->UpdateLastSyncTime();
   updates_handler.Process(updates, got_new_encryption_requirements);
+  if (bookmark_tracker_->ReuploadBookmarksOnLoadIfNeeded()) {
+    NudgeForCommitIfNeeded();
+  }
   // There are cases when we receive non-empty updates that don't result in
   // model changes (e.g. reflections). In that case, issue a write to persit the
   // progress marker in order to avoid downloading those updates again.
-  if (!updates.empty() || !base::FeatureList::IsEnabled(
-                              kSyncScheduleForEntityMetadataChangesOnly)) {
+  if (!updates.empty()) {
     // Schedule save just in case one is needed.
     schedule_save_closure_.Run();
   }
+
+  base::UmaHistogramCounts10000(
+      "Sync.BookmarksWithoutFullTitle.OnRemoteUpdate",
+      updates_handler.valid_updates_without_full_title_for_uma());
 }
 
 const SyncedBookmarkTracker* BookmarkModelTypeProcessor::GetTrackerForTest()
@@ -288,9 +287,13 @@ void BookmarkModelTypeProcessor::ModelReadyToSync(
   bookmark_model_ = model;
   schedule_save_closure_ = schedule_save_closure;
 
-  base::TimeTicks start_time = base::TimeTicks::Now();
   sync_pb::BookmarkModelMetadata model_metadata;
   model_metadata.ParseFromString(metadata_str);
+
+  const bool initial_sync_done =
+      model_metadata.model_type_state().initial_sync_done();
+  const bool bookmarks_metadata_empty =
+      model_metadata.bookmarks_metadata().empty();
 
   bookmark_tracker_ = SyncedBookmarkTracker::CreateFromBookmarkModelAndMetadata(
       model, std::move(model_metadata));
@@ -298,10 +301,7 @@ void BookmarkModelTypeProcessor::ModelReadyToSync(
   if (bookmark_tracker_) {
     bookmark_tracker_->CheckAllNodesTracked(bookmark_model_);
     StartTrackingMetadata();
-    UMA_HISTOGRAM_TIMES("Sync.BookmarksModelReadyToSyncTime",
-                        base::TimeTicks::Now() - start_time);
-  } else if (!model_metadata.model_type_state().initial_sync_done() &&
-             !model_metadata.bookmarks_metadata().empty()) {
+  } else if (!initial_sync_done && !bookmarks_metadata_empty) {
     DLOG(ERROR)
         << "Persisted Metadata not empty while initial sync is not done.";
   }
@@ -450,6 +450,8 @@ void BookmarkModelTypeProcessor::OnInitialUpdateReceived(
     syncer::UpdateResponseDataList updates) {
   DCHECK(!bookmark_tracker_);
 
+  TRACE_EVENT0("sync", "BookmarkModelTypeProcessor::OnInitialUpdateReceived");
+
   bookmark_tracker_ = SyncedBookmarkTracker::CreateEmpty(model_type_state);
   StartTrackingMetadata();
 
@@ -458,9 +460,13 @@ void BookmarkModelTypeProcessor::OnInitialUpdateReceived(
         bookmark_model_, bookmark_undo_service_,
         bookmark_model_observer_.get());
 
-    BookmarkModelMerger(std::move(updates), bookmark_model_, favicon_service_,
-                        bookmark_tracker_.get())
-        .Merge();
+    BookmarkModelMerger model_merger(std::move(updates), bookmark_model_,
+                                     favicon_service_, bookmark_tracker_.get());
+    model_merger.Merge();
+
+    base::UmaHistogramCounts1M(
+        "Sync.BookmarksWithoutFullTitle.OnInitialMerge",
+        model_merger.valid_updates_without_full_title_for_uma());
   }
 
   // If any of the permanent nodes is missing, we treat it as failure.

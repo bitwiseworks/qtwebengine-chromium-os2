@@ -48,11 +48,13 @@ class PLATFORM_EXPORT JPEGImageDecoder final : public ImageDecoder {
   void OnSetData(SegmentReader* data) override;
   IntSize DecodedSize() const override { return decoded_size_; }
   bool SetSize(unsigned width, unsigned height) override;
-  IntSize DecodedYUVSize(int component) const override;
-  size_t DecodedYUVWidthBytes(int component) const override;
+  cc::YUVSubsampling GetYUVSubsampling() const override;
+  IntSize DecodedYUVSize(cc::YUVIndex) const override;
+  size_t DecodedYUVWidthBytes(cc::YUVIndex) const override;
   void DecodeToYUV() override;
   SkYUVColorSpace GetYUVColorSpace() const override;
   Vector<SkISize> GetSupportedDecodeSizes() const override;
+
   bool HasImagePlanes() const { return image_planes_.get(); }
 
   bool OutputScanlines();
@@ -62,6 +64,10 @@ class PLATFORM_EXPORT JPEGImageDecoder final : public ImageDecoder {
 
   void SetOrientation(ImageOrientation orientation) {
     orientation_ = orientation;
+  }
+
+  void SetDensityCorrectedSize(const IntSize& size) {
+    density_corrected_size_ = size;
   }
   void SetDecodedSize(unsigned width, unsigned height);
 
@@ -78,7 +84,6 @@ class PLATFORM_EXPORT JPEGImageDecoder final : public ImageDecoder {
   // ImageDecoder:
   void DecodeSize() override { Decode(true); }
   void Decode(size_t) override { Decode(false); }
-  cc::YUVSubsampling GetYUVSubsampling() const override;
   cc::ImageHeaderMetadata MakeMetadataForDecodeAcceleration() const override;
 
   // Attempts to calculate the coded size of the JPEG image. Returns a zero

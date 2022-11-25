@@ -21,11 +21,10 @@
 #include "media/renderers/paint_canvas_video_renderer.h"
 #include "services/viz/public/cpp/gpu/context_provider_command_buffer.h"
 #include "skia/ext/platform_canvas.h"
-#include "third_party/blink/public/platform/web_media_stream.h"
-#include "third_party/blink/public/platform/web_media_stream_source.h"
-#include "third_party/blink/public/platform/web_media_stream_track.h"
 #include "third_party/blink/public/platform/web_video_frame_submitter.h"
 #include "third_party/blink/public/web/modules/mediastream/webmediaplayer_ms.h"
+#include "third_party/blink/renderer/platform/mediastream/media_stream_component.h"
+#include "third_party/blink/renderer/platform/mediastream/media_stream_descriptor.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/libyuv/include/libyuv/convert.h"
@@ -135,13 +134,23 @@ scoped_refptr<media::VideoFrame> CopyFrame(
   return new_frame;
 }
 
+gfx::Size RotationAdjustedSize(media::VideoRotation rotation,
+                               const gfx::Size& size) {
+  if (rotation == media::VIDEO_ROTATION_90 ||
+      rotation == media::VIDEO_ROTATION_270) {
+    return gfx::Size(size.height(), size.width());
+  }
+
+  return size;
+}
+
 }  // anonymous namespace
 
 WebMediaPlayerMSCompositor::WebMediaPlayerMSCompositor(
     scoped_refptr<base::SingleThreadTaskRunner>
         video_frame_compositor_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
-    const WebMediaStream& web_stream,
+    MediaStreamDescriptor* media_stream_descriptor,
     std::unique_ptr<WebVideoFrameSubmitter> submitter,
     WebMediaPlayer::SurfaceLayerMode surface_layer_mode,
     const base::WeakPtr<WebMediaPlayerMS>& player)
@@ -170,12 +179,12 @@ WebMediaPlayerMSCompositor::WebMediaPlayerMSCompositor(
             weak_ptr_factory_.GetWeakPtr())));
   }
 
-  WebVector<WebMediaStreamTrack> video_tracks;
-  if (!web_stream.IsNull())
-    video_tracks = web_stream.VideoTracks();
+  HeapVector<Member<MediaStreamComponent>> video_components;
+  if (media_stream_descriptor)
+    video_components = media_stream_descriptor->VideoComponents();
 
   const bool remote_video =
-      video_tracks.size() && video_tracks[0].Source().Remote();
+      video_components.size() && video_components[0]->Source()->Remote();
 
   if (remote_video && Platform::Current()->RTCSmoothnessAlgorithmEnabled()) {
     base::AutoLock auto_lock(current_frame_lock_);
@@ -187,8 +196,9 @@ WebMediaPlayerMSCompositor::WebMediaPlayerMSCompositor(
   }
 
   // Just for logging purpose.
-  std::string stream_id =
-      web_stream.IsNull() ? std::string() : web_stream.Id().Utf8();
+  std::string stream_id = media_stream_descriptor
+                              ? media_stream_descriptor->Id().Utf8()
+                              : std::string();
   const uint32_t hash_value = base::Hash(stream_id);
   serial_ = (hash_value << 1) | (remote_video ? 1 : 0);
 }
@@ -222,7 +232,7 @@ void WebMediaPlayerMSCompositorTraits::Destruct(
 
 void WebMediaPlayerMSCompositor::InitializeSubmitter() {
   DCHECK(video_frame_compositor_task_runner_->BelongsToCurrentThread());
-  submitter_->Initialize(this);
+  submitter_->Initialize(this, /* is_media_stream = */ true);
 }
 
 void WebMediaPlayerMSCompositor::SetIsSurfaceVisible(bool state) {
@@ -234,7 +244,6 @@ void WebMediaPlayerMSCompositor::SetIsSurfaceVisible(bool state) {
 // submission. Do this along with the VideoFrameSubmitter refactor.
 void WebMediaPlayerMSCompositor::EnableSubmission(
     const viz::SurfaceId& id,
-    base::TimeTicks local_surface_id_allocation_time,
     media::VideoTransformation transformation,
     bool force_submit) {
   DCHECK(video_frame_compositor_task_runner_->BelongsToCurrentThread());
@@ -247,11 +256,26 @@ void WebMediaPlayerMSCompositor::EnableSubmission(
 
   submitter_->SetRotation(transformation.rotation);
   submitter_->SetForceSubmit(force_submit);
-  submitter_->EnableSubmission(id, local_surface_id_allocation_time);
+  submitter_->EnableSubmission(id);
   video_frame_provider_client_ = submitter_.get();
 
   if (!stopped_)
     video_frame_provider_client_->StartRendering();
+}
+
+void WebMediaPlayerMSCompositor::SetForceBeginFrames(bool enable) {
+  if (!submitter_)
+    return;
+
+  if (!video_frame_compositor_task_runner_->BelongsToCurrentThread()) {
+    PostCrossThreadTask(
+        *video_frame_compositor_task_runner_, FROM_HERE,
+        CrossThreadBindOnce(&WebMediaPlayerMSCompositor::SetForceBeginFrames,
+                            weak_ptr_factory_.GetWeakPtr(), enable));
+    return;
+  }
+
+  submitter_->SetForceBeginFrames(enable);
 }
 
 void WebMediaPlayerMSCompositor::SetForceSubmit(bool force_submit) {
@@ -303,7 +327,8 @@ void WebMediaPlayerMSCompositor::SetVideoFrameProviderClient(
 }
 
 void WebMediaPlayerMSCompositor::EnqueueFrame(
-    scoped_refptr<media::VideoFrame> frame) {
+    scoped_refptr<media::VideoFrame> frame,
+    bool is_copy) {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
   base::AutoLock auto_lock(current_frame_lock_);
   TRACE_EVENT_INSTANT1("media", "WebMediaPlayerMSCompositor::EnqueueFrame",
@@ -313,33 +338,29 @@ void WebMediaPlayerMSCompositor::EnqueueFrame(
 
   // With algorithm off, just let |current_frame_| hold the incoming |frame|.
   if (!rendering_frame_buffer_) {
-    RenderWithoutAlgorithm(std::move(frame));
+    RenderWithoutAlgorithm(std::move(frame), is_copy);
     return;
   }
 
   // This is a signal frame saying that the stream is stopped.
-  bool end_of_stream = false;
-  if (frame->metadata()->GetBoolean(media::VideoFrameMetadata::END_OF_STREAM,
-                                    &end_of_stream) &&
-      end_of_stream) {
+  if (frame->metadata()->end_of_stream) {
     rendering_frame_buffer_.reset();
-    RenderWithoutAlgorithm(std::move(frame));
+    RenderWithoutAlgorithm(std::move(frame), is_copy);
     return;
   }
 
   // If we detect a bad frame without |render_time|, we switch off algorithm,
   // because without |render_time|, algorithm cannot work.
   // In general, this should not happen.
-  base::TimeTicks render_time;
-  if (!frame->metadata()->GetTimeTicks(
-          media::VideoFrameMetadata::REFERENCE_TIME, &render_time)) {
+  if (!frame->metadata()->reference_time.has_value()) {
     DLOG(WARNING)
-        << "Incoming VideoFrames have no REFERENCE_TIME, switching off super "
+        << "Incoming VideoFrames have no reference_time, switching off super "
            "sophisticated rendering algorithm";
     rendering_frame_buffer_.reset();
-    RenderWithoutAlgorithm(std::move(frame));
+    RenderWithoutAlgorithm(std::move(frame), is_copy);
     return;
   }
+  base::TimeTicks render_time = *frame->metadata()->reference_time;
 
   // The code below handles the case where UpdateCurrentFrame() callbacks stop.
   // These callbacks can stop when the tab is hidden or the page area containing
@@ -354,11 +375,12 @@ void WebMediaPlayerMSCompositor::EnqueueFrame(
     // increase |dropped_frame_count_| by the count of all other frames.
     dropped_frame_count_ += rendering_frame_buffer_->frames_queued() - 1;
     rendering_frame_buffer_->Reset();
-    timestamps_to_clock_times_.clear();
-    RenderWithoutAlgorithm(frame);
+    pending_frames_info_.clear();
+    RenderWithoutAlgorithm(frame, is_copy);
   }
 
-  timestamps_to_clock_times_[frame->timestamp()] = render_time;
+  pending_frames_info_.push_back(PendingFrameInfo{
+      frame->unique_id(), frame->timestamp(), render_time, is_copy});
   rendering_frame_buffer_->EnqueueFrame(std::move(frame));
 }
 
@@ -385,9 +407,10 @@ bool WebMediaPlayerMSCompositor::UpdateCurrentFrame(
     tracing_or_dcheck_enabled = true;
 #endif  // DCHECK_IS_ON()
     if (tracing_or_dcheck_enabled) {
-      base::TimeTicks render_time;
-      if (!current_frame_->metadata()->GetTimeTicks(
-              media::VideoFrameMetadata::REFERENCE_TIME, &render_time)) {
+      base::TimeTicks render_time =
+          current_frame_->metadata()->reference_time.value_or(
+              base::TimeTicks());
+      if (!current_frame_->metadata()->reference_time.has_value()) {
         DCHECK(!rendering_frame_buffer_)
             << "VideoFrames need REFERENCE_TIME to use "
                "sophisticated video rendering algorithm.";
@@ -481,8 +504,13 @@ bool WebMediaPlayerMSCompositor::MapTimestampsToRenderTimeTicks(
          io_task_runner_->BelongsToCurrentThread());
 #endif
   for (const base::TimeDelta& timestamp : timestamps) {
-    DCHECK(timestamps_to_clock_times_.count(timestamp));
-    wall_clock_times->push_back(timestamps_to_clock_times_[timestamp]);
+    auto* it =
+        std::find_if(pending_frames_info_.begin(), pending_frames_info_.end(),
+                     [&timestamp](PendingFrameInfo& info) {
+                       return info.timestamp == timestamp;
+                     });
+    DCHECK(it != pending_frames_info_.end());
+    wall_clock_times->push_back(it->reference_time);
   }
   return true;
 }
@@ -507,35 +535,45 @@ void WebMediaPlayerMSCompositor::RenderUsingAlgorithm(
   if (!frame || frame == current_frame_)
     return;
 
-  const base::TimeDelta timestamp = frame->timestamp();
-  SetCurrentFrame(std::move(frame), deadline_min);
+  // Walk |pending_frames_info_| to find |is_copy| value for the frame, while
+  // also erasing old elements.
+  bool is_copy = false;
+  for (auto* it = pending_frames_info_.begin();
+       it != pending_frames_info_.end();) {
+    if (it->unique_id == frame->unique_id())
+      is_copy = it->is_copy;
 
-  const auto& end = timestamps_to_clock_times_.end();
-  const auto& begin = timestamps_to_clock_times_.begin();
-  auto iterator = begin;
-  while (iterator != end && iterator->first < timestamp)
-    ++iterator;
-  timestamps_to_clock_times_.erase(begin, iterator);
+    // Erase info for the older frames.
+    if (it->timestamp < frame->timestamp()) {
+      it = pending_frames_info_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+
+  SetCurrentFrame(std::move(frame), is_copy, deadline_min);
 }
 
 void WebMediaPlayerMSCompositor::RenderWithoutAlgorithm(
-    scoped_refptr<media::VideoFrame> frame) {
+    scoped_refptr<media::VideoFrame> frame,
+    bool is_copy) {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
   PostCrossThreadTask(
       *video_frame_compositor_task_runner_, FROM_HERE,
       CrossThreadBindOnce(
           &WebMediaPlayerMSCompositor::RenderWithoutAlgorithmOnCompositor,
-          WrapRefCounted(this), std::move(frame)));
+          WrapRefCounted(this), std::move(frame), is_copy));
 }
 
 void WebMediaPlayerMSCompositor::RenderWithoutAlgorithmOnCompositor(
-    scoped_refptr<media::VideoFrame> frame) {
+    scoped_refptr<media::VideoFrame> frame,
+    bool is_copy) {
   DCHECK(video_frame_compositor_task_runner_->BelongsToCurrentThread());
   {
     base::AutoLock auto_lock(current_frame_lock_);
     if (current_frame_)
       last_render_length_ = frame->timestamp() - current_frame_->timestamp();
-    SetCurrentFrame(std::move(frame), base::nullopt);
+    SetCurrentFrame(std::move(frame), is_copy, base::nullopt);
   }
   if (video_frame_provider_client_)
     video_frame_provider_client_->DidReceiveFrame();
@@ -543,6 +581,7 @@ void WebMediaPlayerMSCompositor::RenderWithoutAlgorithmOnCompositor(
 
 void WebMediaPlayerMSCompositor::SetCurrentFrame(
     scoped_refptr<media::VideoFrame> frame,
+    bool is_copy,
     base::Optional<base::TimeTicks> expected_display_time) {
   DCHECK(video_frame_compositor_task_runner_->BelongsToCurrentThread());
   current_frame_lock_.AssertAcquired();
@@ -558,43 +597,42 @@ void WebMediaPlayerMSCompositor::SetCurrentFrame(
   // current frame.
   bool is_first_frame = true;
   bool has_frame_size_changed = false;
-  base::Optional<media::VideoRotation> new_rotation = media::VIDEO_ROTATION_0;
-  base::Optional<bool> new_opacity;
 
+  base::Optional<media::VideoRotation> new_rotation =
+      frame->metadata()->rotation.value_or(media::VIDEO_ROTATION_0);
+
+  base::Optional<bool> new_opacity;
   new_opacity = media::IsOpaque(frame->format());
-  media::VideoRotation current_video_rotation;
-  if (frame->metadata()->GetRotation(media::VideoFrameMetadata::ROTATION,
-                                     &current_video_rotation)) {
-    new_rotation = current_video_rotation;
-  }
 
   if (current_frame_) {
     // We have a current frame, so determine what has changed.
     is_first_frame = false;
 
-    if (!current_frame_->metadata()->GetRotation(
-            media::VideoFrameMetadata::ROTATION, &current_video_rotation)) {
-      // Assume VIDEO_ROTATION_0 for current frame without video rotation.
-      current_video_rotation = media::VIDEO_ROTATION_0;
-    }
+    media::VideoRotation current_video_rotation =
+        current_frame_->metadata()->rotation.value_or(media::VIDEO_ROTATION_0);
+
+    has_frame_size_changed =
+        RotationAdjustedSize(*new_rotation, frame->natural_size()) !=
+        RotationAdjustedSize(current_video_rotation,
+                             current_frame_->natural_size());
+
     if (current_video_rotation == *new_rotation) {
       new_rotation.reset();
     }
 
     if (*new_opacity == media::IsOpaque(current_frame_->format()))
       new_opacity.reset();
-
-    has_frame_size_changed =
-        frame->natural_size() != current_frame_->natural_size();
   }
 
   current_frame_ = std::move(frame);
+  current_frame_is_copy_ = is_copy;
 
   // TODO(https://crbug.com/1050755): Improve the accuracy of these fields when
   // we only use RenderWithoutAlgorithm.
   base::TimeTicks now = base::TimeTicks::Now();
   last_presentation_time_ = now;
   last_expected_display_time_ = expected_display_time.value_or(now);
+  last_preferred_render_interval_ = GetPreferredRenderInterval();
   ++presented_frames_;
 
   OnNewFramePresentedCB presented_frame_cb;
@@ -693,7 +731,7 @@ void WebMediaPlayerMSCompositor::ReplaceCurrentFrameWithACopyInternal() {
   scoped_refptr<media::VideoFrame> current_frame_ref;
   {
     base::AutoLock auto_lock(current_frame_lock_);
-    if (!current_frame_ || !player_)
+    if (!current_frame_ || !player_ || current_frame_is_copy_)
       return;
     current_frame_ref = current_frame_;
   }
@@ -707,8 +745,10 @@ void WebMediaPlayerMSCompositor::ReplaceCurrentFrameWithACopyInternal() {
   // |current_frame_| hasn't been changed.
   {
     base::AutoLock auto_lock(current_frame_lock_);
-    if (current_frame_ == current_frame_ref)
+    if (current_frame_ == current_frame_ref) {
       current_frame_ = std::move(copied_frame);
+      current_frame_is_copy_ = true;
+    }
   }
 }
 
@@ -747,7 +787,7 @@ WebMediaPlayerMSCompositor::GetLastPresentedFrameMetadata() {
     frame_metadata->expected_display_time = last_expected_display_time_;
     frame_metadata->presented_frames = static_cast<uint32_t>(presented_frames_);
 
-    frame_metadata->average_frame_duration = GetPreferredRenderInterval();
+    frame_metadata->average_frame_duration = last_preferred_render_interval_;
     frame_metadata->rendering_interval = last_render_length_;
   }
 

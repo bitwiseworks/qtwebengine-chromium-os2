@@ -39,16 +39,13 @@ struct MockUploadResult {
 
 class UploadMockURLRequestJob : public net::URLRequestJob {
  public:
-  UploadMockURLRequestJob(net::URLRequest* request,
-                          net::NetworkDelegate* network_delegate,
-                          MockUploadResult result)
-      : net::URLRequestJob(request, network_delegate),
-        upload_stream_(nullptr),
-        result_(result) {
-    int load_flags = request->load_flags();
-    EXPECT_TRUE(load_flags & net::LOAD_DO_NOT_SEND_COOKIES);
-    EXPECT_TRUE(load_flags & net::LOAD_DO_NOT_SAVE_COOKIES);
+  UploadMockURLRequestJob(net::URLRequest* request, MockUploadResult result)
+      : net::URLRequestJob(request), upload_stream_(nullptr), result_(result) {
+    EXPECT_FALSE(request->allow_credentials());
+    EXPECT_TRUE(request->load_flags() & net::LOAD_DO_NOT_SAVE_COOKIES);
   }
+
+  ~UploadMockURLRequestJob() override = default;
 
  protected:
   void Start() override {
@@ -66,8 +63,6 @@ class UploadMockURLRequestJob : public net::URLRequestJob {
   }
 
  private:
-  ~UploadMockURLRequestJob() override {}
-
   void OnStreamInitialized(int rv) {
     EXPECT_EQ(net::OK, rv);
 
@@ -91,7 +86,7 @@ class UploadMockURLRequestJob : public net::URLRequestJob {
     if (result_.net_error == net::OK)
       NotifyHeadersComplete();
     else if (result_.net_error != net::ERR_IO_PENDING)
-      NotifyStartError(net::URLRequestStatus::FromError(result_.net_error));
+      NotifyStartError(result_.net_error);
   }
 
   void GetResponseInfo(net::HttpResponseInfo* info) override {
@@ -110,9 +105,8 @@ class UploadInterceptor : public net::URLRequestInterceptor {
 
   ~UploadInterceptor() override { EXPECT_TRUE(results_.empty()); }
 
-  net::URLRequestJob* MaybeInterceptRequest(
-      net::URLRequest* request,
-      net::NetworkDelegate* delegate) const override {
+  std::unique_ptr<net::URLRequestJob> MaybeInterceptRequest(
+      net::URLRequest* request) const override {
     EXPECT_FALSE(results_.empty());
     MockUploadResult result = results_.front();
     results_.pop_front();
@@ -122,7 +116,7 @@ class UploadInterceptor : public net::URLRequestInterceptor {
 
     ++request_count_;
 
-    return new UploadMockURLRequestJob(request, delegate, result);
+    return std::make_unique<UploadMockURLRequestJob>(request, result);
   }
 
   void ExpectRequestAndReturnError(int net_error) {
@@ -175,14 +169,12 @@ class TestUploadCallback {
 class DomainReliabilityUploaderTest : public testing::Test {
  protected:
   DomainReliabilityUploaderTest()
-      : url_request_context_getter_(new net::TestURLRequestContextGetter(
-            base::ThreadTaskRunnerHandle::Get())),
-        interceptor_(new UploadInterceptor()),
-        uploader_(
-            DomainReliabilityUploader::Create(&time_,
-                                              url_request_context_getter_)) {
+      : uploader_(
+            DomainReliabilityUploader::Create(&time_, &url_request_context_)) {
+    auto interceptor = std::make_unique<UploadInterceptor>();
+    interceptor_ = interceptor.get();
     net::URLRequestFilter::GetInstance()->AddUrlInterceptor(
-        GURL(kUploadURL), base::WrapUnique(interceptor_));
+        GURL(kUploadURL), std::move(interceptor));
     uploader_->SetDiscardUploads(false);
   }
 
@@ -192,14 +184,14 @@ class DomainReliabilityUploaderTest : public testing::Test {
 
   DomainReliabilityUploader* uploader() const { return uploader_.get(); }
   UploadInterceptor* interceptor() const { return interceptor_; }
-  scoped_refptr<net::TestURLRequestContextGetter> url_request_context_getter() {
-    return url_request_context_getter_;
+  net::TestURLRequestContext* url_request_context() {
+    return &url_request_context_;
   }
 
  private:
   base::test::SingleThreadTaskEnvironment task_environment_{
       base::test::SingleThreadTaskEnvironment::MainThreadType::IO};
-  scoped_refptr<net::TestURLRequestContextGetter> url_request_context_getter_;
+  net::TestURLRequestContext url_request_context_;
   UploadInterceptor* interceptor_;
   MockTime time_;
   std::unique_ptr<DomainReliabilityUploader> uploader_;
@@ -297,7 +289,7 @@ TEST_F(DomainReliabilityUploaderTest, UploadCanceledAtShutdown) {
 
   EXPECT_EQ(0u, c.called_count());
 
-  url_request_context_getter()->GetURLRequestContext()->AssertNoURLRequests();
+  url_request_context()->AssertNoURLRequests();
 }
 
 TEST_F(DomainReliabilityUploaderTest, NoUploadAfterShutdown) {

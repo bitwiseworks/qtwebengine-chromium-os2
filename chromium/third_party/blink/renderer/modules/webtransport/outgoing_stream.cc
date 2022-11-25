@@ -17,7 +17,7 @@
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/streams/underlying_sink_base.h"
 #include "third_party/blink/renderer/core/streams/writable_stream.h"
-#include "third_party/blink/renderer/modules/webtransport/web_transport_close_proxy.h"
+#include "third_party/blink/renderer/modules/webtransport/web_transport_stream.h"
 #include "third_party/blink/renderer/platform/bindings/exception_code.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
@@ -65,7 +65,11 @@ class OutgoingStream::UnderlyingSink final : public UnderlyingSinkBase {
     // pending writes have been completed.
     DCHECK(!outgoing_stream_->write_promise_resolver_);
 
-    outgoing_stream_->close_proxy_->SendFin();
+    if (outgoing_stream_->client_) {
+      outgoing_stream_->state_ = State::kSentFin;
+      outgoing_stream_->client_->SendFin();
+      outgoing_stream_->client_ = nullptr;
+    }
 
     outgoing_stream_->AbortAndReset();
 
@@ -84,7 +88,7 @@ class OutgoingStream::UnderlyingSink final : public UnderlyingSinkBase {
     return close(script_state, exception_state);
   }
 
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     visitor->Trace(outgoing_stream_);
     UnderlyingSinkBase::Trace(visitor);
   }
@@ -115,11 +119,10 @@ OutgoingStream::CachedDataBuffer::~CachedDataBuffer() {
 }
 
 OutgoingStream::OutgoingStream(ScriptState* script_state,
-                               WebTransportCloseProxy* close_proxy,
+                               Client* client,
                                mojo::ScopedDataPipeProducerHandle handle)
-    : ExecutionContextLifecycleObserver(ExecutionContext::From(script_state)),
-      script_state_(script_state),
-      close_proxy_(close_proxy),
+    : script_state_(script_state),
+      client_(client),
       data_pipe_(std::move(handle)),
       write_watcher_(FROM_HERE, mojo::SimpleWatcher::ArmingPolicy::MANUAL),
       close_watcher_(FROM_HERE, mojo::SimpleWatcher::ArmingPolicy::AUTOMATIC) {}
@@ -147,11 +150,7 @@ void OutgoingStream::Init() {
       script_state_, MakeGarbageCollected<UnderlyingSink>(this), 1);
 }
 
-void OutgoingStream::abortWriting() {
-  abortWriting(StreamAbortInfo::Create());
-}
-
-void OutgoingStream::abortWriting(StreamAbortInfo* stream_abort_info) {
+void OutgoingStream::AbortWriting(StreamAbortInfo* stream_abort_info) {
   DVLOG(1) << "OutgoingStream::abortWriting() this=" << this;
 
   ErrorStreamAbortAndReset(IsLocalAbort(true));
@@ -169,16 +168,14 @@ void OutgoingStream::ContextDestroyed() {
   ResetPipe();
 }
 
-void OutgoingStream::Trace(Visitor* visitor) {
+void OutgoingStream::Trace(Visitor* visitor) const {
   visitor->Trace(script_state_);
-  visitor->Trace(close_proxy_);
+  visitor->Trace(client_);
   visitor->Trace(writable_);
   visitor->Trace(controller_);
   visitor->Trace(writing_aborted_);
   visitor->Trace(writing_aborted_resolver_);
   visitor->Trace(write_promise_resolver_);
-  ScriptWrappable::Trace(visitor);
-  ExecutionContextLifecycleObserver::Trace(visitor);
 }
 
 void OutgoingStream::OnHandleReady(MojoResult result,
@@ -215,6 +212,7 @@ void OutgoingStream::OnPeerClosed(MojoResult result,
 void OutgoingStream::HandlePipeClosed() {
   DVLOG(1) << "OutgoingStream::HandlePipeClosed() this=" << this;
 
+  ScriptState::Scope scope(script_state_);
   ErrorStreamAbortAndReset(IsLocalAbort(false));
 }
 
@@ -390,6 +388,14 @@ void OutgoingStream::AbortAndReset() {
     writing_aborted_resolver_->Resolve(StreamAbortInfo::Create());
     writing_aborted_resolver_ = nullptr;
   }
+
+  if (client_) {
+    DCHECK_EQ(state_, State::kOpen);
+    state_ = State::kAborted;
+    client_->OnOutgoingStreamAbort();
+    client_ = nullptr;
+  }
+
   ResetPipe();
 }
 

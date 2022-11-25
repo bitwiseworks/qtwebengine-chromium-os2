@@ -14,6 +14,7 @@
 #include "third_party/blink/renderer/modules/notifications/notification.h"
 #include "third_party/blink/renderer/modules/notifications/timestamp_trigger.h"
 #include "third_party/blink/renderer/modules/vibration/vibration_controller.h"
+#include "third_party/blink/renderer/platform/bindings/enumeration_base.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
@@ -28,7 +29,9 @@ mojom::blink::NotificationDirection ToDirectionEnumValue(
     return mojom::blink::NotificationDirection::LEFT_TO_RIGHT;
   if (direction == "rtl")
     return mojom::blink::NotificationDirection::RIGHT_TO_LEFT;
-
+  if (direction == "auto")
+    return mojom::blink::NotificationDirection::AUTO;
+  NOTREACHED() << "Unknown direction: " << direction;
   return mojom::blink::NotificationDirection::AUTO;
 }
 
@@ -78,11 +81,15 @@ mojom::blink::NotificationDataPtr CreateNotificationData(
   if (options->hasBadge() && !options->badge().IsEmpty())
     notification_data->badge = CompleteURL(context, options->badge());
 
-  VibrationController::VibrationPattern vibration_pattern =
-      VibrationController::SanitizeVibrationPattern(options->vibrate());
+  VibrationController::VibrationPattern vibration_pattern;
+  if (options->hasVibrate()) {
+    vibration_pattern =
+        VibrationController::SanitizeVibrationPattern(options->vibrate());
+  }
   notification_data->vibration_pattern = Vector<int32_t>();
   notification_data->vibration_pattern->Append(vibration_pattern.data(),
                                                vibration_pattern.size());
+
   notification_data->timestamp = options->hasTimestamp()
                                      ? static_cast<double>(options->timestamp())
                                      : base::Time::Now().ToDoubleT() * 1000.0;
@@ -90,7 +97,9 @@ mojom::blink::NotificationDataPtr CreateNotificationData(
   notification_data->silent = options->silent();
   notification_data->require_interaction = options->requireInteraction();
 
-  if (options->hasData()) {
+  // TODO(crbug.com/1070871, crbug.com/1070964): |data| member has a null value
+  // as a default value, and we don't need |hasData()| check actually.
+  if (options->hasData() && !options->data().IsNull()) {
     const ScriptValue& data = options->data();
     v8::Isolate* isolate = data.GetIsolate();
     DCHECK(isolate->InContext());
@@ -119,14 +128,16 @@ mojom::blink::NotificationDataPtr CreateNotificationData(
     notification_action->action = action->action();
     notification_action->title = action->title();
 
-    if (action->type() == "button")
+    if (action->type() == "button") {
       notification_action->type = mojom::blink::NotificationActionType::BUTTON;
-    else if (action->type() == "text")
+    } else if (action->type() == "text") {
       notification_action->type = mojom::blink::NotificationActionType::TEXT;
-    else
-      NOTREACHED() << "Unknown action type: " << action->type();
+    } else {
+      NOTREACHED() << "Unknown action type: "
+                   << IDLEnumAsString(action->type());
+    }
 
-    if (action->hasPlaceholder() &&
+    if (!action->placeholder().IsNull() &&
         notification_action->type ==
             mojom::blink::NotificationActionType::BUTTON) {
       exception_state.ThrowTypeError(

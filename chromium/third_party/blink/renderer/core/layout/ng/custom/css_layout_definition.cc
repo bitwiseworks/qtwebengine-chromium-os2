@@ -89,7 +89,6 @@ bool CSSLayoutDefinition::Instance::Layout(
     const NGBlockNode& node,
     const LogicalSize& border_box_size,
     const NGBoxStrut& border_scrollbar_padding,
-    const LayoutUnit child_percentage_resolution_block_size_for_min_max,
     CustomLayoutScope* custom_layout_scope,
     FragmentResultOptions*& fragment_result_options,
     scoped_refptr<SerializedScriptValue>* fragment_result_data) {
@@ -143,12 +142,14 @@ bool CSSLayoutDefinition::Instance::Layout(
   }
 
   // Run the work queue until exhaustion.
-  while (!custom_layout_scope->Queue()->IsEmpty()) {
-    for (auto& task : *custom_layout_scope->Queue()) {
-      task.Run(space, node.Style(),
-               child_percentage_resolution_block_size_for_min_max);
+  auto& queue = *custom_layout_scope->Queue();
+  while (!queue.IsEmpty()) {
+    // The queue may mutate (re-allocating the vector) while running a task.
+    for (wtf_size_t index = 0; index < queue.size(); ++index) {
+      auto task = queue[index];
+      task->Run(space, node.Style(), border_box_size.block_size);
     }
-    custom_layout_scope->Queue()->clear();
+    queue.clear();
     {
       v8::MicrotasksScope microtasks_scope(isolate, microtask_queue,
                                            v8::MicrotasksScope::kRunMicrotasks);
@@ -223,7 +224,8 @@ bool CSSLayoutDefinition::Instance::IntrinsicSizes(
     const NGBoxStrut& border_scrollbar_padding,
     const LayoutUnit child_percentage_resolution_block_size_for_min_max,
     CustomLayoutScope* custom_layout_scope,
-    IntrinsicSizesResultOptions*& intrinsic_sizes_result_options) {
+    IntrinsicSizesResultOptions** intrinsic_sizes_result_options,
+    bool* child_depends_on_percentage_block_size) {
   ScriptState* script_state = definition_->GetScriptState();
   v8::Isolate* isolate = script_state->GetIsolate();
 
@@ -269,12 +271,16 @@ bool CSSLayoutDefinition::Instance::IntrinsicSizes(
   }
 
   // Run the work queue until exhaustion.
-  while (!custom_layout_scope->Queue()->IsEmpty()) {
-    for (auto& task : *custom_layout_scope->Queue()) {
-      task.Run(space, node.Style(),
-               child_percentage_resolution_block_size_for_min_max);
+  auto& queue = *custom_layout_scope->Queue();
+  while (!queue.IsEmpty()) {
+    // The queue may mutate (re-allocating the vector) while running a task.
+    for (wtf_size_t index = 0; index < queue.size(); ++index) {
+      auto task = queue[index];
+      task->Run(space, node.Style(),
+                child_percentage_resolution_block_size_for_min_max,
+                child_depends_on_percentage_block_size);
     }
-    custom_layout_scope->Queue()->clear();
+    queue.clear();
     {
       v8::MicrotasksScope microtasks_scope(isolate, microtask_queue,
                                            v8::MicrotasksScope::kRunMicrotasks);
@@ -300,7 +306,7 @@ bool CSSLayoutDefinition::Instance::IntrinsicSizes(
   v8::Local<v8::Value> inner_value = v8_result_promise->Result();
 
   // Attempt to convert the result.
-  intrinsic_sizes_result_options =
+  *intrinsic_sizes_result_options =
       NativeValueTraits<IntrinsicSizesResultOptions>::NativeValue(
           isolate, inner_value, exception_state);
 
@@ -353,12 +359,12 @@ CSSLayoutDefinition::Instance* CSSLayoutDefinition::CreateInstance() {
   return MakeGarbageCollected<Instance>(this, instance.V8Value());
 }
 
-void CSSLayoutDefinition::Instance::Trace(Visitor* visitor) {
+void CSSLayoutDefinition::Instance::Trace(Visitor* visitor) const {
   visitor->Trace(definition_);
   visitor->Trace(instance_);
 }
 
-void CSSLayoutDefinition::Trace(Visitor* visitor) {
+void CSSLayoutDefinition::Trace(Visitor* visitor) const {
   visitor->Trace(constructor_);
   visitor->Trace(intrinsic_sizes_);
   visitor->Trace(layout_);

@@ -3,11 +3,44 @@
 // found in the LICENSE file.
 
 import * as Common from '../common/common.js';
-import {ActionDelegate} from './ActionDelegate.js';  // eslint-disable-line no-unused-vars
+import * as Root from '../root/root.js';
 
-/**
- * @unrestricted
- */
+import {ActionDelegate} from './ActionDelegate.js';  // eslint-disable-line no-unused-vars
+import {Context} from './Context.js';
+
+class ActionRuntimeExtensionDescriptor extends  // eslint-disable-line no-unused-vars
+    Root.Runtime.RuntimeExtensionDescriptor {
+  constructor() {
+    super();
+
+    /** @type {string|null} */
+    this.iconClass;
+
+    /** @type {string|null} */
+    this.toggledIconClass;
+
+    /** @type {boolean|null} */
+    this.toggleWithRedColor;
+
+    /** @type {string|null} */
+    this.category;
+
+    /** @type {string|null} */
+    this.tags;
+
+    /** @type {boolean|null} */
+    this.toggleable;
+
+    /**
+     * @type {?Array<{
+     *   value: boolean,
+     *   title: string,
+     * }>}
+     */
+    this.options;
+  }
+}
+
 export class Action extends Common.ObjectWrapper.ObjectWrapper {
   /**
    * @param {!Root.Runtime.Extension} extension
@@ -15,7 +48,9 @@ export class Action extends Common.ObjectWrapper.ObjectWrapper {
   constructor(extension) {
     super();
     this._extension = extension;
+    /** @type {boolean} */
     this._enabled = true;
+    /** @type {boolean} */
     this._toggled = false;
   }
 
@@ -23,7 +58,7 @@ export class Action extends Common.ObjectWrapper.ObjectWrapper {
    * @return {string}
    */
   id() {
-    return this._extension.descriptor()['actionId'];
+    return this._actionDescriptor().actionId || '';
   }
 
   /**
@@ -36,40 +71,34 @@ export class Action extends Common.ObjectWrapper.ObjectWrapper {
   /**
    * @return {!Promise.<boolean>}
    */
-  execute() {
-    return this._extension.instance().then(handleAction.bind(this));
-
-    /**
-     * @param {!Object} actionDelegate
-     * @return {boolean}
-     * @this {Action}
-     */
-    function handleAction(actionDelegate) {
-      const actionId = this._extension.descriptor()['actionId'];
-      const delegate = /** @type {!ActionDelegate} */ (actionDelegate);
-      return delegate.handleAction(self.UI.context, actionId);
+  async execute() {
+    if (!this._extension.canInstantiate()) {
+      return false;
     }
+    const delegate = /** @type {!ActionDelegate} */ (await this._extension.instance());
+    const actionId = this.id();
+    return delegate.handleAction(Context.instance(), actionId);
   }
 
   /**
    * @return {string}
    */
   icon() {
-    return this._extension.descriptor()['iconClass'] || '';
+    return this._actionDescriptor().iconClass || '';
   }
 
   /**
    * @return {string}
    */
   toggledIcon() {
-    return this._extension.descriptor()['toggledIconClass'] || '';
+    return this._actionDescriptor().toggledIconClass || '';
   }
 
   /**
    * @return {boolean}
    */
   toggleWithRedColor() {
-    return !!this._extension.descriptor()['toggleWithRedColor'];
+    return !!this._actionDescriptor().toggleWithRedColor;
   }
 
   /**
@@ -95,21 +124,21 @@ export class Action extends Common.ObjectWrapper.ObjectWrapper {
    * @return {string}
    */
   category() {
-    return ls(this._extension.descriptor()['category'] || '');
+    return ls`${this._actionDescriptor().category || ''}`;
   }
 
   /**
    * @return {string}
    */
   tags() {
-    return this._extension.descriptor()['tags'] || '';
+    return this._actionDescriptor().tags || '';
   }
 
   /**
    * @return {boolean}
    */
   toggleable() {
-    return !!this._extension.descriptor()['toggleable'];
+    return !!this._actionDescriptor().toggleable;
   }
 
   /**
@@ -117,11 +146,11 @@ export class Action extends Common.ObjectWrapper.ObjectWrapper {
    */
   title() {
     let title = this._extension.title() || '';
-    const options = this._extension.descriptor()['options'];
+    const options = this._actionDescriptor().options;
     if (options) {
       for (const pair of options) {
-        if (pair['value'] !== this._toggled) {
-          title = ls(pair['title']);
+        if (pair.value !== this._toggled) {
+          title = ls`${pair.title}`;
         }
       }
     }
@@ -146,6 +175,13 @@ export class Action extends Common.ObjectWrapper.ObjectWrapper {
 
     this._toggled = toggled;
     this.dispatchEventToListeners(Events.Toggled, toggled);
+  }
+
+  /**
+   * @return {!ActionRuntimeExtensionDescriptor}
+   */
+  _actionDescriptor() {
+    return /** @type {!ActionRuntimeExtensionDescriptor} */ (this._extension.descriptor());
   }
 }
 

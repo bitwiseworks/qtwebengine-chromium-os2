@@ -15,6 +15,7 @@ component("ios") {
   deps = [
     "//base",
     "//components/autofill/ios/form_util",
+    "//components/safe_browsing/ios/browser:allow_list",
     "//components/security_state/core",
     "//ios/web/common",
     "//ios/web/public",
@@ -28,6 +29,7 @@ source_set("unit_tests") {
   sources = [ "security_state_utils_unittest.mm" ]
   deps = [
     ":ios",
+    "//components/safe_browsing/ios/browser:allow_list",
     "//components/security_state/core",
     "//ios/web/public/security",
     "//ios/web/public/test",

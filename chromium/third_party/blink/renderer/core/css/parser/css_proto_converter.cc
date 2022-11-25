@@ -1006,7 +1006,7 @@ const std::string Converter::kPropertyLookupTable[] = {
     "max-block-size",
     "-webkit-animation-play-state",
     "border-image-repeat",
-    "-webkit-font-size-delta",
+    "-internal-font-size-delta",
     "scroll-padding-bottom",
     "border-right-style",
     "border-left-style",
@@ -1517,6 +1517,8 @@ const std::string Converter::kPropertyLookupTable[] = {
     "overscroll-behavior-block",
     "overscroll-behavior-x",
     "overscroll-behavior-y",
+    "animation-timeline",
+    "counter-set",
     "INVALID_PROPERTY",
 };
 

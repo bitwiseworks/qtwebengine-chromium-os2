@@ -9,19 +9,28 @@
 
 #include "base/containers/flat_set.h"
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "base/unguessable_token.h"
+#include "base/util/type_safety/pass_key.h"
 #include "components/performance_manager/graph/node_base.h"
 #include "components/performance_manager/public/graph/frame_node.h"
+#include "components/performance_manager/public/graph/node_attached_data.h"
+#include "components/performance_manager/public/render_frame_host_proxy.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver.h"
+#include "third_party/blink/public/common/tokens/tokens.h"
 #include "url/gurl.h"
 
 namespace performance_manager {
 
-class FrameNodeImpl;
+class FrameNodeImplDescriber;
 class PageNodeImpl;
 class ProcessNodeImpl;
 class WorkerNodeImpl;
+
+namespace execution_context {
+class ExecutionContextAccess;
+}  // namespace execution_context
 
 // Frame nodes form a tree structure, each FrameNode at most has one parent that
 // is a FrameNode. Conceptually, a frame corresponds to a
@@ -62,7 +71,7 @@ class FrameNodeImpl
                 FrameNodeImpl* parent_frame_node,
                 int frame_tree_node_id,
                 int render_frame_id,
-                const base::UnguessableToken& dev_tools_token,
+                const blink::LocalFrameToken& frame_token,
                 int32_t browsing_instance_id,
                 int32_t site_instance_id);
   ~FrameNodeImpl() override;
@@ -75,10 +84,13 @@ class FrameNodeImpl
   void SetHasNonEmptyBeforeUnload(bool has_nonempty_beforeunload) override;
   void SetOriginTrialFreezePolicy(mojom::InterventionPolicy policy) override;
   void SetIsAdFrame() override;
-  void OnNonPersistentNotificationCreated() override;
   void SetHadFormInteraction() override;
+  void OnNonPersistentNotificationCreated() override;
+  void OnFirstContentfulPaint(
+      base::TimeDelta time_since_navigation_start) override;
+  const RenderFrameHostProxy& GetRenderFrameHostProxy() const override;
 
-  // Partial FrameNode implementation:
+  // Partial FrameNodbase::TimeDelta time_since_navigatione implementation:
   bool IsMainFrame() const override;
 
   // Getters for const properties. These can be called from any thread.
@@ -87,12 +99,14 @@ class FrameNodeImpl
   ProcessNodeImpl* process_node() const;
   int frame_tree_node_id() const;
   int render_frame_id() const;
-  const base::UnguessableToken& dev_tools_token() const;
+  const blink::LocalFrameToken& frame_token() const;
   int32_t browsing_instance_id() const;
   int32_t site_instance_id() const;
+  const RenderFrameHostProxy& render_frame_host_proxy() const;
 
   // Getters for non-const properties. These are not thread safe.
   const base::flat_set<FrameNodeImpl*>& child_frame_nodes() const;
+  const base::flat_set<PageNodeImpl*>& opened_page_nodes() const;
   LifecycleState lifecycle_state() const;
   InterventionPolicy origin_trial_freeze_policy() const;
   bool has_nonempty_beforeunload() const;
@@ -105,11 +119,13 @@ class FrameNodeImpl
   const base::flat_set<WorkerNodeImpl*>& child_worker_nodes() const;
   const PriorityAndReason& priority_and_reason() const;
   bool had_form_interaction() const;
+  bool is_audible() const;
 
   // Setters are not thread safe.
   void SetIsCurrent(bool is_current);
   void SetIsHoldingWebLock(bool is_holding_weblock);
   void SetIsHoldingIndexedDBLock(bool is_holding_indexeddb_lock);
+  void SetIsAudible(bool is_audible);
 
   // Invoked when a navigation is committed in the frame.
   void OnNavigationCommitted(const GURL& url, bool same_document);
@@ -121,9 +137,31 @@ class FrameNodeImpl
   // Invoked to set the frame priority, and the reason behind it.
   void SetPriorityAndReason(const PriorityAndReason& priority_and_reason);
 
+  base::WeakPtr<FrameNodeImpl> GetWeakPtr() {
+    return weak_factory_.GetWeakPtr();
+  }
+
+  void SeverOpenedPagesAndMaybeReparentForTesting() {
+    SeverOpenedPagesAndMaybeReparent();
+  }
+
+  // Implementation details below this point.
+
+  // Invoked by opened pages when this frame is set/cleared as their opener.
+  // See PageNodeImpl::(Set|Clear)OpenerFrameNodeAndOpenedType.
+  void AddOpenedPage(util::PassKey<PageNodeImpl> key, PageNodeImpl* page_node);
+  void RemoveOpenedPage(util::PassKey<PageNodeImpl> key,
+                        PageNodeImpl* page_node);
+
+  // Used by the ExecutionContextRegistry mechanism.
+  std::unique_ptr<NodeAttachedData>* GetExecutionContextStorage(
+      util::PassKey<execution_context::ExecutionContextAccess> key) {
+    return &execution_context_;
+  }
+
  private:
+  friend class FrameNodeImplDescriber;
   friend class FramePriorityAccess;
-  friend class PageNodeImpl;
   friend class ProcessNodeImpl;
 
   // Rest of FrameNode implementation. These are private so that users of the
@@ -132,10 +170,13 @@ class FrameNodeImpl
   const PageNode* GetPageNode() const override;
   const ProcessNode* GetProcessNode() const override;
   int GetFrameTreeNodeId() const override;
-  const base::UnguessableToken& GetDevToolsToken() const override;
+  const blink::LocalFrameToken& GetFrameToken() const override;
   int32_t GetBrowsingInstanceId() const override;
   int32_t GetSiteInstanceId() const override;
+  bool VisitChildFrameNodes(const FrameNodeVisitor& visitor) const override;
   const base::flat_set<const FrameNode*> GetChildFrameNodes() const override;
+  bool VisitOpenedPageNodes(const PageNodeVisitor& visitor) const override;
+  const base::flat_set<const PageNode*> GetOpenedPageNodes() const override;
   LifecycleState GetLifecycleState() const override;
   InterventionPolicy GetOriginTrialFreezePolicy() const override;
   bool HasNonemptyBeforeUnload() const override;
@@ -148,6 +189,7 @@ class FrameNodeImpl
   const base::flat_set<const WorkerNode*> GetChildWorkerNodes() const override;
   const PriorityAndReason& GetPriorityAndReason() const override;
   bool HadFormInteraction() const override;
+  bool IsAudible() const override;
 
   // Properties associated with a Document, which are reset when a
   // different-document navigation is committed in the frame.
@@ -193,8 +235,21 @@ class FrameNodeImpl
   void OnJoiningGraph() override;
   void OnBeforeLeavingGraph() override;
 
+  // Helper function to sever all opened page relationships. This is called
+  // before destroying the frame node in "OnBeforeLeavingGraph". Note that this
+  // will reparent opened pages to this frame's parent so that tracking is
+  // maintained.
+  void SeverOpenedPagesAndMaybeReparent();
+
+  // This is not quite the same as GetMainFrame, because there can be multiple
+  // main frames while the main frame is navigating. This explicitly walks up
+  // the tree to find the main frame that corresponds to this frame tree node,
+  // even if it is not current.
+  FrameNodeImpl* GetFrameTreeRoot() const;
+
   bool HasFrameNodeInAncestors(FrameNodeImpl* frame_node) const;
   bool HasFrameNodeInDescendants(FrameNodeImpl* frame_node) const;
+  bool HasFrameNodeInTree(FrameNodeImpl* frame_node) const;
 
   mojo::Receiver<mojom::DocumentCoordinationUnit> receiver_{this};
 
@@ -206,11 +261,11 @@ class FrameNodeImpl
   const int frame_tree_node_id_;
   // The routing id of the frame.
   const int render_frame_id_;
-  // A unique identifier shared with all representations of this node across
-  // content and blink. The token is only defined by the browser process and
-  // is never sent back from the renderer in control calls. It should never be
-  // used to look up the FrameTreeNode instance.
-  const base::UnguessableToken dev_tools_token_;
+
+  // This is the unique token for this frame instance as per e.g.
+  // RenderFrameHost::GetFrameToken().
+  const blink::LocalFrameToken frame_token_;
+
   // The unique ID of the BrowsingInstance this frame belongs to. Frames in the
   // same BrowsingInstance are allowed to script each other at least
   // asynchronously (if cross-site), and sometimes synchronously (if same-site,
@@ -220,8 +275,14 @@ class FrameNodeImpl
   // same SiteInstance may sychronously script each other. Frames with the
   // same |site_instance_id_| will also have the same |browsing_instance_id_|.
   const int32_t site_instance_id_;
+  // A proxy object that lets the underlying RFH be safely dereferenced on the
+  // UI thread.
+  const RenderFrameHostProxy render_frame_host_proxy_;
 
   base::flat_set<FrameNodeImpl*> child_frame_nodes_;
+
+  // The set of pages that have been opened by this frame.
+  base::flat_set<PageNodeImpl*> opened_page_nodes_;
 
   // Does *not* change when a navigation is committed.
   ObservedProperty::NotifiesOnlyOnChanges<
@@ -268,8 +329,20 @@ class FrameNodeImpl
       priority_and_reason_{PriorityAndReason(base::TaskPriority::LOWEST,
                                              kDefaultPriorityReason)};
 
+  // Indicates if the frame is audible. This is tracked independently of a
+  // document, and if a document swap occurs the audio stream monitor machinery
+  // will keep this up to date.
+  ObservedProperty::
+      NotifiesOnlyOnChanges<bool, &FrameNodeObserver::OnIsAudibleChanged>
+          is_audible_{false};
+
   // Inline storage for FramePriorityDecorator data.
   frame_priority::AcceptedVote accepted_vote_;
+
+  // Inline storage for ExecutionContext.
+  std::unique_ptr<NodeAttachedData> execution_context_;
+
+  base::WeakPtrFactory<FrameNodeImpl> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(FrameNodeImpl);
 };

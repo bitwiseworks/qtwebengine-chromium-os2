@@ -16,6 +16,7 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/common/channel_info.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "extensions/browser/event_router_factory.h"
 
@@ -188,8 +189,18 @@ void AutofillAssistantPrivateEventRouter::OnInfoBoxChanged(
 
 void AutofillAssistantPrivateEventRouter::OnProgressChanged(int progress) {}
 
+void AutofillAssistantPrivateEventRouter::OnProgressActiveStepChanged(
+    int active_step) {}
+
 void AutofillAssistantPrivateEventRouter::OnProgressVisibilityChanged(
     bool visible) {}
+
+void AutofillAssistantPrivateEventRouter::OnStepProgressBarConfigurationChanged(
+    const autofill_assistant::ShowProgressBarProto::
+        StepProgressBarConfiguration& configuration) {}
+
+void AutofillAssistantPrivateEventRouter::OnProgressBarErrorStateChanged(
+    bool error) {}
 
 void AutofillAssistantPrivateEventRouter::OnTouchableAreaChanged(
     const autofill_assistant::RectF& visual_viewport,
@@ -314,13 +325,19 @@ void AutofillAssistantPrivateAPI::AttachUI() {}
 
 void AutofillAssistantPrivateAPI::DestroyUI() {}
 
-std::string AutofillAssistantPrivateAPI::GetApiKey() const {
-  // TODO(crbug.com/1015753): Use chromium's keys and also consider the
-  // autofill-assistant-key here to override that particular key.
-  return "invalid";
+version_info::Channel AutofillAssistantPrivateAPI::GetChannel() const {
+  // TODO(crbug.com/1015753): Make a minimal client impl available in a common
+  // chrome/browser/autofill_assistant and share it with the android client
+  // impl.
+  return chrome::GetChannel();
 }
 
-std::string AutofillAssistantPrivateAPI::GetAccountEmailAddress() const {
+std::string AutofillAssistantPrivateAPI::GetEmailAddressForAccessTokenAccount()
+    const {
+  return "joe@example.com";
+}
+
+std::string AutofillAssistantPrivateAPI::GetChromeSignedInEmailAddress() const {
   return "joe@example.com";
 }
 
@@ -341,16 +358,9 @@ AutofillAssistantPrivateAPI::GetPasswordManagerClient() const {
   return nullptr;
 }
 
-autofill_assistant::WebsiteLoginFetcher*
-AutofillAssistantPrivateAPI::GetWebsiteLoginFetcher() const {
+autofill_assistant::WebsiteLoginManager*
+AutofillAssistantPrivateAPI::GetWebsiteLoginManager() const {
   return nullptr;
-}
-
-std::string AutofillAssistantPrivateAPI::GetServerUrl() const {
-  // TODO(crbug.com/1015753): Consider the autofill-assistant-url for endpoint
-  // overrides and share the kDefaultAutofillAssistantServerUrl to expose it
-  // here.
-  return "https://automate-pa.googleapis.com";
 }
 
 std::string AutofillAssistantPrivateAPI::GetLocale() const {
@@ -366,8 +376,19 @@ AutofillAssistantPrivateAPI::GetDeviceContext() const {
   return autofill_assistant::DeviceContext();
 }
 
+bool AutofillAssistantPrivateAPI::IsAccessibilityEnabled() const {
+  return false;
+}
+
 void AutofillAssistantPrivateAPI::Shutdown(
     autofill_assistant::Metrics::DropOutReason reason) {}
+
+void AutofillAssistantPrivateAPI::RecordDropOut(
+    autofill_assistant::Metrics::DropOutReason reason) {}
+
+void bool AutofillAssistantPrivateAPI::HasHadUI() {
+  return true;
+}
 
 // Note that this method implements autofill_assistant::Client and simply
 // forwards the web_contents associated with the controller. There is no reason

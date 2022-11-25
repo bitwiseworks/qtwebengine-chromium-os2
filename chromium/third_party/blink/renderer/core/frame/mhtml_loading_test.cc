@@ -30,6 +30,8 @@
 
 #include "base/bind_helpers.h"
 #include "build/build_config.h"
+#include "services/network/public/cpp/web_sandbox_flags.h"
+#include "services/network/public/mojom/web_sandbox_flags.mojom-blink.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_url.h"
@@ -97,12 +99,10 @@ TEST_F(MHTMLLoadingTest, CheckDomain) {
   ASSERT_TRUE(GetPage());
   LocalFrame* frame = To<LocalFrame>(GetPage()->MainFrame());
   ASSERT_TRUE(frame);
-  Document* document = frame->GetDocument();
-  ASSERT_TRUE(document);
 
   EXPECT_EQ(kFileURL, frame->DomWindow()->location()->toString());
 
-  const SecurityOrigin* origin = document->GetSecurityOrigin();
+  const SecurityOrigin* origin = frame->DomWindow()->GetSecurityOrigin();
   EXPECT_NE("localhost", origin->Domain().Ascii());
 }
 
@@ -114,45 +114,45 @@ TEST_F(MHTMLLoadingTest, EnforceSandboxFlags) {
   ASSERT_TRUE(GetPage());
   LocalFrame* frame = To<LocalFrame>(GetPage()->MainFrame());
   ASSERT_TRUE(frame);
-  Document* document = frame->GetDocument();
-  ASSERT_TRUE(document);
+  LocalDOMWindow* window = frame->DomWindow();
+  ASSERT_TRUE(window);
 
   // Full sandboxing with the exception to new top-level windows should be
   // turned on.
-  EXPECT_EQ(mojom::blink::WebSandboxFlags::kAll &
-                ~(mojom::blink::WebSandboxFlags::kPopups |
-                  mojom::blink::WebSandboxFlags::
+  EXPECT_EQ(network::mojom::blink::WebSandboxFlags::kAll &
+                ~(network::mojom::blink::WebSandboxFlags::kPopups |
+                  network::mojom::blink::WebSandboxFlags::
                       kPropagatesToAuxiliaryBrowsingContexts),
-            document->GetSandboxFlags());
+            window->GetSandboxFlags());
 
   // MHTML document should be loaded into unique origin.
-  EXPECT_TRUE(document->GetSecurityOrigin()->IsOpaque());
+  EXPECT_TRUE(window->GetSecurityOrigin()->IsOpaque());
   // Script execution should be disabled.
-  EXPECT_FALSE(document->CanExecuteScripts(kNotAboutToExecuteScript));
+  EXPECT_FALSE(window->CanExecuteScripts(kNotAboutToExecuteScript));
 
   // The element to be created by the script is not there.
-  EXPECT_FALSE(document->getElementById("mySpan"));
+  EXPECT_FALSE(window->document()->getElementById("mySpan"));
 
   // Make sure the subframe is also sandboxed.
   LocalFrame* child_frame =
       To<LocalFrame>(GetPage()->MainFrame()->Tree().FirstChild());
   ASSERT_TRUE(child_frame);
-  Document* child_document = child_frame->GetDocument();
-  ASSERT_TRUE(child_document);
+  LocalDOMWindow* child_window = child_frame->DomWindow();
+  ASSERT_TRUE(child_window);
 
-  EXPECT_EQ(mojom::blink::WebSandboxFlags::kAll &
-                ~(mojom::blink::WebSandboxFlags::kPopups |
-                  mojom::blink::WebSandboxFlags::
+  EXPECT_EQ(network::mojom::blink::WebSandboxFlags::kAll &
+                ~(network::mojom::blink::WebSandboxFlags::kPopups |
+                  network::mojom::blink::WebSandboxFlags::
                       kPropagatesToAuxiliaryBrowsingContexts),
-            child_document->GetSandboxFlags());
+            child_window->GetSandboxFlags());
 
   // MHTML document should be loaded into unique origin.
-  EXPECT_TRUE(child_document->GetSecurityOrigin()->IsOpaque());
+  EXPECT_TRUE(child_window->GetSecurityOrigin()->IsOpaque());
   // Script execution should be disabled.
-  EXPECT_FALSE(child_document->CanExecuteScripts(kNotAboutToExecuteScript));
+  EXPECT_FALSE(child_window->CanExecuteScripts(kNotAboutToExecuteScript));
 
   // The element to be created by the script is not there.
-  EXPECT_FALSE(child_document->getElementById("mySpan"));
+  EXPECT_FALSE(child_window->document()->getElementById("mySpan"));
 }
 
 TEST_F(MHTMLLoadingTest, EnforceSandboxFlagsInXSLT) {
@@ -162,21 +162,21 @@ TEST_F(MHTMLLoadingTest, EnforceSandboxFlagsInXSLT) {
   ASSERT_TRUE(GetPage());
   LocalFrame* frame = To<LocalFrame>(GetPage()->MainFrame());
   ASSERT_TRUE(frame);
-  Document* document = frame->GetDocument();
-  ASSERT_TRUE(document);
+  LocalDOMWindow* window = frame->DomWindow();
+  ASSERT_TRUE(window);
 
   // Full sandboxing with the exception to new top-level windows should be
   // turned on.
-  EXPECT_EQ(mojom::blink::WebSandboxFlags::kAll &
-                ~(mojom::blink::WebSandboxFlags::kPopups |
-                  mojom::blink::WebSandboxFlags::
+  EXPECT_EQ(network::mojom::blink::WebSandboxFlags::kAll &
+                ~(network::mojom::blink::WebSandboxFlags::kPopups |
+                  network::mojom::blink::WebSandboxFlags::
                       kPropagatesToAuxiliaryBrowsingContexts),
-            document->GetSandboxFlags());
+            window->GetSandboxFlags());
 
   // MHTML document should be loaded into unique origin.
-  EXPECT_TRUE(document->GetSecurityOrigin()->IsOpaque());
+  EXPECT_TRUE(window->GetSecurityOrigin()->IsOpaque());
   // Script execution should be disabled.
-  EXPECT_FALSE(document->CanExecuteScripts(kNotAboutToExecuteScript));
+  EXPECT_FALSE(window->CanExecuteScripts(kNotAboutToExecuteScript));
 }
 
 TEST_F(MHTMLLoadingTest, ShadowDom) {
@@ -189,7 +189,6 @@ TEST_F(MHTMLLoadingTest, ShadowDom) {
   Document* document = frame->GetDocument();
   ASSERT_TRUE(document);
 
-  EXPECT_TRUE(IsShadowHost(document->getElementById("h1")));
   EXPECT_TRUE(IsShadowHost(document->getElementById("h2")));
   // The nested shadow DOM tree is created.
   EXPECT_TRUE(IsShadowHost(

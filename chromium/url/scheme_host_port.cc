@@ -9,7 +9,8 @@
 
 #include <tuple>
 
-#include "base/logging.h"
+#include "base/check_op.h"
+#include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -96,10 +97,12 @@ bool IsValidInput(const base::StringPiece& scheme,
   switch (scheme_type) {
     case SCHEME_WITH_HOST_AND_PORT:
     case SCHEME_WITH_HOST_PORT_AND_USER_INFORMATION:
-      // A URL with |scheme| is required to have the host and port (may be
-      // omitted in a serialization if it's the same as the default value).
-      // Return an invalid instance if either of them is not given.
-      if (host.empty() || port == 0)
+      // A URL with |scheme| is required to have the host and port, so return an
+      // invalid instance if host is not given.  Note that a valid port is
+      // always provided by SchemeHostPort(const GURL&) constructor (a missing
+      // port is replaced with a default port if needed by
+      // GURL::EffectiveIntPort()).
+      if (host.empty())
         return false;
 
       // Don't do an expensive canonicalization if the host is already
@@ -142,14 +145,12 @@ bool IsValidInput(const base::StringPiece& scheme,
 
 }  // namespace
 
-SchemeHostPort::SchemeHostPort() : port_(0) {
-}
+SchemeHostPort::SchemeHostPort() = default;
 
 SchemeHostPort::SchemeHostPort(std::string scheme,
                                std::string host,
                                uint16_t port,
-                               ConstructPolicy policy)
-    : port_(0) {
+                               ConstructPolicy policy) {
   if (!IsValidInput(scheme, host, port, policy)) {
     DCHECK(!IsValid());
     return;
@@ -170,7 +171,7 @@ SchemeHostPort::SchemeHostPort(base::StringPiece scheme,
                      port,
                      ConstructPolicy::CHECK_CANONICALIZATION) {}
 
-SchemeHostPort::SchemeHostPort(const GURL& url) : port_(0) {
+SchemeHostPort::SchemeHostPort(const GURL& url) {
   if (!url.is_valid())
     return;
 

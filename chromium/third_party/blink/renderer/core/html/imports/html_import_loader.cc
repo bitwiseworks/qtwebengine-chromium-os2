@@ -96,11 +96,18 @@ HTMLImportLoader::State HTMLImportLoader::StartWritingAndParsing(
     const ResourceResponse& response) {
   DCHECK(controller_);
   DCHECK(!imports_.IsEmpty());
+  Document* tree_root = controller_->TreeRoot();
   document_ = MakeGarbageCollected<HTMLDocument>(
-      DocumentInit::CreateWithImportsController(controller_)
+      DocumentInit::Create()
+          .WithImportsController(controller_)
+          .WithExecutionContext(tree_root->GetExecutionContext())
+          .WithRegistrationContext(tree_root->RegistrationContext())
           .WithURL(response.CurrentRequestUrl()));
-  document_->OpenForNavigation(kAllowAsynchronousParsing, response.MimeType(),
-                               "UTF-8");
+  document_->OpenForNavigation(
+      RuntimeEnabledFeatures::ForceSynchronousHTMLParsingEnabled()
+          ? kAllowDeferredParsing
+          : kAllowAsynchronousParsing,
+      response.MimeType(), "UTF-8");
 
   DocumentParser* parser = document_->Parser();
   DCHECK(parser);
@@ -199,7 +206,7 @@ V0CustomElementSyncMicrotaskQueue* HTMLImportLoader::MicrotaskQueue() const {
   return microtask_queue_;
 }
 
-void HTMLImportLoader::Trace(Visitor* visitor) {
+void HTMLImportLoader::Trace(Visitor* visitor) const {
   visitor->Trace(controller_);
   visitor->Trace(imports_);
   visitor->Trace(document_);

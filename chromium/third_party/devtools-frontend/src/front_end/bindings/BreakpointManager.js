@@ -30,6 +30,7 @@
 
 import * as Common from '../common/common.js';
 import * as SDK from '../sdk/sdk.js';
+import * as TextUtils from '../text_utils/text_utils.js';  // eslint-disable-line no-unused-vars
 import * as Workspace from '../workspace/workspace.js';
 
 import {DebuggerWorkspaceBinding} from './DebuggerWorkspaceBinding.js';  // eslint-disable-line no-unused-vars
@@ -194,7 +195,7 @@ export class BreakpointManager extends Common.ObjectWrapper.ObjectWrapper {
 
   /**
    * @param {!Workspace.UISourceCode.UISourceCode} uiSourceCode
-   * @param {!TextUtils.TextRange} textRange
+   * @param {!TextUtils.TextRange.TextRange} textRange
    * @return {!Promise<!Array<!Workspace.UISourceCode.UILocation>>}
    */
   async possibleBreakpoints(uiSourceCode, textRange) {
@@ -218,7 +219,7 @@ export class BreakpointManager extends Common.ObjectWrapper.ObjectWrapper {
       }
     }
     if (!startLocation || !endLocation) {
-      return Promise.resolve([]);
+      return [];
     }
 
     return startLocation.debuggerModel
@@ -233,8 +234,9 @@ export class BreakpointManager extends Common.ObjectWrapper.ObjectWrapper {
     async function toUILocations(locations) {
       const sortedLocationsPromises =
           locations.map(location => this._debuggerWorkspaceBinding.rawLocationToUILocation(location));
-      let sortedLocations = await Promise.all(sortedLocationsPromises);
-      sortedLocations = sortedLocations.filter(location => location && location.uiSourceCode === uiSourceCode);
+      const nullableLocations = await Promise.all(sortedLocationsPromises);
+      const sortedLocations = /** @type {!Array<!Workspace.UISourceCode.UILocation>} */ (
+          nullableLocations.filter(location => location && location.uiSourceCode === uiSourceCode));
       if (!sortedLocations.length) {
         return [];
       }
@@ -353,6 +355,7 @@ export class Breakpoint {
     /** @type {boolean} */ this._enabled;
     /** @type {boolean} */ this._isRemoved;
 
+    /** @type {?Breakpoint.State} */
     this._currentState = null;
 
     /** @type {!Map.<!SDK.DebuggerModel.DebuggerModel, !ModelBreakpoint>}*/
@@ -362,10 +365,13 @@ export class Breakpoint {
     this._breakpointManager._targetManager.observeModels(SDK.DebuggerModel.DebuggerModel, this);
   }
 
+  /**
+   * @return {!Promise<void>}
+   */
   async refreshInDebugger() {
     if (!this._isRemoved) {
       const breakpoints = Array.from(this._modelBreakpoints.values());
-      return Promise.all(breakpoints.map(breakpoint => breakpoint._refreshBreakpoint()));
+      await Promise.all(breakpoints.map(breakpoint => breakpoint._refreshBreakpoint()));
     }
   }
 
@@ -385,6 +391,10 @@ export class Breakpoint {
   modelRemoved(debuggerModel) {
     const modelBreakpoint = this._modelBreakpoints.get(debuggerModel);
     this._modelBreakpoints.delete(debuggerModel);
+
+    if (!modelBreakpoint) {
+      return;
+    }
     modelBreakpoint._cleanUpAfterDebuggerIsGone();
     modelBreakpoint._removeEventListeners();
   }
@@ -395,14 +405,14 @@ export class Breakpoint {
   addUISourceCode(uiSourceCode) {
     if (!this._uiSourceCodes.has(uiSourceCode)) {
       this._uiSourceCodes.add(uiSourceCode);
-      if (!this._isBound()) {
+      if (!this.bound()) {
         this._breakpointManager._uiLocationAdded(this, this._defaultUILocation(uiSourceCode));
       }
     }
   }
 
   clearUISourceCodes() {
-    if (!this._isBound()) {
+    if (!this.bound()) {
       this._removeAllUnboundLocations();
     }
     this._uiSourceCodes.clear();
@@ -414,13 +424,13 @@ export class Breakpoint {
   removeUISourceCode(uiSourceCode) {
     if (this._uiSourceCodes.has(uiSourceCode)) {
       this._uiSourceCodes.delete(uiSourceCode);
-      if (!this._isBound()) {
+      if (!this.bound()) {
         this._breakpointManager._uiLocationRemoved(this, this._defaultUILocation(uiSourceCode));
       }
     }
 
     // Do we need to do this? Not sure if bound locations will leak...
-    if (this._isBound()) {
+    if (this.bound()) {
       for (const uiLocation of this._uiLocations) {
         if (uiLocation.uiSourceCode === uiSourceCode) {
           this._uiLocations.delete(uiLocation);
@@ -428,7 +438,7 @@ export class Breakpoint {
         }
       }
 
-      if (!this._isBound() && !this._isRemoved) {
+      if (!this.bound() && !this._isRemoved) {
         // Switch to unbound locations
         this._addAllUnboundLocations();
       }
@@ -463,7 +473,7 @@ export class Breakpoint {
     if (this._isRemoved) {
       return;
     }
-    if (!this._isBound()) {
+    if (!this.bound()) {
       // This is our first bound location; remove all unbound locations
       this._removeAllUnboundLocations();
     }
@@ -478,7 +488,7 @@ export class Breakpoint {
     if (this._uiLocations.has(uiLocation)) {
       this._uiLocations.delete(uiLocation);
       this._breakpointManager._uiLocationRemoved(this, uiLocation);
-      if (!this._isBound() && !this._isRemoved) {
+      if (!this.bound() && !this._isRemoved) {
         this._addAllUnboundLocations();
       }
     }
@@ -489,6 +499,25 @@ export class Breakpoint {
    */
   enabled() {
     return this._enabled;
+  }
+
+  /**
+   * @return {boolean}
+   */
+  bound() {
+    return this._uiLocations.size !== 0;
+  }
+
+  /**
+   * @return {boolean}
+   */
+  hasBoundScript() {
+    for (const uiSourceCode of this._uiSourceCodes) {
+      if (uiSourceCode.project().type() === Workspace.Workspace.projectTypes.Network) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -527,7 +556,7 @@ export class Breakpoint {
   }
 
   _updateBreakpoint() {
-    if (!this._isBound()) {
+    if (!this.bound()) {
       this._removeAllUnboundLocations();
       if (!this._isRemoved) {
         this._addAllUnboundLocations();
@@ -566,13 +595,6 @@ export class Breakpoint {
     for (const modelBreakpoint of this._modelBreakpoints.values()) {
       modelBreakpoint._resetLocations();
     }
-  }
-
-  /**
-   * @return {boolean}
-   */
-  _isBound() {
-    return this._uiLocations.size !== 0;
   }
 
   /**
@@ -622,6 +644,8 @@ export class ModelBreakpoint {
     this._isUpdating = false;
     this._cancelCallback = false;
     this._currentState = null;
+    /** @type {?string} */
+    this._debuggerId;
     if (this._debuggerModel.debuggerEnabled()) {
       this._scheduleUpdateInDebugger();
     }
@@ -668,8 +692,8 @@ export class ModelBreakpoint {
   }
 
   /**
-   * @param {function()} callback
-   * @return {!Promise}
+   * @param {function():void} callback
+   * @return {!Promise<void>}
    */
   async _updateInDebugger(callback) {
     if (this._debuggerModel.target().isDisposed()) {
@@ -691,11 +715,14 @@ export class ModelBreakpoint {
         break;
       }
     }
-    let newState;
+    let newState = null;
     if (this._breakpoint._isRemoved || !this._breakpoint.enabled() || this._scriptDiverged()) {
       newState = null;
     } else if (debuggerLocation && debuggerLocation.script()) {
       const script = debuggerLocation.script();
+      if (!script) {
+        return;
+      }
       if (script.sourceURL) {
         newState = new Breakpoint.State(
             script.sourceURL, null, null, debuggerLocation.lineNumber, debuggerLocation.columnNumber, condition);
@@ -755,7 +782,7 @@ export class ModelBreakpoint {
   }
 
   /**
-   * @param {function()} callback
+   * @param {function():void} callback
    * @param {?Protocol.Debugger.BreakpointId} breakpointId
    * @param {!Array.<!SDK.DebuggerModel.Location>} locations
    */
@@ -773,7 +800,11 @@ export class ModelBreakpoint {
     }
 
     this._debuggerId = breakpointId;
-    this._debuggerModel.addBreakpointListener(this._debuggerId, this._breakpointResolved, this);
+    this._debuggerModel.addBreakpointListener(
+        this._debuggerId, /**
+      * @param {!Common.EventTarget.EventTargetEvent} event
+      */
+        event => this._breakpointResolved(event), this);
     for (const location of locations) {
       if (!(await this._addResolvedLocation(location))) {
         break;
@@ -789,8 +820,14 @@ export class ModelBreakpoint {
     }
 
     this._resetLocations();
-    this._debuggerModel.removeBreakpointListener(this._debuggerId, this._breakpointResolved, this);
-    delete this._debuggerId;
+    if (this._debuggerId) {
+      this._debuggerModel.removeBreakpointListener(
+          this._debuggerId, /**
+        * @param {!Common.EventTarget.EventTargetEvent} event
+        */
+          event => this._breakpointResolved(event), this);
+    }
+    this._debuggerId = null;
   }
 
   /**
@@ -969,4 +1006,5 @@ Storage.Item = class {
  *    uiLocation: !Workspace.UISourceCode.UILocation
  *  }}
  */
+// @ts-ignore typedef
 export let BreakpointLocation;

@@ -27,10 +27,13 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
 
 import * as Common from '../common/common.js';
 import * as Host from '../host/host.js';
 import * as Platform from '../platform/platform.js';
+import * as Root from '../root/root.js';
 import * as TextUtils from '../text_utils/text_utils.js';
 import * as UI from '../ui/ui.js';
 
@@ -56,7 +59,7 @@ export class CodeMirrorTextEditor extends UI.Widget.VBox {
         Common.Settings.Settings.instance().moduleSetting('textEditorIndent').get());
 
     this._codeMirror = new CodeMirror(this.element, {
-      devtoolsAccessibleName: options.devtoolsAccessibleName,
+      screenReaderLabel: options.devtoolsAccessibleName || ls`Code editor`,
       lineNumbers: options.lineNumbers,
       matchBrackets: true,
       smartIndent: true,
@@ -66,7 +69,7 @@ export class CodeMirrorTextEditor extends UI.Widget.VBox {
       indentUnit,
       indentWithTabs,
       lineWrapping: options.lineWrapping,
-      lineWiseCopyCut: false,
+      lineWiseCopyCut: options.lineWiseCopyCut || false,
       tabIndex: 0,
       pollInterval: Math.pow(2, 31) - 1,  // ~25 days
       inputStyle: options.inputStyle || 'devToolsAccessibleTextArea'
@@ -212,6 +215,7 @@ export class CodeMirrorTextEditor extends UI.Widget.VBox {
     if (options.placeholder) {
       this._placeholderElement = createElement('pre');
       this._placeholderElement.classList.add('placeholder-text');
+      this._placeholderElement.classList.add('CodeMirror-line-like');
       this._placeholderElement.textContent = options.placeholder;
       this._updatePlaceholder();
     }
@@ -305,7 +309,7 @@ export class CodeMirrorTextEditor extends UI.Widget.VBox {
     const installed = loadedMimeModeExtensions;
 
     const nameToExtension = new Map();
-    const extensions = self.runtime.extensions(CodeMirrorMimeMode);
+    const extensions = Root.Runtime.Runtime.instance().extensions(CodeMirrorMimeMode);
     for (const extension of extensions) {
       nameToExtension.set(extension.descriptor()['fileName'], extension);
     }
@@ -424,6 +428,7 @@ export class CodeMirrorTextEditor extends UI.Widget.VBox {
     if (!this._placeholderElement) {
       this._placeholderElement = createElement('pre');
       this._placeholderElement.classList.add('placeholder-text');
+      this._placeholderElement.classList.add('CodeMirror-line-like');
     }
     this._placeholderElement.textContent = placeholder || '';
     this._updatePlaceholder();
@@ -1876,7 +1881,6 @@ CodeMirror.inputStyles.devToolsAccessibleTextArea = class extends CodeMirror.inp
    */
   init(display) {
     super.init(display);
-    UI.ARIAUtils.setAccessibleName(this.textarea, this.cm.options.devtoolsAccessibleName || ls`Code editor`);
     this.textarea.addEventListener('compositionstart', this._onCompositionStart.bind(this));
   }
 

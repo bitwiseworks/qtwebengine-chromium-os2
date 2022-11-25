@@ -4,6 +4,7 @@
 
 #include "build/build_config.h"
 #include "content/browser/media/media_browsertest.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "media/base/test_data_util.h"
 #include "media/media_buildflags.h"
@@ -16,10 +17,20 @@ namespace content {
 
 class MediaColorTest : public MediaBrowserTest {
  public:
+  void SetUpOnMainThread() override {
+    embedded_test_server()->ServeFilesFromSourceDirectory(
+        media::GetTestDataPath());
+    ASSERT_TRUE(embedded_test_server()->Start());
+  }
+
   void RunColorTest(const std::string& video_file) {
-    base::FilePath path = media::GetTestDataFilePath("blackwhite.html");
-    std::string final_title =
-        RunTest(GetFileUrlWithQuery(path, video_file), media::kEnded);
+    GURL base_url = embedded_test_server()->GetURL("/blackwhite.html");
+
+    GURL::Replacements replacements;
+    replacements.SetQueryStr(video_file);
+    GURL test_url = base_url.ReplaceComponents(replacements);
+
+    std::string final_title = RunTest(test_url, media::kEnded);
     EXPECT_EQ(media::kEnded, final_title);
   }
   void SetUp() override {
@@ -103,7 +114,7 @@ IN_PROC_BROWSER_TEST_F(MediaColorTest, MAYBE_Yuv420pRec709H264) {
 
 // Android doesn't support 10bpc.
 // This test flakes on mac: http://crbug.com/810908
-#if defined(OS_ANDROID) || defined(OS_MACOSX)
+#if defined(OS_ANDROID) || defined(OS_MAC)
 #define MAYBE_Yuv420pHighBitDepth DISABLED_Yuv420pHighBitDepth
 #else
 #define MAYBE_Yuv420pHighBitDepth Yuv420pHighBitDepth

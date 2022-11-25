@@ -17,8 +17,6 @@ class Navigator;
 class NavigatorCredentials final
     : public GarbageCollected<NavigatorCredentials>,
       public Supplement<Navigator> {
-  USING_GARBAGE_COLLECTED_MIXIN(NavigatorCredentials);
-
  public:
   static const char kSupplementName[];
 
@@ -28,7 +26,7 @@ class NavigatorCredentials final
 
   explicit NavigatorCredentials(Navigator&);
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   CredentialsContainer* credentials();

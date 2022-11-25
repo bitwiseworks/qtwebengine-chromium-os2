@@ -99,12 +99,8 @@ ListPicker.prototype._handleWindowMessage = function(event) {
             window.updateData.anchorRectInScreen.width ||
         this._config.anchorRectInScreen.height !==
             window.updateData.anchorRectInScreen.height) {
-      // TODO(tkent): Don't fix window size here due to a bug of Aura or
-      // compositor. crbug.com/863770
-      if (!navigator.platform.startsWith('Win')) {
         this._config.anchorRectInScreen = window.updateData.anchorRectInScreen;
         this._fixWindowSize();
-      }
     }
   }
   delete window.updateData;
@@ -448,7 +444,8 @@ ListPicker.prototype._applyItemStyle = function(element, styleConfig) {
   style.color = styleConfig.color ? styleConfig.color : '';
   style.backgroundColor =
       styleConfig.backgroundColor ? styleConfig.backgroundColor : '';
-  style.fontSize = styleConfig.fontSize ? styleConfig.fontSize + 'px' : '';
+  style.fontSize =
+      styleConfig.fontSize !== undefined ? styleConfig.fontSize + 'px' : '';
   style.fontWeight = styleConfig.fontWeight ? styleConfig.fontWeight : '';
   style.fontFamily = styleConfig.fontFamily ?
       styleConfig.fontFamily.map(s => '"' + s + '"').join(',') :

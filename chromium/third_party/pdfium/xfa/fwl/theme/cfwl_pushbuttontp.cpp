@@ -6,7 +6,6 @@
 
 #include "xfa/fwl/theme/cfwl_pushbuttontp.h"
 
-#include "core/fxge/render_defines.h"
 #include "xfa/fwl/cfwl_pushbutton.h"
 #include "xfa/fwl/cfwl_themebackground.h"
 #include "xfa/fwl/cfwl_widget.h"
@@ -20,16 +19,17 @@ CFWL_PushButtonTP::CFWL_PushButtonTP() : m_pThemeData(new PBThemeData) {
   SetThemeData();
 }
 
-CFWL_PushButtonTP::~CFWL_PushButtonTP() {}
+CFWL_PushButtonTP::~CFWL_PushButtonTP() = default;
 
 void CFWL_PushButtonTP::DrawBackground(const CFWL_ThemeBackground& pParams) {
   switch (pParams.m_iPart) {
     case CFWL_Part::Border: {
-      DrawBorder(pParams.m_pGraphics.Get(), pParams.m_rtPart, pParams.m_matrix);
+      DrawBorder(pParams.m_pGraphics.Get(), pParams.m_PartRect,
+                 pParams.m_matrix);
       break;
     }
     case CFWL_Part::Background: {
-      const CFX_RectF& rect = pParams.m_rtPart;
+      const CFX_RectF& rect = pParams.m_PartRect;
       float fRight = rect.right();
       float fBottom = rect.bottom();
 
@@ -73,7 +73,8 @@ void CFWL_PushButtonTP::DrawBackground(const CFWL_ThemeBackground& pParams) {
                             rtInner.height);
 
       pGraphics->SetFillColor(CXFA_GEColor(m_pThemeData->clrFill[iColor]));
-      pGraphics->FillPath(&fillPath, FXFILL_WINDING, &pParams.m_matrix);
+      pGraphics->FillPath(&fillPath, CFX_FillRenderOptions::FillType::kWinding,
+                          &pParams.m_matrix);
       if (pParams.m_dwStates & CFWL_PartState_Focused) {
         rtInner.Inflate(1, 1, 0, 0);
         DrawFocus(pGraphics, rtInner, pParams.m_matrix);

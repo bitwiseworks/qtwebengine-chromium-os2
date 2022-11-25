@@ -48,7 +48,7 @@ class NavigationPolicyTest : public testing::Test {
   NavigationPolicy GetPolicyForCreateWindow(int modifiers,
                                             WebMouseEvent::Button button,
                                             bool as_popup) {
-    WebMouseEvent event(WebInputEvent::kMouseUp, modifiers,
+    WebMouseEvent event(WebInputEvent::Type::kMouseUp, modifiers,
                         WebInputEvent::GetStaticTimeStampForTests());
     event.button = button;
     if (as_popup)
@@ -82,7 +82,7 @@ class NavigationPolicyTest : public testing::Test {
                                       WebMouseEvent::Button button,
                                       int user_modifiers,
                                       WebMouseEvent::Button user_button) {
-    WebMouseEvent event(WebInputEvent::kMouseUp, user_modifiers,
+    WebMouseEvent event(WebInputEvent::Type::kMouseUp, user_modifiers,
                         WebInputEvent::GetStaticTimeStampForTests());
     event.button = user_button;
     base::AutoReset<const WebInputEvent*> current_event_change(
@@ -126,7 +126,7 @@ TEST_F(NavigationPolicyTest, ShiftLeftClickPopup) {
 }
 
 TEST_F(NavigationPolicyTest, ControlOrMetaLeftClick) {
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   int modifiers = WebInputEvent::kMetaKey;
 #else
   int modifiers = WebInputEvent::kControlKey;
@@ -138,7 +138,7 @@ TEST_F(NavigationPolicyTest, ControlOrMetaLeftClick) {
 }
 
 TEST_F(NavigationPolicyTest, ControlOrMetaLeftClickPopup) {
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   int modifiers = WebInputEvent::kMetaKey;
 #else
   int modifiers = WebInputEvent::kControlKey;
@@ -150,7 +150,7 @@ TEST_F(NavigationPolicyTest, ControlOrMetaLeftClickPopup) {
 }
 
 TEST_F(NavigationPolicyTest, ControlOrMetaAndShiftLeftClick) {
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   int modifiers = WebInputEvent::kMetaKey;
 #else
   int modifiers = WebInputEvent::kControlKey;
@@ -163,7 +163,7 @@ TEST_F(NavigationPolicyTest, ControlOrMetaAndShiftLeftClick) {
 }
 
 TEST_F(NavigationPolicyTest, ControlOrMetaAndShiftLeftClickPopup) {
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   int modifiers = WebInputEvent::kMetaKey;
 #else
   int modifiers = WebInputEvent::kControlKey;
@@ -311,7 +311,7 @@ TEST_F(NavigationPolicyTest, EventShiftLeftClick) {
 }
 
 TEST_F(NavigationPolicyTest, EventControlOrMetaLeftClick) {
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   int modifiers = WebInputEvent::kMetaKey;
 #else
   int modifiers = WebInputEvent::kControlKey;
@@ -322,7 +322,7 @@ TEST_F(NavigationPolicyTest, EventControlOrMetaLeftClick) {
 }
 
 TEST_F(NavigationPolicyTest, EventControlOrMetaLeftClickWithUserEvent) {
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   int modifiers = WebInputEvent::kMetaKey;
 #else
   int modifiers = WebInputEvent::kControlKey;
@@ -334,7 +334,7 @@ TEST_F(NavigationPolicyTest, EventControlOrMetaLeftClickWithUserEvent) {
 
 TEST_F(NavigationPolicyTest,
        EventControlOrMetaLeftClickWithDifferentUserEvent) {
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   int modifiers = WebInputEvent::kMetaKey;
 #else
   int modifiers = WebInputEvent::kControlKey;
@@ -345,7 +345,7 @@ TEST_F(NavigationPolicyTest,
 }
 
 TEST_F(NavigationPolicyTest, EventShiftControlOrMetaLeftClick) {
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   int modifiers = WebInputEvent::kMetaKey | WebInputEvent::kShiftKey;
 #else
   int modifiers = WebInputEvent::kControlKey | WebInputEvent::kShiftKey;

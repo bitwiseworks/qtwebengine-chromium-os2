@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/json/json_reader.h"
+#include "base/logging.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
@@ -64,11 +65,11 @@ bool MatchCertificateName(base::StringPiece name, base::StringPiece pin_name) {
   }
   base::StringPiece first_word = words[0];
 
-  if (first_word.ends_with(",")) {
+  if (base::EndsWith(first_word, ",")) {
     first_word = first_word.substr(0, first_word.size() - 1);
   }
 
-  if (first_word.starts_with("*.")) {
+  if (base::StartsWith(first_word, "*.")) {
     first_word = first_word.substr(2, first_word.size() - 2);
   }
 

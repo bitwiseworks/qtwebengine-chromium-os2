@@ -29,7 +29,9 @@ class RequestInit;
 
 using RequestInfo = RequestOrUSVString;
 
-class CORE_EXPORT Request final : public Body {
+class CORE_EXPORT Request final : public ScriptWrappable,
+                                  public ActiveScriptWrappable<Request>,
+                                  public Body {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -56,7 +58,7 @@ class CORE_EXPORT Request final : public Body {
                          ExceptionState&);
   static Request* Create(ScriptState*, FetchRequestData*);
   static Request* Create(ScriptState*,
-                         const mojom::blink::FetchAPIRequest&,
+                         mojom::blink::FetchAPIRequestPtr,
                          ForServiceWorkerFetchEvent);
 
   Request(ScriptState*, FetchRequestData*, Headers*, AbortSignal*);
@@ -85,7 +87,12 @@ class CORE_EXPORT Request final : public Body {
   // This function must be called with entering an appropriate V8 context.
   Request* clone(ScriptState*, ExceptionState&);
 
-  FetchRequestData* PassRequestData(ScriptState*, ExceptionState&);
+  // ScriptWrappable override
+  bool HasPendingActivity() const override {
+    return Body::HasPendingActivity();
+  }
+
+  FetchRequestData* PassRequestData(ScriptState*);
   mojom::blink::FetchAPIRequestPtr CreateFetchAPIRequest() const;
   bool HasBody() const;
   BodyStreamBuffer* BodyBuffer() override { return request_->Buffer(); }
@@ -95,7 +102,7 @@ class CORE_EXPORT Request final : public Body {
   mojom::RequestContextType GetRequestContextType() const;
   network::mojom::RequestDestination GetRequestDestination() const;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   const FetchRequestData* GetRequest() const { return request_; }

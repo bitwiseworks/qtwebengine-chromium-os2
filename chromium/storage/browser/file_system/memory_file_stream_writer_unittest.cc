@@ -13,14 +13,22 @@
 #include "base/bind_helpers.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/test/task_environment.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
+#include "net/base/test_completion_callback.h"
 #include "storage/browser/file_system/file_stream_test_utils.h"
 #include "storage/browser/file_system/file_stream_writer.h"
 #include "storage/browser/file_system/obfuscated_file_util_memory_delegate.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace storage {
+
+namespace {
+void NeverCalled(int unused) {
+  ADD_FAILURE();
+}
+}  // namespace
 
 class MemoryFileStreamWriterTest : public testing::Test {
  public:
@@ -59,11 +67,13 @@ class MemoryFileStreamWriterTest : public testing::Test {
 
   std::unique_ptr<FileStreamWriter> CreateWriter(const base::FilePath& path,
                                                  int64_t offset) {
-    return FileStreamWriter::CreateForMemoryFile(file_util_->GetWeakPtr(), path,
-                                                 offset);
+    return FileStreamWriter::CreateForMemoryFile(
+        base::ThreadTaskRunnerHandle::Get(), file_util_->GetWeakPtr(), path,
+        offset);
   }
 
  private:
+  base::test::TaskEnvironment task_environment_;
   base::ScopedTempDir file_system_directory_;
   std::unique_ptr<ObfuscatedFileUtilMemoryDelegate> file_util_;
 };
@@ -154,6 +164,25 @@ TEST_F(MemoryFileStreamWriterTest, CancelAfterFinishedOperation) {
   // Write operation is already completed.
   EXPECT_TRUE(file_util()->PathExists(path));
   EXPECT_EQ("foo", GetFileContent(path));
+}
+
+TEST_F(MemoryFileStreamWriterTest, CancelWrite) {
+  base::FilePath path = Path("file_a");
+  bool created;
+  EXPECT_EQ(base::File::FILE_OK, file_util()->EnsureFileExists(path, &created));
+
+  std::unique_ptr<FileStreamWriter> writer(CreateWriter(path, 0));
+
+  scoped_refptr<net::StringIOBuffer> buffer(
+      base::MakeRefCounted<net::StringIOBuffer>("xxx"));
+  int result =
+      writer->Write(buffer.get(), buffer->size(), base::BindOnce(&NeverCalled));
+  ASSERT_EQ(net::ERR_IO_PENDING, result);
+
+  net::TestCompletionCallback callback;
+  writer->Cancel(callback.callback());
+  int cancel_result = callback.WaitForResult();
+  EXPECT_EQ(net::OK, cancel_result);
 }
 
 TEST_F(MemoryFileStreamWriterTest, FlushBeforeWriting) {

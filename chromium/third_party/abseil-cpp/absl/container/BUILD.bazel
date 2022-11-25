@@ -24,7 +24,7 @@ load(
 
 package(default_visibility = ["//visibility:public"])
 
-licenses(["notice"])  # Apache 2.0
+licenses(["notice"])
 
 cc_library(
     name = "compressed_tuple",
@@ -60,6 +60,7 @@ cc_library(
     deps = [
         ":compressed_tuple",
         "//absl/algorithm",
+        "//absl/base:config",
         "//absl/base:core_headers",
         "//absl/base:dynamic_annotations",
         "//absl/base:throw_delegate",
@@ -73,6 +74,7 @@ cc_test(
     copts = ABSL_TEST_COPTS,
     linkopts = ABSL_DEFAULT_LINKOPTS,
     deps = [
+        ":counting_allocator",
         ":fixed_array",
         "//absl/base:config",
         "//absl/base:exception_testing",
@@ -257,6 +259,7 @@ cc_test(
         ":unordered_map_lookup_test",
         ":unordered_map_members_test",
         ":unordered_map_modifiers_test",
+        "//absl/base:raw_logging_internal",
         "//absl/types:any",
         "@com_google_googletest//:gtest_main",
     ],
@@ -290,6 +293,7 @@ cc_test(
         ":unordered_set_lookup_test",
         ":unordered_set_members_test",
         ":unordered_set_modifiers_test",
+        "//absl/base:raw_logging_internal",
         "//absl/memory",
         "//absl/strings",
         "@com_google_googletest//:gtest_main",
@@ -365,6 +369,7 @@ cc_library(
     copts = ABSL_DEFAULT_COPTS,
     linkopts = ABSL_DEFAULT_LINKOPTS,
     deps = [
+        "//absl/base:config",
         "//absl/memory",
         "//absl/meta:type_traits",
         "//absl/utility",
@@ -617,6 +622,7 @@ cc_test(
         ":hashtable_debug",
         ":raw_hash_set",
         "//absl/base",
+        "//absl/base:config",
         "//absl/base:core_headers",
         "//absl/base:raw_logging_internal",
         "//absl/strings",
@@ -644,6 +650,7 @@ cc_library(
     copts = ABSL_DEFAULT_COPTS,
     linkopts = ABSL_DEFAULT_LINKOPTS,
     deps = [
+        "//absl/base:config",
         "//absl/base:core_headers",
         "//absl/meta:type_traits",
         "//absl/strings",
@@ -662,6 +669,7 @@ cc_test(
     visibility = ["//visibility:private"],
     deps = [
         ":layout",
+        "//absl/base:config",
         "//absl/base:core_headers",
         "//absl/base:raw_logging_internal",
         "//absl/types:span",

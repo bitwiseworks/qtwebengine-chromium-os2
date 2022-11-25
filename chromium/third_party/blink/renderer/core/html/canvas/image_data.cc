@@ -39,6 +39,8 @@
 
 namespace blink {
 
+// Please note that all the number "4" in the file means number of channels
+// required to describe a pixel, namely, red, green, blue and alpha.
 namespace {
 
 bool RaiseDOMExceptionAndReturnFalse(ExceptionState* exception_state,
@@ -76,10 +78,12 @@ bool ImageData::ValidateConstructorArguments(
   }
 
   if (param_flags & (kParamWidth | kParamHeight)) {
-    base::CheckedNumeric<unsigned> data_size = 4;
+    base::CheckedNumeric<unsigned> data_size =
+        ImageData::StorageFormatBytesPerPixel(
+            kUint8ClampedArrayStorageFormatName);
     if (color_settings) {
-      data_size *=
-          ImageData::StorageFormatDataSize(color_settings->storageFormat());
+      data_size = ImageData::StorageFormatBytesPerPixel(
+          color_settings->storageFormat());
     }
     data_size *= width;
     data_size *= height;
@@ -254,9 +258,6 @@ ImageDataColorSettings* CanvasColorParamsToImageDataColorSettings(
     case CanvasColorSpace::kSRGB:
       color_settings->setColorSpace(kSRGBCanvasColorSpaceName);
       break;
-    case CanvasColorSpace::kLinearRGB:
-      color_settings->setColorSpace(kLinearRGBCanvasColorSpaceName);
-      break;
     case CanvasColorSpace::kRec2020:
       color_settings->setColorSpace(kRec2020CanvasColorSpaceName);
       break;
@@ -284,9 +285,6 @@ ImageData* ImageData::Create(const IntSize& size,
   switch (color_space) {
     case CanvasColorSpace::kSRGB:
       color_settings->setColorSpace(kSRGBCanvasColorSpaceName);
-      break;
-    case CanvasColorSpace::kLinearRGB:
-      color_settings->setColorSpace(kLinearRGBCanvasColorSpaceName);
       break;
     case CanvasColorSpace::kRec2020:
       color_settings->setColorSpace(kRec2020CanvasColorSpaceName);
@@ -320,18 +318,11 @@ ImageData* ImageData::Create(const IntSize& size,
   return MakeGarbageCollected<ImageData>(size, data_array, color_settings);
 }
 
-static SkImageInfo GetImageInfo(scoped_refptr<StaticBitmapImage> image) {
-  sk_sp<SkImage> skia_image = image->PaintImageForCurrentFrame().GetSkImage();
-  return SkImageInfo::Make(skia_image->width(), skia_image->height(),
-                           skia_image->colorType(), skia_image->alphaType(),
-                           skia_image->refColorSpace());
-}
-
 ImageData* ImageData::Create(scoped_refptr<StaticBitmapImage> image,
                              AlphaDisposition alpha_disposition) {
-  sk_sp<SkImage> skia_image = image->PaintImageForCurrentFrame().GetSkImage();
-  DCHECK(skia_image);
-  SkImageInfo image_info = GetImageInfo(image);
+  PaintImage paint_image = image->PaintImageForCurrentFrame();
+  DCHECK(paint_image);
+  SkImageInfo image_info = image->PaintImageForCurrentFrame().GetSkImageInfo();
   CanvasColorParams color_params(image_info);
   if (image_info.alphaType() != kOpaque_SkAlphaType) {
     if (alpha_disposition == kPremultiplyAlpha) {
@@ -341,6 +332,13 @@ ImageData* ImageData::Create(scoped_refptr<StaticBitmapImage> image,
     }
   }
 
+  ImageData* image_data = Create(image->Size(), color_params);
+  if (!image_data)
+    return nullptr;
+
+  // TODO(crbug.com/1115317): Verify if the color type uint16 needs to be
+  // considered separately.
+  ImageDataArray data = image_data->data();
   SkColorType color_type = image_info.colorType();
   bool create_f32_image_data = (color_type == kRGBA_1010102_SkColorType ||
                                 color_type == kRGB_101010x_SkColorType ||
@@ -348,31 +346,15 @@ ImageData* ImageData::Create(scoped_refptr<StaticBitmapImage> image,
                                 color_type == kRGBA_F32_SkColorType);
 
   if (!create_f32_image_data) {
-    ImageData* image_data = Create(image->Size(), color_params);
-    if (!image_data)
-      return nullptr;
     image_info = image_info.makeColorType(kRGBA_8888_SkColorType);
-    skia_image->readPixels(image_info, image_data->data()->Data(),
+    paint_image.readPixels(image_info, data.GetAsUint8ClampedArray()->Data(),
                            image_info.minRowBytes(), 0, 0);
-    return image_data;
+  } else {
+    image_info = image_info.makeColorType(kRGBA_F32_SkColorType);
+    paint_image.readPixels(image_info, data.GetAsFloat32Array()->Data(),
+                           image_info.minRowBytes(), 0, 0);
   }
-
-  base::CheckedNumeric<uint32_t> area = image->Size().Area();
-  area *= 4;
-
-  if (!area.IsValid())
-    return nullptr;
-  // Create image data with f32 storage
-  NotShared<DOMFloat32Array> f32_array =
-      ImageData::AllocateAndValidateFloat32Array(area.ValueOrDie(), nullptr);
-  if (!f32_array)
-    return nullptr;
-  image_info = image_info.makeColorType(kRGBA_F32_SkColorType);
-  skia_image->readPixels(image_info, f32_array->Data(),
-                         image_info.minRowBytes(), 0, 0);
-  ImageDataColorSettings* color_settings =
-      CanvasColorParamsToImageDataColorSettings(color_params);
-  return Create(image->Size(), f32_array, color_settings);
+  return image_data;
 }
 
 ImageData* ImageData::Create(unsigned width,
@@ -384,8 +366,11 @@ ImageData* ImageData::Create(unsigned width,
     return nullptr;
 
   NotShared<DOMUint8ClampedArray> byte_array =
-      AllocateAndValidateUint8ClampedArray(4 * width * height,
-                                           &exception_state);
+      AllocateAndValidateUint8ClampedArray(
+          ImageData::StorageFormatBytesPerPixel(
+              kUint8ClampedArrayStorageFormat) *
+              width * height,
+          &exception_state);
   return byte_array ? MakeGarbageCollected<ImageData>(IntSize(width, height),
                                                       byte_array)
                     : nullptr;
@@ -414,6 +399,69 @@ ImageData* ImageData::Create(NotShared<DOMUint8ClampedArray> data,
     return nullptr;
 
   return MakeGarbageCollected<ImageData>(IntSize(width, height), data);
+}
+
+ImageData* ImageData::Create(NotShared<DOMUint16Array> data,
+                             unsigned width,
+                             ExceptionState& exception_state) {
+  if (!ImageData::ValidateConstructorArguments(kParamData | kParamWidth,
+                                               nullptr, width, 0, data, nullptr,
+                                               &exception_state))
+    return nullptr;
+  unsigned height = base::checked_cast<unsigned>(data->lengthAsSizeT()) /
+                    (width * ImageData::StorageFormatBytesPerPixel(
+                                 kUint16ArrayStorageFormatName));
+  ImageDataColorSettings* image_setting = ImageDataColorSettings::Create();
+  image_setting->setStorageFormat(kUint16ArrayStorageFormatName);
+  return MakeGarbageCollected<ImageData>(IntSize(width, height), data,
+                                         image_setting);
+}
+
+ImageData* ImageData::Create(NotShared<DOMUint16Array> data,
+                             unsigned width,
+                             unsigned height,
+                             ExceptionState& exception_state) {
+  if (!ImageData::ValidateConstructorArguments(
+          kParamData | kParamWidth | kParamHeight, nullptr, width, height, data,
+          nullptr, &exception_state))
+    return nullptr;
+
+  ImageDataColorSettings* image_setting = ImageDataColorSettings::Create();
+  image_setting->setStorageFormat(kUint16ArrayStorageFormatName);
+  return MakeGarbageCollected<ImageData>(IntSize(width, height), data,
+                                         image_setting);
+}
+
+ImageData* ImageData::Create(NotShared<DOMFloat32Array> data,
+                             unsigned width,
+                             ExceptionState& exception_state) {
+  if (!ImageData::ValidateConstructorArguments(kParamData | kParamWidth,
+                                               nullptr, width, 0, data, nullptr,
+                                               &exception_state))
+    return nullptr;
+
+  unsigned height = base::checked_cast<unsigned>(data->lengthAsSizeT()) /
+                    (width * ImageData::StorageFormatBytesPerPixel(
+                                 kFloat32ArrayStorageFormatName));
+  ImageDataColorSettings* image_setting = ImageDataColorSettings::Create();
+  image_setting->setStorageFormat(kFloat32ArrayStorageFormatName);
+  return MakeGarbageCollected<ImageData>(IntSize(width, height), data,
+                                         image_setting);
+}
+
+ImageData* ImageData::Create(NotShared<DOMFloat32Array> data,
+                             unsigned width,
+                             unsigned height,
+                             ExceptionState& exception_state) {
+  if (!ImageData::ValidateConstructorArguments(
+          kParamData | kParamWidth | kParamHeight, nullptr, width, height, data,
+          nullptr, &exception_state))
+    return nullptr;
+
+  ImageDataColorSettings* image_setting = ImageDataColorSettings::Create();
+  image_setting->setStorageFormat(kFloat32ArrayStorageFormatName);
+  return MakeGarbageCollected<ImageData>(IntSize(width, height), data,
+                                         image_setting);
 }
 
 ImageData* ImageData::CreateImageData(
@@ -463,7 +511,7 @@ ImageData* ImageData::CreateImageData(ImageDataArray& data,
     NOTREACHED();
   }
 
-  if (storage_format_name != color_settings->storageFormat())
+  if (color_settings->storageFormat() != storage_format_name)
     color_settings->setStorageFormat(storage_format_name);
 
   if (!ImageData::ValidateConstructorArguments(
@@ -478,7 +526,8 @@ ImageData* ImageData::CreateImageData(ImageDataArray& data,
 // This function accepts size (0, 0) and always returns the ImageData in
 // "srgb" color space and "uint8" storage format.
 ImageData* ImageData::CreateForTest(const IntSize& size) {
-  base::CheckedNumeric<unsigned> data_size = 4;
+  base::CheckedNumeric<unsigned> data_size =
+      ImageData::StorageFormatBytesPerPixel(kUint8ClampedArrayStorageFormat);
   data_size *= size.Width();
   data_size *= size.Height();
   if (!data_size.IsValid() ||
@@ -528,7 +577,7 @@ ImageData* ImageData::CropRect(const IntRect& crop_rect, bool flip_y) {
                 data_size * buffer_view->TypeSize());
   } else {
     unsigned data_type_size =
-        ImageData::StorageFormatDataSize(color_settings_->storageFormat());
+        ImageData::StorageFormatBytesPerPixel(color_settings_->storageFormat());
     int src_index = (dst_rect.X() + dst_rect.Y() * src_rect.Width()) * 4;
     int dst_index = 0;
     if (flip_y)
@@ -536,11 +585,11 @@ ImageData* ImageData::CropRect(const IntRect& crop_rect, bool flip_y) {
     int src_row_stride = src_rect.Width() * 4;
     int dst_row_stride = flip_y ? -dst_rect.Width() * 4 : dst_rect.Width() * 4;
     for (int i = 0; i < dst_rect.Height(); i++) {
-      std::memcpy(
-          static_cast<char*>(buffer_view->BufferBase()->Data()) +
-              dst_index * data_type_size,
-          static_cast<char*>(BufferBase()->Data()) + src_index * data_type_size,
-          dst_rect.Width() * 4 * data_type_size);
+      std::memcpy(static_cast<char*>(buffer_view->BufferBase()->Data()) +
+                      dst_index / 4 * data_type_size,
+                  static_cast<char*>(BufferBase()->Data()) +
+                      src_index / 4 * data_type_size,
+                  dst_rect.Width() * data_type_size);
       src_index += src_row_stride;
       dst_index += dst_row_stride;
     }
@@ -550,7 +599,6 @@ ImageData* ImageData::CropRect(const IntRect& crop_rect, bool flip_y) {
 }
 
 ScriptPromise ImageData::CreateImageBitmap(ScriptState* script_state,
-                                           EventTarget& event_target,
                                            base::Optional<IntRect> crop_rect,
                                            const ImageBitmapOptions* options,
                                            ExceptionState& exception_state) {
@@ -571,11 +619,14 @@ v8::Local<v8::Object> ImageData::AssociateWithWrapper(
   wrapper =
       ScriptWrappable::AssociateWithWrapper(isolate, wrapper_type, wrapper);
 
-  if (!wrapper.IsEmpty() && data_) {
+  if (!wrapper.IsEmpty() && data_.IsUint8ClampedArray()) {
     // Create a V8 Uint8ClampedArray object and set the "data" property
     // of the ImageData object to the created v8 object, eliminating the
     // C++ callback when accessing the "data" property.
-    v8::Local<v8::Value> pixel_array = ToV8(data_.Get(), wrapper, isolate);
+    // TODO(crbug.com/1115317): |pixel_array| should be compatible with uint_8,
+    // float16 and float32.
+    v8::Local<v8::Value> pixel_array =
+        ToV8(data_.GetAsUint8ClampedArray().Get(), wrapper, isolate);
     bool defined_property;
     if (pixel_array.IsEmpty() ||
         !wrapper
@@ -589,24 +640,10 @@ v8::Local<v8::Object> ImageData::AssociateWithWrapper(
   return wrapper;
 }
 
-const DOMUint8ClampedArray* ImageData::data() const {
-  if (color_settings_->storageFormat() == kUint8ClampedArrayStorageFormatName)
-    return data_.Get();
-  return nullptr;
-}
-
-DOMUint8ClampedArray* ImageData::data() {
-  if (color_settings_->storageFormat() == kUint8ClampedArrayStorageFormatName)
-    return data_.Get();
-  return nullptr;
-}
-
 CanvasColorSpace ImageData::GetCanvasColorSpace(
     const String& color_space_name) {
   if (color_space_name == kSRGBCanvasColorSpaceName)
     return CanvasColorSpace::kSRGB;
-  if (color_space_name == kLinearRGBCanvasColorSpaceName)
-    return CanvasColorSpace::kLinearRGB;
   if (color_space_name == kRec2020CanvasColorSpaceName)
     return CanvasColorSpace::kRec2020;
   if (color_space_name == kP3CanvasColorSpaceName)
@@ -619,8 +656,6 @@ String ImageData::CanvasColorSpaceName(CanvasColorSpace color_space) {
   switch (color_space) {
     case CanvasColorSpace::kSRGB:
       return kSRGBCanvasColorSpaceName;
-    case CanvasColorSpace::kLinearRGB:
-      return kLinearRGBCanvasColorSpaceName;
     case CanvasColorSpace::kRec2020:
       return kRec2020CanvasColorSpaceName;
     case CanvasColorSpace::kP3:
@@ -651,26 +686,27 @@ ImageDataStorageFormat ImageData::GetImageDataStorageFormat() {
   return kUint8ClampedArrayStorageFormat;
 }
 
-unsigned ImageData::StorageFormatDataSize(const String& storage_format_name) {
+unsigned ImageData::StorageFormatBytesPerPixel(
+    const String& storage_format_name) {
   if (storage_format_name == kUint8ClampedArrayStorageFormatName)
-    return 1;
-  if (storage_format_name == kUint16ArrayStorageFormatName)
-    return 2;
-  if (storage_format_name == kFloat32ArrayStorageFormatName)
     return 4;
+  if (storage_format_name == kUint16ArrayStorageFormatName)
+    return 8;
+  if (storage_format_name == kFloat32ArrayStorageFormatName)
+    return 16;
   NOTREACHED();
   return 1;
 }
 
-unsigned ImageData::StorageFormatDataSize(
+unsigned ImageData::StorageFormatBytesPerPixel(
     ImageDataStorageFormat storage_format) {
   switch (storage_format) {
     case kUint8ClampedArrayStorageFormat:
-      return 1;
-    case kUint16ArrayStorageFormat:
-      return 2;
-    case kFloat32ArrayStorageFormat:
       return 4;
+    case kUint16ArrayStorageFormat:
+      return 8;
+    case kFloat32ArrayStorageFormat:
+      return 16;
   }
   NOTREACHED();
   return 1;
@@ -735,12 +771,12 @@ ImageData::ConvertPixelsFromCanvasPixelFormatToImageDataStorageFormat(
 }
 
 DOMArrayBufferBase* ImageData::BufferBase() const {
-  if (data_)
-    return data_->BufferBase();
-  if (data_u16_)
-    return data_u16_->BufferBase();
-  if (data_f32_)
-    return data_f32_->BufferBase();
+  if (data_.IsUint8ClampedArray())
+    return data_.GetAsUint8ClampedArray()->BufferBase();
+  if (data_.IsUint16Array())
+    return data_.GetAsUint16Array()->BufferBase();
+  if (data_.IsFloat32Array())
+    return data_.GetAsFloat32Array()->BufferBase();
   return nullptr;
 }
 
@@ -764,7 +800,7 @@ bool ImageData::ImageDataInCanvasColorSettings(
     DataU8ColorType u8_color_type,
     const IntRect* src_rect,
     const AlphaDisposition alpha_disposition) {
-  if (!data_ && !data_u16_ && !data_f32_)
+  if (data_.IsNull())
     return false;
 
   CanvasColorParams canvas_color_params =
@@ -818,7 +854,7 @@ bool ImageData::ImageDataInCanvasColorSettings(
   // for every line.
   if (crop_rect) {
     unsigned bytes_per_pixel =
-        ImageData::StorageFormatDataSize(storage_format) * 4;
+        ImageData::StorageFormatBytesPerPixel(storage_format);
     unsigned src_index =
         (crop_rect->X() + crop_rect->Y() * width()) * bytes_per_pixel;
     unsigned dst_index = 0;
@@ -849,12 +885,12 @@ bool ImageData::ImageDataInCanvasColorSettings(
   return data_transform_successful;
 }
 
-void ImageData::Trace(Visitor* visitor) {
+void ImageData::Trace(Visitor* visitor) const {
   visitor->Trace(color_settings_);
   visitor->Trace(data_);
+  visitor->Trace(data_u8_);
   visitor->Trace(data_u16_);
   visitor->Trace(data_f32_);
-  visitor->Trace(data_union_);
   ScriptWrappable::Trace(visitor);
 }
 
@@ -866,7 +902,7 @@ ImageData::ImageData(const IntSize& size,
   DCHECK_GE(size.Height(), 0);
   DCHECK(data);
 
-  data_.Clear();
+  data_u8_.Clear();
   data_u16_.Clear();
   data_f32_.Clear();
 
@@ -887,32 +923,32 @@ ImageData::ImageData(const IntSize& size,
     case kUint8ClampedArrayStorageFormat:
       DCHECK(data->GetType() ==
              DOMArrayBufferView::ViewType::kTypeUint8Clamped);
-      data_ = data;
-      DCHECK(data_);
-      data_union_.SetUint8ClampedArray(data_);
+      data_u8_ = data;
+      DCHECK(data_u8_);
+      data_.SetUint8ClampedArray(data_u8_);
       SECURITY_CHECK(
           (base::CheckedNumeric<size_t>(size.Width()) * size.Height() * 4)
-              .ValueOrDie() <= data_->lengthAsSizeT());
+              .ValueOrDie() <= data_.GetAsUint8ClampedArray()->lengthAsSizeT());
       break;
 
     case kUint16ArrayStorageFormat:
       DCHECK(data->GetType() == DOMArrayBufferView::ViewType::kTypeUint16);
       data_u16_ = data;
       DCHECK(data_u16_);
-      data_union_.SetUint16Array(data_u16_);
+      data_.SetUint16Array(data_u16_);
       SECURITY_CHECK(
           (base::CheckedNumeric<size_t>(size.Width()) * size.Height() * 4)
-              .ValueOrDie() <= data_u16_->lengthAsSizeT());
+              .ValueOrDie() <= data_.GetAsUint16Array()->lengthAsSizeT());
       break;
 
     case kFloat32ArrayStorageFormat:
       DCHECK(data->GetType() == DOMArrayBufferView::ViewType::kTypeFloat32);
       data_f32_ = data;
       DCHECK(data_f32_);
-      data_union_.SetFloat32Array(data_f32_);
+      data_.SetFloat32Array(data_f32_);
       SECURITY_CHECK(
           (base::CheckedNumeric<size_t>(size.Width()) * size.Height() * 4)
-              .ValueOrDie() <= data_f32_->lengthAsSizeT());
+              .ValueOrDie() <= data_.GetAsFloat32Array()->lengthAsSizeT());
       break;
 
     default:

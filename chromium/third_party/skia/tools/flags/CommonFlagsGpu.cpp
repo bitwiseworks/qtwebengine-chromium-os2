@@ -16,8 +16,14 @@ DEFINE_int(gpuThreads,
 
 static DEFINE_bool(cachePathMasks, true,
                    "Allows path mask textures to be cached in GPU configs.");
+static DEFINE_bool(allPathsVolatile, false,
+                   "Causes all GPU paths to be processed as if 'setIsVolatile' had been called.");
 
-static DEFINE_bool(noGS, false, "Disables support for geometry shaders.");
+static DEFINE_bool(gs, true, "Enables support for geometry shaders (if hw allows).");
+static DEFINE_bool(ts, true, "Enables support for tessellation shaders (if hw allows.).");
+
+static DEFINE_int(maxTessellationSegments, 0,
+                  "Overrides the max number of tessellation segments supported by the caps.");
 
 static DEFINE_bool(cc, false, "Allow coverage counting shortcuts to render paths?");
 
@@ -59,7 +65,7 @@ static GpuPathRenderers get_named_pathrenderers_flags(const char* name) {
     } else if (!strcmp(name, "default")) {
         return GpuPathRenderers::kDefault;
     }
-    SK_ABORT(SkStringPrintf("error: unknown named path renderer \"%s\"\n", name).c_str());
+    SK_ABORT("error: unknown named path renderer \"%s\"\n", name);
 }
 
 static GpuPathRenderers collect_gpu_path_renderers_from_flags() {
@@ -90,7 +96,10 @@ void SetCtxOptionsFromCommonFlags(GrContextOptions* ctxOptions) {
     ctxOptions->fExecutor                            = gGpuExecutor.get();
     ctxOptions->fDisableCoverageCountingPaths        = !FLAGS_cc;
     ctxOptions->fAllowPathMaskCaching                = FLAGS_cachePathMasks;
-    ctxOptions->fSuppressGeometryShaders             = FLAGS_noGS;
+    ctxOptions->fAllPathsVolatile                    = FLAGS_allPathsVolatile;
+    ctxOptions->fSuppressGeometryShaders             = !FLAGS_gs;
+    ctxOptions->fSuppressTessellationShaders         = !FLAGS_ts;
+    ctxOptions->fMaxTessellationSegmentsOverride     = FLAGS_maxTessellationSegments;
     ctxOptions->fGpuPathRenderers                    = collect_gpu_path_renderers_from_flags();
     ctxOptions->fInternalMultisampleCount            = FLAGS_internalSamples;
     ctxOptions->fDisableDriverCorrectnessWorkarounds = FLAGS_disableDriverCorrectnessWorkarounds;

@@ -6,6 +6,7 @@
 
 #include "base/containers/adapters.h"
 #include "base/lazy_instance.h"
+#include "base/logging.h"
 #include "base/unguessable_token.h"
 #include "build/chromecast_buildflags.h"
 #include "components/viz/common/quads/draw_quad.h"
@@ -49,13 +50,13 @@ bool OverlayStrategyUnderlayCast::Attempt(
     const OverlayProcessorInterface::FilterOperationsMap&
         render_pass_backdrop_filters,
     DisplayResourceProvider* resource_provider,
-    RenderPassList* render_pass_list,
+    AggregatedRenderPassList* render_pass_list,
     const PrimaryPlane* primary_plane,
     OverlayCandidateList* candidate_list,
     std::vector<gfx::Rect>* content_bounds) {
   // Before we attempt an overlay strategy, the candidate list should be empty.
   DCHECK(candidate_list->empty());
-  RenderPass* render_pass = render_pass_list->back().get();
+  auto* render_pass = render_pass_list->back().get();
   QuadList& quad_list = render_pass->quad_list;
   bool found_underlay = false;
   gfx::Rect content_rect;

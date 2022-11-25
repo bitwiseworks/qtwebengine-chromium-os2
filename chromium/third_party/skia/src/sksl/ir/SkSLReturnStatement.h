@@ -17,11 +17,13 @@ namespace SkSL {
  * A 'return' statement.
  */
 struct ReturnStatement : public Statement {
+    static constexpr Kind kStatementKind = Kind::kReturn;
+
     ReturnStatement(int offset)
-    : INHERITED(offset, kReturn_Kind) {}
+    : INHERITED(offset, kStatementKind) {}
 
     ReturnStatement(std::unique_ptr<Expression> expression)
-    : INHERITED(expression->fOffset, kReturn_Kind)
+    : INHERITED(expression->fOffset, kStatementKind)
     , fExpression(std::move(expression)) {}
 
     std::unique_ptr<Statement> clone() const override {
@@ -31,7 +33,6 @@ struct ReturnStatement : public Statement {
         return std::unique_ptr<Statement>(new ReturnStatement(fOffset));
     }
 
-#ifdef SK_DEBUG
     String description() const override {
         if (fExpression) {
             return "return " + fExpression->description() + ";";
@@ -39,13 +40,12 @@ struct ReturnStatement : public Statement {
             return String("return;");
         }
     }
-#endif
 
     std::unique_ptr<Expression> fExpression;
 
-    typedef Statement INHERITED;
+    using INHERITED = Statement;
 };
 
-} // namespace
+}  // namespace SkSL
 
 #endif

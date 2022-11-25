@@ -9,8 +9,8 @@
 #include <utility>
 
 #include "base/callback_forward.h"
+#include "base/check.h"
 #include "base/compiler_specific.h"
-#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/sequenced_task_runner.h"
@@ -180,8 +180,8 @@ class AssociatedRemote {
   //
   // For testing, where the returned request is bound to e.g. a mock and there
   // are no other interfaces involved.
-  PendingAssociatedReceiver<Interface>
-  BindNewEndpointAndPassDedicatedReceiverForTesting() WARN_UNUSED_RESULT {
+  PendingAssociatedReceiver<Interface> BindNewEndpointAndPassDedicatedReceiver()
+      WARN_UNUSED_RESULT {
     MessagePipe pipe;
     scoped_refptr<internal::MultiplexRouter> router0 =
         new internal::MultiplexRouter(
@@ -275,16 +275,6 @@ class AssociatedRemote {
   mutable State internal_state_;
 
   DISALLOW_COPY_AND_ASSIGN(AssociatedRemote);
-};
-
-// Constructs an invalid PendingAssociatedRemote of any arbitrary interface
-// type. Useful as short-hand for a default constructed value.
-class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) NullAssociatedRemote {
- public:
-  template <typename Interface>
-  operator PendingAssociatedRemote<Interface>() const {
-    return PendingAssociatedRemote<Interface>();
-  }
 };
 
 }  // namespace mojo

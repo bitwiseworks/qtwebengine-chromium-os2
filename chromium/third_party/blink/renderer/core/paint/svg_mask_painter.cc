@@ -30,15 +30,24 @@ SVGMaskPainter::~SVGMaskPainter() {
   // properties are ready.
   if (!properties || !properties->Mask())
     return;
+
+  DCHECK(properties->MaskClip());
+  PropertyTreeStateOrAlias property_tree_state(
+      properties->Mask()->LocalTransformSpace(), *properties->MaskClip(),
+      *properties->Mask());
   ScopedPaintChunkProperties scoped_paint_chunk_properties(
-      context_.GetPaintController(), *properties->Mask(), display_item_client_,
+      context_.GetPaintController(), property_tree_state, display_item_client_,
       DisplayItem::kSVGMask);
 
   if (DrawingRecorder::UseCachedDrawingIfPossible(
           context_, display_item_client_, DisplayItem::kSVGMask))
     return;
+
+  FloatRect visual_rect = properties->MaskClip()->UnsnappedClipRect().Rect();
+  visual_rect.Intersect(layout_object_.VisualRectInLocalSVGCoordinates());
   DrawingRecorder recorder(context_, display_item_client_,
-                           DisplayItem::kSVGMask);
+                           DisplayItem::kSVGMask,
+                           EnclosingIntRect(visual_rect));
 
   const SVGComputedStyle& svg_style = layout_object_.StyleRef().SvgStyle();
   auto* masker =
@@ -47,10 +56,20 @@ SVGMaskPainter::~SVGMaskPainter() {
   SECURITY_DCHECK(!masker->NeedsLayout());
   masker->ClearInvalidationMask();
 
+  FloatRect reference_box =
+      SVGResources::ReferenceBoxForEffects(layout_object_);
   AffineTransform content_transformation;
-  sk_sp<const PaintRecord> record = masker->CreatePaintRecord(
-      content_transformation,
-      SVGResources::ReferenceBoxForEffects(layout_object_), context_);
+  if (masker->MaskContentUnits() ==
+      SVGUnitTypes::kSvgUnitTypeObjectboundingbox) {
+    content_transformation.Translate(reference_box.X(), reference_box.Y());
+    content_transformation.ScaleNonUniform(reference_box.Width(),
+                                           reference_box.Height());
+  } else if (layout_object_.IsSVGForeignObject()) {
+    content_transformation.Scale(layout_object_.StyleRef().EffectiveZoom());
+  }
+
+  sk_sp<const PaintRecord> record =
+      masker->CreatePaintRecord(content_transformation, context_);
 
   context_.Save();
   context_.ConcatCTM(content_transformation);

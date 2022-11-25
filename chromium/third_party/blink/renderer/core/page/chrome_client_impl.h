@@ -61,14 +61,15 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
  public:
   explicit ChromeClientImpl(WebViewImpl*);
   ~ChromeClientImpl() override;
-  void Trace(Visitor* visitor) override;
+  void Trace(Visitor* visitor) const override;
 
   // ChromeClient methods:
   WebViewImpl* GetWebView() const override;
   void ChromeDestroyed() override;
   void SetWindowRect(const IntRect&, LocalFrame&) override;
   IntRect RootWindowRect(LocalFrame&) override;
-  void Focus(LocalFrame*) override;
+  void FocusPage() override;
+  void DidFocusPage() override;
   bool CanTakeFocus(mojom::blink::FocusType) override;
   void TakeFocus(mojom::blink::FocusType) override;
   void SetKeyboardFocusURL(Element* new_focus_element) override;
@@ -79,7 +80,7 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
                             cc::PaintHoldingCommitTrigger) override;
   void StartDragging(LocalFrame*,
                      const WebDragData&,
-                     WebDragOperationsMask,
+                     DragOperationsMask,
                      const SkBitmap& drag_image,
                      const gfx::Point& drag_image_offset) override;
   bool AcceptsLoadDrops() const override;
@@ -87,8 +88,8 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
                              const FrameLoadRequest&,
                              const AtomicString& name,
                              const WebWindowFeatures&,
-                             mojom::blink::WebSandboxFlags,
-                             const FeaturePolicy::FeatureState&,
+                             network::mojom::blink::WebSandboxFlags,
+                             const FeaturePolicyFeatureState&,
                              const SessionStorageNamespaceId&) override;
   void Show(NavigationPolicy) override;
   void DidOverscroll(const gfx::Vector2dF& overscroll_delta,
@@ -115,6 +116,10 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
   bool CanOpenBeforeUnloadConfirmPanel() override;
   bool OpenBeforeUnloadConfirmPanelDelegate(LocalFrame*,
                                             bool is_reload) override;
+  // Used in tests to set a mock value for a before unload confirmation dialog
+  // box. The value is cleared after being read.
+  void SetBeforeUnloadConfirmPanelResultForTesting(bool result_success);
+
   void CloseWindowSoon() override;
   bool OpenJavaScriptAlertDelegate(LocalFrame*, const String&) override;
   bool OpenJavaScriptConfirmDelegate(LocalFrame*, const String&) override;
@@ -129,9 +134,7 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
   IntRect ViewportToScreen(const IntRect&,
                            const LocalFrameView*) const override;
   float WindowToViewportScalar(LocalFrame*, const float) const override;
-  void WindowToViewportRect(LocalFrame& frame,
-                            WebFloatRect* viewport_rect) const override;
-  WebScreenInfo GetScreenInfo(LocalFrame&) const override;
+  ScreenInfo GetScreenInfo(LocalFrame&) const override;
   void OverrideVisibleRectForMainFrame(LocalFrame& frame,
                                        IntRect* paint_rect) const override;
   float InputEventsScaleForEmulation() const override;
@@ -185,7 +188,7 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
 
   void EnterFullscreen(LocalFrame&,
                        const FullscreenOptions*,
-                       bool for_cross_process_descendant) override;
+                       FullscreenRequestType) override;
   void ExitFullscreen(LocalFrame&) override;
   void FullscreenElementChanged(Element* old_element,
                                 Element* new_element) override;
@@ -199,6 +202,9 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
   // ChromeClient methods:
   String AcceptLanguages() override;
   void SetCursorForPlugin(const ui::Cursor&, LocalFrame*) override;
+  void SetDelegatedInkMetadata(
+      LocalFrame* frame,
+      std::unique_ptr<viz::DelegatedInkMetadata> metadata) override;
 
   // ChromeClientImpl:
   void SetNewWindowNavigationPolicy(WebNavigationPolicy);
@@ -270,23 +276,20 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
 
   void NotifySwapTime(LocalFrame& frame, ReportTimeCallback callback) override;
 
-  void FallbackCursorModeLockCursor(LocalFrame* frame,
-                                    bool left,
-                                    bool right,
-                                    bool up,
-                                    bool down) override;
-
-  void FallbackCursorModeSetCursorVisibility(LocalFrame* frame,
-                                             bool visible) override;
-
   void RequestBeginMainFrameNotExpected(LocalFrame& frame,
                                         bool request) override;
 
+  void DidUpdateTextAutosizerPageInfo(
+      const mojom::blink::TextAutosizerPageInfo& page_info) override;
+
   int GetLayerTreeId(LocalFrame& frame) override;
 
-  void DidUpdateTextAutosizerPageInfo(const WebTextAutosizerPageInfo&) override;
-
   void DocumentDetached(Document&) override;
+
+  double UserZoomFactor() const override;
+
+  void BatterySavingsChanged(LocalFrame& main_frame,
+                             WebBatterySavingsFlags savings) override;
 
  private:
   bool IsChromeClientImpl() const override { return true; }
@@ -304,6 +307,7 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
   bool cursor_overridden_;
   Member<ExternalDateTimeChooser> external_date_time_chooser_;
   bool did_request_non_empty_tool_tip_;
+  base::Optional<bool> before_unload_confirm_panel_result_for_testing_;
 
   FRIEND_TEST_ALL_PREFIXES(FileChooserQueueTest, DerefQueuedChooser);
 };

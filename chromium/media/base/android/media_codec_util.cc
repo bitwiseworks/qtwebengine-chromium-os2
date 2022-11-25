@@ -168,18 +168,18 @@ bool MediaCodecUtil::IsMediaCodecAvailable() {
 
 // static
 bool MediaCodecUtil::IsMediaCodecAvailableFor(int sdk, const char* model) {
-  // We will blacklist the model on any sdk that is as old or older than
+  // We will block the model on any sdk that is as old or older than
   // |last_bad_sdk| for the given model.
-  struct BlacklistEntry {
-    BlacklistEntry(const char* m, int s) : model(m), last_bad_sdk(s) {}
+  struct BlocklistEntry {
+    BlocklistEntry(const char* m, int s) : model(m), last_bad_sdk(s) {}
     base::StringPiece model;
     int last_bad_sdk;
-    bool operator==(const BlacklistEntry& other) const {
+    bool operator==(const BlocklistEntry& other) const {
       // Search on name only.  Ignore |last_bad_sdk|.
       return model == other.model;
     }
   };
-  static const BlacklistEntry blacklist[] = {
+  static const BlocklistEntry blocklist[] = {
       // crbug.com/653905
       {"LGMS330", SDK_VERSION_LOLLIPOP_MR1},
 
@@ -199,9 +199,9 @@ bool MediaCodecUtil::IsMediaCodecAvailableFor(int sdk, const char* model) {
       {"GT-I8552", SDK_VERSION_KITKAT},
   };
 
-  const BlacklistEntry* iter = std::find(
-      std::begin(blacklist), std::end(blacklist), BlacklistEntry(model, 0));
-  return iter == std::end(blacklist) || sdk > iter->last_bad_sdk;
+  const BlocklistEntry* iter = std::find(
+      std::begin(blocklist), std::end(blocklist), BlocklistEntry(model, 0));
+  return iter == std::end(blocklist) || sdk > iter->last_bad_sdk;
 }
 
 // static
@@ -239,26 +239,13 @@ std::set<int> MediaCodecUtil::GetEncoderColorFormats(
 }
 
 // static
-bool MediaCodecUtil::IsHLSPath(const GURL& url) {
-  return (url.SchemeIsHTTPOrHTTPS() || url.SchemeIsFile()) &&
-         base::EndsWith(url.path(), ".m3u8",
-                        base::CompareCase::INSENSITIVE_ASCII);
-}
-
-// static
-bool MediaCodecUtil::IsHLSURL(const GURL& url) {
-  return (url.SchemeIsHTTPOrHTTPS() || url.SchemeIsFile()) &&
-         url.spec().find("m3u8") != std::string::npos;
-}
-
-// static
 bool MediaCodecUtil::IsVp8DecoderAvailable() {
   return IsMediaCodecAvailable() && IsDecoderSupportedByDevice(kVp8MimeType);
 }
 
 // static
 bool MediaCodecUtil::IsVp8EncoderAvailable() {
-  // Currently the vp8 encoder and decoder blacklists cover the same devices,
+  // Currently the vp8 encoder and decoder blocklists cover the same devices,
   // but we have a second method for clarity in future issues.
   return IsVp8DecoderAvailable();
 }
@@ -300,19 +287,19 @@ bool MediaCodecUtil::IsSurfaceViewOutputSupported() {
   // Disable SurfaceView output for the Samsung Galaxy S3; it does not work
   // well enough for even 360p24 H264 playback.  http://crbug.com/602870.
   //
-  // Notably this is codec agnostic at present, so any devices added to
-  // the blacklist will avoid trying to play any codecs on SurfaceView.  If
+  // Notably this is codec agnostic at present, so any devices added to the
+  // disabled list will avoid trying to play any codecs on SurfaceView.  If
   // needed in the future this can be expanded to be codec specific.
-  const char* model_prefixes[] = {// Exynos 4 (Mali-400)
-                                  "GT-I9300", "GT-I9305", "SHV-E210",
-                                  // Snapdragon S4 (Adreno-225)
-                                  "SCH-I535", "SCH-J201", "SCH-R530",
-                                  "SCH-I960", "SCH-S968", "SGH-T999",
-                                  "SGH-I747", "SGH-N064", 0};
+  constexpr const char* kDisabledModels[] = {// Exynos 4 (Mali-400)
+                                             "GT-I9300", "GT-I9305", "SHV-E210",
+                                             // Snapdragon S4 (Adreno-225)
+                                             "SCH-I535", "SCH-J201", "SCH-R530",
+                                             "SCH-I960", "SCH-S968", "SGH-T999",
+                                             "SGH-I747", "SGH-N064"};
 
   std::string model(base::android::BuildInfo::GetInstance()->model());
-  for (int i = 0; model_prefixes[i]; ++i) {
-    if (base::StartsWith(model, model_prefixes[i],
+  for (auto* disabled_model : kDisabledModels) {
+    if (base::StartsWith(model, disabled_model,
                          base::CompareCase::INSENSITIVE_ASCII)) {
       return false;
     }
@@ -343,8 +330,25 @@ bool MediaCodecUtil::CanDecode(AudioCodec codec) {
 }
 
 // static
-bool MediaCodecUtil::IsH264EncoderAvailable() {
-  return IsMediaCodecAvailable() && IsEncoderSupportedByDevice(kAvcMimeType);
+bool MediaCodecUtil::IsH264EncoderAvailable(bool use_codec_list) {
+  if (!IsMediaCodecAvailable())
+    return false;
+
+  constexpr const char* kDisabledModels[] = {"SAMSUNG-SGH-I337", "Nexus 7",
+                                             "Nexus 4"};
+  const std::string model(base::android::BuildInfo::GetInstance()->model());
+  for (auto* disabled_model : kDisabledModels) {
+    if (base::StartsWith(model, disabled_model,
+                         base::CompareCase::INSENSITIVE_ASCII)) {
+      return false;
+    }
+  }
+
+  if (use_codec_list)
+    return IsEncoderSupportedByDevice(kAvcMimeType);
+
+  // Assume support since Chrome only supports Lollipop+.
+  return true;
 }
 
 // static

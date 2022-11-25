@@ -40,36 +40,42 @@ class PLATFORM_EXPORT ThreadHeapStatsObserver {
   virtual void DecreaseAllocatedObjectSize(size_t) = 0;
 };
 
-#define FOR_ALL_SCOPES(V)             \
-  V(AtomicPauseCompaction)            \
-  V(AtomicPauseMarkEpilogue)          \
-  V(AtomicPauseMarkPrologue)          \
-  V(AtomicPauseMarkRoots)             \
-  V(AtomicPauseMarkTransitiveClosure) \
-  V(AtomicPauseSweepAndCompact)       \
-  V(CompleteSweep)                    \
-  V(IncrementalMarkingFinalize)       \
-  V(IncrementalMarkingStartMarking)   \
-  V(IncrementalMarkingStep)           \
-  V(InvokePreFinalizers)              \
-  V(LazySweepInIdle)                  \
-  V(LazySweepOnAllocation)            \
-  V(MarkBailOutObjects)               \
-  V(MarkInvokeEphemeronCallbacks)     \
-  V(MarkProcessWorklist)              \
-  V(MarkNotFullyConstructedObjects)   \
-  V(MarkWeakProcessing)               \
-  V(UnifiedMarkingStep)               \
-  V(VisitCrossThreadPersistents)      \
-  V(VisitDOMWrappers)                 \
-  V(VisitPersistentRoots)             \
-  V(VisitPersistents)                 \
-  V(VisitRoots)                       \
-  V(VisitStackRoots)                  \
+#define FOR_ALL_SCOPES(V)                    \
+  V(AtomicPauseCompaction)                   \
+  V(AtomicPauseMarkEpilogue)                 \
+  V(AtomicPauseMarkPrologue)                 \
+  V(AtomicPauseMarkRoots)                    \
+  V(AtomicPauseMarkTransitiveClosure)        \
+  V(AtomicPauseSweepAndCompact)              \
+  V(CompleteSweep)                           \
+  V(IncrementalMarkingFinalize)              \
+  V(IncrementalMarkingStartMarking)          \
+  V(IncrementalMarkingStep)                  \
+  V(IncrementalMarkingWithDeadline)          \
+  V(InvokePreFinalizers)                     \
+  V(LazySweepInIdle)                         \
+  V(LazySweepOnAllocation)                   \
+  V(MarkBailOutObjects)                      \
+  V(MarkInvokeEphemeronCallbacks)            \
+  V(MarkFlushV8References)                   \
+  V(MarkFlushEphemeronPairs)                 \
+  V(MarkProcessWorklists)                    \
+  V(MarkProcessMarkingWorklist)              \
+  V(MarkProcessWriteBarrierWorklist)         \
+  V(MarkProcessNotFullyconstructeddWorklist) \
+  V(MarkNotFullyConstructedObjects)          \
+  V(MarkWeakProcessing)                      \
+  V(UnifiedMarkingStep)                      \
+  V(VisitCrossThreadPersistents)             \
+  V(VisitPersistentRoots)                    \
+  V(VisitPersistents)                        \
+  V(VisitRoots)                              \
+  V(VisitStackRoots)                         \
   V(VisitRememberedSets)
 
-#define FOR_ALL_CONCURRENT_SCOPES(V) \
-  V(ConcurrentMarkingStep)           \
+#define FOR_ALL_CONCURRENT_SCOPES(V)        \
+  V(ConcurrentMarkInvokeEphemeronCallbacks) \
+  V(ConcurrentMarkingStep)                  \
   V(ConcurrentSweepingStep)
 
 // Manages counters and statistics across garbage collection cycles.
@@ -133,7 +139,7 @@ class PLATFORM_EXPORT ThreadHeapStatsCollector {
     return nullptr;
   }
 
-  enum TraceCategory { kEnabled, kDisabled, kDevTools };
+  enum TraceCategory { kEnabled, kDisabled };
   enum ScopeContext { kMutatorThread, kConcurrentThread };
 
   // Trace a particular scope. Will emit a trace event and record the time in
@@ -184,7 +190,6 @@ class PLATFORM_EXPORT ThreadHeapStatsCollector {
   using EnabledScope = InternalScope<kEnabled>;
   using ConcurrentScope = InternalScope<kDisabled, kConcurrentThread>;
   using EnabledConcurrentScope = InternalScope<kEnabled, kConcurrentThread>;
-  using DevToolsScope = InternalScope<kDevTools>;
 
   // BlinkGCInV8Scope keeps track of time spent in Blink's GC when called by V8.
   // This is necessary to avoid double-accounting of Blink's time when computing
@@ -217,6 +222,8 @@ class PLATFORM_EXPORT ThreadHeapStatsCollector {
   // GCs. E.g., |atomic_marking_time()| report the marking time of the atomic
   // phase, independent of whether the GC was a stand-alone or unified heap GC.
   struct PLATFORM_EXPORT Event {
+    Event();
+
     // Overall time spent in the GC cycle. This includes marking time as well as
     // sweeping time.
     base::TimeDelta gc_cycle_time() const;
@@ -236,6 +243,12 @@ class PLATFORM_EXPORT ThreadHeapStatsCollector {
     // Time spent incrementally marking the heap.
     base::TimeDelta incremental_marking_time() const;
 
+    // Time spent processing worklist in the foreground thread.
+    base::TimeDelta worklist_processing_time_foreground() const;
+
+    // Time spent flushing v8 references (this is done only in the foreground)
+    base::TimeDelta flushing_v8_references_time() const;
+
     // Time spent in foreground tasks marking the heap.
     base::TimeDelta foreground_marking_time() const;
 
@@ -254,10 +267,8 @@ class PLATFORM_EXPORT ThreadHeapStatsCollector {
     // Overall time spent sweeping the heap.
     base::TimeDelta sweeping_time() const;
 
-    // Marking speed in bytes/s.
-    double marking_time_in_bytes_per_second() const;
-
     // Marked bytes collected during sweeping.
+    size_t unique_id = -1;
     size_t marked_bytes = 0;
     size_t compaction_freed_bytes = 0;
     size_t compaction_freed_pages = 0;
@@ -270,12 +281,14 @@ class PLATFORM_EXPORT ThreadHeapStatsCollector {
     size_t allocated_space_in_bytes_before_sweeping = 0;
     size_t partition_alloc_bytes_before_sweeping = 0;
     double live_object_rate = 0;
-    size_t wrapper_count_before_sweeping = 0;
     base::TimeDelta gc_nested_in_v8;
+    bool is_forced_gc = true;
   };
 
   // Indicates a new garbage collection cycle.
-  void NotifyMarkingStarted(BlinkGC::CollectionType, BlinkGC::GCReason);
+  void NotifyMarkingStarted(BlinkGC::CollectionType,
+                            BlinkGC::GCReason,
+                            bool is_forced_gc);
 
   // Indicates that marking of the current garbage collection cycle is
   // completed.
@@ -320,14 +333,12 @@ class PLATFORM_EXPORT ThreadHeapStatsCollector {
   // and newly allocated bytes since the previous cycle.
   size_t object_size_in_bytes() const;
 
-  // Estimated marking time in seconds. Based on marked bytes and mark speed in
-  // the previous cycle assuming that the collection rate of the current cycle
-  // is similar to the rate of the last GC.
-  double estimated_marking_time_in_seconds() const;
-  base::TimeDelta estimated_marking_time() const;
-
   size_t marked_bytes() const;
   base::TimeDelta marking_time_so_far() const;
+
+  base::TimeDelta worklist_processing_time_foreground() const;
+
+  base::TimeDelta flushing_v8_references_time() const;
 
   int64_t allocated_bytes_since_prev_gc() const;
 
@@ -374,9 +385,6 @@ class PLATFORM_EXPORT ThreadHeapStatsCollector {
   // Allocated space in bytes for all arenas.
   size_t allocated_space_bytes_ = 0;
 
-  size_t wrapper_count_ = 0;
-  size_t collected_wrapper_count_ = 0;
-
   bool is_started_ = false;
 
   // base::TimeDelta for RawScope. These don't need to be nested within a
@@ -397,11 +405,9 @@ ThreadHeapStatsCollector::InternalScope<trace_category,
                                         scope_category>::TraceCategory() {
   switch (trace_category) {
     case kEnabled:
-      return "blink_gc";
+      return "blink_gc,devtools.timeline";
     case kDisabled:
       return TRACE_DISABLED_BY_DEFAULT("blink_gc");
-    case kDevTools:
-      return "blink_gc,devtools.timeline";
   }
 }
 
@@ -436,8 +442,10 @@ template <ThreadHeapStatsCollector::TraceCategory trace_category,
           ThreadHeapStatsCollector::ScopeContext scope_category>
 void ThreadHeapStatsCollector::InternalScope<trace_category,
                                              scope_category>::StopTrace() {
-  TRACE_EVENT_END0(TraceCategory(),
-                   ToString(id_, tracer_->current_.collection_type));
+  TRACE_EVENT_END2(TraceCategory(),
+                   ToString(id_, tracer_->current_.collection_type), "epoch",
+                   tracer_->current_.unique_id, "forced",
+                   tracer_->current_.is_forced_gc);
 }
 
 template <ThreadHeapStatsCollector::TraceCategory trace_category,

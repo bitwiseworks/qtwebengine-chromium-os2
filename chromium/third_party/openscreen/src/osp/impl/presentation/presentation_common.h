@@ -7,13 +7,14 @@
 
 #include <algorithm>
 #include <memory>
+#include <string>
 
 #include "osp/msgs/osp_messages.h"
 #include "osp/public/message_demuxer.h"
 #include "osp/public/network_service_manager.h"
 #include "osp/public/protocol_connection_server.h"
 #include "platform/api/time.h"
-#include "util/logging.h"
+#include "util/osp_logging.h"
 
 namespace openscreen {
 namespace osp {
@@ -34,7 +35,7 @@ MessageDemuxer* GetClientDemuxer();
 
 class PresentationID {
  public:
-  PresentationID(const std::string presentation_id);
+  explicit PresentationID(const std::string presentation_id);
 
   operator bool() { return id_; }
   operator std::string() { return id_.value(); }

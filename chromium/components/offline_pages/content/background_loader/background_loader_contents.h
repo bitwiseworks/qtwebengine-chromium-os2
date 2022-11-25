@@ -65,6 +65,7 @@ class BackgroundLoaderContents : public content::WebContentsDelegate {
 
   void AddNewContents(content::WebContents* source,
                       std::unique_ptr<content::WebContents> new_contents,
+                      const GURL& target_url,
                       WindowOpenDisposition disposition,
                       const gfx::Rect& initial_rect,
                       bool user_gesture,
@@ -83,7 +84,7 @@ class BackgroundLoaderContents : public content::WebContentsDelegate {
                                   blink::mojom::MediaStreamType type) override;
   void AdjustPreviewsStateForNavigation(
       content::WebContents* web_contents,
-      content::PreviewsState* previews_state) override;
+      blink::PreviewsState* previews_state) override;
   bool ShouldAllowLazyLoad() override;
 
  private:

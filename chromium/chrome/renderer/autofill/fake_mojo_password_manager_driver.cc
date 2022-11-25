@@ -58,7 +58,7 @@ void FakeMojoPasswordManagerDriver::UserModifiedPasswordField() {
 }
 
 void FakeMojoPasswordManagerDriver::UserModifiedNonPasswordField(
-    uint32_t renderer_id,
+    autofill::FieldRendererId renderer_id,
     const base::string16& value) {}
 
 void FakeMojoPasswordManagerDriver::CheckSafeBrowsingReputation(
@@ -67,14 +67,10 @@ void FakeMojoPasswordManagerDriver::CheckSafeBrowsingReputation(
   called_check_safe_browsing_reputation_cnt_++;
 }
 
-void FakeMojoPasswordManagerDriver::ShowManualFallbackForSaving(
+void FakeMojoPasswordManagerDriver::InformAboutUserInput(
     const autofill::FormData& form_data) {
-  called_show_manual_fallback_for_saving_count_++;
+  called_inform_about_user_input_count_++;
   form_data_maybe_submitted_ = form_data;
-}
-
-void FakeMojoPasswordManagerDriver::HideManualFallbackForSaving() {
-  called_show_manual_fallback_for_saving_count_ = 0;
 }
 
 void FakeMojoPasswordManagerDriver::FocusedInputChanged(

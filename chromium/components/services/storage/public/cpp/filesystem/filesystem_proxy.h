@@ -43,7 +43,8 @@ class COMPONENT_EXPORT(STORAGE_SERVICE_FILESYSTEM_SUPPORT) FilesystemProxy {
   // outside of |root| and in general suffer no restrictions on what paths are
   // allowed.
   //
-  // If |root| is empty, this object's methods will only accept absolute paths.
+  // If |root| is empty, relative paths are used as-is and effectively
+  // interpreted as relative to the current working directory.
   explicit FilesystemProxy(decltype(UNRESTRICTED), const base::FilePath& root);
 
   // Constructs a new FilesystemProxy for |root|, using |directory| to invoke
@@ -87,20 +88,38 @@ class COMPONENT_EXPORT(STORAGE_SERVICE_FILESYSTEM_SUPPORT) FilesystemProxy {
   // base::File::Flags values.
   FileErrorOr<base::File> OpenFile(const base::FilePath& path, int flags);
 
-  // Deletes the file at |path| if it exists and returns true iff successful.
-  bool RemoveFile(const base::FilePath& path);
+  // Writes a file atomically using the ImportantFileWriter.
+  bool WriteFileAtomically(const base::FilePath& path,
+                           const std::string& contents);
 
   // Creates a new directory at |path|. Any needed parent directories above
   // |path| are also created if they don't already exist.
   base::File::Error CreateDirectory(const base::FilePath& path);
 
-  // Deletes the directory at |path| if it exists and returns true iff
-  // successful.
-  bool RemoveDirectory(const base::FilePath& path);
+  // Deletes the file or directory at |path| if it exists and returns true iff
+  // successful.  Not recursive.  Will fail if there are subdirectories.  This
+  // will return true if |path| does not exist.
+  bool DeleteFile(const base::FilePath& path);
+
+  // Recursively deletes the directory at |path| if it exists and returns true
+  // iff successful.  This will return true if |path| does not exist.
+  bool DeletePathRecursively(const base::FilePath& path);
 
   // Retrieves information about a file or directory at |path|. Returns a valid
   // base::File::Info value on success, or null on failure.
   base::Optional<base::File::Info> GetFileInfo(const base::FilePath& path);
+
+  // Retrieves information about access rights for a path in the filesystem.
+  // Returns a valid PathAccessInfo on success, or null on failure.
+  struct PathAccessInfo {
+    bool can_read = false;
+    bool can_write = false;
+  };
+  base::Optional<PathAccessInfo> GetPathAccess(const base::FilePath& path);
+
+  // Returns the maximum length of path component on the volume containing the
+  // directory |path|, in the number of FilePath::CharType, or -1 on failure.
+  base::Optional<int> GetMaximumPathComponentLength(const base::FilePath& path);
 
   // Renames a file from |old_path| to |new_path|. Must be atomic.
   base::File::Error RenameFile(const base::FilePath& old_path,
@@ -121,6 +140,13 @@ class COMPONENT_EXPORT(STORAGE_SERVICE_FILESYSTEM_SUPPORT) FilesystemProxy {
   };
   FileErrorOr<std::unique_ptr<FileLock>> LockFile(const base::FilePath& path);
 
+  // Sets the length of the given file to |length| bytes.
+  bool SetOpenedFileLength(base::File* file, uint64_t length);
+
+  // Returns the total number of bytes used by all the files under |path|.
+  // If the path does not exist the function returns 0.
+  int64_t ComputeDirectorySize(const base::FilePath& path);
+
  private:
   // For restricted FilesystemProxy instances, this returns a FilePath
   // equivalent to |path| which is strictly relative to |root_|. It is an error
@@ -129,10 +155,13 @@ class COMPONENT_EXPORT(STORAGE_SERVICE_FILESYSTEM_SUPPORT) FilesystemProxy {
   // Not called by unrestricted FilesystemProxy instances.
   base::FilePath MakeRelative(const base::FilePath& path) const;
 
-  // For unrestricted FilesystemProxy instances, this returns a FilePath that is
-  // always absolute. If |path| is absolute, it is returned unmodified. If
-  // relative, it is resolved against |root_|.
-  base::FilePath MakeAbsolute(const base::FilePath& path) const;
+  // For unrestricted FilesystemProxy instances with a non-empty root, this
+  // returns a FilePath that is always absolute. If |path| is absolute, it is
+  // returned unmodified. If |path| is relative AND |root_| is non-empty, the
+  // path is resolved against |root_| and the resulting absolute path is
+  // returned. Finally, if |path| is relative and |root_| is empty, this returns
+  // |path| unmodified.
+  base::FilePath MaybeMakeAbsolute(const base::FilePath& path) const;
 
   const base::FilePath root_;
   const size_t num_root_components_ = 0;

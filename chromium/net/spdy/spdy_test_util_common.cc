@@ -9,8 +9,9 @@
 
 #include "base/base64.h"
 #include "base/bind.h"
+#include "base/check_op.h"
 #include "base/compiler_specific.h"
-#include "base/logging.h"
+#include "base/notreached.h"
 #include "base/optional.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -41,7 +42,7 @@
 #include "net/third_party/quiche/src/spdy/core/spdy_alt_svc_wire_format.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_framer.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
-#include "net/url_request/url_request_job_factory_impl.h"
+#include "net/url_request/url_request_job_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 using net::test::IsError;
@@ -105,8 +106,8 @@ void AppendToHeaderBlock(const char* const extra_headers[],
 
   // Copy in the headers.
   for (int i = 0; i < extra_header_count; i++) {
-    base::StringPiece key(extra_headers[i * 2]);
-    base::StringPiece value(extra_headers[i * 2 + 1]);
+    absl::string_view key(extra_headers[i * 2]);
+    absl::string_view value(extra_headers[i * 2 + 1]);
     DCHECK(!key.empty()) << "Header key must not be empty.";
     headers->AppendValueOrAddHeader(key, value);
   }
@@ -345,6 +346,7 @@ SpdySessionDependencies::SpdySessionDependencies(
       time_func(&base::TimeTicks::Now),
       enable_http2_alternative_service(false),
       enable_websocket_over_http2(false),
+      http2_end_stream_with_data_frame(false),
       net_log(nullptr),
       disable_idle_sockets_close_on_memory_pressure(false),
       enable_early_data(false),
@@ -399,6 +401,8 @@ HttpNetworkSession::Params SpdySessionDependencies::CreateSessionParams(
   params.enable_websocket_over_http2 =
       session_deps->enable_websocket_over_http2;
   params.greased_http2_frame = session_deps->greased_http2_frame;
+  params.http2_end_stream_with_data_frame =
+      session_deps->http2_end_stream_with_data_frame;
   params.disable_idle_sockets_close_on_memory_pressure =
       session_deps->disable_idle_sockets_close_on_memory_pressure;
   params.enable_early_data = session_deps->enable_early_data;
@@ -451,7 +455,7 @@ SpdyURLRequestContext::SpdyURLRequestContext() : storage_(this) {
       HttpAuthHandlerFactory::CreateDefault());
   storage_.set_http_server_properties(std::make_unique<HttpServerProperties>());
   storage_.set_quic_context(std::make_unique<QuicContext>());
-  storage_.set_job_factory(std::make_unique<URLRequestJobFactoryImpl>());
+  storage_.set_job_factory(std::make_unique<URLRequestJobFactory>());
   HttpNetworkSession::Params session_params;
   session_params.enable_spdy_ping_based_connection_checking = false;
 
@@ -714,13 +718,14 @@ std::string SpdyTestUtil::ConstructSpdyReplyString(
   std::string reply_string;
   for (spdy::SpdyHeaderBlock::const_iterator it = headers.begin();
        it != headers.end(); ++it) {
-    std::string key = it->first.as_string();
+    auto key = std::string(it->first);
     // Remove leading colon from pseudo headers.
     if (key[0] == ':')
       key = key.substr(1);
     for (const std::string& value :
-         base::SplitString(it->second, base::StringPiece("\0", 1),
-                           base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)) {
+         base::SplitString(base::StringViewToStringPiece(it->second),
+                           base::StringPiece("\0", 1), base::TRIM_WHITESPACE,
+                           base::SPLIT_WANT_ALL)) {
       reply_string += key + ": " + value + "\n";
     }
   }
@@ -1028,7 +1033,7 @@ spdy::SpdySerializedFrame SpdyTestUtil::ConstructSpdyDataFrame(
     int stream_id,
     base::StringPiece data,
     bool fin) {
-  spdy::SpdyDataIR data_ir(stream_id, data);
+  spdy::SpdyDataIR data_ir(stream_id, base::StringPieceToStringView(data));
   data_ir.set_fin(fin);
   return spdy::SpdySerializedFrame(
       headerless_spdy_framer_.SerializeData(data_ir));
@@ -1039,7 +1044,7 @@ spdy::SpdySerializedFrame SpdyTestUtil::ConstructSpdyDataFrame(
     base::StringPiece data,
     bool fin,
     int padding_length) {
-  spdy::SpdyDataIR data_ir(stream_id, data);
+  spdy::SpdyDataIR data_ir(stream_id, base::StringPieceToStringView(data));
   data_ir.set_fin(fin);
   data_ir.set_padding_len(padding_length);
   return spdy::SpdySerializedFrame(

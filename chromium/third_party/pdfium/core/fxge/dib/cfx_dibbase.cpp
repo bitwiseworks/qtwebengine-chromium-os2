@@ -11,6 +11,8 @@
 #include <utility>
 #include <vector>
 
+#include "core/fxcrt/fx_memory.h"
+#include "core/fxcrt/fx_safe_types.h"
 #include "core/fxge/cfx_cliprgn.h"
 #include "core/fxge/dib/cfx_bitmapstorer.h"
 #include "core/fxge/dib/cfx_cmyk_to_srgb.h"
@@ -18,6 +20,7 @@
 #include "core/fxge/dib/cfx_imagestretcher.h"
 #include "core/fxge/dib/cfx_imagetransformer.h"
 #include "third_party/base/logging.h"
+#include "third_party/base/stl_util.h"
 
 namespace {
 
@@ -95,7 +98,7 @@ CFX_Palette::CFX_Palette(const RetainPtr<CFX_DIBBase>& pBitmap)
   Obtain_Pal(m_Luts.data(), m_Palette.data(), m_lut);
 }
 
-CFX_Palette::~CFX_Palette() {}
+CFX_Palette::~CFX_Palette() = default;
 
 void ConvertBuffer_1bppMask2Gray(uint8_t* dest_buf,
                                  int dest_pitch,
@@ -190,14 +193,14 @@ void ConvertBuffer_8bppPlt2Gray(uint8_t* dest_buf,
     uint8_t r;
     uint8_t g;
     uint8_t b;
-    for (size_t i = 0; i < FX_ArraySize(gray); ++i) {
+    for (size_t i = 0; i < pdfium::size(gray); ++i) {
       std::tie(r, g, b) = AdobeCMYK_to_sRGB1(
           FXSYS_GetCValue(src_plt[i]), FXSYS_GetMValue(src_plt[i]),
           FXSYS_GetYValue(src_plt[i]), FXSYS_GetKValue(src_plt[i]));
       gray[i] = FXRGB2GRAY(r, g, b);
     }
   } else {
-    for (size_t i = 0; i < FX_ArraySize(gray); ++i) {
+    for (size_t i = 0; i < pdfium::size(gray); ++i) {
       gray[i] = FXRGB2GRAY(FXARGB_R(src_plt[i]), FXARGB_G(src_plt[i]),
                            FXARGB_B(src_plt[i]));
     }
@@ -381,15 +384,9 @@ void ConvertBuffer_1bppMask2Rgb(FXDIB_Format dest_format,
     uint8_t* dest_scan = dest_buf + row * dest_pitch;
     const uint8_t* src_scan = pSrcBitmap->GetScanline(src_top + row);
     for (int col = src_left; col < src_left + width; ++col) {
-      if (src_scan[col / 8] & (1 << (7 - col % 8))) {
-        dest_scan[0] = kSetGray;
-        dest_scan[1] = kSetGray;
-        dest_scan[2] = kSetGray;
-      } else {
-        dest_scan[0] = kResetGray;
-        dest_scan[1] = kResetGray;
-        dest_scan[2] = kResetGray;
-      }
+      uint8_t value =
+          (src_scan[col / 8] & (1 << (7 - col % 8))) ? kSetGray : kResetGray;
+      memset(dest_scan, value, 3);
       dest_scan += comps;
     }
   }
@@ -407,13 +404,10 @@ void ConvertBuffer_8bppMask2Rgb(FXDIB_Format dest_format,
   for (int row = 0; row < height; ++row) {
     uint8_t* dest_scan = dest_buf + row * dest_pitch;
     const uint8_t* src_scan = pSrcBitmap->GetScanline(src_top + row) + src_left;
-    uint8_t src_pixel;
     for (int col = 0; col < width; ++col) {
-      src_pixel = *src_scan++;
-      *dest_scan++ = src_pixel;
-      *dest_scan++ = src_pixel;
-      *dest_scan = src_pixel;
-      dest_scan += comps - 2;
+      memset(dest_scan, *src_scan, 3);
+      dest_scan += comps;
+      ++src_scan;
     }
   }
 }
@@ -455,16 +449,9 @@ void ConvertBuffer_1bppPlt2Rgb(FXDIB_Format dest_format,
     uint8_t* dest_scan = dest_buf + row * dest_pitch;
     const uint8_t* src_scan = pSrcBitmap->GetScanline(src_top + row);
     for (int col = src_left; col < src_left + width; ++col) {
-      if (src_scan[col / 8] & (1 << (7 - col % 8))) {
-        *dest_scan++ = bgr_ptr[3];
-        *dest_scan++ = bgr_ptr[4];
-        *dest_scan = bgr_ptr[5];
-      } else {
-        *dest_scan++ = bgr_ptr[0];
-        *dest_scan++ = bgr_ptr[1];
-        *dest_scan = bgr_ptr[2];
-      }
-      dest_scan += comps - 2;
+      size_t offset = (src_scan[col / 8] & (1 << (7 - col % 8))) ? 3 : 0;
+      memcpy(dest_scan, bgr_ptr + offset, 3);
+      dest_scan += comps;
     }
   }
 }
@@ -505,10 +492,8 @@ void ConvertBuffer_8bppPlt2Rgb(FXDIB_Format dest_format,
     const uint8_t* src_scan = pSrcBitmap->GetScanline(src_top + row) + src_left;
     for (int col = 0; col < width; ++col) {
       uint8_t* src_pixel = bgr_ptr + 3 * (*src_scan++);
-      *dest_scan++ = *src_pixel++;
-      *dest_scan++ = *src_pixel++;
-      *dest_scan = *src_pixel++;
-      dest_scan += comps - 2;
+      memcpy(dest_scan, src_pixel, 3);
+      dest_scan += comps;
     }
   }
 }
@@ -540,10 +525,9 @@ void ConvertBuffer_32bppRgb2Rgb24(uint8_t* dest_buf,
     const uint8_t* src_scan =
         pSrcBitmap->GetScanline(src_top + row) + src_left * 4;
     for (int col = 0; col < width; ++col) {
-      *dest_scan++ = *src_scan++;
-      *dest_scan++ = *src_scan++;
-      *dest_scan++ = *src_scan++;
-      ++src_scan;
+      memcpy(dest_scan, src_scan, 3);
+      dest_scan += 3;
+      src_scan += 4;
     }
   }
 }
@@ -561,11 +545,9 @@ void ConvertBuffer_Rgb2Rgb32(uint8_t* dest_buf,
     const uint8_t* src_scan =
         pSrcBitmap->GetScanline(src_top + row) + src_left * comps;
     for (int col = 0; col < width; ++col) {
-      *dest_scan++ = *src_scan++;
-      *dest_scan++ = *src_scan++;
-      *dest_scan++ = *src_scan++;
-      ++dest_scan;
-      src_scan += comps - 3;
+      memcpy(dest_scan, src_scan, 3);
+      dest_scan += 4;
+      src_scan += comps;
     }
   }
 }
@@ -717,7 +699,7 @@ bool ConvertBuffer_Argb(int bpp,
 CFX_DIBBase::CFX_DIBBase()
     : m_Width(0), m_Height(0), m_bpp(0), m_AlphaFlag(0), m_Pitch(0) {}
 
-CFX_DIBBase::~CFX_DIBBase() {}
+CFX_DIBBase::~CFX_DIBBase() = default;
 
 uint8_t* CFX_DIBBase::GetBuffer() const {
   return nullptr;
@@ -876,47 +858,90 @@ bool CFX_DIBBase::GetOverlapRect(int& dest_left,
                                  int src_height,
                                  int& src_left,
                                  int& src_top,
-                                 const CFX_ClipRgn* pClipRgn) {
+                                 const CFX_ClipRgn* pClipRgn) const {
   if (width == 0 || height == 0)
     return false;
 
   ASSERT(width > 0);
   ASSERT(height > 0);
 
-  if (dest_left > m_Width || dest_top > m_Height) {
-    width = 0;
-    height = 0;
+  if (dest_left > m_Width || dest_top > m_Height)
     return false;
-  }
-  int x_offset = dest_left - src_left;
-  int y_offset = dest_top - src_top;
-  FX_RECT src_rect(src_left, src_top, src_left + width, src_top + height);
+
+  FX_SAFE_INT32 safe_src_width = src_left;
+  safe_src_width += width;
+  if (!safe_src_width.IsValid())
+    return false;
+
+  FX_SAFE_INT32 safe_src_height = src_top;
+  safe_src_height += height;
+  if (!safe_src_height.IsValid())
+    return false;
+
+  FX_RECT src_rect(src_left, src_top, safe_src_width.ValueOrDie(),
+                   safe_src_height.ValueOrDie());
   FX_RECT src_bound(0, 0, src_width, src_height);
   src_rect.Intersect(src_bound);
-  FX_RECT dest_rect(src_rect.left + x_offset, src_rect.top + y_offset,
-                    src_rect.right + x_offset, src_rect.bottom + y_offset);
+
+  FX_SAFE_INT32 safe_x_offset = dest_left;
+  safe_x_offset -= src_left;
+  if (!safe_x_offset.IsValid())
+    return false;
+
+  FX_SAFE_INT32 safe_y_offset = dest_top;
+  safe_y_offset -= src_top;
+  if (!safe_y_offset.IsValid())
+    return false;
+
+  FX_SAFE_INT32 safe_dest_left = safe_x_offset;
+  safe_dest_left += src_rect.left;
+  if (!safe_dest_left.IsValid())
+    return false;
+
+  FX_SAFE_INT32 safe_dest_top = safe_y_offset;
+  safe_dest_top += src_rect.top;
+  if (!safe_dest_top.IsValid())
+    return false;
+
+  FX_SAFE_INT32 safe_dest_right = safe_x_offset;
+  safe_dest_right += src_rect.right;
+  if (!safe_dest_right.IsValid())
+    return false;
+
+  FX_SAFE_INT32 safe_dest_bottom = safe_y_offset;
+  safe_dest_bottom += src_rect.bottom;
+  if (!safe_dest_bottom.IsValid())
+    return false;
+
+  FX_RECT dest_rect(safe_dest_left.ValueOrDie(), safe_dest_top.ValueOrDie(),
+                    safe_dest_right.ValueOrDie(),
+                    safe_dest_bottom.ValueOrDie());
   FX_RECT dest_bound(0, 0, m_Width, m_Height);
   dest_rect.Intersect(dest_bound);
+
   if (pClipRgn)
     dest_rect.Intersect(pClipRgn->GetBox());
   dest_left = dest_rect.left;
   dest_top = dest_rect.top;
 
-  pdfium::base::CheckedNumeric<int> safe_src_left = dest_left;
-  safe_src_left -= x_offset;
-  if (!safe_src_left.IsValid())
-    return false;
-  src_left = safe_src_left.ValueOrDie();
+  FX_SAFE_INT32 safe_new_src_left = dest_left;
+  safe_new_src_left -= safe_x_offset;
+  if (!safe_new_src_left.IsValid())
+     return false;
+  src_left = safe_new_src_left.ValueOrDie();
 
-  pdfium::base::CheckedNumeric<int> safe_src_top = dest_top;
-  safe_src_top -= y_offset;
-  if (!safe_src_top.IsValid())
-    return false;
-  src_top = safe_src_top.ValueOrDie();
+  FX_SAFE_INT32 safe_new_src_top = dest_top;
+  safe_new_src_top -= safe_y_offset;
+  if (!safe_new_src_top.IsValid())
+     return false;
+  src_top = safe_new_src_top.ValueOrDie();
 
-  width = dest_rect.right - dest_rect.left;
-  height = dest_rect.bottom - dest_rect.top;
-  return width != 0 && height != 0;
+  if (dest_rect.IsEmpty())
+    return false;
+
+  width = dest_rect.Width();
+  height = dest_rect.Height();
+  return true;
 }
 
 void CFX_DIBBase::SetPalette(const uint32_t* pSrc) {
@@ -1034,9 +1059,7 @@ RetainPtr<CFX_DIBitmap> CFX_DIBBase::FlipImage(bool bXFlip, bool bYFlip) const {
       }
     } else if (Bpp == 3) {
       for (int col = 0; col < m_Width; ++col) {
-        dest_scan[0] = src_scan[0];
-        dest_scan[1] = src_scan[1];
-        dest_scan[2] = src_scan[2];
+        memcpy(dest_scan, src_scan, 3);
         dest_scan -= 3;
         src_scan += 3;
       }
@@ -1173,10 +1196,9 @@ RetainPtr<CFX_DIBitmap> CFX_DIBBase::SwapXY(bool bXFlip, bool bYFlip) const {
           }
         } else {
           for (int col = col_start; col < col_end; ++col) {
-            *dest_scan++ = *src_scan++;
-            *dest_scan++ = *src_scan++;
-            *dest_scan = *src_scan++;
-            dest_scan += dest_step;
+            memcpy(dest_scan, src_scan, 3);
+            dest_scan += 2 + dest_step;
+            src_scan += 3;
           }
         }
       }

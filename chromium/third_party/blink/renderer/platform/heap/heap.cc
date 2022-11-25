@@ -42,6 +42,7 @@
 #include "third_party/blink/renderer/platform/heap/blink_gc_memory_dump_provider.h"
 #include "third_party/blink/renderer/platform/heap/heap_compact.h"
 #include "third_party/blink/renderer/platform/heap/heap_stats_collector.h"
+#include "third_party/blink/renderer/platform/heap/marking_scheduling_oracle.h"
 #include "third_party/blink/renderer/platform/heap/marking_visitor.h"
 #include "third_party/blink/renderer/platform/heap/page_bloom_filter.h"
 #include "third_party/blink/renderer/platform/heap/page_memory.h"
@@ -151,7 +152,7 @@ void ThreadHeap::VisitRememberedSets(MarkingVisitor* visitor) {
       // points or by reintroducing nested allocation scopes that avoid
       // finalization.
       DCHECK(header->IsMarked());
-      DCHECK(!MarkingVisitor::IsInConstruction(header));
+      DCHECK(!header->IsInConstruction());
       const GCInfo& gc_info = GCInfo::From(header->GcInfoIndex());
       gc_info.trace(visitor, header->Payload());
     }
@@ -165,41 +166,39 @@ void ThreadHeap::VisitRememberedSets(MarkingVisitor* visitor) {
 }
 
 void ThreadHeap::SetupWorklists(bool should_initialize_compaction_worklists) {
-  marking_worklist_.reset(new MarkingWorklist());
-  write_barrier_worklist_.reset(new WriteBarrierWorklist());
-  not_fully_constructed_worklist_.reset(new NotFullyConstructedWorklist());
-  previously_not_fully_constructed_worklist_.reset(
-      new NotFullyConstructedWorklist());
-  weak_callback_worklist_.reset(new WeakCallbackWorklist());
-  weak_table_worklist_.reset(new WeakTableWorklist);
-  v8_references_worklist_.reset(new V8ReferencesWorklist());
-  not_safe_to_concurrently_trace_worklist_.reset(
-      new NotSafeToConcurrentlyTraceWorklist());
-  DCHECK(ephemeron_callbacks_.IsEmpty());
+  marking_worklist_ = std::make_unique<MarkingWorklist>();
+  write_barrier_worklist_ = std::make_unique<WriteBarrierWorklist>();
+  not_fully_constructed_worklist_ =
+      std::make_unique<NotFullyConstructedWorklist>();
+  previously_not_fully_constructed_worklist_ =
+      std::make_unique<NotFullyConstructedWorklist>();
+  weak_callback_worklist_ = std::make_unique<WeakCallbackWorklist>();
+  discovered_ephemeron_pairs_worklist_ =
+      std::make_unique<EphemeronPairsWorklist>();
+  ephemeron_pairs_to_process_worklist_ =
+      std::make_unique<EphemeronPairsWorklist>();
+  v8_references_worklist_ = std::make_unique<V8ReferencesWorklist>();
+  not_safe_to_concurrently_trace_worklist_ =
+      std::make_unique<NotSafeToConcurrentlyTraceWorklist>();
   if (should_initialize_compaction_worklists) {
-    movable_reference_worklist_.reset(new MovableReferenceWorklist());
-    backing_store_callback_worklist_.reset(new BackingStoreCallbackWorklist());
+    movable_reference_worklist_ = std::make_unique<MovableReferenceWorklist>();
   }
 }
 
 void ThreadHeap::DestroyMarkingWorklists(BlinkGC::StackState stack_state) {
-  marking_worklist_.reset(nullptr);
-  write_barrier_worklist_.reset(nullptr);
-  previously_not_fully_constructed_worklist_.reset(nullptr);
-  weak_callback_worklist_.reset(nullptr);
-  weak_table_worklist_.reset();
+  marking_worklist_.reset();
+  write_barrier_worklist_.reset();
+  previously_not_fully_constructed_worklist_.reset();
+  weak_callback_worklist_.reset();
+  ephemeron_pairs_to_process_worklist_.reset();
   v8_references_worklist_.reset();
   not_safe_to_concurrently_trace_worklist_.reset();
-  ephemeron_callbacks_.clear();
-
   // The fixed point iteration may have found not-fully-constructed objects.
   // Such objects should have already been found through the stack scan though
   // and should thus already be marked.
   //
   // Possible reasons for encountering unmarked objects here:
   // - Object is not allocated through MakeGarbageCollected.
-  // - Type is missing a USING_GARBAGE_COLLECTED_MIXIN annotation which means
-  //   that the GC will always find pointers as in construction.
   // - Broken stack (roots) scanning.
   if (!not_fully_constructed_worklist_->IsGlobalEmpty()) {
 #if DCHECK_IS_ON()
@@ -218,12 +217,28 @@ void ThreadHeap::DestroyMarkingWorklists(BlinkGC::StackState stack_state) {
     not_fully_constructed_worklist_->Clear();
 #endif
   }
-  not_fully_constructed_worklist_.reset(nullptr);
+  not_fully_constructed_worklist_.reset();
+
+  // |discovered_ephemeron_pairs_worklist_| may still hold ephemeron pairs with
+  // dead keys.
+  if (!discovered_ephemeron_pairs_worklist_->IsGlobalEmpty()) {
+#if DCHECK_IS_ON()
+    EphemeronPairItem item;
+    while (discovered_ephemeron_pairs_worklist_->Pop(
+        WorklistTaskId::MutatorThread, &item)) {
+      const HeapObjectHeader* const header = HeapObjectHeader::FromInnerAddress(
+          reinterpret_cast<ConstAddress>(item.key));
+      DCHECK(!header->IsMarked());
+    }
+#else
+    discovered_ephemeron_pairs_worklist_->Clear();
+#endif
+  }
+  discovered_ephemeron_pairs_worklist_.reset();
 }
 
 void ThreadHeap::DestroyCompactionWorklists() {
   movable_reference_worklist_.reset();
-  backing_store_callback_worklist_.reset();
 }
 
 HeapCompact* ThreadHeap::Compaction() {
@@ -237,13 +252,35 @@ bool ThreadHeap::ShouldRegisterMovingAddress() {
 }
 
 void ThreadHeap::FlushNotFullyConstructedObjects() {
-  if (!not_fully_constructed_worklist_->IsGlobalEmpty()) {
-    not_fully_constructed_worklist_->FlushToGlobal(
-        WorklistTaskId::MutatorThread);
+  NotFullyConstructedWorklist::View view(not_fully_constructed_worklist_.get(),
+                                         WorklistTaskId::MutatorThread);
+  if (!view.IsLocalViewEmpty()) {
+    view.FlushToGlobal();
     previously_not_fully_constructed_worklist_->MergeGlobalPool(
         not_fully_constructed_worklist_.get());
   }
-  DCHECK(not_fully_constructed_worklist_->IsGlobalEmpty());
+  DCHECK(view.IsLocalViewEmpty());
+}
+
+void ThreadHeap::FlushEphemeronPairs(EphemeronProcessing ephemeron_processing) {
+  if (ephemeron_processing == EphemeronProcessing::kPartialProcessing) {
+    if (steps_since_last_ephemeron_pairs_flush_ <
+        kStepsBeforeEphemeronPairsFlush)
+      return;
+  }
+
+  ThreadHeapStatsCollector::EnabledScope stats_scope(
+      stats_collector(), ThreadHeapStatsCollector::kMarkFlushEphemeronPairs);
+
+  EphemeronPairsWorklist::View view(discovered_ephemeron_pairs_worklist_.get(),
+                                    WorklistTaskId::MutatorThread);
+  if (!view.IsLocalViewEmpty()) {
+    view.FlushToGlobal();
+    ephemeron_pairs_to_process_worklist_->MergeGlobalPool(
+        discovered_ephemeron_pairs_worklist_.get());
+  }
+
+  steps_since_last_ephemeron_pairs_flush_ = 0;
 }
 
 void ThreadHeap::MarkNotFullyConstructedObjects(MarkingVisitor* visitor) {
@@ -264,48 +301,72 @@ void ThreadHeap::MarkNotFullyConstructedObjects(MarkingVisitor* visitor) {
 
 namespace {
 
-template <typename Worklist, typename Callback>
-bool DrainWorklistWithDeadline(base::TimeTicks deadline,
-                               Worklist* worklist,
-                               Callback callback,
-                               int task_id) {
-  const size_t kDeadlineCheckInterval = 1250;
+static constexpr size_t kDefaultDeadlineCheckInterval = 150u;
+static constexpr size_t kDefaultConcurrentDeadlineCheckInterval =
+    5 * kDefaultDeadlineCheckInterval;
 
-  size_t processed_callback_count = 0;
+template <size_t kDeadlineCheckInterval = kDefaultDeadlineCheckInterval,
+          typename Worklist,
+          typename Callback,
+          typename YieldPredicate>
+bool DrainWorklist(Worklist* worklist,
+                   Callback callback,
+                   YieldPredicate should_yield,
+                   int task_id) {
+  // For concurrent markers, should_yield also reports marked bytes.
+  if (worklist->IsLocalViewEmpty(task_id))
+    return true;
+  if (should_yield())
+    return false;
+  size_t processed_callback_count = kDeadlineCheckInterval;
   typename Worklist::EntryType item;
   while (worklist->Pop(task_id, &item)) {
     callback(item);
-    if (++processed_callback_count == kDeadlineCheckInterval) {
-      if (deadline <= base::TimeTicks::Now()) {
+    if (--processed_callback_count == 0) {
+      if (should_yield()) {
         return false;
       }
-      processed_callback_count = 0;
+      processed_callback_count = kDeadlineCheckInterval;
     }
   }
   return true;
 }
 
+template <size_t kDeadlineCheckInterval = kDefaultDeadlineCheckInterval,
+          typename Worklist,
+          typename Callback>
+bool DrainWorklistWithDeadline(base::TimeTicks deadline,
+                               Worklist* worklist,
+                               Callback callback,
+                               int task_id) {
+  return DrainWorklist<kDeadlineCheckInterval>(
+      worklist, std::move(callback),
+      [deadline]() { return deadline <= base::TimeTicks::Now(); }, task_id);
+}
+
 }  // namespace
 
-bool ThreadHeap::InvokeEphemeronCallbacks(MarkingVisitor* visitor,
-                                          base::TimeTicks deadline) {
-  // Mark any strong pointers that have now become reachable in ephemeron maps.
-  ThreadHeapStatsCollector::Scope stats_scope(
-      stats_collector(),
-      ThreadHeapStatsCollector::kMarkInvokeEphemeronCallbacks);
-
-  // We first reiterate over known callbacks from previous iterations.
-  constexpr size_t kDeadlineCheckInterval = 250;
-  size_t processed_callback_count = 0;
-  for (auto& tuple : ephemeron_callbacks_) {
-    tuple.value(visitor, tuple.key);
-    if (++processed_callback_count == kDeadlineCheckInterval) {
-      if (deadline <= base::TimeTicks::Now()) {
-        return false;
-      }
-      processed_callback_count = 0;
+bool ThreadHeap::InvokeEphemeronCallbacks(
+    EphemeronProcessing ephemeron_processing,
+    MarkingVisitor* visitor,
+    base::TimeTicks deadline) {
+  if (ephemeron_processing == EphemeronProcessing::kPartialProcessing) {
+    if (steps_since_last_ephemeron_processing_ <
+        kStepsBeforeEphemeronProcessing) {
+      // Returning "no more work" to avoid excessive processing. The fixed
+      // point computation in the atomic pause takes care of correctness.
+      return true;
     }
   }
+
+  FlushEphemeronPairs(EphemeronProcessing::kFullProcessing);
+
+  steps_since_last_ephemeron_processing_ = 0;
+
+  // Mark any strong pointers that have now become reachable in ephemeron maps.
+  ThreadHeapStatsCollector::EnabledScope stats_scope(
+      stats_collector(),
+      ThreadHeapStatsCollector::kMarkInvokeEphemeronCallbacks);
 
   DCHECK_EQ(WorklistTaskId::MutatorThread, visitor->task_id());
 
@@ -313,94 +374,126 @@ bool ThreadHeap::InvokeEphemeronCallbacks(MarkingVisitor* visitor,
   // Callbacks found by the concurrent marking will be flushed eventually
   // and then invoked by the mutator thread (in the atomic pause at latest).
   return DrainWorklistWithDeadline(
-      deadline, weak_table_worklist_.get(),
-      [this, visitor](const WeakTableItem& item) {
-        auto result = ephemeron_callbacks_.insert(item.base_object_payload,
-                                                  item.callback);
-        DCHECK(result.is_new_entry ||
-               result.stored_value->value == item.callback);
-        if (result.is_new_entry) {
-          item.callback(visitor, item.base_object_payload);
-        }
+      deadline, ephemeron_pairs_to_process_worklist_.get(),
+      [visitor](EphemeronPairItem& item) {
+        visitor->VisitEphemeron(item.key, item.value,
+                                item.value_trace_callback);
       },
       WorklistTaskId::MutatorThread);
 }
 
 bool ThreadHeap::AdvanceMarking(MarkingVisitor* visitor,
-                                base::TimeTicks deadline) {
+                                base::TimeTicks deadline,
+                                EphemeronProcessing ephemeron_processing) {
   DCHECK_EQ(WorklistTaskId::MutatorThread, visitor->task_id());
 
+  ++steps_since_last_ephemeron_pairs_flush_;
+  ++steps_since_last_ephemeron_processing_;
+
   bool finished;
+  bool processed_ephemerons = false;
+  FlushEphemeronPairs(ephemeron_processing);
   // Ephemeron fixed point loop.
   do {
     {
       // Iteratively mark all objects that are reachable from the objects
       // currently pushed onto the marking worklist.
-      ThreadHeapStatsCollector::Scope stats_scope(
-          stats_collector(), ThreadHeapStatsCollector::kMarkProcessWorklist);
+      ThreadHeapStatsCollector::EnabledScope stats_scope(
+          stats_collector(), ThreadHeapStatsCollector::kMarkProcessWorklists);
 
       // Start with mutator-thread-only worklists (not fully constructed).
       // If time runs out, concurrent markers can take care of the rest.
 
-      // Convert |previously_not_fully_constructed_worklist_| to
-      // |marking_worklist_|. This merely re-adds items with the proper
-      // callbacks.
-      finished = DrainWorklistWithDeadline(
-          deadline, previously_not_fully_constructed_worklist_.get(),
-          [visitor](NotFullyConstructedItem& item) {
-            visitor->DynamicallyMarkAddress(
-                reinterpret_cast<ConstAddress>(item));
-          },
-          WorklistTaskId::MutatorThread);
-      if (!finished)
-        break;
-
       {
-        ThreadHeapStatsCollector::EnabledScope bailout_scope(
+        ThreadHeapStatsCollector::EnabledScope inner_scope(
             stats_collector(), ThreadHeapStatsCollector::kMarkBailOutObjects);
-        finished = DrainWorklistWithDeadline(
+        // Items in the bailout worklist are only collection backing stores.
+        // These items could take a long time to process, so we should check
+        // the deadline more often (backing stores and large items can also be
+        // found in the regular marking worklist, but those are interleaved
+        // with smaller objects).
+        finished = DrainWorklistWithDeadline<kDefaultDeadlineCheckInterval / 5>(
             deadline, not_safe_to_concurrently_trace_worklist_.get(),
-            [visitor](const MarkingItem& item) {
-              item.callback(visitor, item.base_object_payload);
+            [visitor](const NotSafeToConcurrentlyTraceItem& item) {
+              item.desc.callback(visitor, item.desc.base_object_payload);
+              visitor->AccountMarkedBytes(item.bailout_size);
             },
             WorklistTaskId::MutatorThread);
         if (!finished)
           break;
       }
 
-      finished = FlushV8References(deadline);
-      if (!finished)
-        break;
+      {
+        ThreadHeapStatsCollector::EnabledScope inner_scope(
+            stats_collector(),
+            ThreadHeapStatsCollector::kMarkFlushV8References);
+        finished = FlushV8References(deadline);
+        if (!finished)
+          break;
+      }
 
-      finished = DrainWorklistWithDeadline(
-          deadline, marking_worklist_.get(),
-          [visitor](const MarkingItem& item) {
-            HeapObjectHeader* header =
-                HeapObjectHeader::FromPayload(item.base_object_payload);
-            DCHECK(!MarkingVisitor::IsInConstruction(header));
-            item.callback(visitor, item.base_object_payload);
-            visitor->AccountMarkedBytes(header);
-          },
-          WorklistTaskId::MutatorThread);
-      if (!finished)
-        break;
+      {
+        ThreadHeapStatsCollector::EnabledScope inner_scope(
+            stats_collector(),
+            ThreadHeapStatsCollector::kMarkProcessNotFullyconstructeddWorklist);
+        // Convert |previously_not_fully_constructed_worklist_| to
+        // |marking_worklist_|. This merely re-adds items with the proper
+        // callbacks.
+        finished = DrainWorklistWithDeadline(
+            deadline, previously_not_fully_constructed_worklist_.get(),
+            [visitor](NotFullyConstructedItem& item) {
+              visitor->DynamicallyMarkAddress(
+                  reinterpret_cast<ConstAddress>(item));
+            },
+            WorklistTaskId::MutatorThread);
+        if (!finished)
+          break;
+      }
 
-      finished = DrainWorklistWithDeadline(
-          deadline, write_barrier_worklist_.get(),
-          [visitor](HeapObjectHeader* header) {
-            DCHECK(!MarkingVisitor::IsInConstruction(header));
-            GCInfo::From(header->GcInfoIndex())
-                .trace(visitor, header->Payload());
-            visitor->AccountMarkedBytes(header);
-          },
-          WorklistTaskId::MutatorThread);
+      {
+        ThreadHeapStatsCollector::EnabledScope inner_scope(
+            stats_collector(),
+            ThreadHeapStatsCollector::kMarkProcessMarkingWorklist);
+        finished = DrainWorklistWithDeadline(
+            deadline, marking_worklist_.get(),
+            [visitor](const MarkingItem& item) {
+              HeapObjectHeader* header =
+                  HeapObjectHeader::FromPayload(item.base_object_payload);
+              DCHECK(!header->IsInConstruction());
+              item.callback(visitor, item.base_object_payload);
+              visitor->AccountMarkedBytes(header);
+            },
+            WorklistTaskId::MutatorThread);
+        if (!finished)
+          break;
+      }
+
+      {
+        ThreadHeapStatsCollector::EnabledScope inner_scope(
+            stats_collector(),
+            ThreadHeapStatsCollector::kMarkProcessWriteBarrierWorklist);
+        finished = DrainWorklistWithDeadline(
+            deadline, write_barrier_worklist_.get(),
+            [visitor](HeapObjectHeader* header) {
+              DCHECK(!header->IsInConstruction());
+              GCInfo::From(header->GcInfoIndex())
+                  .trace(visitor, header->Payload());
+              visitor->AccountMarkedBytes(header);
+            },
+            WorklistTaskId::MutatorThread);
+        if (!finished)
+          break;
+      }
+    }
+
+    if ((ephemeron_processing == EphemeronProcessing::kFullProcessing) ||
+        !processed_ephemerons) {
+      processed_ephemerons = true;
+      finished =
+          InvokeEphemeronCallbacks(ephemeron_processing, visitor, deadline);
       if (!finished)
         break;
     }
-
-    finished = InvokeEphemeronCallbacks(visitor, deadline);
-    if (!finished)
-      break;
 
     // Rerun loop if ephemeron processing queued more objects for tracing.
   } while (!marking_worklist_->IsLocalViewEmpty(WorklistTaskId::MutatorThread));
@@ -410,38 +503,94 @@ bool ThreadHeap::AdvanceMarking(MarkingVisitor* visitor,
 
 bool ThreadHeap::HasWorkForConcurrentMarking() const {
   return !marking_worklist_->IsGlobalPoolEmpty() ||
-         !write_barrier_worklist_->IsGlobalPoolEmpty();
+         !write_barrier_worklist_->IsGlobalPoolEmpty() ||
+         !previously_not_fully_constructed_worklist_->IsGlobalPoolEmpty() ||
+         !ephemeron_pairs_to_process_worklist_->IsGlobalPoolEmpty();
 }
 
-bool ThreadHeap::AdvanceConcurrentMarking(ConcurrentMarkingVisitor* visitor,
-                                          base::TimeTicks deadline) {
+size_t ThreadHeap::ConcurrentMarkingGlobalWorkSize() const {
+  return marking_worklist_->GlobalPoolSize() +
+         write_barrier_worklist_->GlobalPoolSize() +
+         previously_not_fully_constructed_worklist_->GlobalPoolSize() +
+         ephemeron_pairs_to_process_worklist_->GlobalPoolSize();
+}
+
+bool ThreadHeap::AdvanceConcurrentMarking(
+    ConcurrentMarkingVisitor* visitor,
+    base::JobDelegate* delegate,
+    MarkingSchedulingOracle* marking_scheduler) {
+  auto should_yield_callback = [marking_scheduler, visitor, delegate]() {
+    marking_scheduler->AddConcurrentlyMarkedBytes(
+        visitor->RecentlyMarkedBytes());
+    return delegate->ShouldYield();
+  };
   bool finished;
   do {
+    // Convert |previously_not_fully_constructed_worklist_| to
+    // |marking_worklist_|. This merely re-adds items with the proper
+    // callbacks.
+    finished = DrainWorklist<kDefaultConcurrentDeadlineCheckInterval>(
+        previously_not_fully_constructed_worklist_.get(),
+        [visitor](NotFullyConstructedItem& item) {
+          visitor->DynamicallyMarkAddress(reinterpret_cast<ConstAddress>(item));
+        },
+        should_yield_callback, visitor->task_id());
+    if (!finished)
+      break;
+
     // Iteratively mark all objects that are reachable from the objects
     // currently pushed onto the marking worklist.
-    finished = DrainWorklistWithDeadline(
-        deadline, marking_worklist_.get(),
+    finished = DrainWorklist<kDefaultConcurrentDeadlineCheckInterval>(
+        marking_worklist_.get(),
         [visitor](const MarkingItem& item) {
           HeapObjectHeader* header =
               HeapObjectHeader::FromPayload(item.base_object_payload);
-          DCHECK(!ConcurrentMarkingVisitor::IsInConstruction(header));
+          PageFromObject(header)->SynchronizedLoad();
+          DCHECK(
+              !header
+                   ->IsInConstruction<HeapObjectHeader::AccessMode::kAtomic>());
           item.callback(visitor, item.base_object_payload);
-          visitor->AccountMarkedBytesSafe(header);
+          visitor->AccountMarkedBytes(header);
         },
-        visitor->task_id());
+        should_yield_callback, visitor->task_id());
     if (!finished)
       break;
 
-    finished = DrainWorklistWithDeadline(
-        deadline, write_barrier_worklist_.get(),
+    finished = DrainWorklist<kDefaultConcurrentDeadlineCheckInterval>(
+        write_barrier_worklist_.get(),
         [visitor](HeapObjectHeader* header) {
-          DCHECK(!ConcurrentMarkingVisitor::IsInConstruction(header));
+          PageFromObject(header)->SynchronizedLoad();
+          DCHECK(
+              !header
+                   ->IsInConstruction<HeapObjectHeader::AccessMode::kAtomic>());
           GCInfo::From(header->GcInfoIndex()).trace(visitor, header->Payload());
-          visitor->AccountMarkedBytesSafe(header);
+          visitor->AccountMarkedBytes(header);
         },
-        visitor->task_id());
+        should_yield_callback, visitor->task_id());
     if (!finished)
       break;
+
+    {
+      ThreadHeapStatsCollector::ConcurrentScope stats_scope(
+          stats_collector(),
+          ThreadHeapStatsCollector::kConcurrentMarkInvokeEphemeronCallbacks);
+
+      // Then we iterate over the new ephemerons found by the marking visitor.
+      // Callbacks found by the concurrent marking will be flushed eventually
+      // by the mutator thread and then invoked either concurrently or by the
+      // mutator thread (in the atomic pause at latest).
+      finished =
+          DrainWorklist<kDefaultConcurrentDeadlineCheckInterval>(
+              ephemeron_pairs_to_process_worklist_.get(),
+              [visitor](EphemeronPairItem& item) {
+                visitor->VisitEphemeron(item.key, item.value,
+                                        item.value_trace_callback);
+              },
+              should_yield_callback, visitor->task_id());
+      if (!finished)
+        break;
+    }
+
   } while (HasWorkForConcurrentMarking());
 
   return finished;
@@ -459,7 +608,7 @@ void ThreadHeap::WeakProcessing(MarkingVisitor* visitor) {
 
   // Call weak callbacks on objects that may now be pointing to dead objects.
   CustomCallbackItem item;
-  WeakCallbackInfo broker;
+  LivenessBroker broker = internal::LivenessBrokerFactory::Create();
   while (weak_callback_worklist_->Pop(WorklistTaskId::MutatorThread, &item)) {
     item.callback(broker, item.parameter);
   }

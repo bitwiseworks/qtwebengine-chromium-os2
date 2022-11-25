@@ -19,6 +19,7 @@
 #include "device/bluetooth/dbus/bluetooth_adapter_client.h"
 #include "device/bluetooth/dbus/bluetooth_device_client.h"
 #include "device/bluetooth/dbus/bluez_dbus_manager.h"
+#include "device/bluetooth/public/cpp/bluetooth_address.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 
 namespace device {
@@ -129,9 +130,9 @@ void BluetoothSystem::SetPowered(bool powered, SetPoweredCallback callback) {
   GetBluetoothAdapterClient()
       ->GetProperties(active_adapter_.value())
       ->powered.Set(powered,
-                    base::BindRepeating(&BluetoothSystem::OnSetPoweredFinished,
-                                        weak_ptr_factory_.GetWeakPtr(),
-                                        base::Passed(&callback)));
+                    base::BindOnce(&BluetoothSystem::OnSetPoweredFinished,
+                                   weak_ptr_factory_.GetWeakPtr(),
+                                   base::Passed(&callback)));
 }
 
 void BluetoothSystem::GetScanState(GetScanStateCallback callback) {
@@ -209,8 +210,7 @@ void BluetoothSystem::GetAvailableDevices(
   for (const auto& device_path : device_paths) {
     auto* properties = GetBluetoothDeviceClient()->GetProperties(device_path);
     std::array<uint8_t, 6> parsed_address;
-    if (!BluetoothDevice::ParseAddress(properties->address.value(),
-                                       parsed_address)) {
+    if (!ParseBluetoothAddress(properties->address.value(), parsed_address)) {
       LOG(WARNING) << "Failed to parse device address '"
                    << properties->address.value() << "' for "
                    << device_path.value();

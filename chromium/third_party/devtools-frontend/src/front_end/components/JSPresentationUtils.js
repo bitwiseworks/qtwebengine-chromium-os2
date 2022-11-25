@@ -30,19 +30,25 @@
  */
 
 import * as Bindings from '../bindings/bindings.js';
+import * as SDK from '../sdk/sdk.js';  // eslint-disable-line no-unused-vars
 import * as UI from '../ui/ui.js';
 
 import {Linkifier} from './Linkifier.js';
 
 /**
- * @param {?SDK.Target} target
+ * @param {?SDK.SDKModel.Target} target
  * @param {!Linkifier} linkifier
  * @param {!Options=} options
  * @return {{element: !Element, links: !Array<!Element>}}
  */
-export function buildStackTracePreviewContents(target, linkifier, options = {}) {
+export function buildStackTracePreviewContents(target, linkifier, options = {
+  stackTrace: undefined,
+  contentUpdated: undefined,
+  tabStops: undefined
+}) {
   const {stackTrace, contentUpdated, tabStops} = options;
-  const element = createElementWithClass('span', 'monospace');
+  const element = document.createElement('span');
+  element.classList.add('monospace');
   element.style.display = 'inline-block';
   const shadowRoot = UI.Utils.createShadowRootWithCoreStyles(element, 'components/jsUtils.css');
   const contentElement = shadowRoot.createChild('table', 'stack-preview-container');
@@ -60,10 +66,11 @@ export function buildStackTracePreviewContents(target, linkifier, options = {}) 
     for (const stackFrame of stackTrace.callFrames) {
       totalCallFramesCount++;
       let shouldHide = totalCallFramesCount > 30 && stackTrace.callFrames.length > 31;
-      const row = createElement('tr');
+      const row = document.createElement('tr');
       row.createChild('td').textContent = '\n';
       row.createChild('td', 'function-name').textContent = UI.UIUtils.beautifyFunctionName(stackFrame.functionName);
-      const link = linkifier.maybeLinkifyConsoleCallFrame(target, stackFrame, {tabStop: !!tabStops});
+      const link = linkifier.maybeLinkifyConsoleCallFrame(
+          target, stackFrame, {tabStop: !!tabStops, className: undefined, columnNumber: undefined});
       if (link) {
         link.addEventListener('contextmenu', populateContextMenu.bind(null, link));
         const uiLocation = Linkifier.uiLocation(link);
@@ -136,7 +143,7 @@ export function buildStackTracePreviewContents(target, linkifier, options = {}) 
   if (totalHiddenCallFramesCount) {
     const row = contentElement.createChild('tr', 'show-blackboxed-link');
     row.createChild('td').textContent = '\n';
-    const cell = row.createChild('td');
+    const cell = /** @type {!HTMLTableCellElement} */ (row.createChild('td'));
     cell.colSpan = 4;
     const showAllLink = cell.createChild('span', 'link');
     if (totalHiddenCallFramesCount === 1) {
@@ -158,8 +165,9 @@ export function buildStackTracePreviewContents(target, linkifier, options = {}) 
 /**
  * @typedef {{
  *   stackTrace: (!Protocol.Runtime.StackTrace|undefined),
- *   contentUpdated: (function()|undefined),
+ *   contentUpdated: ((function(): *) | undefined),
  *   tabStops: (boolean|undefined)
  * }}
  */
+// @ts-ignore typedef
 export let Options;

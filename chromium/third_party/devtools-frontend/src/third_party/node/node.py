@@ -7,6 +7,7 @@ from os import path as os_path
 import platform
 import subprocess
 import sys
+import os
 
 
 def GetBinaryPath():
@@ -18,12 +19,28 @@ def GetBinaryPath():
         }[platform.system()])
 
 
-def RunNode(cmd_parts, stdout=None):
-    cmd = " ".join([GetBinaryPath()] + cmd_parts)
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+def RunNode(cmd_parts, output=subprocess.PIPE):
+    cmd = [GetBinaryPath()] + cmd_parts
+    process = subprocess.Popen(cmd,
+                               cwd=os.getcwd(),
+                               stdout=output,
+                               stderr=output)
     stdout, stderr = process.communicate()
 
-    if stderr:
-        raise RuntimeError('%s failed: %s' % (cmd, stderr))
+    if process.returncode is not 0:
+        print('%s failed:\n%s' % (cmd, stdout + stderr))
+        exit(process.returncode)
 
     return stdout
+
+
+if __name__ == '__main__':
+    args = sys.argv[1:]
+    # Accept --output as the first argument, and then remove
+    # it from the args entirely if present.
+    if len(args) > 0 and args[0] == '--output':
+        output = None
+        args = sys.argv[2:]
+    else:
+        output = subprocess.PIPE
+    RunNode(args, output)

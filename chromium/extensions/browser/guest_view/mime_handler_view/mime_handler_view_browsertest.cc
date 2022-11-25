@@ -21,12 +21,14 @@
 #include "components/guest_view/browser/test_guest_view_manager.h"
 #include "components/javascript_dialogs/app_modal_dialog_controller.h"
 #include "components/javascript_dialogs/app_modal_dialog_view.h"
+#include "components/printing/common/print.mojom.h"
 #include "components/printing/common/print_messages.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_renderer_host.h"
 #include "extensions/browser/api/extensions_api_client.h"
@@ -193,8 +195,8 @@ class PrintPreviewWaiter : public content::BrowserMessageFilter {
     return false;
   }
 
-  void OnDidStartPreview(const PrintHostMsg_DidStartPreview_Params& params,
-                         const PrintHostMsg_PreviewIds& ids) {
+  void OnDidStartPreview(const printing::mojom::DidStartPreviewParams& params,
+                         const printing::mojom::PreviewIds& ids) {
     // Expect that there is at least one page.
     did_load_ = true;
     run_loop_.Quit();
@@ -441,7 +443,8 @@ IN_PROC_BROWSER_TEST_F(MimeHandlerViewTest, BackgroundPage) {
 IN_PROC_BROWSER_TEST_F(MimeHandlerViewTest, TargetBlankAnchor) {
   RunTest("testTargetBlankAnchor.csv");
   ASSERT_EQ(2, browser()->tab_strip_model()->count());
-  content::WaitForLoadStop(browser()->tab_strip_model()->GetWebContentsAt(1));
+  EXPECT_TRUE(content::WaitForLoadStop(
+      browser()->tab_strip_model()->GetWebContentsAt(1)));
   EXPECT_EQ(
       GURL(url::kAboutBlankURL),
       browser()->tab_strip_model()->GetWebContentsAt(1)->GetLastCommittedURL());

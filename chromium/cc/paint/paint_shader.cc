@@ -360,7 +360,8 @@ sk_sp<PaintShader> PaintShader::CreateDecodedImage(
     ImageProvider* image_provider,
     uint32_t* transfer_cache_entry_id,
     SkFilterQuality* raster_quality,
-    bool* needs_mips) const {
+    bool* needs_mips,
+    gpu::Mailbox* mailbox) const {
   DCHECK_EQ(shader_type_, Type::kImage);
   if (!image_)
     return nullptr;
@@ -387,6 +388,9 @@ sk_sp<PaintShader> PaintShader::CreateDecodedImage(
   if (decoded_image.transfer_cache_entry_id()) {
     decoded_paint_image = image_;
     *transfer_cache_entry_id = *decoded_image.transfer_cache_entry_id();
+  } else if (!decoded_image.mailbox().IsZero()) {
+    decoded_paint_image = image_;
+    *mailbox = decoded_image.mailbox();
   } else {
     DCHECK(decoded_image.image());
 
@@ -395,7 +399,8 @@ sk_sp<PaintShader> PaintShader::CreateDecodedImage(
     decoded_paint_image =
         PaintImageBuilder::WithDefault()
             .set_id(image_.stable_id())
-            .set_image(std::move(sk_image), image_.GetContentIdForFrame(0u))
+            .set_texture_image(std::move(sk_image),
+                               image_.GetContentIdForFrame(0u))
             .TakePaintImage();
   }
 

@@ -6,16 +6,17 @@
 
 #include "third_party/blink/public/web/web_heap.h"
 #include "third_party/blink/renderer/bindings/core/v8/sanitize_script_errors.h"
-#include "third_party/blink/renderer/bindings/core/v8/script_controller.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_source_code.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_gc_controller.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_resize_observer_options.h"
 #include "third_party/blink/renderer/core/exported/web_view_impl.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/geometry/dom_rect_read_only.h"
 #include "third_party/blink/renderer/core/resize_observer/resize_observation.h"
 #include "third_party/blink/renderer/core/resize_observer/resize_observer_box_options.h"
 #include "third_party/blink/renderer/core/resize_observer/resize_observer_controller.h"
 #include "third_party/blink/renderer/core/resize_observer/resize_observer_size.h"
+#include "third_party/blink/renderer/core/script/classic_script.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_compositor.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
@@ -28,24 +29,22 @@ namespace {
 
 class TestResizeObserverDelegate : public ResizeObserver::Delegate {
  public:
-  TestResizeObserverDelegate(Document& document)
-      : document_(document), call_count_(0) {}
+  explicit TestResizeObserverDelegate(LocalDOMWindow& window)
+      : window_(window), call_count_(0) {}
   void OnResize(
       const HeapVector<Member<ResizeObserverEntry>>& entries) override {
     call_count_++;
   }
-  ExecutionContext* GetExecutionContext() const {
-    return document_->ToExecutionContext();
-  }
+  ExecutionContext* GetExecutionContext() const { return window_.Get(); }
   int CallCount() const { return call_count_; }
 
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     ResizeObserver::Delegate::Trace(visitor);
-    visitor->Trace(document_);
+    visitor->Trace(window_);
   }
 
  private:
-  Member<Document> document_;
+  Member<LocalDOMWindow> window_;
   int call_count_;
 };
 
@@ -73,8 +72,8 @@ TEST_F(ResizeObserverUnitTest, ResizeObserverDOMContentBoxAndSVG) {
   main_resource.Finish();
 
   ResizeObserver::Delegate* delegate =
-      MakeGarbageCollected<TestResizeObserverDelegate>(GetDocument());
-  ResizeObserver* observer = ResizeObserver::Create(GetDocument(), delegate);
+      MakeGarbageCollected<TestResizeObserverDelegate>(Window());
+  ResizeObserver* observer = ResizeObserver::Create(&Window(), delegate);
   Element* dom_target = GetDocument().getElementById("domTarget");
   Element* svg_target = GetDocument().getElementById("svgTarget");
   ResizeObservation* dom_observation = MakeGarbageCollected<ResizeObservation>(
@@ -118,8 +117,8 @@ TEST_F(ResizeObserverUnitTest, ResizeObserverDOMBorderBox) {
   main_resource.Finish();
 
   ResizeObserver::Delegate* delegate =
-      MakeGarbageCollected<TestResizeObserverDelegate>(GetDocument());
-  ResizeObserver* observer = ResizeObserver::Create(GetDocument(), delegate);
+      MakeGarbageCollected<TestResizeObserverDelegate>(Window());
+  ResizeObserver* observer = ResizeObserver::Create(&Window(), delegate);
   Element* dom_border_target = GetDocument().getElementById("domBorderTarget");
   ResizeObservation* dom_border_observation =
       MakeGarbageCollected<ResizeObservation>(
@@ -153,8 +152,8 @@ TEST_F(ResizeObserverUnitTest, ResizeObserverDOMDevicePixelContentBox) {
   main_resource.Finish();
 
   ResizeObserver::Delegate* delegate =
-      MakeGarbageCollected<TestResizeObserverDelegate>(GetDocument());
-  ResizeObserver* observer = ResizeObserver::Create(GetDocument(), delegate);
+      MakeGarbageCollected<TestResizeObserverDelegate>(Window());
+  ResizeObserver* observer = ResizeObserver::Create(&Window(), delegate);
   Element* dom_target = GetDocument().getElementById("domTarget");
   Element* dom_dp_target = GetDocument().getElementById("domDPTarget");
 
@@ -205,8 +204,8 @@ TEST_F(ResizeObserverUnitTest, TestBoxOverwrite) {
   border_box_option->setBox("border-box");
 
   ResizeObserver::Delegate* delegate =
-      MakeGarbageCollected<TestResizeObserverDelegate>(GetDocument());
-  ResizeObserver* observer = ResizeObserver::Create(GetDocument(), delegate);
+      MakeGarbageCollected<TestResizeObserverDelegate>(Window());
+  ResizeObserver* observer = ResizeObserver::Create(&Window(), delegate);
   Element* dom_target = GetDocument().getElementById("domTarget");
 
   // Assert no observations (depth returned is kDepthBottom)
@@ -251,56 +250,42 @@ TEST_F(ResizeObserverUnitTest, TestNonBoxTarget) {
 
 TEST_F(ResizeObserverUnitTest, TestMemoryLeaks) {
   ResizeObserverController& controller =
-      GetDocument().EnsureResizeObserverController();
+      *ResizeObserverController::From(Window());
   const HeapLinkedHashSet<WeakMember<ResizeObserver>>& observers =
       controller.Observers();
   ASSERT_EQ(observers.size(), 0U);
-  v8::HandleScope scope(v8::Isolate::GetCurrent());
 
-  ScriptController& script_controller =
-      GetDocument().ExecutingFrame()->GetScriptController();
+  LocalFrame* frame = Window().GetFrame();
 
   //
   // Test whether ResizeObserver is kept alive by direct JS reference
   //
-  script_controller.ExecuteScriptInMainWorldAndReturnValue(
-      ScriptSourceCode("var ro = new ResizeObserver( entries => {});"), KURL(),
-      SanitizeScriptErrors::kSanitize, ScriptFetchOptions(),
-      ScriptController::kExecuteScriptWhenScriptsDisabled);
+  ClassicScript::CreateUnspecifiedScript(
+      ScriptSourceCode("var ro = new ResizeObserver( entries => {});"))
+      ->RunScript(frame, ScriptController::kExecuteScriptWhenScriptsDisabled);
   ASSERT_EQ(observers.size(), 1U);
-  script_controller.ExecuteScriptInMainWorldAndReturnValue(
-      ScriptSourceCode("ro = undefined;"), KURL(),
-      SanitizeScriptErrors::kSanitize, ScriptFetchOptions(),
-      ScriptController::kExecuteScriptWhenScriptsDisabled);
-  V8GCController::CollectAllGarbageForTesting(
-      v8::Isolate::GetCurrent(),
-      v8::EmbedderHeapTracer::EmbedderStackState::kEmpty);
+  ClassicScript::CreateUnspecifiedScript(ScriptSourceCode("ro = undefined;"))
+      ->RunScript(frame, ScriptController::kExecuteScriptWhenScriptsDisabled);
+  ThreadState::Current()->CollectAllGarbageForTesting();
   WebHeap::CollectAllGarbageForTesting();
   ASSERT_EQ(observers.IsEmpty(), true);
 
   //
   // Test whether ResizeObserver is kept alive by an Element
   //
-  script_controller.ExecuteScriptInMainWorldAndReturnValue(
+  ClassicScript::CreateUnspecifiedScript(
       ScriptSourceCode("var ro = new ResizeObserver( () => {});"
                        "var el = document.createElement('div');"
                        "ro.observe(el);"
-                       "ro = undefined;"),
-      KURL(), SanitizeScriptErrors::kSanitize, ScriptFetchOptions(),
-      ScriptController::kExecuteScriptWhenScriptsDisabled);
+                       "ro = undefined;"))
+      ->RunScript(frame, ScriptController::kExecuteScriptWhenScriptsDisabled);
   ASSERT_EQ(observers.size(), 1U);
-  V8GCController::CollectAllGarbageForTesting(
-      v8::Isolate::GetCurrent(),
-      v8::EmbedderHeapTracer::EmbedderStackState::kEmpty);
+  ThreadState::Current()->CollectAllGarbageForTesting();
   WebHeap::CollectAllGarbageForTesting();
   ASSERT_EQ(observers.size(), 1U);
-  script_controller.ExecuteScriptInMainWorldAndReturnValue(
-      ScriptSourceCode("el = undefined;"), KURL(),
-      SanitizeScriptErrors::kSanitize, ScriptFetchOptions(),
-      ScriptController::kExecuteScriptWhenScriptsDisabled);
-  V8GCController::CollectAllGarbageForTesting(
-      v8::Isolate::GetCurrent(),
-      v8::EmbedderHeapTracer::EmbedderStackState::kEmpty);
+  ClassicScript::CreateUnspecifiedScript(ScriptSourceCode("el = undefined;"))
+      ->RunScript(frame, ScriptController::kExecuteScriptWhenScriptsDisabled);
+  ThreadState::Current()->CollectAllGarbageForTesting();
   WebHeap::CollectAllGarbageForTesting();
   ASSERT_EQ(observers.IsEmpty(), true);
 }

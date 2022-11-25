@@ -8,7 +8,6 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
-#include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/optional.h"
@@ -17,7 +16,6 @@
 #include "content/common/fetch/fetch_request_type_converters.h"
 #include "content/common/service_worker/service_worker_loader_helpers.h"
 #include "content/common/service_worker/service_worker_utils.h"
-#include "content/public/common/content_features.h"
 #include "content/renderer/loader/web_url_request_util.h"
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/renderer_blink_platform_impl.h"
@@ -26,11 +24,8 @@
 #include "net/base/net_errors.h"
 #include "net/url_request/redirect_util.h"
 #include "net/url_request/url_request.h"
-#include "services/network/public/cpp/features.h"
-#include "services/network/public/cpp/network_switches.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "third_party/blink/public/common/blob/blob_utils.h"
-#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/service_worker/service_worker_type_converters.h"
 #include "third_party/blink/public/mojom/blob/blob.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/dispatch_fetch_event_params.mojom.h"
@@ -410,38 +405,6 @@ void ServiceWorkerSubresourceLoader::OnFallback(
     blink::mojom::ServiceWorkerFetchEventTimingPtr timing) {
   SettleFetchEventDispatch(blink::ServiceWorkerStatusCode::kOk);
   UpdateResponseTiming(std::move(timing));
-  // When the request mode is CORS or CORS-with-forced-preflight and the origin
-  // of the request URL is different from the security origin of the document,
-  // we can't simply fallback to the network here. It is because the CORS
-  // preflight logic is implemented in Blink. So we return a "fallback required"
-  // response to Blink.
-  // TODO(falken): Remove this mechanism after OOB-CORS ships.
-  if ((base::CommandLine::ForCurrentProcess()->HasSwitch(
-           network::switches::kForceToDisableOutOfBlinkCors) ||
-       !base::FeatureList::IsEnabled(network::features::kOutOfBlinkCors)) &&
-      ((resource_request_.mode == network::mojom::RequestMode::kCors ||
-        resource_request_.mode ==
-            network::mojom::RequestMode::kCorsWithForcedPreflight) &&
-       (!resource_request_.request_initiator.has_value() ||
-        !resource_request_.request_initiator->IsSameOriginWith(
-            url::Origin::Create(resource_request_.url))))) {
-    TRACE_EVENT_WITH_FLOW0(
-        "ServiceWorker",
-        "ServiceWorkerSubresourceLoader::OnFallback - CORS workaround",
-        TRACE_ID_WITH_SCOPE(kServiceWorkerSubresourceLoaderScope,
-                            TRACE_ID_LOCAL(request_id_)),
-        TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
-    //  Add "Service Worker Fallback Required" which DevTools knows means to not
-    //  show the response in the Network tab as it's just an internal
-    //  implementation mechanism.
-    response_head_->headers = base::MakeRefCounted<net::HttpResponseHeaders>(
-        "HTTP/1.1 400 Service Worker Fallback Required");
-    response_head_->was_fetched_via_service_worker = true;
-    response_head_->was_fallback_required_by_service_worker = true;
-    CommitResponseHeaders();
-    CommitEmptyResponseAndComplete();
-    return;
-  }
   TRACE_EVENT_WITH_FLOW0(
       "ServiceWorker", "ServiceWorkerSubresourceLoader::OnFallback",
       TRACE_ID_WITH_SCOPE(kServiceWorkerSubresourceLoaderScope,
@@ -480,6 +443,10 @@ void ServiceWorkerSubresourceLoader::UpdateResponseTiming(
   // dispatching the fetch event, so set it to |dispatch_event_time|.
   response_head_->load_timing.service_worker_ready_time =
       timing->dispatch_event_time;
+  response_head_->load_timing.service_worker_fetch_start =
+      timing->dispatch_event_time;
+  response_head_->load_timing.service_worker_respond_with_settled =
+      timing->respond_with_settled_time;
   fetch_event_timing_ = std::move(timing);
 }
 
@@ -536,8 +503,6 @@ void ServiceWorkerSubresourceLoader::StartResponse(
   // Handle a stream response body.
   if (body_stream_is_valid) {
     DCHECK(!response->blob);
-    if (response->side_data_blob)
-      DCHECK(base::FeatureList::IsEnabled(features::kCacheStorageEagerReading));
     DCHECK(url_loader_client_.is_bound());
     stream_waiter_ = std::make_unique<StreamWaiter>(
         this, std::move(body_as_stream->callback_receiver));
@@ -566,10 +531,9 @@ void ServiceWorkerSubresourceLoader::StartResponse(
   // Read side data if necessary.  We only do this if both the
   // |side_data_blob| is available to read and the request is destined
   // for a script.
-  auto resource_type =
-      static_cast<blink::mojom::ResourceType>(resource_request_.resource_type);
+  auto request_destination = resource_request_.destination;
   if (response->side_data_blob &&
-      resource_type == blink::mojom::ResourceType::kScript) {
+      request_destination == network::mojom::RequestDestination::kScript) {
     side_data_as_blob_.Bind(std::move(response->side_data_blob->blob));
     side_data_as_blob_->ReadSideData(base::BindOnce(
         &ServiceWorkerSubresourceLoader::OnSideDataReadingComplete,
@@ -705,6 +669,7 @@ void ServiceWorkerSubresourceLoader::RecordTimingMetrics(bool handled) {
 void ServiceWorkerSubresourceLoader::FollowRedirect(
     const std::vector<std::string>& removed_headers,
     const net::HttpRequestHeaders& modified_headers,
+    const net::HttpRequestHeaders& modified_cors_exempt_headers,
     const base::Optional<GURL>& new_url) {
   TRACE_EVENT_WITH_FLOW1(
       "ServiceWorker", "ServiceWorkerSubresourceLoader::FollowRedirect",
@@ -715,8 +680,8 @@ void ServiceWorkerSubresourceLoader::FollowRedirect(
   // TODO(arthursonzogni, juncai): This seems to be correctly implemented, but
   // not used so far. Add tests and remove this DCHECK to support this feature
   // if needed. See https://crbug.com/845683.
-  DCHECK(removed_headers.empty() && modified_headers.IsEmpty())
-      << "Redirect with removed or modified headers is not supported yet. See "
+  DCHECK(modified_headers.IsEmpty() && modified_cors_exempt_headers.IsEmpty())
+      << "Redirect with modified headers is not supported yet. See "
          "https://crbug.com/845683";
   DCHECK(!new_url.has_value()) << "Redirect with modified url was not "
                                   "supported yet. crbug.com/845683";
@@ -727,6 +692,10 @@ void ServiceWorkerSubresourceLoader::FollowRedirect(
       resource_request_.url, resource_request_.method, *redirect_info_,
       removed_headers, modified_headers, &resource_request_.headers,
       &should_clear_upload);
+  resource_request_.cors_exempt_headers.MergeFrom(modified_cors_exempt_headers);
+  for (const std::string& name : removed_headers)
+    resource_request_.cors_exempt_headers.RemoveHeader(name);
+
   if (should_clear_upload)
     resource_request_.request_body = nullptr;
 

@@ -34,10 +34,10 @@
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_midi_options.h"
-#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/deprecation.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/navigator.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
@@ -60,7 +60,7 @@ const char kFeaturePolicyConsoleWarning[] =
 NavigatorWebMIDI::NavigatorWebMIDI(Navigator& navigator)
     : Supplement<Navigator>(navigator) {}
 
-void NavigatorWebMIDI::Trace(Visitor* visitor) {
+void NavigatorWebMIDI::Trace(Visitor* visitor) const {
   Supplement<Navigator>::Trace(visitor);
 }
 
@@ -95,12 +95,12 @@ ScriptPromise NavigatorWebMIDI::requestMIDIAccess(
     return ScriptPromise();
   }
 
-  Document& document = *Document::From(ExecutionContext::From(script_state));
+  LocalDOMWindow* window = LocalDOMWindow::From(script_state);
   if (options->hasSysex() && options->sysex()) {
     UseCounter::Count(
-        document,
+        window,
         WebFeature::kRequestMIDIAccessWithSysExOption_ObscuredByFootprinting);
-    document.CountUseOnlyInCrossOriginIframe(
+    window->CountUseOnlyInCrossOriginIframe(
         WebFeature::
             kRequestMIDIAccessIframeWithSysExOption_ObscuredByFootprinting);
   } else {
@@ -108,18 +108,18 @@ ScriptPromise NavigatorWebMIDI::requestMIDIAccess(
     // user for permission regardless of sysex option.
     // https://webaudio.github.io/web-midi-api/#dom-navigator-requestmidiaccess
     // https://crbug.com/662000.
-    if (document.IsSecureContext()) {
+    if (window->IsSecureContext()) {
       Deprecation::CountDeprecation(
-          document, WebFeature::kNoSysexWebMIDIWithoutPermission);
+          window, WebFeature::kNoSysexWebMIDIWithoutPermission);
     }
   }
-  document.CountUseOnlyInCrossOriginIframe(
+  window->CountUseOnlyInCrossOriginIframe(
       WebFeature::kRequestMIDIAccessIframe_ObscuredByFootprinting);
 
-  if (!document.IsFeatureEnabled(
+  if (!window->IsFeatureEnabled(
           mojom::blink::FeaturePolicyFeature::kMidiFeature,
           ReportOptions::kReportOnFailure, kFeaturePolicyConsoleWarning)) {
-    UseCounter::Count(document, WebFeature::kMidiDisabledByFeaturePolicy);
+    UseCounter::Count(window, WebFeature::kMidiDisabledByFeaturePolicy);
     exception_state.ThrowSecurityError(kFeaturePolicyErrorMessage);
     return ScriptPromise();
   }

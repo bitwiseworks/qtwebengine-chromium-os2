@@ -2,8 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/macros.h"
 #include "media/video/picture.h"
+
+#include "base/check_op.h"
+#include "base/logging.h"
+#include "base/macros.h"
 
 namespace media {
 
@@ -29,7 +32,6 @@ PictureBuffer::PictureBuffer(int32_t id,
       service_texture_ids_(service_texture_ids),
       texture_target_(texture_target),
       pixel_format_(pixel_format) {
-  DCHECK(!service_texture_ids_.empty());
   // We either not have client texture ids at all, or if we do, then their
   // number must be the same as the number of service texture ids.
   DCHECK(client_texture_ids_.empty() ||
@@ -82,5 +84,16 @@ Picture::Picture(int32_t picture_buffer_id,
 Picture::Picture(const Picture& other) = default;
 
 Picture::~Picture() = default;
+
+Picture::ScopedSharedImage::ScopedSharedImage(
+    gpu::Mailbox mailbox,
+    uint32_t texture_target,
+    base::OnceClosure destruction_closure)
+    : destruction_closure_(std::move(destruction_closure)),
+      mailbox_holder_(mailbox, gpu::SyncToken(), texture_target) {}
+
+Picture::ScopedSharedImage::~ScopedSharedImage() {
+  std::move(destruction_closure_).Run();
+}
 
 }  // namespace media

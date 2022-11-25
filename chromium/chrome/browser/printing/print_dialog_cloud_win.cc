@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/printing/print_dialog_cloud.h"
+#include "chrome/browser/printing/print_dialog_cloud_win.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -74,8 +74,8 @@ class PrintDataSetter : public content::WebContentsObserver {
     GURL url = web_contents()->GetURL();
     if (cloud_devices::IsCloudPrintURL(url)) {
       base::string16 origin = base::UTF8ToUTF16(url.GetOrigin().spec());
-      content::MessagePortProvider::PostMessageToFrame(
-          web_contents(), origin, origin, message_data_);
+      content::MessagePortProvider::PostMessageToFrame(web_contents(), origin,
+                                                       origin, message_data_);
     }
   }
 
@@ -120,7 +120,7 @@ scoped_refptr<base::RefCountedMemory> ReadFile(
     if (base::ReadFileToString(path_to_file, &file_data))
       data = base::RefCountedString::TakeString(&file_data);
   }
-  base::DeleteFile(path_to_file, false);
+  base::DeleteFile(path_to_file);
   return data;
 }
 

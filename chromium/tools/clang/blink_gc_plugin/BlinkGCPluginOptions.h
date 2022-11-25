@@ -12,9 +12,6 @@
 struct BlinkGCPluginOptions {
   bool dump_graph = false;
 
-  // If |true|, disallow Member types in stack allocated classes.
-  bool no_members_in_stack_allocated = false;
-
   // Member<T> fields are only permitted in managed classes,
   // something CheckFieldsVisitor verifies, issuing errors if
   // found in unmanaged classes. WeakMember<T> should be treated
@@ -32,6 +29,8 @@ struct BlinkGCPluginOptions {
   std::set<std::string> ignored_classes;
   std::set<std::string> checked_namespaces;
   std::vector<std::string> ignored_directories;
+  // |allowed_directories| overrides |ignored_directories|.
+  std::vector<std::string> allowed_directories;
 };
 
 #endif  // TOOLS_BLINK_GC_PLUGIN_BLINK_GC_PLUGIN_OPTIONS_H_

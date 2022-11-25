@@ -35,6 +35,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/qualified_name.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "v8/include/v8.h"
 
@@ -47,7 +48,7 @@ EventListener* CreateAttributeEventListener(Node* node,
                                             const AtomicString& value,
                                             JSEventHandler::HandlerType type) {
   DCHECK(node);
-  if (value.IsNull())
+  if (value.IsNull() || !node->GetExecutionContext())
     return nullptr;
 
   // FIXME: Very strange: we initialize zero-based number with '1'.
@@ -55,14 +56,11 @@ EventListener* CreateAttributeEventListener(Node* node,
                         OrdinalNumber::First());
   String source_url;
 
-  v8::Isolate* isolate = node->GetDocument().GetIsolate();
-
-  if (LocalFrame* frame = node->GetDocument().GetFrame()) {
-    ScriptController& script_controller = frame->GetScriptController();
-    if (!node->GetDocument().CanExecuteScripts(kAboutToExecuteScript))
+  if (LocalDOMWindow* window = node->GetDocument().domWindow()) {
+    if (!window->CanExecuteScripts(kAboutToExecuteScript))
       return nullptr;
-    position = script_controller.EventHandlerPosition();
-    source_url = node->GetDocument().Url().GetString();
+    position = window->GetScriptController().EventHandlerPosition();
+    source_url = window->Url().GetString();
   }
 
   // An assumption here is that the content attributes are used only in the main
@@ -72,6 +70,7 @@ EventListener* CreateAttributeEventListener(Node* node,
   // of the isolated world for the content script by design.
   DOMWrapperWorld& world = DOMWrapperWorld::MainWorld();
 
+  v8::Isolate* isolate = node->GetExecutionContext()->GetIsolate();
   return MakeGarbageCollected<JSEventHandlerForContentAttribute>(
       isolate, world, name.LocalName(), value, source_url, position, type);
 }
@@ -86,13 +85,13 @@ EventListener* CreateAttributeEventListener(LocalFrame* frame,
   if (value.IsNull())
     return nullptr;
 
-  if (!frame->GetDocument()->CanExecuteScripts(kAboutToExecuteScript))
+  LocalDOMWindow* window = frame->DomWindow();
+  if (!window->CanExecuteScripts(kAboutToExecuteScript))
     return nullptr;
 
-  TextPosition position = frame->GetScriptController().EventHandlerPosition();
-  String source_url = frame->GetDocument()->Url().GetString();
-
-  v8::Isolate* isolate = ToIsolate(frame);
+  TextPosition position = window->GetScriptController().EventHandlerPosition();
+  String source_url = window->Url().GetString();
+  v8::Isolate* isolate = window->GetIsolate();
 
   // An assumption here is that the content attributes are used only in the main
   // world or the isolated world for the content scripts, they are never used in

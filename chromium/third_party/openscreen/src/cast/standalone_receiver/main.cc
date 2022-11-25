@@ -5,9 +5,12 @@
 #include <getopt.h>
 
 #include <array>
-#include <chrono>  // NOLINT
+#include <chrono>
+#include <iostream>
 
+#include "absl/strings/str_cat.h"
 #include "cast/common/public/service_info.h"
+#include "cast/receiver/channel/static_credentials.h"
 #include "cast/standalone_receiver/cast_agent.h"
 #include "cast/streaming/ssrc.h"
 #include "discovery/common/config.h"
@@ -23,6 +26,7 @@
 #include "platform/impl/platform_client_posix.h"
 #include "platform/impl/task_runner.h"
 #include "platform/impl/text_trace_logging_platform.h"
+#include "util/chrono_helpers.h"
 #include "util/stringprintf.h"
 #include "util/trace_logging.h"
 
@@ -48,38 +52,43 @@ struct DiscoveryState {
 
 ErrorOr<std::unique_ptr<DiscoveryState>> StartDiscovery(
     TaskRunner* task_runner,
-    const InterfaceInfo& interface) {
+    const InterfaceInfo& interface,
+    const std::string& friendly_name,
+    const std::string& model_name) {
+  TRACE_DEFAULT_SCOPED(TraceCategory::kStandaloneReceiver);
   discovery::Config config;
 
-  config.interface = interface;
+  discovery::Config::NetworkInfo::AddressFamilies supported_address_families =
+      discovery::Config::NetworkInfo::kNoAddressFamily;
+  if (interface.GetIpAddressV4()) {
+    supported_address_families |= discovery::Config::NetworkInfo::kUseIpV4;
+  }
+  if (interface.GetIpAddressV6()) {
+    supported_address_families |= discovery::Config::NetworkInfo::kUseIpV6;
+  }
+  OSP_CHECK(supported_address_families !=
+            discovery::Config::NetworkInfo::kNoAddressFamily)
+      << "No address families supported by the selected interface";
+  config.network_info.push_back({interface, supported_address_families});
 
   auto state = std::make_unique<DiscoveryState>();
   state->reporting_client = std::make_unique<DiscoveryReportingClient>();
   state->service = discovery::CreateDnsSdService(
       task_runner, state->reporting_client.get(), config);
 
-  // TODO(jophba): update after ServiceInfo update patch lands.
   ServiceInfo info;
   info.port = kDefaultCastPort;
-  if (interface.GetIpAddressV4()) {
-    info.v4_address = interface.GetIpAddressV4();
-  }
-  if (interface.GetIpAddressV6()) {
-    info.v6_address = interface.GetIpAddressV6();
-  }
 
   OSP_CHECK(std::any_of(interface.hardware_address.begin(),
                         interface.hardware_address.end(),
                         [](int e) { return e > 0; }));
   info.unique_id = HexEncode(interface.hardware_address);
-
-  // TODO(jophba): add command line arguments to set these fields.
-  info.model_name = "cast_standalone_receiver";
-  info.friendly_name = "Cast Standalone Receiver";
+  info.friendly_name = friendly_name;
+  info.model_name = model_name;
 
   state->publisher =
       std::make_unique<discovery::DnsSdServicePublisher<ServiceInfo>>(
-          state->service.get(), kCastV2ServiceId, ServiceInfoToDnsSdRecord);
+          state->service.get(), kCastV2ServiceId, ServiceInfoToDnsSdInstance);
 
   auto error = state->publisher->Register(info);
   if (!error.ok()) {
@@ -88,107 +97,192 @@ ErrorOr<std::unique_ptr<DiscoveryState>> StartDiscovery(
   return state;
 }
 
-void RunStandaloneReceiver(TaskRunnerImpl* task_runner,
-                           InterfaceInfo interface) {
-  CastAgent agent(task_runner, interface);
-  const auto error = agent.Start();
+std::unique_ptr<CastAgent> StartCastAgent(TaskRunnerImpl* task_runner,
+                                          const InterfaceInfo& interface,
+                                          GeneratedCredentials* creds) {
+  TRACE_DEFAULT_SCOPED(TraceCategory::kStandaloneReceiver);
+  auto agent = std::make_unique<CastAgent>(
+      task_runner, interface, creds->provider.get(), creds->tls_credentials);
+  const auto error = agent->Start();
   if (!error.ok()) {
     OSP_LOG_ERROR << "Error occurred while starting agent: " << error;
-    return;
+    agent.reset();
   }
-
-  // Run the event loop until an exit is requested (e.g., the video player GUI
-  // window is closed, a SIGINT or SIGTERM is received, or whatever other
-  // appropriate user indication that shutdown is requested).
-  task_runner->RunUntilSignaled();
+  return agent;
 }
-
-}  // namespace
-}  // namespace cast
-}  // namespace openscreen
-
-namespace {
 
 void LogUsage(const char* argv0) {
-  constexpr char kExecutableTag[] = "argv[0]";
-  constexpr char kUsageMessage[] = R"(
-    usage: argv[0] <options> <interface>
+  std::cerr << R"(
+usage: )" << argv0
+            << R"( <options> <interface>
 
-    options:
-      <interface>: Specify the network interface to bind to. The interface is
-          looked up from the system interface registry. This argument is
-          mandatory, as it must be known for publishing discovery.
+options:
+    interface
+        Specifies the network interface to bind to. The interface is
+        looked up from the system interface registry.
+        Mandatory, as it must be known for publishing discovery.
 
-      -t, --tracing: Enable performance tracing logging.
+    -p, --private-key=path-to-key: Path to OpenSSL-generated private key to be
+                    used for TLS authentication.
 
-      -h, --help: Show this help message.
+    -s, --server-certificate=path-to-cert: Path to PEM file containing a
+                           server certificate to be used for TLS authentication.
+
+    -f, --friendly-name: Friendly name to be used for device discovery.
+
+    -m, --model-name: Model name to be used for device discovery.
+
+    -t, --tracing: Enable performance tracing logging.
+
+    -v, --verbose: Enable verbose logging.
+
+    -h, --help: Show this help message.
   )";
-  std::string message = kUsageMessage;
-  message.replace(message.find(kExecutableTag), strlen(kExecutableTag), argv0);
-  OSP_LOG_INFO << message;
 }
 
-}  // namespace
+InterfaceInfo GetInterfaceInfoFromName(const char* name) {
+  OSP_CHECK(name != nullptr) << "Missing mandatory argument: interface.";
+  InterfaceInfo interface_info;
+  std::vector<InterfaceInfo> network_interfaces = GetNetworkInterfaces();
+  for (auto& interface : network_interfaces) {
+    if (interface.name == name) {
+      interface_info = std::move(interface);
+      break;
+    }
+  }
 
-int main(int argc, char* argv[]) {
-  // TODO(jophba): refactor into separate method and make main a one-liner.
-  using openscreen::Clock;
-  using openscreen::ErrorOr;
-  using openscreen::InterfaceInfo;
-  using openscreen::IPAddress;
-  using openscreen::IPEndpoint;
-  using openscreen::PlatformClientPosix;
-  using openscreen::TaskRunnerImpl;
+  if (interface_info.name.empty()) {
+    auto error_or_info = GetLoopbackInterfaceForTesting();
+    if (error_or_info.has_value()) {
+      if (error_or_info.value().name == name) {
+        interface_info = std::move(error_or_info.value());
+      }
+    }
+  }
+  OSP_CHECK(!interface_info.name.empty()) << "Invalid interface specified.";
+  return interface_info;
+}
 
-  openscreen::SetLogLevel(openscreen::LogLevel::kInfo);
-
-  const struct option argument_options[] = {
+int RunStandaloneReceiver(int argc, char* argv[]) {
+  // A note about modifying command line arguments: consider uniformity
+  // between all Open Screen executables. If it is a platform feature
+  // being exposed, consider if it applies to the standalone receiver,
+  // standalone sender, osp demo, and test_main argument options.
+  const struct option kArgumentOptions[] = {
+      {"private-key", required_argument, nullptr, 'p'},
+      {"server-certificate", required_argument, nullptr, 's'},
+      {"friendly-name", required_argument, nullptr, 'f'},
+      {"model-name", required_argument, nullptr, 'm'},
       {"tracing", no_argument, nullptr, 't'},
+      {"verbose", no_argument, nullptr, 'v'},
       {"help", no_argument, nullptr, 'h'},
+
+      // Discovery is enabled by default, however there are cases where it
+      // needs to be disabled, such as on Mac OS X.
+      {"disable-discovery", no_argument, nullptr, 'x'},
       {nullptr, 0, nullptr, 0}};
 
-  InterfaceInfo interface_info;
+  bool is_verbose = false;
+  bool discovery_enabled = true;
+  std::string private_key_path;
+  std::string server_certificate_path;
+  std::string friendly_name = "Cast Standalone Receiver";
+  std::string model_name = "cast_standalone_receiver";
   std::unique_ptr<openscreen::TextTraceLoggingPlatform> trace_logger;
   int ch = -1;
-  while ((ch = getopt_long(argc, argv, "th", argument_options, nullptr)) !=
-         -1) {
+  while ((ch = getopt_long(argc, argv, "p:s:f:m:tvhx", kArgumentOptions,
+                           nullptr)) != -1) {
     switch (ch) {
+      case 'p':
+        private_key_path = optarg;
+        break;
+      case 's':
+        server_certificate_path = optarg;
+        break;
+      case 'f':
+        friendly_name = optarg;
+        break;
+      case 'm':
+        friendly_name = optarg;
+        break;
       case 't':
         trace_logger = std::make_unique<openscreen::TextTraceLoggingPlatform>();
+        break;
+      case 'v':
+        is_verbose = true;
+        break;
+      case 'x':
+        discovery_enabled = false;
         break;
       case 'h':
         LogUsage(argv[0]);
         return 1;
     }
   }
-  char* interface_argument = argv[optind];
-  OSP_CHECK(interface_argument != nullptr)
-      << "Missing mandatory argument: interface.";
-  std::vector<InterfaceInfo> network_interfaces =
-      openscreen::GetNetworkInterfaces();
-  for (auto& interface : network_interfaces) {
-    if (interface.name == interface_argument) {
-      interface_info = std::move(interface);
-      break;
-    }
+  if (private_key_path.empty() != server_certificate_path.empty()) {
+    OSP_LOG_ERROR << "If a private key or server certificate path is provided, "
+                     "both are required.";
+    return 1;
   }
-  OSP_CHECK(!interface_info.name.empty()) << "Invalid interface specified.";
+  SetLogLevel(is_verbose ? openscreen::LogLevel::kVerbose
+                         : openscreen::LogLevel::kInfo);
 
   auto* const task_runner = new TaskRunnerImpl(&Clock::now);
-  PlatformClientPosix::Create(Clock::duration{50}, Clock::duration{50},
+  PlatformClientPosix::Create(milliseconds(50), milliseconds(50),
                               std::unique_ptr<TaskRunnerImpl>(task_runner));
 
-  auto discovery_state =
-      openscreen::cast::StartDiscovery(task_runner, interface_info);
-  OSP_CHECK(discovery_state.is_value()) << "Failed to start discovery.";
+  // Post tasks to kick-off the CastAgent and, if successful, start discovery to
+  // make this standalone receiver visible to senders on the network.
+  std::unique_ptr<DiscoveryState> discovery_state;
+  std::unique_ptr<CastAgent> cast_agent;
+  const char* interface_name = argv[optind];
+  OSP_CHECK(interface_name && strlen(interface_name) > 0)
+      << "No interface name provided.";
 
-  // Runs until the process is interrupted.  Safe to pass |task_runner| as it
-  // will not be destroyed by ShutDown() until this exits.
-  openscreen::cast::RunStandaloneReceiver(task_runner, interface_info);
+  std::string device_id =
+      absl::StrCat("Standalone Receiver on ", interface_name);
+  ErrorOr<GeneratedCredentials> creds = Error::Code::kEVPInitializationError;
+  if (private_key_path.empty()) {
+    creds = GenerateCredentials(device_id);
+  } else {
+    creds = GenerateCredentials(device_id, private_key_path,
+                                server_certificate_path);
+  }
+  OSP_CHECK(creds.is_value()) << creds.error();
+  task_runner->PostTask(
+      [&, interface = GetInterfaceInfoFromName(interface_name)] {
+        cast_agent = StartCastAgent(task_runner, interface, &(creds.value()));
+        OSP_CHECK(cast_agent) << "Failed to start CastAgent.";
 
-  // The task runner must be deleted after all serial delete pointers, such
-  // as the one stored in the discovery state.
-  discovery_state.value().reset();
+        if (discovery_enabled) {
+          auto result =
+              StartDiscovery(task_runner, interface, friendly_name, model_name);
+          OSP_CHECK(result.is_value()) << "Failed to start discovery.";
+          discovery_state = std::move(result.value());
+        }
+      });
+
+  // Run the event loop until an exit is requested (e.g., the video player GUI
+  // window is closed, a SIGINT or SIGTERM is received, or whatever other
+  // appropriate user indication that shutdown is requested).
+  task_runner->RunUntilSignaled();
+
+  // Shutdown the Cast Agent and discovery-related entities. This may cause one
+  // or more tasks to be posted, and so the TaskRunner is spun to give them a
+  // chance to execute.
+  discovery_state.reset();
+  cast_agent.reset();
+  task_runner->PostTask([task_runner] { task_runner->RequestStopSoon(); });
+  task_runner->RunUntilStopped();
+
   PlatformClientPosix::ShutDown();
   return 0;
+}
+
+}  // namespace
+}  // namespace cast
+}  // namespace openscreen
+
+int main(int argc, char* argv[]) {
+  return openscreen::cast::RunStandaloneReceiver(argc, argv);
 }

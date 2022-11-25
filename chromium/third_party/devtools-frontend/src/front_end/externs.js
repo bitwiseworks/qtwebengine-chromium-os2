@@ -45,17 +45,6 @@ Event.prototype.isMetaOrCtrlForTest;
 Event.prototype.code;
 
 /**
- * TODO(luoe): MouseEvent properties movementX and movementY from the
- * PointerLock API are not yet standard. Once they are included in
- * Closure Compiler, these custom externs can be removed.
- */
-/** @type {number} */
-MouseEvent.prototype.movementX;
-
-/** @type {number} */
-MouseEvent.prototype.movementY;
-
-/**
  * @type {number}
  */
 KeyboardEvent.DOM_KEY_LOCATION_NUMPAD;
@@ -163,15 +152,6 @@ Array.prototype.mergeOrdered = function(array, comparator) {};
  * @return {number}
  */
 Int32Array.prototype.lowerBound = function(object, comparator, left, right) {};
-
-// TODO(luoe): remove these BigInt and ArrayLike types once closure supports them.
-/**
- * @param {number|string} value
- */
-const BigInt = function(value) {};
-
-/** @typedef {*} */
-const bigint = null;
 
 /** @typedef {Array|NodeList|Arguments|{length: number}} */
 let ArrayLike;
@@ -568,11 +548,16 @@ CodeMirror.Pos.prototype.ch;
  */
 CodeMirror.cmpPos = function(pos1, pos2) {};
 
-/** @constructor */
-CodeMirror.StringStream = function(line) {
+/**
+ * @constructor
+ * @param {string} line
+ * @param {number=} index
+ */
+CodeMirror.StringStream = function(line, index) {
   this.pos = 0;
   this.start = 0;
 };
+
 CodeMirror.StringStream.prototype = {
   backUp: function(n) {},
   column: function() {},
@@ -623,76 +608,6 @@ CodeMirror.defineMIME = function(mime, mode) {};
 
 /** @type {boolean} */
 window.dispatchStandaloneTestRunnerMessages;
-
-const acorn = {
-  /**
-   * @param {string} text
-   * @param {Object.<string, boolean>} options
-   * @return {!ESTree.Node}
-   */
-  parse: function(text, options) {},
-
-  /**
-   * @param {string} text
-   * @param {Object.<string, boolean>} options
-   * @return {!Acorn.Tokenizer}
-   */
-  tokenizer: function(text, options) {},
-
-  tokTypes: {
-    _true: new Acorn.TokenType(),
-    _false: new Acorn.TokenType(),
-    _null: new Acorn.TokenType(),
-    num: new Acorn.TokenType(),
-    regexp: new Acorn.TokenType(),
-    string: new Acorn.TokenType(),
-    name: new Acorn.TokenType(),
-    eof: new Acorn.TokenType()
-  }
-};
-
-acorn.loose = {};
-
-/**
- * @param {string} text
- * @param {Object.<string, boolean>} options
- * @return {!ESTree.Node}
- */
-acorn.loose.parse = function(text, options) {};
-
-const Acorn = {};
-/**
- * @constructor
- */
-Acorn.Tokenizer = function() {
-  /** @type {function():!Acorn.Token} */
-  this.getToken;
-};
-
-/**
- * @constructor
- */
-Acorn.TokenType = function() {
-  /** @type {string} */
-  this.label;
-  /** @type {(string|undefined)} */
-  this.keyword;
-};
-
-/**
- * @typedef {{type: !Acorn.TokenType, value: string, start: number, end: number}}
- */
-Acorn.Token;
-
-/**
- * @typedef {{type: string, value: string, start: number, end: number}}
- */
-Acorn.Comment;
-
-/**
- * @typedef {(!Acorn.Token|!Acorn.Comment)}
- */
-Acorn.TokenOrComment;
 
 const dagre = {};
 dagre.graphlib = {};
@@ -788,6 +703,62 @@ ESTree.TemplateLiteralNode = function() {
 };
 
 /**
+ * @extends {ESTree.Node}
+ * @constructor
+ */
+ESTree.SimpleLiteral = function() {
+  /** @type {?(string|boolean|number)} */
+  this.value;
+  /** @type {(string|undefined)} */
+  this.raw;
+};
+
+/**
+ * @extends {ESTree.Node}
+ * @constructor
+ */
+ESTree.ForStatement = function() {
+  /** @type {(!ESTree.Node|undefined)} */
+  this.update;
+};
+
+/**
+ * @extends {ESTree.Node}
+ * @constructor
+ */
+ESTree.ForInStatement = function() {};
+
+/**
+ * @extends {ESTree.Node}
+ * @constructor
+ */
+ESTree.ForOfStatement = function() {};
+
+/**
+ * @extends {ESTree.Node}
+ * @constructor
+ */
+ESTree.IfStatement = function() {
+  /** @type {(!ESTree.Node|undefined)} */
+  this.consequent;
+};
+
+/**
+ * @extends {ESTree.Node}
+ * @constructor
+ */
+ESTree.TryStatement = function() {
+  /** @type {(!ESTree.Node|undefined)} */
+  this.block;
+};
+
+/**
+ * @extends {ESTree.Node}
+ * @constructor
+ */
+ESTree.CatchClause = function() {};
+
+/**
  * @type {string}
  * @see http://heycam.github.io/webidl/#es-DOMException-prototype-object
  * TODO(jsbell): DOMException should be a subclass of Error.
@@ -840,14 +811,6 @@ const createElement = function(tagName, customElementType) {};
 const createTextNode = function(data) {};
 
 /**
- * @param {string} elementName
- * @param {string=} className
- * @param {string=} customElementType
- * @return {!Element}
- */
-const createElementWithClass = function(elementName, className, customElementType) {};
-
-/**
  * @param {string} childType
  * @param {string=} className
  * @return {!Element}
@@ -896,31 +859,10 @@ const mod = function(m, n) {};
 
 /**
  * @param {string} query
- * @param {boolean} caseSensitive
- * @param {boolean} isRegex
- * @return {!RegExp}
- */
-const createSearchRegex = function(query, caseSensitive, isRegex) {};
-
-/**
- * @param {string} query
  * @param {string=} flags
  * @return {!RegExp}
  */
 const createPlainTextSearchRegex = function(query, flags) {};
-
-/**
- * @param {number} spacesCount
- * @return {string}
- */
-const spacesPadding = function(spacesCount) {};
-
-/**
- * @param {number} value
- * @param {number} symbolsCount
- * @return {string}
- */
-const numberToStringWithSpacesPadding = function(value, symbolsCount) {};
 
 /**
  * @param {*} value
@@ -951,12 +893,6 @@ const base64ToSize = function(content) {};
  * @return {string}
  */
 const unescapeCssString = function(input) {};
-
-/**
- * @constructor
- * @param {function(!Array<*>)} callback
- */
-const ResizeObserver = function(callback) {};
 
 
 // Lighthouse Report Renderer
@@ -1335,7 +1271,7 @@ class InspectorFrontendHostAPI {
   }
 
   /**
-   * @param {string} actionName
+   * @param {!InspectorFrontendHostAPI.EnumeratedHistogram} actionName
    * @param {number} actionCode
    * @param {number} bucketSize
    */
@@ -1482,12 +1418,42 @@ InspectorFrontendHostAPI.ContextMenuDescriptor;
 InspectorFrontendHostAPI.LoadNetworkResourceResult;
 
 /**
+ * Enum for recordEnumeratedHistogram
+ * Warning: There are two other definitions of this enum in the DevTools code
+ * base, keep them in sync:
+ * front_end/devtools_compatibility.js
+ * front_end/host/InspectorFrontendHostAPI.js
+ * @readonly
+ * @enum {string}
+ */
+InspectorFrontendHostAPI.EnumeratedHistogram = {
+  ActionTaken: 'DevTools.ActionTaken',
+  ColorPickerFixedColor: 'DevTools.ColorPicker.FixedColor',
+  PanelClosed: 'DevTools.PanelClosed',
+  PanelShown: 'DevTools.PanelShown',
+  SidebarPaneShown: 'DevTools.SidebarPaneShown',
+  KeyboardShortcutFired: 'DevTools.KeyboardShortcutFired',
+  IssuesPanelIssueExpanded: 'DevTools.IssuesPanelIssueExpanded',
+  IssuesPanelOpenedFrom: 'DevTools.IssuesPanelOpenedFrom',
+  IssuesPanelResourceOpened: 'DevTools.IssuesPanelResourceOpened',
+  KeybindSetSettingChanged: 'DevTools.KeybindSetSettingChanged',
+  DualScreenDeviceEmulated: 'DevTools.DualScreenDeviceEmulated',
+  CSSGridSettings: 'DevTools.CSSGridSettings2',
+  HighlightedPersistentCSSGridCount: 'DevTools.HighlightedPersistentCSSGridCount',
+  ExperimentEnabledAtLaunch: 'DevTools.ExperimentEnabledAtLaunch',
+  ExperimentEnabled: 'DevTools.ExperimentEnabled',
+  ExperimentDisabled: 'DevTools.ExperimentDisabled',
+  ComputedStyleGrouping: 'DevTools.ComputedStyleGrouping',
+  GridOverlayOpenedFrom: 'DevTools.GridOverlayOpenedFrom',
+};
+
+/**
  * @interface
  */
 class ServicePort {
   /**
    * @param {function(string)} messageHandler
-   * @param {function(string)} closeHandler
+   * @param {function()} closeHandler
    */
   setHandlers(messageHandler, closeHandler) {
   }
@@ -1507,3 +1473,51 @@ class ServicePort {
 }
 
 const fabric = {};
+
+class AnchorBox {
+  /**
+   * @param {number=} x
+   * @param {number=} y
+   * @param {number=} width
+   * @param {number=} height
+   */
+  constructor(x, y, width, height) {
+    /** @type {number} */
+    this.x;
+    /** @type {number} */
+    this.y;
+    /** @type {number} */
+    this.width;
+    /** @type {number} */
+    this.height;
+  }
+
+  /**
+   * @param {number} x
+   * @param {number} y
+   * @return {boolean}
+   */
+  contains(x, y) {
+  }
+
+  /**
+   * @param {!AnchorBox} box
+   * @return {!AnchorBox}
+   */
+  relativeTo(box) {
+  }
+
+  /**
+   * @param {!Element} element
+   * @return {!AnchorBox}
+   */
+  relativeToElement(element) {
+  }
+
+  /**
+   * @param {?AnchorBox} anchorBox
+   * @return {boolean}
+   */
+  equals(anchorBox) {
+  }
+}

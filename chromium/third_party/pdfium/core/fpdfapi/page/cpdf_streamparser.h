@@ -7,9 +7,6 @@
 #ifndef CORE_FPDFAPI_PAGE_CPDF_STREAMPARSER_H_
 #define CORE_FPDFAPI_PAGE_CPDF_STREAMPARSER_H_
 
-#include <memory>
-#include <utility>
-
 #include "core/fxcrt/string_pool_template.h"
 #include "core/fxcrt/weak_ptr.h"
 #include "third_party/base/span.h"
@@ -44,7 +41,7 @@ class CPDF_StreamParser {
 
  private:
   friend class cpdf_streamparser_ReadHexString_Test;
-  static const uint32_t kMaxWordLength = 255;
+  static constexpr uint32_t kMaxWordLength = 255;
 
   void GetNextWord(bool& bIsNumber);
   ByteString ReadString();

@@ -155,7 +155,7 @@ NGInlineCursor NGAbstractInlineTextBox::GetCursorOnLine() const {
 
 String NGAbstractInlineTextBox::GetTextContent() const {
   const NGInlineCursor& cursor = GetCursor();
-  if (cursor.Current().IsGeneratedTextType())
+  if (cursor.Current().IsLayoutGeneratedText())
     return cursor.Current().Text(cursor).ToString();
   if (const NGPaintFragment* paint_fragment = cursor.CurrentPaintFragment()) {
     return To<NGPhysicalTextFragment>(paint_fragment->PhysicalFragment())
@@ -170,7 +170,7 @@ bool NGAbstractInlineTextBox::NeedsTrailingSpace() const {
     return false;
   NGInlineCursor line_box = cursor;
   line_box.MoveToContainingLine();
-  if (!line_box.HasSoftWrapToNextLine())
+  if (!line_box.Current().HasSoftWrapToNextLine())
     return false;
   const String text_content = GetTextContent();
   const unsigned end_offset = cursor.Current().TextEndOffset();
@@ -231,7 +231,8 @@ unsigned NGAbstractInlineTextBox::Len() const {
   return cursor.Current().Text(cursor).length();
 }
 
-unsigned NGAbstractInlineTextBox::TextOffsetInContainer(unsigned offset) const {
+unsigned NGAbstractInlineTextBox::TextOffsetInFormattingContext(
+    unsigned offset) const {
   const NGInlineCursor& cursor = GetCursor();
   if (!cursor)
     return 0;

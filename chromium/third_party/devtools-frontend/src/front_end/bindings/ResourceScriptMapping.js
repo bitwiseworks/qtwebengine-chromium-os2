@@ -27,12 +27,14 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
 
 import * as Common from '../common/common.js';
 import * as SDK from '../sdk/sdk.js';
 import * as Workspace from '../workspace/workspace.js';
 
-import {BreakpointManager} from './BreakpointManager.js';
+import {Breakpoint, BreakpointManager} from './BreakpointManager.js';  // eslint-disable-line no-unused-vars
 import {ContentProviderBasedProject} from './ContentProviderBasedProject.js';
 import {DebuggerSourceMapping, DebuggerWorkspaceBinding} from './DebuggerWorkspaceBinding.js';  // eslint-disable-line no-unused-vars
 import {NetworkProject} from './NetworkProject.js';
@@ -119,13 +121,9 @@ export class ResourceScriptMapping {
     if (!scriptFile._hasScripts([script])) {
       return null;
     }
-    let lineNumber = rawLocation.lineNumber - (script.isInlineScriptWithSourceURL() ? script.lineOffset : 0);
+    const lineNumber = rawLocation.lineNumber - (script.isInlineScriptWithSourceURL() ? script.lineOffset : 0);
     let columnNumber = rawLocation.columnNumber || 0;
-    if (script.hasWasmDisassembly()) {
-      // TODO(chromium:1056632) This produces the wrong result when the disassembly is not loaded yet.
-      lineNumber = script.wasmDisassemblyLine(columnNumber);
-      columnNumber = 0;
-    } else if (script.isInlineScriptWithSourceURL() && !lineNumber && columnNumber) {
+    if (script.isInlineScriptWithSourceURL() && !lineNumber && columnNumber) {
       columnNumber -= script.columnOffset;
     }
     return uiSourceCode.uiLocation(lineNumber, columnNumber);
@@ -144,9 +142,6 @@ export class ResourceScriptMapping {
       return [];
     }
     const script = scriptFile._script;
-    if (script.hasWasmDisassembly()) {
-      return [script.wasmByteLocation(lineNumber)];
-    }
     if (script.isInlineScriptWithSourceURL()) {
       return [this._debuggerModel.createRawLocation(
           script, lineNumber + script.lineOffset, lineNumber ? columnNumber : columnNumber + script.columnOffset)];
@@ -202,7 +197,8 @@ export class ResourceScriptMapping {
     const scriptFile = new ResourceScriptFile(this, uiSourceCode, [script]);
     this._uiSourceCodeToScriptFile.set(uiSourceCode, scriptFile);
 
-    project.addUISourceCodeWithProvider(uiSourceCode, originalContentProvider, metadata, 'text/javascript');
+    const mimeType = script.isWasm() ? 'application/wasm' : 'text/javascript';
+    project.addUISourceCodeWithProvider(uiSourceCode, originalContentProvider, metadata, mimeType);
     await this._debuggerWorkspaceBinding.updateLocations(script);
   }
 
@@ -355,35 +351,38 @@ export class ResourceScriptFile extends Common.ObjectWrapper.ObjectWrapper {
                             .breakpointLocationsForUISourceCode(this._uiSourceCode)
                             .map(breakpointLocation => breakpointLocation.breakpoint);
     const source = this._uiSourceCode.workingCopy();
-    debuggerModel.setScriptSource(this._script.scriptId, source, scriptSourceWasSet.bind(this));
+    debuggerModel.setScriptSource(this._script.scriptId, source, (error, exceptionDetails) => {
+      this.scriptSourceWasSet(source, breakpoints, error, exceptionDetails);
+    });
+  }
 
-    /**
-     * @param {?string} error
-     * @param {!Protocol.Runtime.ExceptionDetails=} exceptionDetails
-     * @this {ResourceScriptFile}
-     */
-    async function scriptSourceWasSet(error, exceptionDetails) {
-      if (!error && !exceptionDetails) {
-        this._scriptSource = source;
-      }
-      await this._update();
-
-      if (!error && !exceptionDetails) {
-        // Live edit can cause breakpoints to be in the wrong position, or to be lost altogether.
-        // If any breakpoints were in the pre-live edit script, they need to be re-added.
-        await Promise.all(breakpoints.map(breakpoint => breakpoint.refreshInDebugger()));
-        return;
-      }
-      if (!exceptionDetails) {
-        Common.Console.Console.instance().addMessage(
-            Common.UIString.UIString('LiveEdit failed: %s', error), Common.Console.MessageLevel.Warning);
-        return;
-      }
-      const messageText = Common.UIString.UIString('LiveEdit compile failed: %s', exceptionDetails.text);
-      this._uiSourceCode.addLineMessage(
-          Workspace.UISourceCode.Message.Level.Error, messageText, exceptionDetails.lineNumber,
-          exceptionDetails.columnNumber);
+  /**
+   * @param {string} source
+   * @param {!Array<!Breakpoint>} breakpoints
+   * @param {?string} error
+   * @param {!Protocol.Runtime.ExceptionDetails=} exceptionDetails
+   */
+  async scriptSourceWasSet(source, breakpoints, error, exceptionDetails) {
+    if (!error && !exceptionDetails) {
+      this._scriptSource = source;
     }
+    await this._update();
+
+    if (!error && !exceptionDetails) {
+      // Live edit can cause breakpoints to be in the wrong position, or to be lost altogether.
+      // If any breakpoints were in the pre-live edit script, they need to be re-added.
+      await Promise.all(breakpoints.map(breakpoint => breakpoint.refreshInDebugger()));
+      return;
+    }
+    if (!exceptionDetails) {
+      Common.Console.Console.instance().addMessage(
+          Common.UIString.UIString('LiveEdit failed: %s', error), Common.Console.MessageLevel.Warning);
+      return;
+    }
+    const messageText = Common.UIString.UIString('LiveEdit compile failed: %s', exceptionDetails.text);
+    this._uiSourceCode.addLineMessage(
+        Workspace.UISourceCode.Message.Level.Error, messageText, exceptionDetails.lineNumber,
+        exceptionDetails.columnNumber);
   }
 
   async _update() {
@@ -467,6 +466,20 @@ export class ResourceScriptFile extends Common.ObjectWrapper.ObjectWrapper {
    */
   hasSourceMapURL() {
     return this._script && !!this._script.sourceMapURL;
+  }
+
+  /**
+   * @return {!SDK.Script.Script}
+   */
+  get script() {
+    return this._script;
+  }
+
+  /**
+   * @return {!Workspace.UISourceCode.UISourceCode}
+   */
+  get uiSourceCode() {
+    return this._uiSourceCode;
   }
 }
 

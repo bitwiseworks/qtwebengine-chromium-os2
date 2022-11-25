@@ -15,6 +15,7 @@
 #include "third_party/blink/renderer/core/layout/ng/ng_layout_result.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_length_utils.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_out_of_flow_layout_part.h"
+#include "third_party/blink/renderer/core/layout/ng/ng_physical_box_fragment.h"
 #include "third_party/blink/renderer/core/paint/ng/ng_box_fragment_painter.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 
@@ -25,7 +26,8 @@ LayoutNGMixin<Base>::LayoutNGMixin(Element* element) : Base(element) {
   static_assert(
       std::is_base_of<LayoutBlock, Base>::value,
       "Base class of LayoutNGMixin must be LayoutBlock or derived class.");
-  DCHECK(!element || !element->ShouldForceLegacyLayout());
+  if (element)
+    Base::GetDocument().IncLayoutBlockCounterNG();
 }
 
 template <typename Base>
@@ -35,8 +37,7 @@ template <typename Base>
 void LayoutNGMixin<Base>::Paint(const PaintInfo& paint_info) const {
   // Avoid painting dirty objects because descendants maybe already destroyed.
   if (UNLIKELY(Base::NeedsLayout() &&
-               !Base::LayoutBlockedByDisplayLock(
-                   DisplayLockLifecycleTarget::kChildren))) {
+               !Base::ChildLayoutBlockedByDisplayLock())) {
     NOTREACHED();
     return;
   }
@@ -88,9 +89,12 @@ MinMaxSizes LayoutNGMixin<Base>::ComputeIntrinsicLogicalWidths() const {
       LayoutBoxUtils::AvailableLogicalHeight(*this, Base::ContainingBlock());
 
   NGConstraintSpace space = ConstraintSpaceForMinMaxSizes();
-  MinMaxSizes sizes = node.ComputeMinMaxSizes(
-      node.Style().GetWritingMode(), MinMaxSizesInput(available_logical_height),
-      &space);
+  MinMaxSizes sizes =
+      node.ComputeMinMaxSizes(node.Style().GetWritingMode(),
+                              MinMaxSizesInput(available_logical_height,
+                                               MinMaxSizesType::kContent),
+                              &space)
+          .sizes;
 
   if (Base::IsTableCell()) {
     // If a table cell, or the column that it belongs to, has a specified fixed
@@ -123,7 +127,8 @@ NGConstraintSpace LayoutNGMixin<Base>::ConstraintSpaceForMinMaxSizes() const {
   // Table cells borders may be collapsed, we can't calculate these directly
   // from the style.
   if (Base::IsTableCell()) {
-    builder.SetIsTableCell(true);
+    DCHECK(Base::IsTableCellLegacy());
+    builder.SetIsTableCell(true, /* is_legacy_table_cell */ true);
     builder.SetTableCellBorders({Base::BorderStart(), Base::BorderEnd(),
                                  Base::BorderBefore(), Base::BorderAfter()});
   }
@@ -150,15 +155,13 @@ void LayoutNGMixin<Base>::UpdateOutOfFlowBlockLayout() {
   NGBlockNode container_node(container);
   NGBoxFragmentBuilder container_builder(
       container_node, scoped_refptr<const ComputedStyle>(container_style),
-      /* space */ nullptr, container_style->GetWritingMode(),
-      container_style->Direction());
+      /* space */ nullptr, container_style->GetWritingDirection());
   container_builder.SetIsNewFormattingContext(
       container_node.CreatesNewFormattingContext());
 
   NGFragmentGeometry fragment_geometry;
-  fragment_geometry.border = ComputeBorders(constraint_space, *container_style);
-  fragment_geometry.scrollbar =
-      ComputeScrollbars(constraint_space, container_node);
+  fragment_geometry.border = ComputeBorders(constraint_space, container_node);
+  fragment_geometry.scrollbar = (constraint_space.IsAnonymous() ? NGBoxStrut() : ComputeScrollbarsForNonAnonymous(container_node));
   fragment_geometry.padding =
       ComputePadding(constraint_space, *container_style);
 
@@ -216,8 +219,8 @@ void LayoutNGMixin<Base>::UpdateOutOfFlowBlockLayout() {
   // should get laid out by the actual containing block.
   NGOutOfFlowLayoutPart(css_container->CanContainAbsolutePositionObjects(),
                         css_container->CanContainFixedPositionObjects(),
-                        *container_style, constraint_space, border_scrollbar,
-                        &container_builder, initial_containing_block_fixed_size)
+                        *container_style, constraint_space, &container_builder,
+                        initial_containing_block_fixed_size)
       .Run(/* only_layout */ this);
   scoped_refptr<const NGLayoutResult> result =
       container_builder.ToBoxFragment();
@@ -276,6 +279,10 @@ LayoutNGMixin<Base>::UpdateInFlowBlockLayout() {
 template class CORE_TEMPLATE_EXPORT LayoutNGMixin<LayoutBlock>;
 template class CORE_TEMPLATE_EXPORT LayoutNGMixin<LayoutBlockFlow>;
 template class CORE_TEMPLATE_EXPORT LayoutNGMixin<LayoutProgress>;
+template class CORE_TEMPLATE_EXPORT LayoutNGMixin<LayoutRubyAsBlock>;
+template class CORE_TEMPLATE_EXPORT LayoutNGMixin<LayoutRubyBase>;
+template class CORE_TEMPLATE_EXPORT LayoutNGMixin<LayoutRubyRun>;
+template class CORE_TEMPLATE_EXPORT LayoutNGMixin<LayoutRubyText>;
 template class CORE_TEMPLATE_EXPORT LayoutNGMixin<LayoutTableCaption>;
 template class CORE_TEMPLATE_EXPORT LayoutNGMixin<LayoutTableCell>;
 

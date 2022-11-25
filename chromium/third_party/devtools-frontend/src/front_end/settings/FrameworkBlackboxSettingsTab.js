@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as UI from '../ui/ui.js';
 
@@ -32,12 +35,14 @@ export class FrameworkBlackboxSettingsTab extends UI.Widget.VBox {
     this._list.element.classList.add('blackbox-list');
     this._list.registerRequiredCSS('settings/frameworkBlackboxSettingsTab.css');
 
-    const placeholder = createElementWithClass('div', 'blackbox-list-empty');
+    const placeholder = document.createElement('div');
+    placeholder.classList.add('blackbox-list-empty');
     placeholder.textContent = Common.UIString.UIString('No blackboxed patterns');
     this._list.setEmptyPlaceholder(placeholder);
     this._list.show(this.contentElement);
     const addPatternButton = UI.UIUtils.createTextButton(
         Common.UIString.UIString('Add pattern...'), this._addButtonClicked.bind(this), 'add-button');
+    UI.ARIAUtils.setAccessibleName(addPatternButton, ls`Add filename pattern`);
     this.contentElement.appendChild(addPatternButton);
 
     this._setting = Common.Settings.Settings.instance().moduleSetting('skipStackFramesPattern');
@@ -73,7 +78,8 @@ export class FrameworkBlackboxSettingsTab extends UI.Widget.VBox {
    * @return {!Element}
    */
   renderItem(item, editable) {
-    const element = createElementWithClass('div', 'blackbox-list-item');
+    const element = document.createElement('div');
+    element.classList.add('blackbox-list-item');
     const pattern = element.createChild('div', 'blackbox-pattern');
     pattern.textContent = item.pattern;
     pattern.title = ls`Blackbox scripts whose names match '${item.pattern}'`;

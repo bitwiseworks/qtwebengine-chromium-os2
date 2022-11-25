@@ -20,6 +20,11 @@ Vector<double> SequenceTest::identityDoubleSequence(
   return arg;
 }
 
+Vector<V8FoodEnum> SequenceTest::identityFoodEnumSequence(
+    const Vector<V8FoodEnum>& arg) const {
+  return arg;
+}
+
 Vector<String> SequenceTest::identityFoodEnumSequence(
     const Vector<String>& arg) const {
   return arg;
@@ -47,7 +52,7 @@ bool SequenceTest::unionReceivedSequence(const DoubleOrDoubleSequence& arg) {
   return arg.IsDoubleSequence();
 }
 
-void SequenceTest::Trace(Visitor* visitor) {
+void SequenceTest::Trace(Visitor* visitor) const {
   visitor->Trace(element_sequence_);
   ScriptWrappable::Trace(visitor);
 }

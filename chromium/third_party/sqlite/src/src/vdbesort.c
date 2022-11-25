@@ -815,8 +815,8 @@ static int vdbeSorterCompareText(
   int n2;
   int res;
 
-  getVarint32(&p1[1], n1);
-  getVarint32(&p2[1], n2);
+  getVarint32NR(&p1[1], n1);
+  getVarint32NR(&p2[1], n2);
   res = memcmp(v1, v2, (MIN(n1, n2) - 13)/2);
   if( res==0 ){
     res = n1 - n2;
@@ -970,13 +970,16 @@ int sqlite3VdbeSorterInit(
   if( pSorter==0 ){
     rc = SQLITE_NOMEM_BKPT;
   }else{
+    Btree *pBt = db->aDb[0].pBt;
     pSorter->pKeyInfo = pKeyInfo = (KeyInfo*)((u8*)pSorter + sz);
     memcpy(pKeyInfo, pCsr->pKeyInfo, szKeyInfo);
     pKeyInfo->db = 0;
     if( nField && nWorker==0 ){
       pKeyInfo->nKeyField = nField;
     }
-    pSorter->pgsz = pgsz = sqlite3BtreeGetPageSize(db->aDb[0].pBt);
+    sqlite3BtreeEnter(pBt);
+    pSorter->pgsz = pgsz = sqlite3BtreeGetPageSize(pBt);
+    sqlite3BtreeLeave(pBt);
     pSorter->nTask = nWorker + 1;
     pSorter->iPrev = (u8)(nWorker - 1);
     pSorter->bUseThreads = (pSorter->nTask>1);
@@ -1773,7 +1776,7 @@ int sqlite3VdbeSorterWrite(
 
   assert( pCsr->eCurType==CURTYPE_SORTER );
   pSorter = pCsr->uc.pSorter;
-  getVarint32((const u8*)&pVal->z[1], t);
+  getVarint32NR((const u8*)&pVal->z[1], t);
   if( t>0 && t<10 && t!=7 ){
     pSorter->typeMask &= SORTER_TYPE_INTEGER;
   }else if( t>10 && (t & 0x01) ){

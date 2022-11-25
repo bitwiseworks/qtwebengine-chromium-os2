@@ -8,7 +8,9 @@
 
 #include "libANGLE/capture_gles_ext_autogen.h"
 
+#include "libANGLE/capture_gles_2_0_autogen.h"
 #include "libANGLE/capture_gles_3_0_autogen.h"
+#include "libANGLE/capture_gles_3_2_autogen.h"
 
 using namespace angle;
 
@@ -262,7 +264,8 @@ void CaptureDrawElementsBaseVertexOES_indices(const State &glState,
                                               GLint basevertex,
                                               ParamCapture *indicesParam)
 {
-    UNIMPLEMENTED();
+    CaptureDrawElements_indices(glState, isCallValid, modePacked, count, typePacked, indices,
+                                indicesParam);
 }
 
 void CaptureDrawElementsInstancedBaseVertexOES_indices(const State &glState,
@@ -2276,7 +2279,7 @@ void CaptureInsertEventMarkerEXT_marker(const State &glState,
                                         const GLchar *marker,
                                         ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CapturePushGroupMarkerEXT_marker(const State &glState,
@@ -2285,7 +2288,7 @@ void CapturePushGroupMarkerEXT_marker(const State &glState,
                                       const GLchar *marker,
                                       ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CaptureDiscardFramebufferEXT_attachments(const State &glState,
@@ -2362,7 +2365,7 @@ void CaptureGetQueryObjectuivEXT_params(const State &glState,
                                         GLuint *params,
                                         ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    paramCapture->readBufferSizeBytes = sizeof(GLuint);
 }
 
 void CaptureGetQueryivEXT_params(const State &glState,
@@ -2461,7 +2464,7 @@ void CaptureGetnUniformfvEXT_params(const State &glState,
                                     GLfloat *params,
                                     ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    paramCapture->readBufferSizeBytes = bufSize;
 }
 
 void CaptureGetnUniformivEXT_params(const State &glState,
@@ -2472,7 +2475,7 @@ void CaptureGetnUniformivEXT_params(const State &glState,
                                     GLint *params,
                                     ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    paramCapture->readBufferSizeBytes = bufSize;
 }
 
 void CaptureReadnPixelsEXT_data(const State &glState,
@@ -2612,7 +2615,7 @@ void CaptureDebugMessageCallbackKHR_userParam(const State &glState,
                                               const void *userParam,
                                               ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CaptureDebugMessageControlKHR_ids(const State &glState,
@@ -2625,7 +2628,7 @@ void CaptureDebugMessageControlKHR_ids(const State &glState,
                                        GLboolean enabled,
                                        ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CaptureDebugMessageInsertKHR_buf(const State &glState,
@@ -2638,7 +2641,7 @@ void CaptureDebugMessageInsertKHR_buf(const State &glState,
                                       const GLchar *buf,
                                       ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CaptureGetDebugMessageLogKHR_sources(const State &glState,
@@ -2653,7 +2656,7 @@ void CaptureGetDebugMessageLogKHR_sources(const State &glState,
                                           GLchar *messageLog,
                                           ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CaptureGetDebugMessageLogKHR_types(const State &glState,
@@ -2668,7 +2671,7 @@ void CaptureGetDebugMessageLogKHR_types(const State &glState,
                                         GLchar *messageLog,
                                         ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CaptureGetDebugMessageLogKHR_ids(const State &glState,
@@ -2683,7 +2686,7 @@ void CaptureGetDebugMessageLogKHR_ids(const State &glState,
                                       GLchar *messageLog,
                                       ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CaptureGetDebugMessageLogKHR_severities(const State &glState,
@@ -2698,7 +2701,7 @@ void CaptureGetDebugMessageLogKHR_severities(const State &glState,
                                              GLchar *messageLog,
                                              ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CaptureGetDebugMessageLogKHR_lengths(const State &glState,
@@ -2713,7 +2716,7 @@ void CaptureGetDebugMessageLogKHR_lengths(const State &glState,
                                           GLchar *messageLog,
                                           ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CaptureGetDebugMessageLogKHR_messageLog(const State &glState,
@@ -2728,7 +2731,7 @@ void CaptureGetDebugMessageLogKHR_messageLog(const State &glState,
                                              GLchar *messageLog,
                                              ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CaptureGetObjectLabelKHR_length(const State &glState,
@@ -2740,7 +2743,7 @@ void CaptureGetObjectLabelKHR_length(const State &glState,
                                      GLchar *label,
                                      ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CaptureGetObjectLabelKHR_label(const State &glState,
@@ -2752,7 +2755,7 @@ void CaptureGetObjectLabelKHR_label(const State &glState,
                                     GLchar *label,
                                     ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CaptureGetObjectPtrLabelKHR_ptr(const State &glState,
@@ -2763,7 +2766,7 @@ void CaptureGetObjectPtrLabelKHR_ptr(const State &glState,
                                      GLchar *label,
                                      ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CaptureGetObjectPtrLabelKHR_length(const State &glState,
@@ -2774,7 +2777,7 @@ void CaptureGetObjectPtrLabelKHR_length(const State &glState,
                                         GLchar *label,
                                         ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CaptureGetObjectPtrLabelKHR_label(const State &glState,
@@ -2785,7 +2788,7 @@ void CaptureGetObjectPtrLabelKHR_label(const State &glState,
                                        GLchar *label,
                                        ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CaptureGetPointervKHR_params(const State &glState,
@@ -2794,7 +2797,7 @@ void CaptureGetPointervKHR_params(const State &glState,
                                   void **params,
                                   ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CaptureObjectLabelKHR_label(const State &glState,
@@ -2805,7 +2808,7 @@ void CaptureObjectLabelKHR_label(const State &glState,
                                  const GLchar *label,
                                  ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CaptureObjectPtrLabelKHR_ptr(const State &glState,
@@ -2815,7 +2818,7 @@ void CaptureObjectPtrLabelKHR_ptr(const State &glState,
                                   const GLchar *label,
                                   ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CaptureObjectPtrLabelKHR_label(const State &glState,
@@ -2825,7 +2828,7 @@ void CaptureObjectPtrLabelKHR_label(const State &glState,
                                     const GLchar *label,
                                     ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CapturePushDebugGroupKHR_message(const State &glState,
@@ -2836,7 +2839,7 @@ void CapturePushDebugGroupKHR_message(const State &glState,
                                       const GLchar *message,
                                       ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    // Skipped
 }
 
 void CaptureDeleteFencesNV_fencesPacked(const State &glState,
@@ -3111,7 +3114,8 @@ void CaptureTexImage3DOES_pixels(const State &glState,
                                  const void *pixels,
                                  ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    CaptureTexImage3D_pixels(glState, isCallValid, targetPacked, level, internalformat, width,
+                             height, depth, border, format, type, pixels, paramCapture);
 }
 
 void CaptureTexSubImage3DOES_pixels(const State &glState,
@@ -3129,7 +3133,8 @@ void CaptureTexSubImage3DOES_pixels(const State &glState,
                                     const void *pixels,
                                     ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    CaptureTexSubImage3D_pixels(glState, isCallValid, targetPacked, level, xoffset, yoffset,
+                                zoffset, width, height, depth, format, type, pixels, paramCapture);
 }
 
 void CaptureGetSamplerParameterIivOES_params(const State &glState,
@@ -3139,7 +3144,8 @@ void CaptureGetSamplerParameterIivOES_params(const State &glState,
                                              GLint *params,
                                              ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    CaptureGetSamplerParameterIiv_params(glState, isCallValid, sampler, pname, params,
+                                         paramCapture);
 }
 
 void CaptureGetSamplerParameterIuivOES_params(const State &glState,
@@ -3149,7 +3155,8 @@ void CaptureGetSamplerParameterIuivOES_params(const State &glState,
                                               GLuint *params,
                                               ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    CaptureGetSamplerParameterIuiv_params(glState, isCallValid, sampler, pname, params,
+                                          paramCapture);
 }
 
 void CaptureGetTexParameterIivOES_params(const State &glState,
@@ -3159,7 +3166,8 @@ void CaptureGetTexParameterIivOES_params(const State &glState,
                                          GLint *params,
                                          ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    CaptureGetTexParameterIiv_params(glState, isCallValid, targetPacked, pname, params,
+                                     paramCapture);
 }
 
 void CaptureGetTexParameterIuivOES_params(const State &glState,
@@ -3169,7 +3177,8 @@ void CaptureGetTexParameterIuivOES_params(const State &glState,
                                           GLuint *params,
                                           ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    CaptureGetTexParameterIuiv_params(glState, isCallValid, targetPacked, pname, params,
+                                      paramCapture);
 }
 
 void CaptureSamplerParameterIivOES_param(const State &glState,
@@ -3179,7 +3188,7 @@ void CaptureSamplerParameterIivOES_param(const State &glState,
                                          const GLint *param,
                                          ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    CaptureSamplerParameterIiv_param(glState, isCallValid, sampler, pname, param, paramCapture);
 }
 
 void CaptureSamplerParameterIuivOES_param(const State &glState,
@@ -3189,7 +3198,7 @@ void CaptureSamplerParameterIuivOES_param(const State &glState,
                                           const GLuint *param,
                                           ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    CaptureSamplerParameterIuiv_param(glState, isCallValid, sampler, pname, param, paramCapture);
 }
 
 void CaptureTexParameterIivOES_params(const State &glState,
@@ -3199,7 +3208,7 @@ void CaptureTexParameterIivOES_params(const State &glState,
                                       const GLint *params,
                                       ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    CaptureTexParameterIiv_params(glState, isCallValid, targetPacked, pname, params, paramCapture);
 }
 
 void CaptureTexParameterIuivOES_params(const State &glState,
@@ -3209,7 +3218,7 @@ void CaptureTexParameterIuivOES_params(const State &glState,
                                        const GLuint *params,
                                        ParamCapture *paramCapture)
 {
-    UNIMPLEMENTED();
+    CaptureTexParameterIuiv_params(glState, isCallValid, targetPacked, pname, params, paramCapture);
 }
 
 void CaptureGetTexGenfvOES_params(const State &glState,
@@ -3309,6 +3318,17 @@ void CaptureGetRenderbufferImageANGLE_pixels(const State &glState,
                                              GLenum type,
                                              void *pixels,
                                              angle::ParamCapture *paramCapture)
+{
+    UNIMPLEMENTED();
+}
+
+void CaptureBufferStorageEXT_data(const State &glState,
+                                  bool isCallValid,
+                                  BufferBinding targetPacked,
+                                  GLsizeiptr size,
+                                  const void *data,
+                                  GLbitfield flags,
+                                  angle::ParamCapture *paramCapture)
 {
     UNIMPLEMENTED();
 }

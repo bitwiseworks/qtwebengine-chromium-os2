@@ -20,6 +20,7 @@
 #include "base/scoped_native_library.h"
 #include "base/threading/thread.h"
 #include "media/base/audio_buffer.h"
+#include "media/base/callback_registry.h"
 #include "media/base/cdm_config.h"
 #include "media/base/cdm_context.h"
 #include "media/base/cdm_factory.h"
@@ -55,7 +56,6 @@ class MEDIA_EXPORT CdmAdapter : public ContentDecryptionModule,
   // |cdm_created_cb| will be called when the CDM is initialized.
   static void Create(
       const std::string& key_system,
-      const url::Origin& security_origin,
       const CdmConfig& cdm_config,
       CreateCdmFunc create_cdm_func,
       std::unique_ptr<CdmAuxiliaryHelper> helper,
@@ -94,10 +94,9 @@ class MEDIA_EXPORT CdmAdapter : public ContentDecryptionModule,
   // CdmContext implementation.
   std::unique_ptr<CallbackRegistration> RegisterEventCB(EventCB event_cb) final;
   Decryptor* GetDecryptor() final;
-  int GetCdmId() const final;
+  base::Optional<base::UnguessableToken> GetCdmId() const final;
 
   // Decryptor implementation.
-  void RegisterNewKeyCB(StreamType stream_type, NewKeyCB key_added_cb) final;
   void Decrypt(StreamType stream_type,
                scoped_refptr<DecoderBuffer> encrypted,
                DecryptCB decrypt_cb) final;
@@ -155,12 +154,8 @@ class MEDIA_EXPORT CdmAdapter : public ContentDecryptionModule,
   cdm::FileIO* CreateFileIO(cdm::FileIOClient* client) override;
   void RequestStorageId(uint32_t version) override;
 
-  // cdm::Host_11 specific implementation.
-  cdm::CdmProxy* RequestCdmProxy(cdm::CdmProxyClient* client) override;
-
  private:
   CdmAdapter(const std::string& key_system,
-             const url::Origin& security_origin,
              const CdmConfig& cdm_config,
              CreateCdmFunc create_cdm_func,
              std::unique_ptr<CdmAuxiliaryHelper> helper,
@@ -212,7 +207,6 @@ class MEDIA_EXPORT CdmAdapter : public ContentDecryptionModule,
   void OnFileRead(int file_size_bytes);
 
   const std::string key_system_;
-  const std::string origin_string_;
   const CdmConfig cdm_config_;
 
   CreateCdmFunc create_cdm_func_;
@@ -226,6 +220,9 @@ class MEDIA_EXPORT CdmAdapter : public ContentDecryptionModule,
   SessionKeysChangeCB session_keys_change_cb_;
   SessionExpirationUpdateCB session_expiration_update_cb_;
 
+  // CDM origin used in crash reporting.
+  const std::string cdm_origin_;
+
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   scoped_refptr<AudioBufferMemoryPool> pool_;
 
@@ -236,9 +233,7 @@ class MEDIA_EXPORT CdmAdapter : public ContentDecryptionModule,
   DecoderInitCB audio_init_cb_;
   DecoderInitCB video_init_cb_;
 
-  // Callbacks for new keys added.
-  NewKeyCB new_audio_key_cb_;
-  NewKeyCB new_video_key_cb_;
+  CallbackRegistry<EventCB::RunType> event_callbacks_;
 
   // Keep track of audio parameters.
   int audio_samples_per_second_ = 0;
@@ -258,8 +253,6 @@ class MEDIA_EXPORT CdmAdapter : public ContentDecryptionModule,
   // Tracks CDM file IO related states.
   int last_read_file_size_kb_ = 0;
   bool file_size_uma_reported_ = false;
-
-  bool cdm_proxy_created_ = false;
 
   // Used to keep track of promises while the CDM is processing the request.
   CdmPromiseAdapter cdm_promise_adapter_;

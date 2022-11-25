@@ -16,6 +16,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/random_seed.h"
 #include "libavutil/opt.h"
 #include "vulkan.h"
 #include "internal.h"
@@ -59,11 +60,27 @@ static const char overlay_noalpha[] = {
     C(0, }                                                                     )
 };
 
+static const char overlay_alpha[] = {
+    C(0, void overlay_alpha_opaque(int i, ivec2 pos)                           )
+    C(0, {                                                                     )
+    C(1,     vec4 res = texture(main_img[i], pos);                             )
+    C(1,     if ((o_offset[i].x <= pos.x) && (o_offset[i].y <= pos.y) &&
+                 (pos.x < (o_offset[i].x + o_size[i].x)) &&
+                 (pos.y < (o_offset[i].y + o_size[i].y))) {                    )
+    C(2,         vec4 ovr = texture(overlay_img[i], pos - o_offset[i]);        )
+    C(2,         res = ovr * ovr.a + res * (1.0f - ovr.a);                     )
+    C(2,         res.a = 1.0f;                                                 )
+    C(2,         imageStore(output_img[i], pos, res);                          )
+    C(1,     }                                                                 )
+    C(1,     imageStore(output_img[i], pos, res);                              )
+    C(0, }                                                                     )
+};
+
 static av_cold int init_filter(AVFilterContext *ctx)
 {
     int err;
     OverlayVulkanContext *s = ctx->priv;
-    VkSampler *sampler = ff_vk_init_sampler(ctx, 1, VK_FILTER_LINEAR);
+    VkSampler *sampler = ff_vk_init_sampler(ctx, 1, VK_FILTER_NEAREST);
     if (!sampler)
         return AVERROR_EXTERNAL;
 
@@ -71,8 +88,13 @@ static av_cold int init_filter(AVFilterContext *ctx)
     if (!s->pl)
         return AVERROR(ENOMEM);
 
+    s->vkctx.queue_family_idx = s->vkctx.hwctx->queue_family_comp_index;
+    s->vkctx.queue_count = GET_QUEUE_COUNT(s->vkctx.hwctx, 0, 1, 0);
+    s->vkctx.cur_queue_idx = av_get_random_seed() % s->vkctx.queue_count;
+
     { /* Create the shader */
         const int planes = av_pix_fmt_count_planes(s->vkctx.output_format);
+        const int ialpha = av_pix_fmt_desc_get(s->vkctx.input_format)->flags & AV_PIX_FMT_FLAG_ALPHA;
 
         VulkanDescriptorSetBinding desc_i[3] = {
             {
@@ -126,12 +148,16 @@ static av_cold int init_filter(AVFilterContext *ctx)
         RET(ff_vk_add_descriptor_set(ctx, s->pl, shd, &desc_b, 1, 0)); /* set 1 */
 
         GLSLD(   overlay_noalpha                                              );
+        GLSLD(   overlay_alpha                                                );
         GLSLC(0, void main()                                                  );
         GLSLC(0, {                                                            );
         GLSLC(1,     ivec2 pos = ivec2(gl_GlobalInvocationID.xy);             );
         GLSLF(1,     int planes = %i;                                  ,planes);
         GLSLC(1,     for (int i = 0; i < planes; i++) {                       );
-        GLSLC(2,         overlay_noalpha(i, pos);                             );
+        if (ialpha)
+            GLSLC(2,         overlay_alpha_opaque(i, pos);                    );
+        else
+            GLSLC(2,         overlay_noalpha(i, pos);                         );
         GLSLC(1,     }                                                        );
         GLSLC(0, }                                                            );
 
@@ -190,8 +216,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
     }
 
     /* Execution context */
-    RET(ff_vk_create_exec_ctx(ctx, &s->exec,
-                              s->vkctx.hwctx->queue_family_comp_index));
+    RET(ff_vk_create_exec_ctx(ctx, &s->exec));
 
     s->initialized = 1;
 
@@ -205,6 +230,7 @@ static int process_frames(AVFilterContext *avctx, AVFrame *out_f,
                           AVFrame *main_f, AVFrame *overlay_f)
 {
     int err;
+    VkCommandBuffer cmd_buf;
     OverlayVulkanContext *s = avctx->priv;
     int planes = av_pix_fmt_count_planes(s->vkctx.output_format);
 
@@ -215,16 +241,23 @@ static int process_frames(AVFilterContext *avctx, AVFrame *out_f,
     AVHWFramesContext *main_fc = (AVHWFramesContext*)main_f->hw_frames_ctx->data;
     AVHWFramesContext *overlay_fc = (AVHWFramesContext*)overlay_f->hw_frames_ctx->data;
 
+    /* Update descriptors and init the exec context */
+    ff_vk_start_exec_recording(avctx, s->exec);
+    cmd_buf = ff_vk_get_exec_buf(avctx, s->exec);
+
     for (int i = 0; i < planes; i++) {
-        RET(ff_vk_create_imageview(avctx, &s->main_images[i].imageView, main->img[i],
+        RET(ff_vk_create_imageview(avctx, s->exec, &s->main_images[i].imageView,
+                                   main->img[i],
                                    av_vkfmt_from_pixfmt(main_fc->sw_format)[i],
                                    ff_comp_identity_map));
 
-        RET(ff_vk_create_imageview(avctx, &s->overlay_images[i].imageView, overlay->img[i],
+        RET(ff_vk_create_imageview(avctx, s->exec, &s->overlay_images[i].imageView,
+                                   overlay->img[i],
                                    av_vkfmt_from_pixfmt(overlay_fc->sw_format)[i],
                                    ff_comp_identity_map));
 
-        RET(ff_vk_create_imageview(avctx, &s->output_images[i].imageView, out->img[i],
+        RET(ff_vk_create_imageview(avctx, s->exec, &s->output_images[i].imageView,
+                                   out->img[i],
                                    av_vkfmt_from_pixfmt(s->vkctx.output_format)[i],
                                    ff_comp_identity_map));
 
@@ -234,8 +267,6 @@ static int process_frames(AVFilterContext *avctx, AVFrame *out_f,
     }
 
     ff_vk_update_descriptor_set(avctx, s->pl, 0);
-
-    ff_vk_start_exec_recording(avctx, s->exec);
 
     for (int i = 0; i < planes; i++) {
         VkImageMemoryBarrier bar[3] = {
@@ -280,7 +311,7 @@ static int process_frames(AVFilterContext *avctx, AVFrame *out_f,
             },
         };
 
-        vkCmdPipelineBarrier(s->exec->buf, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
                              0, NULL, 0, NULL, FF_ARRAY_ELEMS(bar), bar);
 
@@ -296,7 +327,7 @@ static int process_frames(AVFilterContext *avctx, AVFrame *out_f,
 
     ff_vk_bind_pipeline_exec(avctx, s->exec, s->pl);
 
-    vkCmdDispatch(s->exec->buf,
+    vkCmdDispatch(cmd_buf,
                   FFALIGN(s->vkctx.output_width,  CGROUPS[0])/CGROUPS[0],
                   FFALIGN(s->vkctx.output_height, CGROUPS[1])/CGROUPS[1], 1);
 
@@ -308,14 +339,10 @@ static int process_frames(AVFilterContext *avctx, AVFrame *out_f,
     if (err)
         return err;
 
+    return err;
+
 fail:
-
-    for (int i = 0; i < planes; i++) {
-        ff_vk_destroy_imageview(avctx, &s->main_images[i].imageView);
-        ff_vk_destroy_imageview(avctx, &s->overlay_images[i].imageView);
-        ff_vk_destroy_imageview(avctx, &s->output_images[i].imageView);
-    }
-
+    ff_vk_discard_exec_deps(avctx, s->exec);
     return err;
 }
 

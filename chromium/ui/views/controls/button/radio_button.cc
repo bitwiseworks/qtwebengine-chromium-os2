@@ -4,7 +4,7 @@
 
 #include "ui/views/controls/button/radio_button.h"
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -18,7 +18,7 @@
 namespace views {
 
 RadioButton::RadioButton(const base::string16& label, int group_id)
-    : Checkbox(label, nullptr) {
+    : Checkbox(label) {
   SetGroup(group_id);
 }
 
@@ -108,8 +108,7 @@ void RadioButton::GetViewsInGroupFromParent(int group, Views* views) {
     parent()->GetViewsInGroup(group, views);
 }
 
-BEGIN_METADATA(RadioButton)
-METADATA_PARENT_CLASS(Checkbox)
-END_METADATA()
+BEGIN_METADATA(RadioButton, Checkbox)
+END_METADATA
 
 }  // namespace views

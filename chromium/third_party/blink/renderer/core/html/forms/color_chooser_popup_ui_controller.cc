@@ -29,6 +29,7 @@
 #include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/strings/grit/blink_strings.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/html/forms/chooser_resource_loader.h"
@@ -55,20 +56,26 @@ ColorChooserPopupUIController::ColorChooserPopupUIController(
     : ColorChooserUIController(frame, client),
       chrome_client_(chrome_client),
       popup_(nullptr),
-      locale_(Locale::DefaultLocale()) {}
+      locale_(Locale::DefaultLocale()),
+      eye_dropper_chooser_(frame->DomWindow()) {}
 
 ColorChooserPopupUIController::~ColorChooserPopupUIController() {
   DCHECK(!popup_);
 }
 
-void ColorChooserPopupUIController::Trace(Visitor* visitor) {
+void ColorChooserPopupUIController::Trace(Visitor* visitor) const {
   visitor->Trace(chrome_client_);
+  visitor->Trace(eye_dropper_chooser_);
   ColorChooserUIController::Trace(visitor);
 }
 
 void ColorChooserPopupUIController::OpenUI() {
+#if !defined(TOOLKIT_QT)
   if (client_->ShouldShowSuggestions() ||
       ::features::IsFormControlsRefreshEnabled())
+#else
+  if (client_->ShouldShowSuggestions())
+#endif // !defined(TOOLKIT_QT)
     OpenPopup();
   else
     OpenColorChooser();
@@ -99,7 +106,9 @@ void ColorChooserPopupUIController::WriteColorPickerDocument(
       client_->ElementRectRelativeToViewport(), frame_->View());
 
   PagePopupClient::AddString(
-      "<!DOCTYPE html><head><meta charset='UTF-8'><style>\n", data);
+      "<!DOCTYPE html><head><meta charset='UTF-8'><meta name='color-scheme' "
+      "content='light dark'><style>\n",
+      data);
   data->Append(ChooserResourceLoader::GetPickerCommonStyleSheet());
   data->Append(ChooserResourceLoader::GetColorPickerStyleSheet());
   PagePopupClient::AddString(
@@ -113,9 +122,32 @@ void ColorChooserPopupUIController::WriteColorPickerDocument(
   AddProperty("zoomFactor", ScaledZoomFactor(), data);
   AddProperty("shouldShowColorSuggestionPicker", false, data);
   AddProperty("isEyeDropperEnabled", ::features::IsEyeDropperEnabled(), data);
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   AddProperty("isBorderTransparent", ::features::IsFormControlsRefreshEnabled(),
               data);
+#endif
+  // We don't create PagePopups on Android, so these strings are excluded
+  // from blink_strings.grd on Android to save binary size.  We have to
+  // exclude them here as well to avoid an Android build break.
+#if !defined(OS_ANDROID)
+  AddLocalizedProperty("axColorWellLabel", IDS_AX_COLOR_WELL, data);
+  AddLocalizedProperty("axColorWellRoleDescription",
+                       IDS_AX_COLOR_WELL_ROLEDESCRIPTION, data);
+  AddLocalizedProperty("axHueSliderLabel", IDS_AX_COLOR_HUE_SLIDER, data);
+  AddLocalizedProperty("axHexadecimalEditLabel", IDS_AX_COLOR_EDIT_HEXADECIMAL,
+                       data);
+  AddLocalizedProperty("axRedEditLabel", IDS_AX_COLOR_EDIT_RED, data);
+  AddLocalizedProperty("axGreenEditLabel", IDS_AX_COLOR_EDIT_GREEN, data);
+  AddLocalizedProperty("axBlueEditLabel", IDS_AX_COLOR_EDIT_BLUE, data);
+  AddLocalizedProperty("axHueEditLabel", IDS_AX_COLOR_EDIT_HUE, data);
+  AddLocalizedProperty("axSaturationEditLabel", IDS_AX_COLOR_EDIT_SATURATION,
+                       data);
+  AddLocalizedProperty("axLightnessEditLabel", IDS_AX_COLOR_EDIT_LIGHTNESS,
+                       data);
+  AddLocalizedProperty("axFormatTogglerLabel", IDS_AX_COLOR_FORMAT_TOGGLER,
+                       data);
+#else
+  CHECK(false) << "We should never reach PagePopupClient code on Android";
 #endif
   PagePopupClient::AddString("};\n", data);
   data->Append(ChooserResourceLoader::GetPickerCommonJS());
@@ -135,7 +167,9 @@ void ColorChooserPopupUIController::WriteColorSuggestionPickerDocument(
       client_->ElementRectRelativeToViewport(), frame_->View());
 
   PagePopupClient::AddString(
-      "<!DOCTYPE html><head><meta charset='UTF-8'><style>\n", data);
+      "<!DOCTYPE html><head><meta charset='UTF-8'><meta name='color-scheme' "
+      "content='light dark'><style>\n",
+      data);
   data->Append(ChooserResourceLoader::GetPickerCommonStyleSheet());
   data->Append(ChooserResourceLoader::GetColorSuggestionPickerStyleSheet());
   if (::features::IsFormControlsRefreshEnabled())
@@ -146,9 +180,8 @@ void ColorChooserPopupUIController::WriteColorSuggestionPickerDocument(
       "window.dialogArguments = {\n",
       data);
   PagePopupClient::AddProperty("values", suggestion_values, data);
-  PagePopupClient::AddProperty(
-      "otherColorLabel", GetLocale().QueryString(IDS_FORM_OTHER_COLOR_LABEL),
-      data);
+  PagePopupClient::AddLocalizedProperty("otherColorLabel",
+                                        IDS_FORM_OTHER_COLOR_LABEL, data);
   if (::features::IsFormControlsRefreshEnabled()) {
     PagePopupClient::AddProperty("selectedColor",
                                  client_->CurrentColor().Serialized(), data);
@@ -159,7 +192,7 @@ void ColorChooserPopupUIController::WriteColorSuggestionPickerDocument(
   AddProperty("isFormControlsRefreshEnabled",
               ::features::IsFormControlsRefreshEnabled(), data);
   AddProperty("isEyeDropperEnabled", ::features::IsEyeDropperEnabled(), data);
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   AddProperty("isBorderTransparent", ::features::IsFormControlsRefreshEnabled(),
               data);
 #endif
@@ -200,6 +233,7 @@ void ColorChooserPopupUIController::SetValue(const String& value) {
 
 void ColorChooserPopupUIController::DidClosePopup() {
   popup_ = nullptr;
+  eye_dropper_chooser_.reset();
 
   if (!chooser_)
     EndChooser();
@@ -225,18 +259,33 @@ void ColorChooserPopupUIController::CancelPopup() {
 }
 
 PagePopupController* ColorChooserPopupUIController::CreatePagePopupController(
+    Page& page,
     PagePopup& popup) {
-  return MakeGarbageCollected<ColorPagePopupController>(popup, this);
+  return MakeGarbageCollected<ColorPagePopupController>(page, popup, this);
 }
 
 void ColorChooserPopupUIController::EyeDropperResponseHandler(bool success,
                                                               uint32_t color) {
-  // TODO(crbug.com/992297): update the color popup with the chosen value.
+  eye_dropper_chooser_.reset();
+
+  if (!popup_)
+    return;
+  // Notify the popup that there is a response from the eye dropper.
+  scoped_refptr<SharedBuffer> data = SharedBuffer::Create();
+  PagePopupClient::AddString("window.updateData = {\n", data.get());
+  AddProperty("success", success, data.get());
+  AddProperty("color", Color(color).Serialized(), data.get());
+  PagePopupClient::AddString("}\n", data.get());
+  popup_->PostMessageToPopup(String::FromUTF8(data->Data(), data->size()));
 }
 
 void ColorChooserPopupUIController::OpenEyeDropper() {
+  if (!LocalFrame::HasTransientUserActivation(frame_))
+    return;
+
   frame_->GetBrowserInterfaceBroker().GetInterface(
-      eye_dropper_chooser_.BindNewPipeAndPassReceiver());
+      eye_dropper_chooser_.BindNewPipeAndPassReceiver(
+          frame_->GetTaskRunner(TaskType::kUserInteraction)));
   eye_dropper_chooser_.set_disconnect_handler(WTF::Bind(
       &ColorChooserPopupUIController::EndChooser, WrapWeakPersistent(this)));
   eye_dropper_chooser_->Choose(

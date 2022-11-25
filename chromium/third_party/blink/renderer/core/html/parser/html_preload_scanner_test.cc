@@ -11,6 +11,7 @@
 #include "third_party/blink/public/platform/web_runtime_features.h"
 #include "third_party/blink/public/platform/web_url_loader_mock_factory.h"
 #include "third_party/blink/renderer/core/css/media_values_cached.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/html/cross_origin_attribute.h"
 #include "third_party/blink/renderer/core/html/parser/html_parser_options.h"
@@ -110,17 +111,18 @@ class HTMLMockHTMLResourcePreloader : public ResourcePreloader {
       EXPECT_EQ(url, preload_request_->ResourceURL());
       EXPECT_EQ(base_url, preload_request_->BaseURL().GetString());
       EXPECT_EQ(width, preload_request_->ResourceWidth());
-      EXPECT_EQ(preferences.ShouldSend(mojom::WebClientHintsType::kDpr),
+      EXPECT_EQ(
+          preferences.ShouldSend(network::mojom::WebClientHintsType::kDpr),
+          preload_request_->Preferences().ShouldSend(
+              network::mojom::WebClientHintsType::kDpr));
+      EXPECT_EQ(preferences.ShouldSend(
+                    network::mojom::WebClientHintsType::kResourceWidth),
                 preload_request_->Preferences().ShouldSend(
-                    mojom::WebClientHintsType::kDpr));
-      EXPECT_EQ(
-          preferences.ShouldSend(mojom::WebClientHintsType::kResourceWidth),
-          preload_request_->Preferences().ShouldSend(
-              mojom::WebClientHintsType::kResourceWidth));
-      EXPECT_EQ(
-          preferences.ShouldSend(mojom::WebClientHintsType::kViewportWidth),
-          preload_request_->Preferences().ShouldSend(
-              mojom::WebClientHintsType::kViewportWidth));
+                    network::mojom::WebClientHintsType::kResourceWidth));
+      EXPECT_EQ(preferences.ShouldSend(
+                    network::mojom::WebClientHintsType::kViewportWidth),
+                preload_request_->Preferences().ShouldSend(
+                    network::mojom::WebClientHintsType::kViewportWidth));
     }
   }
 
@@ -193,9 +195,11 @@ class HTMLMockHTMLResourcePreloader : public ResourcePreloader {
   }
 
   void LazyLoadImageEnabledVerification(bool expected_enabled) {
-    ASSERT_TRUE(preload_request_.get());
-    EXPECT_EQ(expected_enabled,
-              preload_request_->IsLazyLoadImageEnabledForTesting());
+    if (expected_enabled) {
+      EXPECT_FALSE(preload_request_) << preload_request_->ResourceURL();
+    } else {
+      ASSERT_TRUE(preload_request_.get());
+    }
   }
 
  protected:
@@ -228,7 +232,7 @@ class HTMLPreloadScannerTest : public PageTestBase {
     data.device_pixel_ratio = 2.0;
     data.color_bits_per_component = 24;
     data.monochrome_bits_per_component = 0;
-    data.primary_pointer_type = kPointerTypeFine;
+    data.primary_pointer_type = ui::POINTER_TYPE_FINE;
     data.default_font_size = 16;
     data.three_d_enabled = true;
     data.media_type = media_type_names::kScreen;
@@ -253,7 +257,7 @@ class HTMLPreloadScannerTest : public PageTestBase {
                                                         kViewportEnabled);
     GetDocument().GetSettings()->SetDoHtmlPreloadScanning(preload_state ==
                                                           kPreloadEnabled);
-    GetDocument().SetReferrerPolicy(document_referrer_policy);
+    GetFrame().DomWindow()->SetReferrerPolicy(document_referrer_policy);
     scanner_ = std::make_unique<HTMLPreloadScanner>(
         options, document_url,
         std::make_unique<CachedDocumentParameters>(&GetDocument()),
@@ -612,14 +616,14 @@ TEST_F(HTMLPreloadScannerTest, testMetaAcceptCH) {
   ClientHintsPreferences resource_width;
   ClientHintsPreferences all;
   ClientHintsPreferences viewport_width;
-  dpr.SetShouldSendForTesting(mojom::WebClientHintsType::kDpr);
-  all.SetShouldSendForTesting(mojom::WebClientHintsType::kDpr);
-  resource_width.SetShouldSendForTesting(
-      mojom::WebClientHintsType::kResourceWidth);
-  all.SetShouldSendForTesting(mojom::WebClientHintsType::kResourceWidth);
-  viewport_width.SetShouldSendForTesting(
-      mojom::WebClientHintsType::kViewportWidth);
-  all.SetShouldSendForTesting(mojom::WebClientHintsType::kViewportWidth);
+  dpr.SetShouldSend(network::mojom::WebClientHintsType::kDpr);
+  all.SetShouldSend(network::mojom::WebClientHintsType::kDpr);
+  resource_width.SetShouldSend(
+      network::mojom::WebClientHintsType::kResourceWidth);
+  all.SetShouldSend(network::mojom::WebClientHintsType::kResourceWidth);
+  viewport_width.SetShouldSend(
+      network::mojom::WebClientHintsType::kViewportWidth);
+  all.SetShouldSend(network::mojom::WebClientHintsType::kViewportWidth);
   PreloadScannerTestCase test_cases[] = {
       {"http://example.test",
        "<meta http-equiv='accept-ch' content='bla'><img srcset='bla.gif 320w, "
@@ -678,9 +682,9 @@ TEST_F(HTMLPreloadScannerTest, testMetaAcceptCH) {
 
 TEST_F(HTMLPreloadScannerTest, testMetaAcceptCHInsecureDocument) {
   ClientHintsPreferences all;
-  all.SetShouldSendForTesting(mojom::WebClientHintsType::kDpr);
-  all.SetShouldSendForTesting(mojom::WebClientHintsType::kResourceWidth);
-  all.SetShouldSendForTesting(mojom::WebClientHintsType::kViewportWidth);
+  all.SetShouldSend(network::mojom::WebClientHintsType::kDpr);
+  all.SetShouldSend(network::mojom::WebClientHintsType::kResourceWidth);
+  all.SetShouldSend(network::mojom::WebClientHintsType::kViewportWidth);
 
   const PreloadScannerTestCase expect_no_client_hint = {
       "http://example.test",
@@ -1215,12 +1219,9 @@ TEST_F(HTMLPreloadScannerTest, LazyLoadImage_DisabledForSmallImages) {
   ScopedLazyImageLoadingForTest scoped_lazy_image_loading_for_test(true);
   ScopedAutomaticLazyImageLoadingForTest
       scoped_automatic_lazy_image_loading_for_test(true);
-  ScopedLazyImageLoadingMetadataFetchForTest
-      scoped_lazy_image_loading_metadata_fetch_for_test(true);
   ScopedRestrictAutomaticLazyImageLoadingToDataSaverForTest
       scoped_restrict_automatic_lazy_image_loading_to_data_saver_for_test(
           false);
-  GetDocument().GetSettings()->SetLazyLoadEnabled(true);
   RunSetUp(kViewportEnabled);
   LazyLoadImageTestCase test_cases[] = {
       {"<img src='foo.jpg'>", true},
@@ -1240,7 +1241,6 @@ TEST_F(HTMLPreloadScannerTest, LazyLoadImage_DisabledForSmallImages) {
 
 TEST_F(HTMLPreloadScannerTest, LazyLoadImage_FeatureDisabledWithAttribute) {
   ScopedLazyImageLoadingForTest scoped_lazy_image_loading_for_test(false);
-  GetDocument().GetSettings()->SetLazyLoadEnabled(true);
   RunSetUp(kViewportEnabled);
   LazyLoadImageTestCase test_cases[] = {
       {"<img src='foo.jpg' loading='auto'>", false},
@@ -1256,12 +1256,9 @@ TEST_F(HTMLPreloadScannerTest,
   ScopedLazyImageLoadingForTest scoped_lazy_image_loading_for_test(true);
   ScopedAutomaticLazyImageLoadingForTest
       scoped_automatic_lazy_image_loading_for_test(true);
-  ScopedLazyImageLoadingMetadataFetchForTest
-      scoped_lazy_image_loading_metadata_fetch_for_test(true);
   ScopedRestrictAutomaticLazyImageLoadingToDataSaverForTest
       scoped_restrict_automatic_lazy_image_loading_to_data_saver_for_test(
           false);
-  GetDocument().GetSettings()->SetLazyLoadEnabled(true);
   RunSetUp(kViewportEnabled);
   LazyLoadImageTestCase test_cases[] = {
       {"<img src='foo.jpg' loading='auto'>", true},
@@ -1279,9 +1276,6 @@ TEST_F(HTMLPreloadScannerTest,
 TEST_F(HTMLPreloadScannerTest,
        LazyLoadImage_FeatureExplicitEnabledWithAttribute) {
   ScopedLazyImageLoadingForTest scoped_lazy_image_loading_for_test(true);
-  ScopedLazyImageLoadingMetadataFetchForTest
-      scoped_lazy_image_loading_metadata_fetch_for_test(true);
-  GetDocument().GetSettings()->SetLazyLoadEnabled(true);
   RunSetUp(kViewportEnabled);
   LazyLoadImageTestCase test_cases[] = {
       {"<img src='foo.jpg' loading='auto'>", false},
@@ -1298,12 +1292,9 @@ TEST_F(HTMLPreloadScannerTest,
   ScopedLazyImageLoadingForTest scoped_lazy_image_loading_for_test(true);
   ScopedAutomaticLazyImageLoadingForTest
       scoped_automatic_lazy_image_loading_for_test(true);
-  ScopedLazyImageLoadingMetadataFetchForTest
-      scoped_lazy_image_loading_metadata_fetch_for_test(true);
   ScopedRestrictAutomaticLazyImageLoadingToDataSaverForTest
       scoped_restrict_automatic_lazy_image_loading_to_data_saver_for_test(
           false);
-  GetDocument().GetSettings()->SetLazyLoadEnabled(true);
   RunSetUp(kViewportEnabled);
   PreloadScannerTestCase test_cases[] = {
       {"http://example.test", "<img src='foo.jpg' height='20px' width='20px'>",
@@ -1341,9 +1332,6 @@ TEST_F(HTMLPreloadScannerTest,
        LazyLoadImage_FeatureExplicitPreloadForLargeImages) {
   // Large images should not be preloaded, when loading is lazy.
   ScopedLazyImageLoadingForTest scoped_lazy_image_loading_for_test(true);
-  ScopedLazyImageLoadingMetadataFetchForTest
-      scoped_lazy_image_loading_metadata_fetch_for_test(true);
-  GetDocument().GetSettings()->SetLazyLoadEnabled(true);
   RunSetUp(kViewportEnabled);
   PreloadScannerTestCase test_cases[] = {
       {"http://example.test",
@@ -1369,42 +1357,29 @@ TEST_F(HTMLPreloadScannerTest,
     Test(test_case);
 }
 
+// TODO(domfarolino): Before merging, can we just delete this test, since we no
+// longer have metadata fetching?
 TEST_F(HTMLPreloadScannerTest, LazyLoadImage_DisableMetadataFetch) {
-  GetDocument().GetSettings()->SetLazyLoadEnabled(true);
   struct TestCase {
-    bool metadata_fetch_feature_enabled;
     bool automatic_lazy_image_loading_enabled;
     const char* loading_attr_value;
     bool expected_is_preload;
-    // If preload happens, whether it is a fetch of placeholder or full image.
-    bool expected_is_placeholder_fetch;
   };
   const TestCase test_cases[] = {
-      // The lazyload eligible cases should not trigger any preload when
-      // metadata fetch feature disabled, and trigger placeholder fetch if
-      // metadata fetch feature is active.
-      {false, false, "lazy", false, false},
-      {false, true, "lazy", false, false},
-      {false, true, "auto", false, false},
-      {true, false, "lazy", true, true},
-      {true, true, "lazy", true, true},
-      {true, true, "auto", true, true},
+      // The lazyload eligible cases should not trigger a preload.
+      {false, "lazy", false},
+      {true, "lazy", false},
+      {true, "auto", false},
 
       // Lazyload ineligible case.
-      {false, false, "auto", true, false},
-      {true, false, "auto", true, false},
+      {false, "auto", true},
 
       // Full image should be fetched when loading='eager' irrespective of
-      // automatic lazyload or metadata fetch feature states.
-      {false, false, "eager", true, false},
-      {false, true, "eager", true, false},
-      {true, false, "eager", true, false},
-      {true, true, "eager", true, false},
+      // automatic lazyload feature state.
+      {false, "eager", true},
+      {true, "eager", true},
   };
   for (const auto& test_case : test_cases) {
-    ScopedLazyImageLoadingMetadataFetchForTest
-        scoped_lazy_image_loading_metadata_fetch_for_test(
-            test_case.metadata_fetch_feature_enabled);
     ScopedAutomaticLazyImageLoadingForTest
         scoped_automatic_lazy_image_loading_for_test(
             test_case.automatic_lazy_image_loading_enabled);
@@ -1415,8 +1390,7 @@ TEST_F(HTMLPreloadScannerTest, LazyLoadImage_DisableMetadataFetch) {
     const std::string img_html = base::StringPrintf(
         "<img src='foo.jpg' loading='%s'>", test_case.loading_attr_value);
     if (test_case.expected_is_preload) {
-      LazyLoadImageTestCase test_preload = {
-          img_html.c_str(), test_case.expected_is_placeholder_fetch};
+      LazyLoadImageTestCase test_preload = {img_html.c_str(), false};
       Test(test_preload);
     } else {
       PreloadScannerTestCase test_no_preload = {
@@ -1425,6 +1399,57 @@ TEST_F(HTMLPreloadScannerTest, LazyLoadImage_DisableMetadataFetch) {
       Test(test_no_preload);
     }
   }
+}
+
+TEST_F(HTMLPreloadScannerTest,
+       LazyLoadImage_FirstKImagesNotAppliesForExplicit) {
+  ScopedAutomaticLazyImageLoadingForTest
+      scoped_automatic_lazy_image_loading_for_test(false);
+  ScopedRestrictAutomaticLazyImageLoadingToDataSaverForTest
+      scoped_restrict_automatic_lazy_image_loading_to_data_saver_for_test(
+          false);
+  GetDocument().GetSettings()->SetLazyImageFirstKFullyLoadUnknown(1);
+  RunSetUp(kViewportEnabled);
+
+  // Neither of the images should be preloaded.
+  LazyLoadImageTestCase test1 = {"<img src='foo.jpg' loading='lazy'>", true};
+  Test(test1);
+  LazyLoadImageTestCase test2 = {"<img src='bar.jpg' loading='lazy'>", true};
+  Test(test2);
+}
+
+TEST_F(HTMLPreloadScannerTest, LazyLoadImage_FirstKImagesAppliesForAutomatic) {
+  ScopedAutomaticLazyImageLoadingForTest
+      scoped_automatic_lazy_image_loading_for_test(true);
+  ScopedRestrictAutomaticLazyImageLoadingToDataSaverForTest
+      scoped_restrict_automatic_lazy_image_loading_to_data_saver_for_test(
+          false);
+  GetDocument().GetSettings()->SetLazyImageFirstKFullyLoadUnknown(1);
+  RunSetUp(kViewportEnabled);
+
+  // Only the first image should get preloaded
+  LazyLoadImageTestCase test1 = {"<img src='foo.jpg'>", false};
+  Test(test1);
+  LazyLoadImageTestCase test2 = {"<img src='bar.jpg'>", true};
+  Test(test2);
+}
+
+TEST_F(HTMLPreloadScannerTest,
+       LazyLoadImage_ExplicitImageCountedForFirstKImages) {
+  ScopedAutomaticLazyImageLoadingForTest
+      scoped_automatic_lazy_image_loading_for_test(true);
+  ScopedRestrictAutomaticLazyImageLoadingToDataSaverForTest
+      scoped_restrict_automatic_lazy_image_loading_to_data_saver_for_test(
+          false);
+  GetDocument().GetSettings()->SetLazyImageFirstKFullyLoadUnknown(1);
+  RunSetUp(kViewportEnabled);
+
+  // The first image should be counted towards first K images limit, even though
+  // it has loading='lazy'.
+  LazyLoadImageTestCase test1 = {"<img src='foo.jpg' loading='lazy'>", true};
+  Test(test1);
+  LazyLoadImageTestCase test2 = {"<img src='bar.jpg'>", true};
+  Test(test2);
 }
 
 }  // namespace blink

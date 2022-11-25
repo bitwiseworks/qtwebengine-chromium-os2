@@ -63,8 +63,8 @@
 #include "third_party/blink/public/web/web_plugin.h"
 #include "ui/accessibility/ax_mode.h"
 #include "ui/base/cursor/cursor.h"
+#include "ui/base/cursor/mojom/cursor_type.mojom-shared.h"
 #include "ui/base/ime/text_input_type.h"
-#include "ui/base/mojom/cursor_type.mojom-shared.h"
 #include "ui/gfx/geometry/rect.h"
 #include "url/gurl.h"
 #include "v8/include/v8.h"
@@ -77,7 +77,6 @@ class WebInputEvent;
 class WebMouseEvent;
 class WebPluginContainer;
 class WebURLResponse;
-struct WebImeTextSpan;
 struct WebURLError;
 struct WebPrintParams;
 }  // namespace blink
@@ -234,7 +233,7 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   bool HandleCompositionStart(const base::string16& text);
   bool HandleCompositionUpdate(
       const base::string16& text,
-      const std::vector<blink::WebImeTextSpan>& ime_text_spans,
+      const std::vector<ui::ImeTextSpan>& ime_text_spans,
       int selection_start,
       int selection_end);
   bool HandleCompositionEnd(const base::string16& text);
@@ -248,7 +247,6 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
 
   // Notifications about focus changes, see has_webkit_focus_ below.
   void SetWebKitFocus(bool has_focus);
-  void SetContentAreaFocus(bool has_focus);
 
   // Notification about page visibility. The default is "visible".
   void PageVisibilityChanged(bool is_visible);
@@ -522,6 +520,8 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   // Should be used only for logging.
   bool is_flash_plugin() const { return is_flash_plugin_; }
 
+  bool SupportsKeyboardFocus();
+
  private:
   friend class base::RefCounted<PepperPluginInstanceImpl>;
   friend class PpapiPluginInstanceTest;
@@ -628,7 +628,7 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   bool SendCompositionEventWithImeTextSpanInformationToPlugin(
       PP_InputEvent_Type type,
       const base::string16& text,
-      const std::vector<blink::WebImeTextSpan>& ime_text_spans,
+      const std::vector<ui::ImeTextSpan>& ime_text_spans,
       int selection_start,
       int selection_end);
 
@@ -744,12 +744,8 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   scoped_refptr<PPB_Graphics3D_Impl> bound_graphics_3d_;
   PepperGraphics2DHost* bound_graphics_2d_platform_;
 
-  // We track two types of focus, one from WebKit, which is the focus among
-  // all elements of the page, one one from the browser, which is whether the
-  // tab/window has focus. We tell the plugin it has focus only when both of
-  // these values are set to true.
+  // Whether the plugin has focus or not.
   bool has_webkit_focus_;
-  bool has_content_area_focus_;
 
   // The id of the current find operation, or -1 if none is in process.
   int find_identifier_;

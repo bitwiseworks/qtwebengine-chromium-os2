@@ -15,6 +15,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/perf/perf_result_reporter.h"
 #include "third_party/skia/include/core/SkSurface.h"
+#include "third_party/skia/include/gpu/GrDirectContext.h"
 
 namespace cc {
 namespace {
@@ -157,7 +158,7 @@ TEST_P(GpuImageDecodeCachePerfTestNoSw, DecodeWithMips) {
       surface->getCanvas()->drawImageRect(decoded_image.image().get(),
                                           SkRect::MakeWH(1024, 2048),
                                           SkRect::MakeWH(614, 1229), &paint);
-      surface->flush();
+      surface->flushAndSubmit();
     }
 
     cache_->DrawWithImageFinished(image, decoded_image);

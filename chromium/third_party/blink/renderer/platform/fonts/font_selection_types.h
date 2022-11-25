@@ -26,6 +26,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_FONT_SELECTION_TYPES_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_FONT_SELECTION_TYPES_H_
 
+#include "base/numerics/ranges.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/hash_table_deleted_value_type.h"
@@ -47,13 +48,16 @@ class PLATFORM_EXPORT FontSelectionValue {
   FontSelectionValue() = default;
 
   // Explicit because it is lossy.
-  explicit FontSelectionValue(int x) : backing_(x * fractionalEntropy) {}
+  explicit FontSelectionValue(int x)
+      : backing_(clampTo<int16_t>(x * fractionalEntropy)) {}
 
   // Explicit because it is lossy.
-  explicit FontSelectionValue(float x) : backing_(x * fractionalEntropy) {}
+  explicit FontSelectionValue(float x)
+      : backing_(clampTo<int16_t>(x * fractionalEntropy)) {}
 
   // Explicit because it is lossy.
-  explicit FontSelectionValue(double x) : backing_(x * fractionalEntropy) {}
+  explicit FontSelectionValue(double x)
+      : backing_(clampTo<int16_t>(x * fractionalEntropy)) {}
 
   operator float() const {
     // floats have 23 fractional bits, but only 14 fractional bits are
@@ -341,11 +345,7 @@ struct FontSelectionRange {
   }
 
   FontSelectionValue clampToRange(FontSelectionValue selection_value) const {
-    if (selection_value < minimum)
-      return minimum;
-    if (selection_value > maximum)
-      return maximum;
-    return selection_value;
+    return base::ClampToRange(selection_value, minimum, maximum);
   }
 
   FontSelectionValue minimum{FontSelectionValue(1)};

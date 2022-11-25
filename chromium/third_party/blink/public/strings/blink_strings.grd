@@ -70,6 +70,7 @@ below:
       <output filename="blink_strings_pa.pak" type="data_package" lang="pa" />
       <output filename="blink_strings_si.pak" type="data_package" lang="si" />
       <output filename="blink_strings_sq.pak" type="data_package" lang="sq" />
+      <output filename="blink_strings_sr-Latn.pak" type="data_package" lang="sr-Latn" />
       <output filename="blink_strings_ur.pak" type="data_package" lang="ur" />
       <output filename="blink_strings_uz.pak" type="data_package" lang="uz" />
       <output filename="blink_strings_zh-HK.pak" type="data_package" lang="zh-HK" />
@@ -314,6 +315,43 @@ below:
       <message name="IDS_AX_CALENDAR_WEEK_DESCRIPTION" desc="Accessible description of a button to select a specific week.">
         <ph name="WEEK">$1<ex>Week 38, 2014</ex></ph>, starting on <ph name="WEEK_START_DATE">$2<ex>September 15, 2014</ex></ph>
       </message>
+
+      <!-- Localized labels for the color input popup.  Exclude from Android to save binary size since Android uses a native popup. -->
+      <if expr="not is_android">
+        <message name="IDS_AX_COLOR_EDIT_BLUE" desc="Accessibility label of the blue channel edit box in a color picker popup">
+          Blue channel
+        </message>
+        <message name="IDS_AX_COLOR_EDIT_GREEN" desc="Accessibility label of the green channel edit box in a color picker popup">
+          Green channel
+        </message>
+        <message name="IDS_AX_COLOR_EDIT_HEXADECIMAL" desc="Accessibility label of the hexadecimal color value edit box in a color picker popup">
+          Hexadecimal color value
+        </message>
+        <message name="IDS_AX_COLOR_EDIT_HUE" desc="Accessibility label of the hue edit box in a color picker popup">
+          Hue
+        </message>
+        <message name="IDS_AX_COLOR_EDIT_LIGHTNESS" desc="Accessibility label of the lightness edit box in a color picker popup">
+          Lightness
+        </message>
+        <message name="IDS_AX_COLOR_EDIT_RED" desc="Accessibility label of the red channel edit box in a color picker popup">
+          Red channel
+        </message>
+        <message name="IDS_AX_COLOR_EDIT_SATURATION" desc="Accessibility label of the saturation edit box in a color picker popup">
+          Saturation
+        </message>
+        <message name="IDS_AX_COLOR_FORMAT_TOGGLER" desc="Accessibility label of the format toggler spinbutton in a color picker popup">
+          Format toggler
+        </message>
+        <message name="IDS_AX_COLOR_HUE_SLIDER" desc="Accessibility label of the color well in a color picker poup">
+          Hue slider
+        </message>
+        <message name="IDS_AX_COLOR_WELL" desc="Accessibility label of the color well in a color picker poup">
+          Color well
+        </message>
+        <message name="IDS_AX_COLOR_WELL_ROLEDESCRIPTION" desc="Accessibility description of the color well for choosing saturation and lighness in a color picker popup">
+          Color well with two-dimensional slider for selecting saturation and lightness
+        </message>
+      </if>
 
       <!-- Localized names for accessibility roles -->
       <message name="IDS_AX_ROLE_ARTICLE" desc="Accessibility role description for article">
@@ -668,9 +706,6 @@ below:
         <message name="IDS_AX_ROLE_MENU_BAR" desc="Accessibility role description for a menu bar">
           menu bar
         </message>
-        <message name="IDS_AX_ROLE_MENU_BUTTON" desc="Accessibility role description for a menu button, a button that opens a menu">
-          menu button
-        </message>
         <message name="IDS_AX_ROLE_MENU_ITEM" desc="Accessibility role description for a menu item">
           menu item
         </message>
@@ -742,6 +777,27 @@ below:
         </message>
         <message name="IDS_AX_ROLE_TREE_ITEM" desc="Accessibility role description for a tree item">
           tree item
+        </message>
+        <message name="IDS_AX_MULTISELECTABLE_STATE_DESCRIPTION" desc="Accessibility state description for a multiselectable node when some children are selected">
+          multiselectable, <ph name="SELECTED">$1<ex>3</ex></ph> of <ph name="COUNT">$2<ex>10</ex></ph> selected.
+        </message>
+        <message name="IDS_AX_MULTISELECTABLE_STATE_DESCRIPTION_NONE" desc="Accessibility state description for a multiselectable node when no children are selected">
+          multiselectable, none selected.
+        </message>
+        <message name="IDS_AX_TOGGLE_BUTTON_ON" desc="Accessibility state description for a toggle button when it is in the on/checked state">
+          On
+        </message>
+        <message name="IDS_AX_TOGGLE_BUTTON_OFF" desc="Accessibility state description for a toggle button when it is in the off/unchecked state">
+          Off
+        </message>
+        <message name="IDS_AX_CHECKBOX_PARTIALLY_CHECKED" desc="Accessibility state description for a checkbox that is in the partially checked state">
+          Partially Checked
+        </message>
+        <message name="IDS_AX_LIST_BOX_STATE_DESCRIPTION" desc="Accessibility state description for a list box of items">
+          <ph name="COUNT">$1<ex>3</ex></ph> items
+        </message>
+        <message name="IDS_AX_LIST_BOX_ITEM_STATE_DESCRIPTION" desc="Accessibility state description for an item that is part of a list box">
+          in list, item <ph name="INDEX">$1<ex>1</ex></ph> of <ph name="COUNT">$2<ex>3</ex></ph>
         </message>
       </if>
 
@@ -969,6 +1025,12 @@ below:
       </message>
       <message name="IDS_FORM_VALIDATION_TYPE_MISMATCH_MULTIPLE_EMAIL" desc="Heading or short sentence shown there is a field which accepts multiple e-mail addresses and a user specified a value which is not a comma-separated e-mail addresses.">
         Please enter a comma separated list of email addresses.
+      </message>
+      <message name="IDS_FORM_VALIDATION_VALUE_NOT_EQUAL" desc="Heading or short sentence shown when a form control value in a webpage needs to be equal to a minimum and maximum value specified by the page author, but a user specified a too small or large value.">
+        Value must be <ph name="VALUE">$1<ex>1</ex></ph>.
+      </message>
+      <message name="IDS_FORM_VALIDATION_VALUE_NOT_EQUAL_DATETIME" desc="Heading or short sentence shown when a form control value in a webpage needs to be equal to a minimum and maximum date/time value specified by the page author, but a user specified an earlier or later date/time.">
+        Value must be <ph name="VALUE_DATE_OR_TIME">$1<ex>02/09/2020</ex></ph>.
       </message>
       <message name="IDS_FORM_VALIDATION_RANGE_UNDERFLOW" desc="Heading or short sentence shown when a form control value in a webpage needs to be larger than or equal to a minimum value specified by the page author, but a user specified a too small value.">
         Value must be greater than or equal to <ph name="MINIMUM">$1<ex>0</ex></ph>.

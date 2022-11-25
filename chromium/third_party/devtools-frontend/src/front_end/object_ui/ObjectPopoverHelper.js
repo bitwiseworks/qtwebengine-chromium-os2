@@ -28,6 +28,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Components from '../components/components.js';
 import * as SDK from '../sdk/sdk.js';
 import * as UI from '../ui/ui.js';
@@ -75,7 +78,8 @@ export class ObjectPopoverHelper {
         customPreviewComponent.expandIfPossible();
         popoverContentElement = customPreviewComponent.element;
       } else {
-        popoverContentElement = createElementWithClass('div', 'object-popover-content');
+        popoverContentElement = document.createElement('div');
+        popoverContentElement.classList.add('object-popover-content');
         UI.Utils.appendStyle(popoverContentElement, 'object_ui/objectPopover.css');
         const titleElement = popoverContentElement.createChild('div', 'monospace object-popover-title');
         titleElement.createChild('span').textContent = description;
@@ -86,6 +90,7 @@ export class ObjectPopoverHelper {
         section.titleLessMode();
         popoverContentElement.appendChild(section.element);
       }
+      popoverContentElement.dataset.stableNameForTest = 'object-popover-content';
       popover.setMaxContentSize(new UI.Geometry.Size(300, 250));
       popover.setSizeBehavior(UI.GlassPane.SizeBehavior.SetExactSize);
       popover.contentElement.appendChild(popoverContentElement);
@@ -93,6 +98,7 @@ export class ObjectPopoverHelper {
     }
 
     popoverContentElement = createElement('span');
+    popoverContentElement.dataset.stableNameForTest = 'object-popover-content';
     UI.Utils.appendStyle(popoverContentElement, 'object_ui/objectValue.css');
     UI.Utils.appendStyle(popoverContentElement, 'object_ui/objectPopover.css');
     const valueElement = popoverContentElement.createChild('span', 'monospace object-value-' + result.type);
@@ -115,7 +121,8 @@ export class ObjectPopoverHelper {
       return null;
     }
 
-    const container = createElementWithClass('div', 'object-popover-container');
+    const container = document.createElement('div');
+    container.classList.add('object-popover-container');
     const title = container.createChild('div', 'function-popover-title source-code');
     const functionName = title.createChild('span', 'function-name');
     functionName.textContent = UI.UIUtils.beautifyFunctionName(response.functionName);
@@ -125,7 +132,7 @@ export class ObjectPopoverHelper {
     const sourceURL = rawLocation && rawLocation.script() && rawLocation.script().sourceURL;
     let linkifier = null;
     if (sourceURL) {
-      linkifier = new Components.Linkifier.Linkifier();
+      linkifier = new Components.Linkifier.Linkifier(undefined, undefined, popover.positionContent.bind(popover));
       linkContainer.appendChild(
           linkifier.linkifyRawLocation(/** @type {!SDK.DebuggerModel.Location} */ (rawLocation), sourceURL));
     }

@@ -56,6 +56,53 @@ enum QuicRstStreamErrorCode {
   QUIC_STREAM_TTL_EXPIRED,
   // The stream received data that goes beyond its close offset.
   QUIC_DATA_AFTER_CLOSE_OFFSET,
+  // Peer violated protocol requirements in a way which does not match a more
+  // specific error code, or endpoint declines to use the more specific error
+  // code.
+  QUIC_STREAM_GENERAL_PROTOCOL_ERROR,
+  // An internal error has occurred.
+  QUIC_STREAM_INTERNAL_ERROR,
+  // Peer created a stream that will not be accepted.
+  QUIC_STREAM_STREAM_CREATION_ERROR,
+  // A stream required by the connection was closed or reset.
+  QUIC_STREAM_CLOSED_CRITICAL_STREAM,
+  // A frame was received which was not permitted in the current state or on the
+  // current stream.
+  QUIC_STREAM_FRAME_UNEXPECTED,
+  // A frame that fails to satisfy layout requirements or with an invalid size
+  // was received.
+  QUIC_STREAM_FRAME_ERROR,
+  // Peer exhibits a behavior that might be generating excessive load.
+  QUIC_STREAM_EXCESSIVE_LOAD,
+  // A Stream ID or Push ID was used incorrectly, such as exceeding a limit,
+  // reducing a limit, or being reused.
+  QUIC_STREAM_ID_ERROR,
+  // Error in the payload of a SETTINGS frame.
+  QUIC_STREAM_SETTINGS_ERROR,
+  // No SETTINGS frame was received at the beginning of the control stream.
+  QUIC_STREAM_MISSING_SETTINGS,
+  // A server rejected a request without performing any application processing.
+  QUIC_STREAM_REQUEST_REJECTED,
+  // The client's stream terminated without containing a fully-formed request.
+  QUIC_STREAM_REQUEST_INCOMPLETE,
+  // The connection established in response to a CONNECT request was reset or
+  // abnormally closed.
+  QUIC_STREAM_CONNECT_ERROR,
+  // The requested operation cannot be served over HTTP/3.
+  // The peer should retry over HTTP/1.1.
+  QUIC_STREAM_VERSION_FALLBACK,
+  // The QPACK decoder failed to interpret a header block and is not able to
+  // continue decoding that header block.
+  QUIC_STREAM_DECOMPRESSION_FAILED,
+  // The QPACK decoder failed to interpret an encoder instruction received on
+  // the encoder stream.
+  QUIC_STREAM_ENCODER_STREAM_ERROR,
+  // The QPACK encoder failed to interpret a decoder instruction received on the
+  // decoder stream.
+  QUIC_STREAM_DECODER_STREAM_ERROR,
+  // IETF RESET_FRAME application error code not matching any HTTP/3 or QPACK
+  // error codes.
+  QUIC_STREAM_UNKNOWN_APPLICATION_ERROR_CODE,
   // No error. Used as bound while iterating.
   QUIC_STREAM_LAST_ERROR,
 };
@@ -379,6 +426,25 @@ enum QuicErrorCode {
   QUIC_HTTP_MISSING_SETTINGS_FRAME = 157,
   // The received SETTINGS frame contains duplicate setting identifiers.
   QUIC_HTTP_DUPLICATE_SETTING_IDENTIFIER = 158,
+  // MAX_PUSH_ID frame received with push ID value smaller than a previously
+  // received value.
+  QUIC_HTTP_INVALID_MAX_PUSH_ID = 159,
+  // Received unidirectional stream limit is lower than required by HTTP/3.
+  QUIC_HTTP_STREAM_LIMIT_TOO_LOW = 160,
+  // Received mismatched SETTINGS frame from HTTP/3 connection where early data
+  // is accepted. Server violated the HTTP/3 spec.
+  QUIC_HTTP_ZERO_RTT_RESUMPTION_SETTINGS_MISMATCH = 164,
+  // Received mismatched SETTINGS frame from HTTP/3 connection where early data
+  // is rejected. Our implementation currently doesn't support it.
+  QUIC_HTTP_ZERO_RTT_REJECTION_SETTINGS_MISMATCH = 165,
+  // Client received GOAWAY frame with stream ID that is not for a
+  // client-initiated bidirectional stream.
+  QUIC_HTTP_GOAWAY_INVALID_STREAM_ID = 166,
+  // Received GOAWAY frame with ID that is greater than previously received ID.
+  QUIC_HTTP_GOAWAY_ID_LARGER_THAN_PREVIOUS = 167,
+  // HTTP/3 session received SETTINGS frame which contains HTTP/2 specific
+  // settings.
+  QUIC_HTTP_RECEIVE_SPDY_SETTING = 169,
 
   // HPACK header block decoding errors.
   // Index varint beyond implementation limit.
@@ -414,8 +480,26 @@ enum QuicErrorCode {
   // Total compressed HPACK data size exceeds limit.
   QUIC_HPACK_COMPRESSED_HEADER_SIZE_EXCEEDS_LIMIT = 150,
 
+  // Stream/flow control limit from 1-RTT handshake is too low to retransmit
+  // 0-RTT data. This is our implentation error. We could in theory keep the
+  // connection alive but chose not to for simplicity.
+  QUIC_ZERO_RTT_UNRETRANSMITTABLE = 161,
+  // Stream/flow control limit from 0-RTT rejection reduces cached limit.
+  // This is our implentation error. We could in theory keep the connection
+  // alive but chose not to for simplicity.
+  QUIC_ZERO_RTT_REJECTION_LIMIT_REDUCED = 162,
+  // Stream/flow control limit from 0-RTT resumption reduces cached limit.
+  // This is the peer violating QUIC spec.
+  QUIC_ZERO_RTT_RESUMPTION_LIMIT_REDUCED = 163,
+
+  // The connection silently timed out due to no network activity.
+  QUIC_SILENT_IDLE_TIMEOUT = 168,
+
+  // Try to write data without the right write keys.
+  QUIC_MISSING_WRITE_KEYS = 170,
+
   // No error. Used as bound while iterating.
-  QUIC_LAST_ERROR = 159,
+  QUIC_LAST_ERROR = 171,
 };
 // QuicErrorCodes is encoded as four octets on-the-wire when doing Google QUIC,
 // or a varint62 when doing IETF QUIC. Ensure that its value does not exceed
@@ -431,34 +515,84 @@ QUIC_EXPORT_PRIVATE const char* QuicRstStreamErrorCodeToString(
 // Returns the name of the QuicErrorCode as a char*
 QUIC_EXPORT_PRIVATE const char* QuicErrorCodeToString(QuicErrorCode error);
 
+// Wire values for QUIC transport errors.
+// https://quicwg.org/base-drafts/draft-ietf-quic-transport.html#name-transport-error-codes
+enum QuicIetfTransportErrorCodes : uint64_t {
+  NO_IETF_QUIC_ERROR = 0x0,
+  INTERNAL_ERROR = 0x1,
+  SERVER_BUSY_ERROR = 0x2,
+  FLOW_CONTROL_ERROR = 0x3,
+  STREAM_LIMIT_ERROR = 0x4,
+  STREAM_STATE_ERROR = 0x5,
+  FINAL_SIZE_ERROR = 0x6,
+  FRAME_ENCODING_ERROR = 0x7,
+  TRANSPORT_PARAMETER_ERROR = 0x8,
+  CONNECTION_ID_LIMIT_ERROR = 0x9,
+  PROTOCOL_VIOLATION = 0xA,
+  INVALID_TOKEN = 0xB,
+  CRYPTO_BUFFER_EXCEEDED = 0xD,
+  CRYPTO_ERROR_FIRST = 0x100,
+  CRYPTO_ERROR_LAST = 0x1FF,
+};
+
+QUIC_EXPORT_PRIVATE std::string QuicIetfTransportErrorCodeString(
+    QuicIetfTransportErrorCodes c);
+
+QUIC_EXPORT_PRIVATE std::ostream& operator<<(
+    std::ostream& os,
+    const QuicIetfTransportErrorCodes& c);
+
+// A transport error code (if is_transport_close is true) or application error
+// code (if is_transport_close is false) to be used in CONNECTION_CLOSE frames.
+struct QUIC_EXPORT_PRIVATE QuicErrorCodeToIetfMapping {
+  bool is_transport_close;
+  uint64_t error_code;
+};
+
+// Convert QuicErrorCode to transport or application IETF error code
+// to be used in CONNECTION_CLOSE frames.
+QUIC_EXPORT_PRIVATE QuicErrorCodeToIetfMapping
+QuicErrorCodeToTransportErrorCode(QuicErrorCode error);
+
 // Wire values for HTTP/3 errors.
 // https://quicwg.org/base-drafts/draft-ietf-quic-http.html#http-error-codes
 enum class QuicHttp3ErrorCode {
-  IETF_QUIC_HTTP3_NO_ERROR = 0x100,
-  IETF_QUIC_HTTP3_GENERAL_PROTOCOL_ERROR = 0x101,
-  IETF_QUIC_HTTP3_INTERNAL_ERROR = 0x102,
-  IETF_QUIC_HTTP3_STREAM_CREATION_ERROR = 0x103,
-  IETF_QUIC_HTTP3_CLOSED_CRITICAL_STREAM = 0x104,
-  IETF_QUIC_HTTP3_FRAME_UNEXPECTED = 0x105,
-  IETF_QUIC_HTTP3_FRAME_ERROR = 0x106,
-  IETF_QUIC_HTTP3_EXCESSIVE_LOAD = 0x107,
-  IETF_QUIC_HTTP3_ID_ERROR = 0x108,
-  IETF_QUIC_HTTP3_SETTINGS_ERROR = 0x109,
-  IETF_QUIC_HTTP3_MISSING_SETTINGS = 0x10A,
-  IETF_QUIC_HTTP3_REQUEST_REJECTED = 0x10B,
-  IETF_QUIC_HTTP3_REQUEST_CANCELLED = 0x10C,
-  IETF_QUIC_HTTP3_REQUEST_INCOMPLETE = 0x10D,
-  IETF_QUIC_HTTP3_CONNECT_ERROR = 0x10F,
-  IETF_QUIC_HTTP3_VERSION_FALLBACK = 0x110,
+  // NO_ERROR is defined as a C preprocessor macro on Windows.
+  HTTP3_NO_ERROR = 0x100,
+  GENERAL_PROTOCOL_ERROR = 0x101,
+  INTERNAL_ERROR = 0x102,
+  STREAM_CREATION_ERROR = 0x103,
+  CLOSED_CRITICAL_STREAM = 0x104,
+  FRAME_UNEXPECTED = 0x105,
+  FRAME_ERROR = 0x106,
+  EXCESSIVE_LOAD = 0x107,
+  ID_ERROR = 0x108,
+  SETTINGS_ERROR = 0x109,
+  MISSING_SETTINGS = 0x10A,
+  REQUEST_REJECTED = 0x10B,
+  REQUEST_CANCELLED = 0x10C,
+  REQUEST_INCOMPLETE = 0x10D,
+  CONNECT_ERROR = 0x10F,
+  VERSION_FALLBACK = 0x110,
 };
 
 // Wire values for QPACK errors.
 // https://quicwg.org/base-drafts/draft-ietf-quic-qpack.html#error-code-registration
-enum QuicHttpQpackErrorCode {
-  IETF_QUIC_HTTP_QPACK_DECOMPRESSION_FAILED = 0x200,
-  IETF_QUIC_HTTP_QPACK_ENCODER_STREAM_ERROR = 0x201,
-  IETF_QUIC_HTTP_QPACK_DECODER_STREAM_ERROR = 0x202
+enum class QuicHttpQpackErrorCode {
+  DECOMPRESSION_FAILED = 0x200,
+  ENCODER_STREAM_ERROR = 0x201,
+  DECODER_STREAM_ERROR = 0x202
 };
+
+// Convert a QuicRstStreamErrorCode to an application error code to be used in
+// an IETF QUIC RESET_STREAM frame
+QUIC_EXPORT_PRIVATE uint64_t RstStreamErrorCodeToIetfResetStreamErrorCode(
+    QuicRstStreamErrorCode rst_stream_error_code);
+
+// Convert the application error code of an IETF QUIC RESET_STREAM frame
+// to QuicRstStreamErrorCode.
+QUIC_EXPORT_PRIVATE QuicRstStreamErrorCode
+IetfResetStreamErrorCodeToRstStreamErrorCode(uint64_t ietf_error_code);
 
 QUIC_EXPORT_PRIVATE inline std::string HistogramEnumString(
     QuicErrorCode enum_value) {
@@ -470,6 +604,47 @@ QUIC_EXPORT_PRIVATE inline std::string HistogramEnumDescription(
   return "cause";
 }
 
+enum QuicFailToSerializePacketLocation {
+  kQuicFailToAppendPacketHeaderFastPath = 0,
+  kQuicFailToAppendTypeFastPath = 1,
+  kQuicFailToAppendStreamFrameFastPath = 2,
+  kQuicFailToAddPaddingFastPath = 3,
+  kQuicFailToWriteIetfLongHeaderLengthFastPath = 4,
+  kQuicFailToEncryptPacketFastPath = 5,
+  kQuicSerializePacketNonEmptyBuffer = 6,
+  kQuicMissingInitialKey = 7,
+  kQuicMissingHandshakeKey = 8,
+  kQuicMissingZeroRttKey = 9,
+  kQuicMissingOneRttKey = 10,
+  kQuicFailToBuildPacketWithPaddingInitial = 11,
+  kQuicFailToBuildPacketInitial = 12,
+  kQuicFailToBuildPacketWithPaddingHandshake = 13,
+  kQuicFailToBuildPacketHandshake = 14,
+  kQuicFailToBuildPacketWithPaddingZeroRtt = 15,
+  kQuicFailToBuildPacketZeroRtt = 16,
+  kQuicFailToBuildPacketWithPaddingOneRtt = 17,
+  kQuicFailToBuildPacketOneRtt = 18,
+  kQuicFailToEncryptInitial = 19,
+  kQuicFailToEncryptHandshake = 20,
+  kQuicFailToEncryptZeroRtt = 21,
+  kQuicFailToEncryptOneRtt = 22,
+  kMaxFailLocationValue = kQuicFailToEncryptOneRtt
+};
+
+QUIC_EXPORT_PRIVATE void RecordFailToSerializePacketLocation(
+    QuicFailToSerializePacketLocation location);
+
 }  // namespace quic
+
+namespace std {
+template <>
+struct hash<quic::QuicErrorCode> {
+    using argument_type = quic::QuicErrorCode;
+    using result_type = size_t;
+    size_t operator()(quic::QuicErrorCode s) const noexcept {
+        return static_cast<int>(s);
+    }
+};
+}
 
 #endif  // QUICHE_QUIC_CORE_QUIC_ERROR_CODES_H_

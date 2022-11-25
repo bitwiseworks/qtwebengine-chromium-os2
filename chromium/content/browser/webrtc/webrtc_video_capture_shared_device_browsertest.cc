@@ -9,6 +9,7 @@
 #include "content/public/browser/video_capture_service.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -281,7 +282,7 @@ INSTANTIATE_TEST_SUITE_P(
         TestParams {
           ServiceApi::kMultiClient, media::VideoCaptureBufferType::kSharedMemory
         }
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
         ,
         TestParams{
             ServiceApi::kSingleClient,
@@ -290,7 +291,7 @@ INSTANTIATE_TEST_SUITE_P(
           ServiceApi::kMultiClient,
               media::VideoCaptureBufferType::kSharedMemoryViaRawFileDescriptor
         }
-#endif  // defined(OS_LINUX)
+#endif  // defined(OS_LINUX) || defined(OS_CHROMEOS)
         ));
 
 }  // namespace content

@@ -15,6 +15,7 @@
 #include "components/content_settings/core/browser/content_settings_rule.h"
 #include "components/content_settings/core/browser/content_settings_utils.h"
 #include "components/content_settings/core/common/content_settings_utils.h"
+#include "components/content_settings/core/common/features.h"
 #include "components/content_settings/core/test/content_settings_test_utils.h"
 #include "components/permissions/features.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -312,7 +313,7 @@ TEST_F(ContentSettingsStoreTest, RemoveEmbedded) {
       ContentSettingsPattern::FromURL(primary_url);
   ContentSettingsPattern secondary_pattern =
       ContentSettingsPattern::FromURL(secondary_url);
-  EXPECT_CALL(observer, OnContentSettingChanged(ext_id, false)).Times(4);
+  EXPECT_CALL(observer, OnContentSettingChanged(ext_id, false)).Times(1);
 
   // Build a preference list in JSON format.
   base::ListValue pref_list;
@@ -332,46 +333,62 @@ TEST_F(ContentSettingsStoreTest, RemoveEmbedded) {
   dict_value->SetString(keys::kContentSettingKey, "allow");
   pref_list.Append(std::move(dict_value));
 
-  {
-    base::test::ScopedFeatureList scoped_feature_list;
-    scoped_feature_list.InitAndDisableFeature(
-        permissions::features::kPermissionDelegation);
-    store()->SetExtensionContentSettingFromList(ext_id, &pref_list,
-                                                kExtensionPrefsScopeRegular);
-
-    EXPECT_EQ(CONTENT_SETTING_ALLOW,
-              GetContentSettingFromStore(store(), primary_url, secondary_url,
-                                         ContentSettingsType::COOKIES,
-                                         std::string(), false));
-    EXPECT_EQ(CONTENT_SETTING_ALLOW,
-              GetContentSettingFromStore(store(), primary_url, secondary_url,
-                                         ContentSettingsType::GEOLOCATION,
-                                         std::string(), false));
-
-    store()->ClearContentSettingsForExtension(ext_id,
+  store()->SetExtensionContentSettingFromList(ext_id, &pref_list,
                                               kExtensionPrefsScopeRegular);
-  }
 
-  {
-    base::test::ScopedFeatureList scoped_feature_list;
-    scoped_feature_list.InitAndEnableFeature(
-        permissions::features::kPermissionDelegation);
-    store()->SetExtensionContentSettingFromList(ext_id, &pref_list,
-                                                kExtensionPrefsScopeRegular);
-
-    // The embedded geolocation pattern should be removed but cookies kept.
-    EXPECT_EQ(CONTENT_SETTING_ALLOW,
-              GetContentSettingFromStore(store(), primary_url, secondary_url,
-                                         ContentSettingsType::COOKIES,
-                                         std::string(), false));
-    EXPECT_EQ(CONTENT_SETTING_DEFAULT,
-              GetContentSettingFromStore(store(), primary_url, secondary_url,
-                                         ContentSettingsType::GEOLOCATION,
-                                         std::string(), false));
-  }
+  // The embedded geolocation pattern should be removed but cookies kept.
+  EXPECT_EQ(CONTENT_SETTING_ALLOW,
+            GetContentSettingFromStore(store(), primary_url, secondary_url,
+                                       ContentSettingsType::COOKIES,
+                                       std::string(), false));
+  EXPECT_EQ(CONTENT_SETTING_DEFAULT,
+            GetContentSettingFromStore(store(), primary_url, secondary_url,
+                                       ContentSettingsType::GEOLOCATION,
+                                       std::string(), false));
 
   Mock::VerifyAndClear(&observer);
   store()->RemoveObserver(&observer);
+}
+
+TEST_F(ContentSettingsStoreTest, DisallowWildcardsInFlash) {
+  // Enabling the feature which disallows wildcard matching for Plugin content
+  // settings.
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(
+      content_settings::kDisallowWildcardsInPluginContentSettings);
+
+  // Register extension.
+  std::string ext_id("my_extension");
+  RegisterExtension(ext_id);
+  ContentSettingsPattern primary_pattern =
+      ContentSettingsPattern::FromString("https://[*.]google.com");
+  ContentSettingsPattern secondary_pattern = ContentSettingsPattern::Wildcard();
+  store()->SetExtensionContentSetting(
+      ext_id, primary_pattern, secondary_pattern, ContentSettingsType::PLUGINS,
+      std::string(), CONTENT_SETTING_ALLOW, kExtensionPrefsScopeRegular);
+  store()->SetExtensionContentSetting(
+      ext_id, primary_pattern, secondary_pattern, ContentSettingsType::COOKIES,
+      std::string(), CONTENT_SETTING_ALLOW, kExtensionPrefsScopeRegular);
+
+  std::vector<content_settings::Rule> rules;
+  rules = GetSettingsForOneTypeFromStore(store(), ContentSettingsType::PLUGINS,
+                                         std::string(), false);
+  // Number of rules will be zero because we tried to add a pattern with
+  // wildcards.
+  ASSERT_EQ(rules.size(), 0u);
+
+  rules = GetSettingsForOneTypeFromStore(store(), ContentSettingsType::COOKIES,
+                                         std::string(), false);
+  // Here we will have one rule because wildcard patterns are allowed for
+  // ContentSettingsType::COOKIES.
+  ASSERT_EQ(rules.size(), 1u);
+
+  std::unique_ptr<content_settings::RuleIterator> discarded_rules_iterator =
+      store()->GetDiscardedRuleIterator(ContentSettingsType::PLUGINS,
+                                        std::string(), false);
+  ASSERT_TRUE(discarded_rules_iterator->HasNext());
+  ASSERT_EQ(discarded_rules_iterator->Next().primary_pattern, primary_pattern);
+  ASSERT_FALSE(discarded_rules_iterator->HasNext());
 }
 
 }  // namespace extensions

@@ -12,7 +12,7 @@
 
 namespace blink {
 
-class LocalFrame;
+class LocalDOMWindow;
 class PresentationReceiver;
 class PresentationRequest;
 
@@ -22,15 +22,14 @@ class PresentationRequest;
 // details.
 class Presentation final : public ScriptWrappable,
                            public ExecutionContextClient {
-  USING_GARBAGE_COLLECTED_MIXIN(Presentation);
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static Presentation* Create(LocalFrame*);
+  static Presentation* Create(LocalDOMWindow*);
 
-  explicit Presentation(LocalFrame*);
+  explicit Presentation(LocalDOMWindow*);
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   PresentationRequest* defaultRequest() const;
   void setDefaultRequest(PresentationRequest*);

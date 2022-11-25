@@ -213,13 +213,10 @@ void CopyBufferIntoFrame(const AudioBuffer& buffer,
 EchoCanceller3Config AdjustConfig(const EchoCanceller3Config& config) {
   EchoCanceller3Config adjusted_cfg = config;
 
-  if (adjusted_cfg.filter.use_legacy_filter_naming) {
-    adjusted_cfg.filter.refined = adjusted_cfg.filter.main;
-    adjusted_cfg.filter.refined_initial = adjusted_cfg.filter.main_initial;
-    adjusted_cfg.filter.coarse = adjusted_cfg.filter.shadow;
-    adjusted_cfg.filter.coarse_initial = adjusted_cfg.filter.shadow_initial;
-    adjusted_cfg.filter.enable_coarse_filter_output_usage =
-        adjusted_cfg.filter.enable_shadow_filter_output_usage;
+  if (field_trial::IsEnabled("WebRTC-Aec3AntiHowlingMinimizationKillSwitch")) {
+    adjusted_cfg.suppressor.high_bands_suppression
+        .anti_howling_activation_threshold = 25.f;
+    adjusted_cfg.suppressor.high_bands_suppression.anti_howling_gain = 0.01f;
   }
 
   if (field_trial::IsEnabled("WebRTC-Aec3UseShortConfigChangeDuration")) {
@@ -573,6 +570,11 @@ class EchoCanceller3::RenderWriter {
                          Aec3RenderQueueItemVerifier>* render_transfer_queue,
                size_t num_bands,
                size_t num_channels);
+
+  RenderWriter() = delete;
+  RenderWriter(const RenderWriter&) = delete;
+  RenderWriter& operator=(const RenderWriter&) = delete;
+
   ~RenderWriter();
   void Insert(const AudioBuffer& input);
 
@@ -584,7 +586,6 @@ class EchoCanceller3::RenderWriter {
   std::vector<std::vector<std::vector<float>>> render_queue_input_frame_;
   SwapQueue<std::vector<std::vector<std::vector<float>>>,
             Aec3RenderQueueItemVerifier>* render_transfer_queue_;
-  RTC_DISALLOW_IMPLICIT_CONSTRUCTORS(RenderWriter);
 };
 
 EchoCanceller3::RenderWriter::RenderWriter(

@@ -84,9 +84,6 @@ DownloadResponseHandler::DownloadResponseHandler(
   }
   if (resource_request->request_initiator.has_value())
     request_initiator_ = resource_request->request_initiator;
-  if (resource_request->trusted_params.has_value())
-    network_isolation_key_ =
-        resource_request->trusted_params->network_isolation_key;
 }
 
 DownloadResponseHandler::~DownloadResponseHandler() = default;
@@ -97,8 +94,6 @@ void DownloadResponseHandler::OnReceiveResponse(
   cert_status_ = head->cert_status;
 
   // TODO(xingliu): Do not use http cache.
-  // Sets page transition type correctly and call
-  // |RecordDownloadSourcePageTransitionType| here.
   if (head->headers) {
     has_strong_validators_ = head->headers->HasStrongValidators();
     RecordDownloadHttpResponseCode(head->headers->response_code(),
@@ -152,7 +147,6 @@ DownloadResponseHandler::CreateDownloadCreateInfo(
   create_info->request_origin = request_origin_;
   create_info->download_source = download_source_;
   create_info->request_initiator = request_initiator_;
-  create_info->network_isolation_key = network_isolation_key_;
 
   HandleResponseHeaders(head.headers.get(), create_info.get());
   return create_info;
@@ -245,16 +239,6 @@ void DownloadResponseHandler::OnComplete(
   if (client_remote_) {
     client_remote_->OnStreamCompleted(
         ConvertInterruptReasonToMojoNetworkRequestStatus(reason));
-  }
-
-  if (reason == DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED) {
-    base::UmaHistogramSparse("Download.MapErrorNetworkFailed.NetworkService",
-                             std::abs(status.error_code));
-    if (is_background_mode_) {
-      base::UmaHistogramSparse(
-          "Download.MapErrorNetworkFailed.NetworkService.BackgroundDownload",
-          std::abs(status.error_code));
-    }
   }
 
   if (started_) {

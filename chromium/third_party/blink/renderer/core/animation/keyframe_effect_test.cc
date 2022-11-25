@@ -15,7 +15,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_optional_effect_timing.h"
 #include "third_party/blink/renderer/core/animation/animation.h"
 #include "third_party/blink/renderer/core/animation/animation_clock.h"
-#include "third_party/blink/renderer/core/animation/animation_test_helper.h"
+#include "third_party/blink/renderer/core/animation/animation_test_helpers.h"
 #include "third_party/blink/renderer/core/animation/document_timeline.h"
 #include "third_party/blink/renderer/core/animation/keyframe_effect_model.h"
 #include "third_party/blink/renderer/core/animation/timing.h"
@@ -28,6 +28,9 @@
 #include "v8/include/v8.h"
 
 namespace blink {
+
+using animation_test_helpers::SetV8ObjectPropertyAsNumber;
+using animation_test_helpers::SetV8ObjectPropertyAsString;
 
 class KeyframeEffectTest : public PageTestBase {
  protected:
@@ -370,25 +373,25 @@ TEST_F(KeyframeEffectTest, TimeToEffectChange) {
             keyframe_effect->TimeToReverseEffectChange());
 
   // End of the before phase.
-  animation->setCurrentTime(100000, false);
+  animation->setCurrentTime(100000);
   EXPECT_EQ(AnimationTimeDelta::FromSecondsD(100),
             keyframe_effect->TimeToForwardsEffectChange());
   EXPECT_EQ(AnimationTimeDelta(), keyframe_effect->TimeToReverseEffectChange());
 
   // Nearing the end of the active phase.
-  animation->setCurrentTime(199000, false);
+  animation->setCurrentTime(199000);
   EXPECT_EQ(AnimationTimeDelta::FromSecondsD(1),
             keyframe_effect->TimeToForwardsEffectChange());
   EXPECT_EQ(AnimationTimeDelta(), keyframe_effect->TimeToReverseEffectChange());
 
   // End of the active phase.
-  animation->setCurrentTime(200000, false);
+  animation->setCurrentTime(200000);
   EXPECT_EQ(AnimationTimeDelta::FromSecondsD(100),
             keyframe_effect->TimeToForwardsEffectChange());
   EXPECT_EQ(AnimationTimeDelta(), keyframe_effect->TimeToReverseEffectChange());
 
   // End of the animation.
-  animation->setCurrentTime(300000, false);
+  animation->setCurrentTime(300000);
   EXPECT_EQ(AnimationTimeDelta::Max(),
             keyframe_effect->TimeToForwardsEffectChange());
   EXPECT_EQ(AnimationTimeDelta::FromSecondsD(100),

@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/messaging/blink_transferable_message_mojom_traits.h"
 
 #include "mojo/public/cpp/base/big_buffer_mojom_traits.h"
+#include "third_party/blink/public/mojom/messaging/transferable_message.mojom-blink.h"
 #include "third_party/blink/renderer/core/imagebitmap/image_bitmap.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
@@ -31,8 +32,8 @@ bool StructTraits<blink::mojom::blink::TransferableMessage::DataView,
                   blink::BlinkTransferableMessage>::
     Read(blink::mojom::blink::TransferableMessage::DataView data,
          blink::BlinkTransferableMessage* out) {
-  Vector<mojo::ScopedMessagePipeHandle> ports;
-  Vector<mojo::ScopedMessagePipeHandle> stream_channels;
+  Vector<blink::MessagePortDescriptor> ports;
+  Vector<blink::MessagePortDescriptor> stream_channels;
   blink::SerializedScriptValue::ArrayBufferContentsArray
       array_buffer_contents_array;
   Vector<SkBitmap> sk_bitmaps;
@@ -50,8 +51,6 @@ bool StructTraits<blink::mojom::blink::TransferableMessage::DataView,
   out->message->GetStreamChannels().AppendRange(
       std::make_move_iterator(stream_channels.begin()),
       std::make_move_iterator(stream_channels.end()));
-  out->transfer_user_activation = data.transfer_user_activation();
-  out->allow_autoplay = data.allow_autoplay();
 
   out->message->SetArrayBufferContentsArray(
       std::move(array_buffer_contents_array));

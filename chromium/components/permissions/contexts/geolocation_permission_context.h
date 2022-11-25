@@ -7,6 +7,7 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/permissions/permission_context_base.h"
@@ -40,24 +41,7 @@ class GeolocationPermissionContext : public PermissionContextBase {
                                   BrowserPermissionCallback* callback,
                                   GeolocationPermissionContext* context) = 0;
 
-    // Called when UpdateTabContext() is called on the context.
-    virtual void UpdateTabContext(const PermissionRequestID& id,
-                                  const GURL& requesting_frame,
-                                  bool allowed) = 0;
-
 #if defined(OS_ANDROID)
-    // Returns whether or not the Android location permission should be
-    // requested.
-    virtual bool ShouldRequestAndroidLocationPermission(
-        content::WebContents* web_contents) = 0;
-
-    using PermissionUpdatedCallback = base::OnceCallback<void(bool)>;
-    // Requests Android location permission, and calls |callback| with the
-    // reslt.
-    virtual void RequestAndroidPermission(
-        content::WebContents* web_contents,
-        PermissionUpdatedCallback callback) = 0;
-
     // Returns whether or not this |web_contents| is interactable.
     virtual bool IsInteractable(content::WebContents* web_contents) = 0;
 
@@ -86,6 +70,8 @@ class GeolocationPermissionContext : public PermissionContextBase {
                         bool user_gesture,
                         BrowserPermissionCallback callback) override;
 
+  base::WeakPtr<GeolocationPermissionContext> GetWeakPtr();
+
   // Make this public for use by the delegate implementation.
   using PermissionContextBase::NotifyPermissionSet;
 
@@ -101,6 +87,8 @@ class GeolocationPermissionContext : public PermissionContextBase {
   device::mojom::GeolocationControl* GetGeolocationControl();
 
   mojo::Remote<device::mojom::GeolocationControl> geolocation_control_;
+
+  base::WeakPtrFactory<GeolocationPermissionContext> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(GeolocationPermissionContext);
 };

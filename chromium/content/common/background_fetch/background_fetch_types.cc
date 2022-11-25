@@ -31,14 +31,16 @@ blink::mojom::FetchAPIResponsePtr BackgroundFetchSettledFetch::CloneResponse(
     return nullptr;
   return blink::mojom::FetchAPIResponse::New(
       response->url_list, response->status_code, response->status_text,
-      response->response_type, response->response_source, response->headers,
+      response->response_type, response->padding, response->response_source,
+      response->headers, response->mime_type, response->request_method,
       CloneSerializedBlob(response->blob), response->error,
       response->response_time, response->cache_storage_cache_name,
       response->cors_exposed_header_names,
       CloneSerializedBlob(response->side_data_blob),
       CloneSerializedBlob(response->side_data_blob_for_cache_put),
-      mojo::Clone(response->content_security_policy),
-      response->loaded_with_credentials);
+      mojo::Clone(response->parsed_headers), response->connection_info,
+      response->alpn_negotiated_protocol, response->was_fetched_via_spdy,
+      response->has_range_requested);
 }
 
 // static
@@ -47,9 +49,8 @@ blink::mojom::FetchAPIRequestPtr BackgroundFetchSettledFetch::CloneRequest(
   if (request.is_null())
     return nullptr;
   return blink::mojom::FetchAPIRequest::New(
-      request->mode, request->is_main_resource_load,
-      request->request_context_type, request->destination, request->frame_type,
-      request->url, request->method, request->headers,
+      request->mode, request->is_main_resource_load, request->destination,
+      request->frame_type, request->url, request->method, request->headers,
       CloneSerializedBlob(request->blob), request->body,
       request->referrer.Clone(), request->credentials_mode, request->cache_mode,
       request->redirect_mode, request->integrity, request->priority,

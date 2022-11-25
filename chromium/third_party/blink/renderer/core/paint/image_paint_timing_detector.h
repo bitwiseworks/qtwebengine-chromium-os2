@@ -21,7 +21,7 @@ namespace blink {
 
 class LayoutObject;
 class LocalFrameView;
-class PropertyTreeState;
+class PropertyTreeStateOrAlias;
 class TracedValue;
 class Image;
 
@@ -63,6 +63,8 @@ typedef std::pair<const LayoutObject*, const ImageResourceContent*> RecordId;
 // Node, LayoutObject, etc.
 class CORE_EXPORT ImageRecordsManager {
   friend class ImagePaintTimingDetectorTest;
+  DISALLOW_NEW();
+
   using NodesQueueComparator = bool (*)(const base::WeakPtr<ImageRecord>&,
                                         const base::WeakPtr<ImageRecord>&);
   using ImageRecordSet =
@@ -70,6 +72,8 @@ class CORE_EXPORT ImageRecordsManager {
 
  public:
   explicit ImageRecordsManager(LocalFrameView*);
+  ImageRecordsManager(const ImageRecordsManager&) = delete;
+  ImageRecordsManager& operator=(const ImageRecordsManager&) = delete;
   ImageRecord* FindLargestPaintCandidate() const;
 
   inline void RemoveInvisibleRecordIfNeeded(const LayoutObject& object) {
@@ -83,6 +87,18 @@ class CORE_EXPORT ImageRecordsManager {
   inline void RemoveVisibleRecord(const RecordId& record_id) {
     base::WeakPtr<ImageRecord> record =
         visible_images_.find(record_id)->value->AsWeakPtr();
+    if (!record->paint_time.is_null()) {
+      DCHECK_GT(record->first_size, 0u);
+      if (record->first_size > largest_removed_image_size_) {
+        largest_removed_image_size_ = record->first_size;
+        largest_removed_image_paint_time_ = record->paint_time;
+      } else if (record->first_size == largest_removed_image_size_) {
+        // Ensure we use the lower timestamp in the case of a tie.
+        DCHECK(!largest_removed_image_paint_time_.is_null());
+        largest_removed_image_paint_time_ =
+            std::min(largest_removed_image_paint_time_, record->paint_time);
+      }
+    }
     size_ordered_set_.erase(record);
     visible_images_.erase(record_id);
     // Leave out |images_queued_for_paint_time_| intentionally because the null
@@ -120,9 +136,16 @@ class CORE_EXPORT ImageRecordsManager {
   void OnImageLoadedInternal(base::WeakPtr<ImageRecord>&,
                              unsigned current_frame_index);
 
+  // Receives a candidate image painted under opacity 0 but without nested
+  // opacity. May update |largest_ignored_image_| if the new candidate has a
+  // larger size.
+  void MaybeUpdateLargestIgnoredImage(const RecordId&,
+                                      const uint64_t& visual_size);
+  void ReportLargestIgnoredImage(unsigned current_frame_index);
+
   // Compare the last frame index in queue with the last frame index that has
   // registered for assigning paint time.
-  inline bool HasUnregisteredRecordsInQueued(
+  inline bool HasUnregisteredRecordsInQueue(
       unsigned last_registered_frame_index) {
     while (!images_queued_for_paint_time_.IsEmpty() &&
            !images_queued_for_paint_time_.back()) {
@@ -130,7 +153,6 @@ class CORE_EXPORT ImageRecordsManager {
     }
     if (images_queued_for_paint_time_.IsEmpty())
       return false;
-    DCHECK(last_registered_frame_index <= LastQueuedFrameIndex());
     return last_registered_frame_index < LastQueuedFrameIndex();
   }
   void AssignPaintTimeToRegisteredQueuedRecords(
@@ -140,6 +162,15 @@ class CORE_EXPORT ImageRecordsManager {
     DCHECK(images_queued_for_paint_time_.back());
     return images_queued_for_paint_time_.back()->frame_index;
   }
+
+  uint64_t LargestRemovedImageSize() const {
+    return largest_removed_image_size_;
+  }
+  base::TimeTicks LargestRemovedImagePaintTime() const {
+    return largest_removed_image_paint_time_;
+  }
+
+  void Trace(Visitor* visitor) const;
 
  private:
   // Find the image record of an visible image.
@@ -172,11 +203,21 @@ class CORE_EXPORT ImageRecordsManager {
   // Map containing timestamps of when LayoutObject::ImageNotifyFinished is
   // first called.
   HashMap<RecordId, base::TimeTicks> image_finished_times_;
-  // ImageRecordsManager is always owned by ImagePaintTimingDetector, which
-  // contains the LocalFrameView as a Member.
-  UntracedMember<LocalFrameView> frame_view_;
 
-  DISALLOW_COPY_AND_ASSIGN(ImageRecordsManager);
+  Member<LocalFrameView> frame_view_;
+
+  // We store the size and paint time of the largest removed image in order to
+  // compute experimental LCP correctly.
+  uint64_t largest_removed_image_size_ = 0u;
+  base::TimeTicks largest_removed_image_paint_time_;
+
+  // Image paints are ignored when they (or an ancestor) have opacity 0. This
+  // can be a problem later on if the opacity changes to nonzero but this change
+  // is composited. We solve this for the special case of documentElement by
+  // storing a record for the largest ignored image without nested opacity. We
+  // consider this an LCP candidate when the documentElement's opacity changes
+  // from zero to nonzero.
+  std::unique_ptr<ImageRecord> largest_ignored_image_;
 };
 
 // ImagePaintTimingDetector contains Largest Image Paint.
@@ -212,9 +253,9 @@ class CORE_EXPORT ImagePaintTimingDetector final
   void RecordImage(const LayoutObject&,
                    const IntSize& intrinsic_size,
                    const ImageResourceContent&,
-                   const PropertyTreeState& current_paint_chunk_properties,
+                   const PropertyTreeStateOrAlias& current_paint_properties,
                    const StyleFetchedImage*,
-                   const IntRect* image_border);
+                   const IntRect& image_border);
   void NotifyImageFinished(const LayoutObject&, const ImageResourceContent*);
   void OnPaintFinished();
   void LayoutObjectWillBeDestroyed(const LayoutObject&);
@@ -237,7 +278,12 @@ class CORE_EXPORT ImagePaintTimingDetector final
   // Return the candidate.
   ImageRecord* UpdateCandidate();
 
-  void Trace(Visitor*);
+  // Called when documentElement changes from zero to nonzero opacity. Makes the
+  // largest image that was hidden due to this a Largest Contentful Paint
+  // candidate.
+  void ReportLargestIgnoredImage();
+
+  void Trace(Visitor*) const;
 
  private:
   friend class LargestContentfulPaintCalculatorTest;
@@ -246,6 +292,11 @@ class CORE_EXPORT ImagePaintTimingDetector final
   void RegisterNotifySwapTime();
   void ReportCandidateToTrace(ImageRecord&);
   void ReportNoCandidateToTrace();
+  uint64_t ComputeImageRectSize(const IntRect&,
+                                const IntSize&,
+                                const PropertyTreeStateOrAlias&,
+                                const LayoutObject&,
+                                const ImageResourceContent&);
 
   // Used to find the last candidate.
   unsigned count_candidates_ = 0;

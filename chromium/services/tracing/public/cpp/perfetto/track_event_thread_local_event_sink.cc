@@ -37,6 +37,7 @@
 using TraceLog = base::trace_event::TraceLog;
 using perfetto::protos::pbzero::ChromeThreadDescriptor;
 using perfetto::protos::pbzero::ClockSnapshot;
+using perfetto::protos::pbzero::CounterDescriptor;
 using perfetto::protos::pbzero::ThreadDescriptor;
 using perfetto::protos::pbzero::TracePacket;
 using perfetto::protos::pbzero::TracePacketDefaults;
@@ -56,17 +57,21 @@ const char* const kPrivacyFiltered = "PRIVACY_FILTERED";
 constexpr uint32_t kClockIdAbsolute = 64;
 constexpr uint32_t kClockIdIncremental = 65;
 
-base::ThreadTicks ThreadNow() {
-  return base::ThreadTicks::IsSupported()
-             ? base::subtle::ThreadTicksNowIgnoringOverride()
-             : base::ThreadTicks();
-}
+// Bits xor-ed into the track uuid of a thread track to make the track uuid of
+// a thread time / instruction count track. These bits are chosen from the
+// upper end of the uint64_t bytes, because the tid of the thread is hashed
+// into the least significant 32 bits of the uuid.
+constexpr uint64_t kThreadTimeTrackUuidBit = static_cast<uint64_t>(1u) << 32;
+constexpr uint64_t kAbsoluteThreadTimeTrackUuidBit = static_cast<uint64_t>(1u)
+                                                     << 33;
+constexpr uint64_t kThreadInstructionCountTrackUuidBit =
+    static_cast<uint64_t>(1u) << 34;
 
 // Names of events that should be converted into a TaskExecution event.
 const char* kTaskExecutionEventCategory = "toplevel";
 const char* kTaskExecutionEventNames[3] = {"ThreadControllerImpl::RunTask",
-                                           "ThreadController::Task",
-                                           "ThreadPool_RunTask"};
+                                           "ThreadPool_RunTask",
+                                           "SimpleAlarmTimer::OnTimerFired"};
 
 void AddConvertableToTraceFormat(
     base::trace_event::ConvertableToTraceFormat* value,
@@ -228,10 +233,117 @@ void TrackEventThreadLocalEventSink::ClearIncrementalState() {
   incremental_state_reset_id_.fetch_add(1u, std::memory_order_relaxed);
 }
 
-void TrackEventThreadLocalEventSink::ResetIncrementalStateIfNeeded(
+void TrackEventThreadLocalEventSink::AddLegacyTraceEvent(
+    base::trace_event::TraceEvent* trace_event,
+    base::trace_event::TraceEventHandle* handle) {
+  DCHECK(!pending_trace_packet_);
+  UpdateIncrementalStateIfNeeded(trace_event);
+
+  auto trace_packet = trace_writer_->NewTracePacket();
+  PrepareTrackEvent(trace_event, handle, &trace_packet);
+
+  if (!pending_interning_updates_.empty()) {
+    EmitStoredInternedData(trace_packet->set_interned_data());
+  }
+}
+
+base::trace_event::TrackEventHandle
+TrackEventThreadLocalEventSink::AddTypedTraceEvent(
+    base::trace_event::TraceEvent* trace_event) {
+  DCHECK(!TraceEventDataSource::GetInstance()
+              ->GetThreadIsInTraceEventTLS()
+              ->Get());
+  // Cleared in OnTrackEventCompleted().
+  TraceEventDataSource::GetInstance()->GetThreadIsInTraceEventTLS()->Set(true);
+
+  DCHECK(!pending_trace_packet_);
+  UpdateIncrementalStateIfNeeded(trace_event);
+
+  pending_trace_packet_ = trace_writer_->NewTracePacket();
+
+  // Note: Since |track_event| is a protozero message under |trace_packet|, we
+  // can't modify |trace_packet| further until we're done with |track_event|.
+  // Thus, incremental state is buffered until the TrackEventHandle we return
+  // here is destroyed.
+  base::trace_event::TraceEventHandle base_handle{0, 0, 0};
+  auto* track_event =
+      PrepareTrackEvent(trace_event, &base_handle, &pending_trace_packet_);
+
+  // |pending_trace_packet_| will be finalized in OnTrackEventCompleted() after
+  // the code in //base ran the typed trace point's argument function.
+  return base::trace_event::TrackEventHandle(track_event, &incremental_state_,
+                                             this);
+}
+
+void TrackEventThreadLocalEventSink::OnTrackEventCompleted() {
+  DCHECK(pending_trace_packet_);
+
+  auto& serialized_interned_data = incremental_state_.serialized_interned_data;
+  if (!pending_interning_updates_.empty()) {
+    // TODO(skyostil): Combine |pending_interning_updates_| and
+    // |serialized_interned_data| so we don't need to merge the two here.
+    if (!serialized_interned_data.empty()) {
+      EmitStoredInternedData(serialized_interned_data.get());
+    } else {
+      EmitStoredInternedData(pending_trace_packet_->set_interned_data());
+    }
+  }
+
+  // When the track event is finalized (i.e., the context is destroyed), we
+  // should flush any newly seen interned data to the trace. The data has
+  // earlier been written to a heap allocated protobuf message
+  // (|serialized_interned_data|). Here we just need to flush it to the main
+  // trace.
+  if (!serialized_interned_data.empty()) {
+    auto ranges = serialized_interned_data.GetRanges();
+    pending_trace_packet_->AppendScatteredBytes(
+        perfetto::protos::pbzero::TracePacket::kInternedDataFieldNumber,
+        &ranges[0], ranges.size());
+
+    // Reset the message but keep one buffer allocated for future use.
+    serialized_interned_data.Reset();
+  }
+
+  pending_trace_packet_ = perfetto::TraceWriter::TracePacketHandle();
+
+  DCHECK(
+      TraceEventDataSource::GetInstance()->GetThreadIsInTraceEventTLS()->Get());
+  TraceEventDataSource::GetInstance()->GetThreadIsInTraceEventTLS()->Set(false);
+}
+
+base::trace_event::TracePacketHandle
+TrackEventThreadLocalEventSink::AddTracePacket() {
+  DCHECK(!TraceEventDataSource::GetInstance()
+              ->GetThreadIsInTraceEventTLS()
+              ->Get());
+  // Cleared in OnTracePacketCompleted().
+  TraceEventDataSource::GetInstance()->GetThreadIsInTraceEventTLS()->Set(true);
+
+  DCHECK(!pending_trace_packet_);
+
+  perfetto::TraceWriter::TracePacketHandle packet =
+      trace_writer_->NewTracePacket();
+  // base doesn't require accurate timestamps in these packets, so we just emit
+  // the packet with the last timestamp we used.
+  SetPacketTimestamp(&packet, last_timestamp_);
+
+  return base::trace_event::TracePacketHandle(std::move(packet), this);
+}
+
+void TrackEventThreadLocalEventSink::OnTracePacketCompleted() {
+  DCHECK(
+      TraceEventDataSource::GetInstance()->GetThreadIsInTraceEventTLS()->Get());
+  TraceEventDataSource::GetInstance()->GetThreadIsInTraceEventTLS()->Set(false);
+}
+
+void TrackEventThreadLocalEventSink::UpdateIncrementalStateIfNeeded(
     base::trace_event::TraceEvent* trace_event) {
   bool explicit_timestamp =
       trace_event->flags() & TRACE_EVENT_FLAG_EXPLICIT_TIMESTAMP;
+  bool is_for_different_process =
+      (trace_event->flags() & TRACE_EVENT_FLAG_HAS_PROCESS_ID) &&
+      trace_event->process_id() != base::kNullProcessId;
+  bool is_for_different_thread = thread_id_ != trace_event->thread_id();
 
   // We access |incremental_state_reset_id_| atomically but racily. It's OK if
   // we don't notice the reset request immediately, as long as we will notice
@@ -244,6 +356,66 @@ void TrackEventThreadLocalEventSink::ResetIncrementalStateIfNeeded(
 
   if (reset_incremental_state_) {
     DoResetIncrementalState(trace_event, explicit_timestamp);
+  }
+
+  // Ensure that track descriptors for another thread that we reference are
+  // emitted. The other thread may not emit its own descriptors, e.g. if it's an
+  // early java thread that already died. We can only do this for threads in the
+  // same process. Some metadata events also set thread_id to 0, which doesn't
+  // correspond to a valid thread, so we skip these here.
+  if (!is_for_different_process && is_for_different_thread &&
+      trace_event->thread_id() != 0) {
+    // If we haven't yet, emit thread track descriptor and mark it as emitted.
+    // This descriptor is compatible with the thread track descriptor that may
+    // be emitted by the other thread itself, but doesn't set thread details
+    // (e.g. thread name or type).
+    perfetto::ThreadTrack thread_track =
+        perfetto::ThreadTrack::ForThread(trace_event->thread_id());
+    if (!base::Contains(extra_emitted_track_descriptor_uuids_,
+                        thread_track.uuid)) {
+      auto packet = trace_writer_->NewTracePacket();
+      SetPacketTimestamp(&packet, last_timestamp_);
+      TrackDescriptor* track_descriptor = packet->set_track_descriptor();
+      // TODO(eseckler): Call thread_track.Serialize() here instead once the
+      // gets the correct pid from Chrome.
+      track_descriptor->set_uuid(thread_track.uuid);
+      DCHECK(thread_track.parent_uuid);
+      track_descriptor->set_parent_uuid(thread_track.parent_uuid);
+      ThreadDescriptor* thread = track_descriptor->set_thread();
+      thread->set_pid(process_id_);
+      thread->set_tid(trace_event->thread_id());
+
+      extra_emitted_track_descriptor_uuids_.push_back(thread_track.uuid);
+    }
+
+    bool has_thread_time = !trace_event->thread_timestamp().is_null();
+    if (has_thread_time) {
+      // If we haven't yet, emit an absolute thread time counter track
+      // descriptor and mark it as emitted. We can't use the thread's own thread
+      // time counter track, because its delta encoding is not valid on this
+      // trace writer sequence.
+      uint64_t thread_time_track_uuid =
+          thread_track.uuid ^ kAbsoluteThreadTimeTrackUuidBit;
+      if (!base::Contains(extra_emitted_track_descriptor_uuids_,
+                          thread_time_track_uuid)) {
+        auto packet = trace_writer_->NewTracePacket();
+        SetPacketTimestamp(&packet, last_timestamp_);
+        TrackDescriptor* track_descriptor = packet->set_track_descriptor();
+        // TODO(eseckler): Switch to client library support for CounterTrack
+        // uuid calculation once available.
+        track_descriptor->set_uuid(thread_time_track_uuid);
+        track_descriptor->set_parent_uuid(thread_track.uuid);
+        CounterDescriptor* counter = track_descriptor->set_counter();
+        counter->set_type(CounterDescriptor::COUNTER_THREAD_TIME_NS);
+        // Absolute values, but in microseconds.
+        counter->set_unit_multiplier(1000u);
+
+        extra_emitted_track_descriptor_uuids_.push_back(thread_time_track_uuid);
+      }
+    }
+
+    // We never emit instruction count for different threads.
+    DCHECK(trace_event->thread_instruction_count().is_null());
   }
 }
 
@@ -390,36 +562,62 @@ TrackEvent* TrackEventThreadLocalEventSink::PrepareTrackEvent(
     }
   }
 
-  if (!trace_event->thread_timestamp().is_null()) {
-    // Thread timestamps are never user-provided, but COMPLETE events may get
-    // reordered, so we can still observe timestamps that are further in the
-    // past. Emit those as absolute timestamps, since we don't support
-    // negative deltas.
-    if (last_thread_time_ > trace_event->thread_timestamp()) {
-      track_event->set_thread_time_absolute_us(
-          trace_event->thread_timestamp().since_origin().InMicroseconds());
+  bool has_thread_time = !trace_event->thread_timestamp().is_null();
+  bool has_instruction_count =
+      !trace_event->thread_instruction_count().is_null();
+
+  // We always snapshot the thread timestamp when we snapshot instruction
+  // count. If we didn't do this, we'd have to make sure to override the
+  // value of extra_counter_track_uuids.
+  DCHECK(has_thread_time || !has_instruction_count);
+
+  if (has_thread_time) {
+    if (is_for_different_thread) {
+      // EarlyJava events are emitted on the main thread but may actually be for
+      // different threads and specify their thread time.
+
+      // EarlyJava events are always for the same process and don't set
+      // instruction counts.
+      DCHECK(!is_for_different_process);
+      DCHECK(!has_instruction_count);
+
+      // Emit a value onto the absolute thread time track for the other thread.
+      // We emit a descriptor for this in UpdateIncrementalStateIfNeeded().
+      uint64_t track_uuid =
+          perfetto::ThreadTrack::ForThread(trace_event->thread_id()).uuid ^
+          kAbsoluteThreadTimeTrackUuidBit;
+      DCHECK(base::Contains(extra_emitted_track_descriptor_uuids_, track_uuid));
+
+      track_event->add_extra_counter_values(
+          (trace_event->thread_timestamp() - base::ThreadTicks())
+              .InMicroseconds());
+      track_event->add_extra_counter_track_uuids(track_uuid);
     } else {
-      track_event->set_thread_time_delta_us(
+      // Thread timestamps for the current thread are never user-provided, and
+      // since we split COMPLETE events into BEGIN+END event pairs, they should
+      // not appear out of order.
+      DCHECK(trace_event->thread_timestamp() >= last_thread_time_);
+
+      track_event->add_extra_counter_values(
           (trace_event->thread_timestamp() - last_thread_time_)
               .InMicroseconds());
       last_thread_time_ = trace_event->thread_timestamp();
-    }
-  }
 
-  if (!trace_event->thread_instruction_count().is_null()) {
-    // Thread instruction counts are never user-provided, but COMPLETE events
-    // may get reordered, so we can still observe counts that are lower. Emit
-    // those as absolute counts, since we don't support negative deltas.
-    if (last_thread_instruction_count_.ToInternalValue() >
-        trace_event->thread_instruction_count().ToInternalValue()) {
-      track_event->set_thread_instruction_count_absolute(
-          trace_event->thread_instruction_count().ToInternalValue());
-    } else {
-      track_event->set_thread_instruction_count_delta(
-          (trace_event->thread_instruction_count() -
-           last_thread_instruction_count_)
-              .ToInternalValue());
-      last_thread_instruction_count_ = trace_event->thread_instruction_count();
+      if (has_instruction_count) {
+        // Thread instruction counts are never user-provided, and since we split
+        // COMPLETE events into BEGIN+END event pairs, they should not appear
+        // out of order.
+        DCHECK(trace_event->thread_instruction_count().ToInternalValue() >=
+               last_thread_instruction_count_.ToInternalValue());
+
+        // TODO(crbug.com/925589): Add tests for instruction counts.
+        track_event->add_extra_counter_values(
+            (trace_event->thread_instruction_count() -
+             last_thread_instruction_count_)
+                .ToInternalValue());
+        last_thread_instruction_count_ =
+            trace_event->thread_instruction_count();
+      }
     }
   }
 
@@ -488,9 +686,11 @@ TrackEvent* TrackEventThreadLocalEventSink::PrepareTrackEvent(
         }
         case TRACE_EVENT_SCOPE_THREAD: {
           if (thread_id_ != trace_event->thread_id()) {
-            track_event->set_track_uuid(
-                perfetto::ThreadTrack::ForThread(trace_event->thread_id())
-                    .uuid);
+            uint64_t track_uuid =
+                perfetto::ThreadTrack::ForThread(trace_event->thread_id()).uuid;
+            DCHECK(base::Contains(extra_emitted_track_descriptor_uuids_,
+                                  track_uuid));
+            track_event->set_track_uuid(track_uuid);
           } else {
             // Default to the thread track.
           }
@@ -499,8 +699,11 @@ TrackEvent* TrackEventThreadLocalEventSink::PrepareTrackEvent(
       }
     } else {
       if (thread_id_ != trace_event->thread_id()) {
-        track_event->set_track_uuid(
-            perfetto::ThreadTrack::ForThread(trace_event->thread_id()).uuid);
+        uint64_t track_uuid =
+            perfetto::ThreadTrack::ForThread(trace_event->thread_id()).uuid;
+        DCHECK(
+            base::Contains(extra_emitted_track_descriptor_uuids_, track_uuid));
+        track_event->set_track_uuid(track_uuid);
       } else {
         // Default to the thread track.
       }
@@ -685,7 +888,7 @@ void TrackEventThreadLocalEventSink::UpdateDuration(
       trace_event_internal::kNoId /* bind_id */, nullptr,
       explicit_timestamps ? TRACE_EVENT_FLAG_EXPLICIT_TIMESTAMP
                           : TRACE_EVENT_FLAG_NONE);
-  AddTraceEvent(&new_trace_event, nullptr, [](perfetto::EventContext) {});
+  AddLegacyTraceEvent(&new_trace_event, nullptr);
 }
 
 void TrackEventThreadLocalEventSink::Flush() {
@@ -695,18 +898,17 @@ void TrackEventThreadLocalEventSink::Flush() {
 void TrackEventThreadLocalEventSink::OnThreadNameChanged(const char* name) {
   if (thread_id_ != static_cast<int>(base::PlatformThread::CurrentId()))
     return;
-  auto trace_packet = trace_writer_->NewTracePacket();
-  EmitTrackDescriptor(&trace_packet, nullptr, TRACE_TIME_TICKS_NOW(), name);
+  EmitThreadTrackDescriptor(nullptr, TRACE_TIME_TICKS_NOW(), name);
 }
 
-void TrackEventThreadLocalEventSink::EmitTrackDescriptor(
-    protozero::MessageHandle<TracePacket>* trace_packet,
+void TrackEventThreadLocalEventSink::EmitThreadTrackDescriptor(
     base::trace_event::TraceEvent* trace_event,
     base::TimeTicks timestamp,
     const char* maybe_new_name) {
-  SetPacketTimestamp(trace_packet, timestamp);
+  auto packet = trace_writer_->NewTracePacket();
+  SetPacketTimestamp(&packet, timestamp);
 
-  TrackDescriptor* track_descriptor = (*trace_packet)->set_track_descriptor();
+  TrackDescriptor* track_descriptor = packet->set_track_descriptor();
   // TODO(eseckler): Call ThreadTrack::Current() instead once the client lib
   // supports Chrome's tids.
   auto thread_track = perfetto::ThreadTrack::ForThread(thread_id_);
@@ -716,7 +918,7 @@ void TrackEventThreadLocalEventSink::EmitTrackDescriptor(
   // from Chrome, and supports pivacy filtering, and we moved off reference_*
   // fields in ThreadDescriptor.
   track_descriptor->set_uuid(thread_track.uuid);
-  PERFETTO_DCHECK(thread_track.parent_uuid);
+  DCHECK(thread_track.parent_uuid);
   track_descriptor->set_parent_uuid(thread_track.parent_uuid);
 
   ThreadDescriptor* thread = track_descriptor->set_thread();
@@ -736,37 +938,37 @@ void TrackEventThreadLocalEventSink::EmitTrackDescriptor(
     thread->set_thread_name(thread_name_);
   }
 
-  // TODO(eseckler): Switch to a more generic encoding format for counters and
-  // move them out of ThreadDescriptor.
-  if (!trace_event || trace_event->thread_timestamp().is_null()) {
-    last_thread_time_ = ThreadNow();
-  } else {
-    // Thread timestamp is never user-provided.
-    DCHECK_LE(trace_event->thread_timestamp(), ThreadNow());
-    last_thread_time_ = trace_event->thread_timestamp();
-  }
-  thread->set_reference_thread_time_us(
-      last_thread_time_.since_origin().InMicroseconds());
-
-  if (base::trace_event::ThreadInstructionCount::IsSupported()) {
-    if (!trace_event || trace_event->thread_instruction_count().is_null()) {
-      last_thread_instruction_count_ =
-          base::trace_event::ThreadInstructionCount::Now();
-    } else {
-      // Thread instruction count is never user-provided.
-      DCHECK_LE(
-          trace_event->thread_instruction_count().ToInternalValue(),
-          base::trace_event::ThreadInstructionCount::Now().ToInternalValue());
-      last_thread_instruction_count_ = trace_event->thread_instruction_count();
-    }
-    thread->set_reference_thread_instruction_count(
-        last_thread_instruction_count_.ToInternalValue());
-  }
-
   ChromeThreadDescriptor* chrome_thread = track_descriptor->set_chrome_thread();
   chrome_thread->set_thread_type(thread_type_);
 
   // TODO(eseckler): Fill in remaining fields in ChromeThreadDescriptor.
+}
+
+void TrackEventThreadLocalEventSink::EmitCounterTrackDescriptor(
+    base::TimeTicks timestamp,
+    uint64_t thread_track_uuid,
+    uint64_t counter_track_uuid_bit,
+    CounterDescriptor::BuiltinCounterType counter_type,
+    uint64_t unit_multiplier) {
+  auto packet = trace_writer_->NewTracePacket();
+  SetPacketTimestamp(&packet, timestamp);
+
+  TrackDescriptor* track_descriptor = packet->set_track_descriptor();
+
+  // TODO(eseckler): Switch to client library support for CounterTrack uuid
+  // calculation once available.
+  uint64_t track_uuid = thread_track_uuid ^ counter_track_uuid_bit;
+  track_descriptor->set_uuid(track_uuid);
+  track_descriptor->set_parent_uuid(thread_track_uuid);
+
+  CounterDescriptor* counter = track_descriptor->set_counter();
+  if (counter_type != CounterDescriptor::COUNTER_UNSPECIFIED) {
+    counter->set_type(CounterDescriptor::COUNTER_THREAD_TIME_NS);
+  }
+  if (unit_multiplier) {
+    counter->set_unit_multiplier(unit_multiplier);
+  }
+  counter->set_is_incremental(true);
 }
 
 void TrackEventThreadLocalEventSink::DoResetIncrementalState(
@@ -777,6 +979,9 @@ void TrackEventThreadLocalEventSink::DoResetIncrementalState(
   interned_annotation_names_.ResetEmittedState();
   interned_source_locations_.ResetEmittedState();
   interned_log_message_bodies_.ResetEmittedState();
+  extra_emitted_track_descriptor_uuids_.clear();
+  incremental_state_.interned_data_indices = {};
+  incremental_state_.seen_tracks.clear();
 
   // Reset the reference timestamp.
   base::TimeTicks timestamp;
@@ -787,6 +992,11 @@ void TrackEventThreadLocalEventSink::DoResetIncrementalState(
   }
   last_timestamp_ = timestamp;
 
+  // TODO(eseckler): Call ThreadTrack::Current() instead once the client lib
+  // supports Chrome's tids.
+  uint64_t thread_track_uuid =
+      perfetto::ThreadTrack::ForThread(thread_id_).uuid;
+
   {
     // Emit a new clock snapshot with this timestamp, and also set the
     // |incremental_state_cleared| flag and defaults.
@@ -796,26 +1006,22 @@ void TrackEventThreadLocalEventSink::DoResetIncrementalState(
     TracePacketDefaults* tp_defaults = packet->set_trace_packet_defaults();
     tp_defaults->set_timestamp_clock_id(kClockIdIncremental);
     TrackEventDefaults* te_defaults = tp_defaults->set_track_event_defaults();
-    // TODO(eseckler): Call ThreadTrack::Current() instead once the client lib
-    // supports Chrome's tids.
-    te_defaults->set_track_uuid(
-        perfetto::ThreadTrack::ForThread(thread_id_).uuid);
+
+    // Default to thread track, with counter values for thread time and
+    // instruction count, if supported.
+    te_defaults->set_track_uuid(thread_track_uuid);
+    te_defaults->add_extra_counter_track_uuids(thread_track_uuid ^
+                                               kThreadTimeTrackUuidBit);
+    if (base::trace_event::ThreadInstructionCount::IsSupported()) {
+      te_defaults->add_extra_counter_track_uuids(
+          thread_track_uuid ^ kThreadInstructionCountTrackUuidBit);
+    }
 
     ClockSnapshot* clocks = packet->set_clock_snapshot();
-    // Always reference the boottime timestamps to help trace processor
-    // translate the clocks to boottime more efficiently.
+    // Reference clock is in nanoseconds.
     ClockSnapshot::Clock* clock_reference = clocks->add_clocks();
-    clock_reference->set_clock_id(ClockSnapshot::Clock::BOOTTIME);
-    if (kTraceClockId == ClockSnapshot::Clock::BOOTTIME) {
-      clock_reference->set_timestamp(timestamp.since_origin().InNanoseconds());
-    } else {
-      int64_t current_boot_nanos = TraceBootTicksNow();
-      int64_t current_monotonic_nanos =
-          TRACE_TIME_TICKS_NOW().since_origin().InNanoseconds();
-      int64_t diff = current_boot_nanos - current_monotonic_nanos;
-      clock_reference->set_timestamp(timestamp.since_origin().InNanoseconds() +
-                                     diff);
-    }
+    clock_reference->set_clock_id(kTraceClockId);
+    clock_reference->set_timestamp(timestamp.since_origin().InNanoseconds());
     // Absolute clock in micros.
     ClockSnapshot::Clock* clock_absolute = clocks->add_clocks();
     clock_absolute->set_clock_id(kClockIdAbsolute);
@@ -829,9 +1035,23 @@ void TrackEventThreadLocalEventSink::DoResetIncrementalState(
     clock_incremental->set_is_incremental(true);
   }
 
-  // Emit a new track descriptor in another packet.
-  auto packet = trace_writer_->NewTracePacket();
-  EmitTrackDescriptor(&packet, trace_event, timestamp);
+  // Emit new track descriptors for the thread and its counters in separate
+  // packets.
+  EmitThreadTrackDescriptor(trace_event, timestamp);
+  if (base::ThreadTicks::IsSupported()) {
+    EmitCounterTrackDescriptor(
+        timestamp, thread_track_uuid, kThreadTimeTrackUuidBit,
+        CounterDescriptor::COUNTER_THREAD_TIME_NS, 1000u);
+  }
+  if (base::trace_event::ThreadInstructionCount::IsSupported()) {
+    EmitCounterTrackDescriptor(
+        timestamp, thread_track_uuid, kThreadInstructionCountTrackUuidBit,
+        CounterDescriptor::COUNTER_THREAD_INSTRUCTION_COUNT);
+  }
+
+  // The first set of counter values should be absolute.
+  last_thread_time_ = base::ThreadTicks();
+  last_thread_instruction_count_ = base::trace_event::ThreadInstructionCount();
 
   reset_incremental_state_ = false;
 }

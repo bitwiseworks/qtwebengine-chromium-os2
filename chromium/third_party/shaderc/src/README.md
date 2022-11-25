@@ -5,10 +5,6 @@ At the moment it includes:
 
 - [`glslc`](glslc), a command line compiler for GLSL/HLSL to SPIR-V, and
 - [`libshaderc`](libshaderc), a library API for accessing `glslc` functionality.
-- [`spvc`](spvc), a command line wrapper around the SPIR-V to GLSL/HLSL/MSL
-  compiler [SPIRV-Cross][spirv-cross], and
-- [`libshaderc_spvc`](libshaderc_spvc), a library API for accessing `spvc`
-  functionality.
 
 **Note:** The fact that that `libshaderc` is not named `libshaderc_glslc` is a
 quirk of history, and a known inconsistency. Changing it would require a
@@ -25,17 +21,10 @@ to provide:
   operating systems
 * increased functionality such as file `#include` support
 
-`spvc` wraps around core functionality in [spirv-cross][spirv-cross]
-and [SPIRV-Tools][spirv-tools]. `spirv` and its library aims to
-provide:
-
-* validation and transformation of inputs before cross-compiling
-* an API designed around integration with specific projects like [Dawn][dawn]
-
-**Note:** `spvc` and its library are WIP and optional artifacts that are by
-default disabled in the build. How to enabled is detailed below.
-
 ## Downloads
+
+**Note: These binaries are just the artifacts of the builders and have not
+  undergone any QA, thus they should be considered unsupported.**
 
 <img alt="Linux" src="kokoro/img/linux.png" width="20px" height="20px" hspace="2px"/>[![Linux Build Status](https://storage.googleapis.com/shaderc/badges/build_status_linux_clang_release.svg)](https://storage.googleapis.com/shaderc/badges/build_link_linux_clang_release.html)
 <img alt="MacOS" src="kokoro/img/macos.png" width="20px" height="20px" hspace="2px"/>[![MacOS Build Status](https://storage.googleapis.com/shaderc/badges/build_status_macos_clang_release.svg)](https://storage.googleapis.com/shaderc/badges/build_link_macos_clang_release.html)
@@ -192,8 +181,8 @@ On Linux, if cross compiling to Windows:
 
 On Windows, the following tools should be installed and available on your path:
 
-- Visual Studio 2013 Update 4 or later. Previous versions of Visual Studio
-  will likely work but are untested.
+- Visual Studio 2015 or later. Previous versions of Visual Studio may work but
+  are untested and unsupported.
 - Git - including the associated tools, Bash, `diff`.
 
 Optionally, the following tools may be installed on any OS:
@@ -231,14 +220,6 @@ test.vert
 /code $ glslc -c -o - test.vert | spirv-dis
 ```
 
-### Building spvc
-
-The value `SHADERC_ENABLE_SPVC` in `CMakeLists.txt` must be set to `ON` to
-enable building `spvc`.
-
-This can be achieved by either editing the file in your checkout, or passing
-`-DSHADERC_ENABLE_SPVC=ON` to `cmake` to set the value.
-
 ## Bug tracking
 
 We track bugs using GitHub -- click on the "Issues" button on
@@ -267,6 +248,7 @@ older versions of Shaderc and its dependencies.
 * **Python:** [pyshaderc][pyshaderc]
 * **Rust:** [shaderc-rs][shaderc-rs]
 * **Go:** [gshaderc][gshaderc]
+* **.NET:** [shaderc.net][shadercdotnet]
 
 [khr-glslang]: https://github.com/KhronosGroup/glslang
 [spirv-tools]: https://github.com/KhronosGroup/SPIRV-Tools
@@ -276,3 +258,4 @@ older versions of Shaderc and its dependencies.
 [appveyor]: https://ci.appveyor.com/project/dneto0/shaderc
 [dawn]: https://dawn.googlesource.com/dawn
 [gshaderc]: https://github.com/celer/gshaderc
+[shadercdotnet]: https://github.com/jpbruyere/shaderc.net

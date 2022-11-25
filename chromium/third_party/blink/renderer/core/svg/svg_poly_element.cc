@@ -20,6 +20,7 @@
 
 #include "third_party/blink/renderer/core/svg/svg_poly_element.h"
 
+#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/svg/svg_animated_point_list.h"
 #include "third_party/blink/renderer/platform/graphics/path.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
@@ -36,26 +37,35 @@ SVGPolyElement::SVGPolyElement(const QualifiedName& tag_name,
   AddToPropertyMap(points_);
 }
 
-void SVGPolyElement::Trace(Visitor* visitor) {
+SVGPointListTearOff* SVGPolyElement::pointsFromJavascript() {
+  return points_->baseVal();
+}
+
+SVGPointListTearOff* SVGPolyElement::animatedPoints() {
+  return points_->animVal();
+}
+
+void SVGPolyElement::Trace(Visitor* visitor) const {
   visitor->Trace(points_);
   SVGGeometryElement::Trace(visitor);
 }
 
 Path SVGPolyElement::AsPathFromPoints() const {
   Path path;
+  DCHECK(GetComputedStyle());
 
-  SVGPointList* points_value = Points()->CurrentValue();
+  const SVGPointList* points_value = Points()->CurrentValue();
   if (points_value->IsEmpty())
     return path;
 
-  SVGPointList::ConstIterator it = points_value->begin();
-  SVGPointList::ConstIterator it_end = points_value->end();
+  auto it = points_value->begin();
+  auto it_end = points_value->end();
   DCHECK(it != it_end);
-  path.MoveTo(it->Value());
+  path.MoveTo((*it)->Value());
   ++it;
 
   for (; it != it_end; ++it)
-    path.AddLineTo(it->Value());
+    path.AddLineTo((*it)->Value());
 
   return path;
 }

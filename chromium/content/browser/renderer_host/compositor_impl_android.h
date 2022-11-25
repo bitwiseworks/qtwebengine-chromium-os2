@@ -21,7 +21,6 @@
 #include "components/viz/common/frame_sinks/begin_frame_source.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "components/viz/common/surfaces/local_surface_id.h"
-#include "components/viz/common/surfaces/local_surface_id_allocation.h"
 #include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "components/viz/host/host_frame_sink_client.h"
 #include "components/viz/host/host_frame_sink_manager.h"
@@ -89,6 +88,7 @@ class CONTENT_EXPORT CompositorImpl
  private:
   class AndroidHostDisplayClient;
   class ScopedCachedBackBuffer;
+  class ReadbackRefImpl;
 
   // Compositor implementation.
   void SetRootWindow(gfx::NativeWindow root_window) override;
@@ -97,6 +97,7 @@ class CONTENT_EXPORT CompositorImpl
                   bool can_be_used_with_surface_control) override;
   void SetBackgroundColor(int color) override;
   void SetWindowBounds(const gfx::Size& size) override;
+  const gfx::Size& GetWindowBounds() override;
   void SetRequiresAlphaChannel(bool flag) override;
   void SetNeedsComposite() override;
   void SetNeedsRedraw() override;
@@ -143,13 +144,18 @@ class CONTENT_EXPORT CompositorImpl
       cc::ActiveFrameSequenceTrackers trackers) override {}
   std::unique_ptr<cc::BeginMainFrameMetrics> GetBeginMainFrameMetrics()
       override;
+  void NotifyThroughputTrackerResults(
+      cc::CustomTrackerResults results) override {}
+  void DidObserveFirstScrollDelay(
+      base::TimeDelta first_scroll_delay,
+      base::TimeTicks first_scroll_timestamp) override {}
 
   // LayerTreeHostSingleThreadClient implementation.
   void DidSubmitCompositorFrame() override;
   void DidLoseLayerTreeFrameSink() override;
 
   // WindowAndroidCompositor implementation.
-  void AttachLayerForReadback(scoped_refptr<cc::Layer> layer) override;
+  std::unique_ptr<ReadbackRef> TakeReadbackRef() override;
   void RequestCopyOfOutputOnRootLayer(
       std::unique_ptr<viz::CopyOutputRequest> request) override;
   void SetNeedsAnimate() override;
@@ -182,8 +188,6 @@ class CONTENT_EXPORT CompositorImpl
       scoped_refptr<viz::ContextProvider> context_provider);
   void DidSwapBuffers(const gfx::Size& swap_size);
 
-  bool HavePendingReadbacks();
-
   void DetachRootWindow();
 
   // Helper functions to perform delayed cleanup after the compositor is no
@@ -193,7 +197,7 @@ class CONTENT_EXPORT CompositorImpl
 
   // Returns a new surface ID when in surface-synchronization mode. Otherwise
   // returns an empty surface.
-  viz::LocalSurfaceIdAllocation GenerateLocalSurfaceId();
+  viz::LocalSurfaceId GenerateLocalSurfaceId();
 
   // Tears down the display for both Viz and non-Viz, unregistering the root
   // frame sink ID in the process.
@@ -211,14 +215,13 @@ class CONTENT_EXPORT CompositorImpl
   void InitializeVizLayerTreeFrameSink(
       scoped_refptr<viz::ContextProviderCommandBuffer> context_provider);
 
+  void DecrementPendingReadbacks();
+
   viz::FrameSinkId frame_sink_id_;
 
   // root_layer_ is the persistent internal root layer, while subroot_layer_
   // is the one attached by the compositor client.
   scoped_refptr<cc::Layer> subroot_layer_;
-
-  // Subtree for hidden layers with CopyOutputRequests on them.
-  scoped_refptr<cc::Layer> readback_layer_tree_;
 
   // Destruction order matters here:
   std::unique_ptr<cc::AnimationHost> animation_host_;
@@ -269,6 +272,8 @@ class CONTENT_EXPORT CompositorImpl
   size_t num_of_consecutive_surface_failures_ = 0u;
 
   base::TimeTicks latest_frame_time_;
+
+  uint32_t pending_readbacks_ = 0u;
 
   base::WeakPtrFactory<CompositorImpl> weak_factory_{this};
 

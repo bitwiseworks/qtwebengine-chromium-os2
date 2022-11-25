@@ -17,20 +17,22 @@ class XRSystem;
 
 class MODULES_EXPORT NavigatorXR final : public GarbageCollected<NavigatorXR>,
                                          public Supplement<Navigator> {
-  USING_GARBAGE_COLLECTED_MIXIN(NavigatorXR);
-
  public:
   static const char kSupplementName[];
 
   static NavigatorXR* From(Document&);
   static NavigatorXR& From(Navigator&);
 
+  // Allows us to check whether |Document| has a NavigatorXR, without triggering
+  // its lazy creation.
+  static bool AlreadyExists(Document&);
+
   explicit NavigatorXR(Navigator&);
 
   static XRSystem* xr(Navigator&);
   XRSystem* xr();
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   Document* GetDocument();

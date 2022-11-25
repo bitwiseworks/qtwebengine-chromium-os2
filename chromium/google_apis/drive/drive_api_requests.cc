@@ -186,7 +186,7 @@ bool ParseMultipartResponse(const std::string& content_type,
     return false;
 
   base::StringPiece content_type_piece(content_type);
-  if (!content_type_piece.starts_with(kMultipartMixedMimeTypePrefix)) {
+  if (!base::StartsWith(content_type_piece, kMultipartMixedMimeTypePrefix)) {
     return false;
   }
   content_type_piece.remove_prefix(
@@ -228,7 +228,7 @@ bool ParseMultipartResponse(const std::string& content_type,
     }
 
     if (state == STATE_PART_HTTP_STATUS_LINE) {
-      if (line.starts_with(kHttpStatusPrefix)) {
+      if (base::StartsWith(line, kHttpStatusPrefix)) {
         int int_code;
         base::StringToInt(
             line.substr(base::StringPiece(kHttpStatusPrefix).size()),
@@ -507,12 +507,10 @@ bool FilesCopyRequest::GetContentData(std::string* upload_content_type,
 TeamDriveListRequest::TeamDriveListRequest(
     RequestSender* sender,
     const DriveApiUrlGenerator& url_generator,
-    const TeamDriveListCallback& callback)
-    : DriveApiDataRequest<TeamDriveList>(sender, callback),
+    TeamDriveListCallback callback)
+    : DriveApiDataRequest<TeamDriveList>(sender, std::move(callback)),
       url_generator_(url_generator),
-      max_results_(30) {
-  DCHECK(!callback.is_null());
-}
+      max_results_(30) {}
 
 TeamDriveListRequest::~TeamDriveListRequest() {}
 
@@ -525,11 +523,9 @@ GURL TeamDriveListRequest::GetURLInternal() const {
 StartPageTokenRequest::StartPageTokenRequest(
     RequestSender* sender,
     const DriveApiUrlGenerator& url_generator,
-    const StartPageTokenCallback& callback)
-    : DriveApiDataRequest<StartPageToken>(sender, callback),
-      url_generator_(url_generator) {
-  DCHECK(!callback.is_null());
-}
+    StartPageTokenCallback callback)
+    : DriveApiDataRequest<StartPageToken>(sender, std::move(callback)),
+      url_generator_(url_generator) {}
 
 StartPageTokenRequest::~StartPageTokenRequest() = default;
 
@@ -577,11 +573,9 @@ GURL FilesListNextPageRequest::GetURLInternal() const {
 FilesDeleteRequest::FilesDeleteRequest(
     RequestSender* sender,
     const DriveApiUrlGenerator& url_generator,
-    const EntryActionCallback& callback)
-    : EntryActionRequest(sender, callback),
-      url_generator_(url_generator) {
-  DCHECK(!callback.is_null());
-}
+    EntryActionCallback callback)
+    : EntryActionRequest(sender, std::move(callback)),
+      url_generator_(url_generator) {}
 
 FilesDeleteRequest::~FilesDeleteRequest() {}
 
@@ -637,14 +631,12 @@ GURL AboutGetRequest::GetURLInternal() const {
 ChangesListRequest::ChangesListRequest(
     RequestSender* sender,
     const DriveApiUrlGenerator& url_generator,
-    const ChangeListCallback& callback)
-    : DriveApiDataRequest<ChangeList>(sender, callback),
+    ChangeListCallback callback)
+    : DriveApiDataRequest<ChangeList>(sender, std::move(callback)),
       url_generator_(url_generator),
       include_deleted_(true),
       max_results_(100),
-      start_change_id_(0) {
-  DCHECK(!callback.is_null());
-}
+      start_change_id_(0) {}
 
 ChangesListRequest::~ChangesListRequest() {}
 
@@ -658,10 +650,8 @@ GURL ChangesListRequest::GetURLInternal() const {
 
 ChangesListNextPageRequest::ChangesListNextPageRequest(
     RequestSender* sender,
-    const ChangeListCallback& callback)
-    : DriveApiDataRequest<ChangeList>(sender, callback) {
-  DCHECK(!callback.is_null());
-}
+    ChangeListCallback callback)
+    : DriveApiDataRequest<ChangeList>(sender, std::move(callback)) {}
 
 ChangesListNextPageRequest::~ChangesListNextPageRequest() {
 }
@@ -675,11 +665,9 @@ GURL ChangesListNextPageRequest::GetURLInternal() const {
 ChildrenInsertRequest::ChildrenInsertRequest(
     RequestSender* sender,
     const DriveApiUrlGenerator& url_generator,
-    const EntryActionCallback& callback)
-    : EntryActionRequest(sender, callback),
-      url_generator_(url_generator) {
-  DCHECK(!callback.is_null());
-}
+    EntryActionCallback callback)
+    : EntryActionRequest(sender, std::move(callback)),
+      url_generator_(url_generator) {}
 
 ChildrenInsertRequest::~ChildrenInsertRequest() {}
 
@@ -709,11 +697,9 @@ bool ChildrenInsertRequest::GetContentData(std::string* upload_content_type,
 ChildrenDeleteRequest::ChildrenDeleteRequest(
     RequestSender* sender,
     const DriveApiUrlGenerator& url_generator,
-    const EntryActionCallback& callback)
-    : EntryActionRequest(sender, callback),
-      url_generator_(url_generator) {
-  DCHECK(!callback.is_null());
-}
+    EntryActionCallback callback)
+    : EntryActionRequest(sender, std::move(callback)),
+      url_generator_(url_generator) {}
 
 ChildrenDeleteRequest::~ChildrenDeleteRequest() {}
 
@@ -847,16 +833,15 @@ bool InitiateUploadExistingFileRequest::GetContentData(
 
 //============================ ResumeUploadRequest ===========================
 
-ResumeUploadRequest::ResumeUploadRequest(
-    RequestSender* sender,
-    const GURL& upload_location,
-    int64_t start_position,
-    int64_t end_position,
-    int64_t content_length,
-    const std::string& content_type,
-    const base::FilePath& local_file_path,
-    UploadRangeCallback callback,
-    const ProgressCallback& progress_callback)
+ResumeUploadRequest::ResumeUploadRequest(RequestSender* sender,
+                                         const GURL& upload_location,
+                                         int64_t start_position,
+                                         int64_t end_position,
+                                         int64_t content_length,
+                                         const std::string& content_type,
+                                         const base::FilePath& local_file_path,
+                                         UploadRangeCallback callback,
+                                         ProgressCallback progress_callback)
     : ResumeUploadRequestBase(sender,
                               upload_location,
                               start_position,
@@ -914,7 +899,7 @@ MultipartUploadNewFileDelegate::MultipartUploadNewFileDelegate(
     const Properties& properties,
     const DriveApiUrlGenerator& url_generator,
     FileResourceCallback callback,
-    const ProgressCallback& progress_callback)
+    ProgressCallback progress_callback)
     : MultipartUploadRequestBase(
           task_runner,
           CreateMultipartUploadMetadataJson(title,
@@ -957,7 +942,7 @@ MultipartUploadExistingFileDelegate::MultipartUploadExistingFileDelegate(
     const Properties& properties,
     const DriveApiUrlGenerator& url_generator,
     FileResourceCallback callback,
-    const ProgressCallback& progress_callback)
+    ProgressCallback progress_callback)
     : MultipartUploadRequestBase(
           task_runner,
           CreateMultipartUploadMetadataJson(title,
@@ -1004,15 +989,14 @@ DownloadFileRequest::DownloadFileRequest(
     const base::FilePath& output_file_path,
     const DownloadActionCallback& download_action_callback,
     const GetContentCallback& get_content_callback,
-    const ProgressCallback& progress_callback)
+    ProgressCallback progress_callback)
     : DownloadFileRequestBase(
           sender,
           download_action_callback,
           get_content_callback,
           progress_callback,
           url_generator.GenerateDownloadFileUrl(resource_id),
-          output_file_path) {
-}
+          output_file_path) {}
 
 DownloadFileRequest::~DownloadFileRequest() {
 }
@@ -1022,12 +1006,11 @@ DownloadFileRequest::~DownloadFileRequest() {
 PermissionsInsertRequest::PermissionsInsertRequest(
     RequestSender* sender,
     const DriveApiUrlGenerator& url_generator,
-    const EntryActionCallback& callback)
-    : EntryActionRequest(sender, callback),
+    EntryActionCallback callback)
+    : EntryActionRequest(sender, std::move(callback)),
       url_generator_(url_generator),
       type_(PERMISSION_TYPE_USER),
-      role_(PERMISSION_ROLE_READER) {
-}
+      role_(PERMISSION_ROLE_READER) {}
 
 PermissionsInsertRequest::~PermissionsInsertRequest() {
 }
@@ -1182,8 +1165,8 @@ void BatchUploadRequest::AddRequest(BatchableDelegate* request) {
   DCHECK(GetChildEntry(request) == child_requests_.end());
   DCHECK(!committed_);
   child_requests_.push_back(std::make_unique<BatchUploadChildEntry>(request));
-  request->Prepare(base::Bind(&BatchUploadRequest::OnChildRequestPrepared,
-                              weak_ptr_factory_.GetWeakPtr(), request));
+  request->Prepare(base::BindOnce(&BatchUploadRequest::OnChildRequestPrepared,
+                                  weak_ptr_factory_.GetWeakPtr(), request));
 }
 
 void BatchUploadRequest::OnChildRequestPrepared(RequestID request_id,

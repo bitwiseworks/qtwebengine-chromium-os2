@@ -12,7 +12,6 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/task/post_task.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -139,8 +138,8 @@ void TCPSocket::Connect(const net::AddressList& address,
           base::BindOnce(&TCPSocket::OnConnectCompleteOnUIThread, task_runner_,
                          std::move(completion_callback));
 
-  base::PostTask(FROM_HERE, {content::BrowserThread::UI},
-                 base::BindOnce(&TCPSocket::ConnectOnUIThread,
+  content::GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindOnce(&TCPSocket::ConnectOnUIThread,
                                 storage_partition_, browser_context_, address,
                                 client_socket_.BindNewPipeAndPassReceiver(),
                                 std::move(completion_callback_ui)));
@@ -214,7 +213,7 @@ void TCPSocket::SetKeepAlive(bool enable,
                              int delay,
                              SetKeepAliveCallback callback) {
   if (!client_socket_) {
-    std::move(callback).Run(net::ERR_FAILED);
+    std::move(callback).Run(false);
     return;
   }
   client_socket_->SetKeepAlive(enable, delay, std::move(callback));
@@ -222,7 +221,7 @@ void TCPSocket::SetKeepAlive(bool enable,
 
 void TCPSocket::SetNoDelay(bool no_delay, SetNoDelayCallback callback) {
   if (!client_socket_) {
-    std::move(callback).Run(net::ERR_FAILED);
+    std::move(callback).Run(false);
     return;
   }
   client_socket_->SetNoDelay(no_delay, std::move(callback));
@@ -263,8 +262,8 @@ void TCPSocket::Listen(const std::string& address,
           base::BindOnce(&TCPSocket::OnListenCompleteOnUIThread, task_runner_,
                          std::move(completion_callback));
 
-  base::PostTask(
-      FROM_HERE, {content::BrowserThread::UI},
+  content::GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce(&TCPSocket::ListenOnUIThread, storage_partition_,
                      browser_context_, ip_end_point, backlog,
                      server_socket_.BindNewPipeAndPassReceiver(),

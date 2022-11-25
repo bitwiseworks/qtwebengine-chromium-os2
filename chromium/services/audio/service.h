@@ -115,7 +115,7 @@ class Service : public mojom::AudioService {
   std::unique_ptr<AudioManagerAccessor> audio_manager_accessor_;
   const bool enable_remote_client_support_;
   std::unique_ptr<base::SystemMonitor> system_monitor_;
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   std::unique_ptr<media::AudioDeviceListenerMac> audio_device_listener_mac_;
 #endif
   std::unique_ptr<SystemInfo> system_info_;
@@ -124,9 +124,6 @@ class Service : public mojom::AudioService {
   std::unique_ptr<DeviceNotifier> device_notifier_;
   std::unique_ptr<LogFactoryManager> log_factory_manager_;
   std::unique_ptr<ServiceMetrics> metrics_;
-
-  // TODO(crbug.com/888478): Remove this after diagnosis.
-  volatile uint32_t magic_bytes_;
 
   DISALLOW_COPY_AND_ASSIGN(Service);
 };

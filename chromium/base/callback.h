@@ -13,6 +13,7 @@
 
 #include "base/callback_forward.h"
 #include "base/callback_internal.h"
+#include "base/notreached.h"
 
 // -----------------------------------------------------------------------------
 // Usage documentation
@@ -56,6 +57,7 @@ namespace base {
 template <typename R, typename... Args>
 class OnceCallback<R(Args...)> : public internal::CallbackBase {
  public:
+  using ResultType = R;
   using RunType = R(Args...);
   using PolymorphicInvoke = R (*)(internal::BindStateBase*,
                                   internal::PassingTraitsType<Args>...);
@@ -102,6 +104,7 @@ class OnceCallback<R(Args...)> : public internal::CallbackBase {
 template <typename R, typename... Args>
 class RepeatingCallback<R(Args...)> : public internal::CallbackBaseCopyable {
  public:
+  using ResultType = R;
   using RunType = R(Args...);
   using PolymorphicInvoke = R (*)(internal::BindStateBase*,
                                   internal::PassingTraitsType<Args>...);

@@ -4,6 +4,8 @@
 
 #include "content/public/renderer/content_renderer_client.h"
 
+#include "build/build_config.h"
+#include "media/base/demuxer.h"
 #include "media/base/renderer_factory.h"
 #include "third_party/blink/public/platform/web_audio_device.h"
 #include "third_party/blink/public/platform/web_prescient_networking.h"
@@ -51,11 +53,6 @@ bool ContentRendererClient::HasErrorPage(int http_status_code) {
   return false;
 }
 
-bool ContentRendererClient::ShouldSuppressErrorPage(RenderFrame* render_frame,
-                                                    const GURL& url) {
-  return false;
-}
-
 bool ContentRendererClient::ShouldTrackUseCounter(const GURL& url) {
   return true;
 }
@@ -65,6 +62,13 @@ bool ContentRendererClient::DeferMediaLoad(RenderFrame* render_frame,
                                            base::OnceClosure closure) {
   std::move(closure).Run();
   return false;
+}
+
+std::unique_ptr<media::Demuxer> ContentRendererClient::OverrideDemuxerForUrl(
+    RenderFrame* render_frame,
+    const GURL& url,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+  return nullptr;
 }
 
 blink::WebThemeEngine* ContentRendererClient::OverrideThemeEngine() {
@@ -111,7 +115,7 @@ void ContentRendererClient::WillSendRequest(
     const net::SiteForCookies& site_for_cookies,
     const url::Origin* initiator_origin,
     GURL* new_url,
-    bool* attach_same_site_cookies) {}
+    bool* force_ignore_site_for_cookies) {}
 
 bool ContentRendererClient::IsPrefetchOnly(
     RenderFrame* render_frame,
@@ -176,27 +180,23 @@ ContentRendererClient::CreateWorkerContentSettingsClient(
   return nullptr;
 }
 
+#if !defined(OS_ANDROID)
 std::unique_ptr<media::SpeechRecognitionClient>
 ContentRendererClient::CreateSpeechRecognitionClient(
-    RenderFrame* render_frame) {
+    RenderFrame* render_frame,
+    media::SpeechRecognitionClient::OnReadyCallback callback) {
   return nullptr;
 }
+#endif
 
 bool ContentRendererClient::IsPluginAllowedToUseCameraDeviceAPI(
     const GURL& url) {
   return false;
 }
 
-bool ContentRendererClient::IsPluginAllowedToUseDevChannelAPIs() {
+bool ContentRendererClient::AllowScriptExtensionForServiceWorker(
+    const url::Origin& script_origin) {
   return false;
-}
-
-BrowserPluginDelegate* ContentRendererClient::CreateBrowserPluginDelegate(
-    RenderFrame* render_frame,
-    const WebPluginInfo& info,
-    const std::string& mime_type,
-    const GURL& original_url) {
-  return nullptr;
 }
 
 bool ContentRendererClient::IsExcludedHeaderForServiceWorkerFetchEvent(
@@ -249,7 +249,9 @@ ContentRendererClient::GetAudioRendererAlgorithmParameters(
   return base::nullopt;
 }
 
-void ContentRendererClient::BindReceiverOnMainThread(
-    mojo::GenericPendingReceiver receiver) {}
+void ContentRendererClient::MaybeProxyURLLoaderFactory(
+    RenderFrame* render_frame,
+    mojo::PendingReceiver<network::mojom::URLLoaderFactory>* factory_receiver) {
+}
 
 }  // namespace content

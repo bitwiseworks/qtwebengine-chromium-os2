@@ -5,15 +5,19 @@
 #include "third_party/blink/renderer/core/workers/worklet_global_scope.h"
 
 #include <memory>
+#include "services/metrics/public/cpp/mojo_ukm_recorder.h"
 #include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_source_code.h"
 #include "third_party/blink/renderer/bindings/core/v8/source_location.h"
 #include "third_party/blink/renderer/bindings/core/v8/worker_or_worklet_script_controller.h"
+#include "third_party/blink/renderer/core/execution_context/agent.h"
 #include "third_party/blink/renderer/core/frame/frame_console.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/inspector/console_message_storage.h"
+#include "third_party/blink/renderer/core/inspector/inspector_issue_storage.h"
 #include "third_party/blink/renderer/core/inspector/main_thread_debugger.h"
 #include "third_party/blink/renderer/core/inspector/worker_thread_debugger.h"
 #include "third_party/blink/renderer/core/origin_trials/origin_trial_context.h"
@@ -33,14 +37,14 @@ WorkletGlobalScope::WorkletGlobalScope(
     std::unique_ptr<GlobalScopeCreationParams> creation_params,
     WorkerReportingProxy& reporting_proxy,
     LocalFrame* frame,
-    Agent* agent)
+    bool create_microtask_queue)
     : WorkletGlobalScope(std::move(creation_params),
                          reporting_proxy,
                          ToIsolate(frame),
                          ThreadType::kMainThread,
                          frame,
                          nullptr /* worker_thread */,
-                         agent) {}
+                         create_microtask_queue) {}
 
 WorkletGlobalScope::WorkletGlobalScope(
     std::unique_ptr<GlobalScopeCreationParams> creation_params,
@@ -52,7 +56,7 @@ WorkletGlobalScope::WorkletGlobalScope(
                          ThreadType::kOffMainThread,
                          nullptr /* frame */,
                          worker_thread,
-                         nullptr /* agent */) {}
+                         false /* create_microtask_queue */) {}
 
 // Partial implementation of the "set up a worklet environment settings object"
 // algorithm:
@@ -64,13 +68,17 @@ WorkletGlobalScope::WorkletGlobalScope(
     ThreadType thread_type,
     LocalFrame* frame,
     WorkerThread* worker_thread,
-    Agent* agent)
+    bool create_microtask_queue)
     : WorkerOrWorkletGlobalScope(
           isolate,
           SecurityOrigin::CreateUniqueOpaque(),
-          // TODO(tzik): Assign an Agent for Worklets after
-          // NonMainThreadScheduler gets ready to run microtasks.
-          agent,
+          MakeGarbageCollected<Agent>(
+              isolate,
+              creation_params->agent_cluster_id,
+              create_microtask_queue
+                  ? v8::MicrotaskQueue::New(isolate,
+                                            v8::MicrotasksPolicy::kScoped)
+                  : nullptr),
           creation_params->global_scope_name,
           creation_params->parent_devtools_token,
           creation_params->v8_cache_options,
@@ -85,14 +93,18 @@ WorkletGlobalScope::WorkletGlobalScope(
       module_responses_map_(creation_params->module_responses_map),
       // Step 4. "Let inheritedHTTPSState be outsideSettings's HTTPS state."
       https_state_(creation_params->starter_https_state),
-      agent_cluster_id_(creation_params->agent_cluster_id.is_empty()
-                            ? base::UnguessableToken::Create()
-                            : creation_params->agent_cluster_id),
       thread_type_(thread_type),
       frame_(frame),
-      worker_thread_(worker_thread) {
+      worker_thread_(worker_thread),
+      // Worklets should always have a parent LocalFrameToken.
+      frame_token_(
+          creation_params->parent_context_token->GetAs<LocalFrameToken>()) {
   DCHECK((thread_type_ == ThreadType::kMainThread && frame_) ||
          (thread_type_ == ThreadType::kOffMainThread && worker_thread_));
+
+  // Worklet should be in the owner's agent cluster.
+  // https://html.spec.whatwg.org/C/#obtain-a-worklet-agent
+  DCHECK(creation_params->agent_cluster_id);
 
   // Step 2: "Let inheritedAPIBaseURL be outsideSettings's API base URL."
   // |url_| is the inheritedAPIBaseURL passed from the parent Document.
@@ -152,6 +164,16 @@ void WorkletGlobalScope::AddConsoleMessageImpl(ConsoleMessage* console_message,
       worker_thread_->GlobalScope(), console_message, discard_duplicates);
 }
 
+void WorkletGlobalScope::AddInspectorIssue(
+    mojom::blink::InspectorIssueInfoPtr info) {
+  if (IsMainThreadWorkletGlobalScope()) {
+    frame_->AddInspectorIssue(std::move(info));
+  } else {
+    worker_thread_->GetInspectorIssueStorage()->AddInspectorIssue(
+        this, std::move(info));
+  }
+}
+
 void WorkletGlobalScope::ExceptionThrown(ErrorEvent* error_event) {
   if (IsMainThreadWorkletGlobalScope()) {
     MainThreadDebugger::Instance()->ExceptionThrown(this, error_event);
@@ -172,6 +194,13 @@ void WorkletGlobalScope::Dispose() {
 WorkerThread* WorkletGlobalScope::GetThread() const {
   DCHECK(!IsMainThreadWorkletGlobalScope());
   return worker_thread_;
+}
+
+const base::UnguessableToken& WorkletGlobalScope::GetDevToolsToken() const {
+  if (IsMainThreadWorkletGlobalScope()) {
+    return frame_->GetDevToolsFrameToken();
+  }
+  return GetThread()->GetDevToolsWorkerToken();
 }
 
 CoreProbeSink* WorkletGlobalScope::GetProbeSink() {
@@ -258,7 +287,19 @@ void WorkletGlobalScope::BindContentSecurityPolicyToExecutionContext() {
   GetContentSecurityPolicy()->SetupSelf(*document_security_origin_);
 }
 
-void WorkletGlobalScope::Trace(Visitor* visitor) {
+ukm::UkmRecorder* WorkletGlobalScope::UkmRecorder() {
+  if (ukm_recorder_)
+    return ukm_recorder_.get();
+
+  mojo::PendingRemote<ukm::mojom::UkmRecorderInterface> recorder;
+  GetBrowserInterfaceBroker().GetInterface(
+      recorder.InitWithNewPipeAndPassReceiver());
+  ukm_recorder_ = std::make_unique<ukm::MojoUkmRecorder>(std::move(recorder));
+
+  return ukm_recorder_.get();
+}
+
+void WorkletGlobalScope::Trace(Visitor* visitor) const {
   visitor->Trace(frame_);
   WorkerOrWorkletGlobalScope::Trace(visitor);
 }

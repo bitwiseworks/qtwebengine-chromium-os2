@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <string>
 
+#include "third_party/boringssl/src/include/openssl/ssl.h"
 #include "net/third_party/quiche/src/quic/core/crypto/crypto_framer.h"
 #include "net/third_party/quiche/src/quic/core/crypto/crypto_utils.h"
 #include "net/third_party/quiche/src/quic/core/quic_config.h"
@@ -72,6 +73,13 @@ class QUIC_EXPORT_PRIVATE QuicCryptoStream : public QuicStream {
   virtual void WriteCryptoData(EncryptionLevel level,
                                quiche::QuicheStringPiece data);
 
+  // Returns the ssl_early_data_reason_t describing why 0-RTT was accepted or
+  // rejected. Note that the value returned by this function may vary during the
+  // handshake. Once |one_rtt_keys_available| returns true, the value returned
+  // by this function will not change for the rest of the lifetime of the
+  // QuicCryptoStream.
+  virtual ssl_early_data_reason_t EarlyDataReason() const = 0;
+
   // Returns true once an encrypter has been set for the connection.
   virtual bool encryption_established() const = 0;
 
@@ -91,11 +99,29 @@ class QUIC_EXPORT_PRIVATE QuicCryptoStream : public QuicStream {
   // Called when a 1RTT packet has been acknowledged.
   virtual void OnOneRttPacketAcknowledged() = 0;
 
+  // Called when a packet of ENCRYPTION_HANDSHAKE gets sent.
+  virtual void OnHandshakePacketSent() = 0;
+
   // Called when a handshake done frame has been received.
   virtual void OnHandshakeDoneReceived() = 0;
 
   // Returns current handshake state.
   virtual HandshakeState GetHandshakeState() const = 0;
+
+  // Called to provide the server-side application state that must be checked
+  // when performing a 0-RTT TLS resumption.
+  //
+  // On a client, this may be called at any time; 0-RTT tickets will not be
+  // cached until this function is called. When a 0-RTT resumption is attempted,
+  // QuicSession::SetApplicationState will be called with the state provided by
+  // a call to this function on a previous connection.
+  //
+  // On a server, this function must be called before commencing the handshake,
+  // otherwise 0-RTT tickets will not be issued. On subsequent connections,
+  // 0-RTT will be rejected if the data passed into this function does not match
+  // the data passed in on the connection where the 0-RTT ticket was issued.
+  virtual void SetServerApplicationStateForResumption(
+      std::unique_ptr<ApplicationState> state) = 0;
 
   // Returns the maximum number of bytes that can be buffered at a particular
   // encryption level |level|.
@@ -104,8 +130,11 @@ class QUIC_EXPORT_PRIVATE QuicCryptoStream : public QuicStream {
   // Called to cancel retransmission of unencrypted crypto stream data.
   void NeuterUnencryptedStreamData();
 
+  // Called to cancel retransmission of data of encryption |level|.
+  void NeuterStreamDataOfEncryptionLevel(EncryptionLevel level);
+
   // Override to record the encryption level of consumed data.
-  void OnStreamDataConsumed(size_t bytes_consumed) override;
+  void OnStreamDataConsumed(QuicByteCount bytes_consumed) override;
 
   // Returns whether there are any bytes pending retransmission in CRYPTO
   // frames.
@@ -197,9 +226,6 @@ class QUIC_EXPORT_PRIVATE QuicCryptoStream : public QuicStream {
   // Keeps state for data sent/received in CRYPTO frames at each encryption
   // level.
   std::array<CryptoSubstream, NUM_ENCRYPTION_LEVELS> substreams_;
-
-  // Latched value of gfe2_reloadable_flag_quic_writevdata_at_level.
-  const bool writevdata_at_level_;
 };
 
 }  // namespace quic

@@ -5,9 +5,9 @@
 #include "ui/events/base_event_utils.h"
 
 #include "base/atomic_sequence_num.h"
+#include "base/check_op.h"
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
-#include "base/logging.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "ui/events/event_constants.h"
@@ -19,12 +19,12 @@ namespace {
 
 #if defined(OS_CHROMEOS)
 const int kSystemKeyModifierMask = EF_ALT_DOWN | EF_COMMAND_DOWN;
-#elif defined(OS_MACOSX)
+#elif defined(OS_APPLE)
 // Alt modifier is used to input extended characters on Mac.
 const int kSystemKeyModifierMask = EF_COMMAND_DOWN;
 #else
 const int kSystemKeyModifierMask = EF_ALT_DOWN;
-#endif  // !defined(OS_CHROMEOS) && !defined(OS_MACOSX)
+#endif  // !defined(OS_CHROMEOS) && !defined(OS_APPLE)
 
 bool IsValidTimebase(base::TimeTicks now, base::TimeTicks timestamp) {
   int64_t delta = (now - timestamp).InMilliseconds();

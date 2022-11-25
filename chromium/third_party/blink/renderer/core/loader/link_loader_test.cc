@@ -10,10 +10,12 @@
 #include "base/test/scoped_feature_list.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/common/loader/referrer_utils.h"
 #include "third_party/blink/public/platform/web_prescient_networking.h"
 #include "third_party/blink/public/platform/web_url_loader_mock_factory.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/html/link_rel_attribute.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
@@ -37,12 +39,12 @@ namespace {
 class MockLinkLoaderClient final
     : public GarbageCollected<MockLinkLoaderClient>,
       public LinkLoaderClient {
-  USING_GARBAGE_COLLECTED_MIXIN(MockLinkLoaderClient);
-
  public:
   explicit MockLinkLoaderClient(bool should_load) : should_load_(should_load) {}
 
-  void Trace(Visitor* visitor) override { LinkLoaderClient::Trace(visitor); }
+  void Trace(Visitor* visitor) const override {
+    LinkLoaderClient::Trace(visitor);
+  }
 
   bool ShouldLoadLink() override { return should_load_; }
   bool IsLinkCreatedByParser() override { return true; }
@@ -368,8 +370,9 @@ class LinkLoaderPreloadNonceTest
 
 TEST_P(LinkLoaderPreloadNonceTest, Preload) {
   const auto& test_case = GetParam();
-  dummy_page_holder_->GetDocument()
-      .GetContentSecurityPolicy()
+  dummy_page_holder_->GetFrame()
+      .DomWindow()
+      ->GetContentSecurityPolicy()
       ->DidReceiveHeader(test_case.content_security_policy,
                          network::mojom::ContentSecurityPolicyType::kEnforce,
                          network::mojom::ContentSecurityPolicySource::kHTTP);
@@ -589,12 +592,12 @@ TEST_P(LinkLoaderTestPrefetchPrivacyChanges, PrefetchPrivacyChanges) {
     EXPECT_EQ(resource->GetResourceRequest().GetRedirectMode(),
               network::mojom::RedirectMode::kFollow);
     EXPECT_EQ(resource->GetResourceRequest().GetReferrerPolicy(),
-              RuntimeEnabledFeatures::ReducedReferrerGranularityEnabled()
-                  ? network::mojom::ReferrerPolicy::kStrictOriginWhenCrossOrigin
-                  : network::mojom::ReferrerPolicy::kNoReferrerWhenDowngrade);
+              ReferrerUtils::MojoReferrerPolicyResolveDefault(
+                  network::mojom::ReferrerPolicy::kDefault));
   }
 
-  platform_->GetURLLoaderMockFactory()->UnregisterAllURLsAndClearMemoryCache();
+  WebURLLoaderMockFactory::GetSingletonInstance()
+      ->UnregisterAllURLsAndClearMemoryCache();
 }
 
 class LinkLoaderTest : public testing::Test,
@@ -660,7 +663,7 @@ TEST_F(LinkLoaderTest, Prefetch) {
                   resource->GetResourceRequest().GetReferrerPolicy());
       }
     }
-    platform_->GetURLLoaderMockFactory()
+    WebURLLoaderMockFactory::GetSingletonInstance()
         ->UnregisterAllURLsAndClearMemoryCache();
   }
 }

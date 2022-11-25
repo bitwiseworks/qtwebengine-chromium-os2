@@ -55,7 +55,7 @@ class MediaControlPopupMenuElement::EventListener final
     }
   }
 
-  void Trace(Visitor* visitor) final {
+  void Trace(Visitor* visitor) const final {
     NativeEventListener::Trace(visitor);
     visitor->Trace(popup_menu_);
   }
@@ -165,7 +165,7 @@ void MediaControlPopupMenuElement::RemovedFrom(ContainerNode& container) {
   MediaControlDivElement::RemovedFrom(container);
 }
 
-void MediaControlPopupMenuElement::Trace(Visitor* visitor) {
+void MediaControlPopupMenuElement::Trace(Visitor* visitor) const {
   MediaControlDivElement::Trace(visitor);
   visitor->Trace(event_listener_);
   visitor->Trace(last_focused_element_);
@@ -198,10 +198,10 @@ void MediaControlPopupMenuElement::SetPosition() {
                           bounding_client_rect->right() + kPopupMenuMarginPx) +
       kPx;
 
-  style()->setProperty(GetDocument().ToExecutionContext(), "bottom",
-                       bottom_str_value, kImportant, ASSERT_NO_EXCEPTION);
-  style()->setProperty(GetDocument().ToExecutionContext(), "right",
-                       right_str_value, kImportant, ASSERT_NO_EXCEPTION);
+  style()->setProperty(dom_window, "bottom", bottom_str_value, kImportant,
+                       ASSERT_NO_EXCEPTION);
+  style()->setProperty(dom_window, "right", right_str_value, kImportant,
+                       ASSERT_NO_EXCEPTION);
 }
 
 Element* MediaControlPopupMenuElement::PopupAnchor() const {

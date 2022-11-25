@@ -142,16 +142,6 @@ void LabelExample::ButtonPressed(Button* button, const ui::Event& event) {
   custom_label_->SchedulePaint();
 }
 
-void LabelExample::OnPerformAction(Combobox* combobox) {
-  if (combobox == alignment_) {
-    custom_label_->SetHorizontalAlignment(
-        static_cast<gfx::HorizontalAlignment>(combobox->GetSelectedIndex()));
-  } else if (combobox == elide_behavior_) {
-    custom_label_->SetElideBehavior(
-        static_cast<gfx::ElideBehavior>(combobox->GetSelectedIndex()));
-  }
-}
-
 void LabelExample::ContentsChanged(Textfield* sender,
                                    const base::string16& new_contents) {
   custom_label_->SetText(new_contents);
@@ -167,9 +157,9 @@ void LabelExample::AddCustomLabel(View* container) {
 
   ColumnSet* column_set = layout->AddColumnSet(0);
   column_set->AddColumn(GridLayout::LEADING, GridLayout::FILL, 0.0f,
-                        GridLayout::USE_PREF, 0, 0);
+                        GridLayout::ColumnSize::kUsePreferred, 0, 0);
   column_set->AddColumn(GridLayout::FILL, GridLayout::FILL, 1.0f,
-                        GridLayout::USE_PREF, 0, 0);
+                        GridLayout::ColumnSize::kUsePreferred, 0, 0);
 
   layout->StartRow(0, 0);
   layout->AddView(std::make_unique<Label>(ASCIIToUTF16("Content: ")));
@@ -182,18 +172,20 @@ void LabelExample::AddCustomLabel(View* container) {
   textfield_ = layout->AddView(std::move(textfield));
 
   alignment_ =
-      AddCombobox(layout, "Alignment: ", kAlignments, base::size(kAlignments));
+      AddCombobox(layout, "Alignment: ", kAlignments, base::size(kAlignments),
+                  &LabelExample::AlignmentChanged);
   elide_behavior_ = AddCombobox(
       layout, "Elide Behavior: ", ExamplePreferredSizeLabel::kElideBehaviors,
-      base::size(ExamplePreferredSizeLabel::kElideBehaviors));
+      base::size(ExamplePreferredSizeLabel::kElideBehaviors),
+      &LabelExample::ElidingChanged);
 
   column_set = layout->AddColumnSet(1);
   column_set->AddColumn(GridLayout::LEADING, GridLayout::LEADING, 0,
-                        GridLayout::USE_PREF, 0, 0);
+                        GridLayout::ColumnSize::kUsePreferred, 0, 0);
   column_set->AddColumn(GridLayout::LEADING, GridLayout::LEADING, 0,
-                        GridLayout::USE_PREF, 0, 0);
+                        GridLayout::ColumnSize::kUsePreferred, 0, 0);
   column_set->AddColumn(GridLayout::LEADING, GridLayout::LEADING, 0,
-                        GridLayout::USE_PREF, 0, 0);
+                        GridLayout::ColumnSize::kUsePreferred, 0, 0);
   layout->StartRow(0, 1);
   multiline_ = layout->AddView(
       std::make_unique<Checkbox>(base::ASCIIToUTF16("Multiline"), this));
@@ -205,7 +197,7 @@ void LabelExample::AddCustomLabel(View* container) {
 
   column_set = layout->AddColumnSet(2);
   column_set->AddColumn(GridLayout::FILL, GridLayout::FILL, 1,
-                        GridLayout::USE_PREF, 0, 0);
+                        GridLayout::ColumnSize::kUsePreferred, 0, 0);
   layout->StartRow(0, 2);
   auto custom_label = std::make_unique<ExamplePreferredSizeLabel>();
   custom_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
@@ -223,14 +215,25 @@ void LabelExample::AddCustomLabel(View* container) {
 Combobox* LabelExample::AddCombobox(GridLayout* layout,
                                     const char* name,
                                     const char** strings,
-                                    int count) {
+                                    int count,
+                                    void (LabelExample::*function)()) {
   layout->StartRow(0, 0);
   layout->AddView(std::make_unique<Label>(base::ASCIIToUTF16(name)));
   auto combobox = std::make_unique<Combobox>(
       std::make_unique<ExampleComboboxModel>(strings, count));
   combobox->SetSelectedIndex(0);
-  combobox->set_listener(this);
+  combobox->set_callback(base::BindRepeating(function, base::Unretained(this)));
   return layout->AddView(std::move(combobox));
+}
+
+void LabelExample::AlignmentChanged() {
+  custom_label_->SetHorizontalAlignment(
+      static_cast<gfx::HorizontalAlignment>(alignment_->GetSelectedIndex()));
+}
+
+void LabelExample::ElidingChanged() {
+  custom_label_->SetElideBehavior(
+      static_cast<gfx::ElideBehavior>(elide_behavior_->GetSelectedIndex()));
 }
 
 }  // namespace examples

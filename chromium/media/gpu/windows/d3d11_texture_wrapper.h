@@ -10,6 +10,9 @@
 #include <memory>
 #include <vector>
 
+#include "base/memory/weak_ptr.h"
+#include "base/optional.h"
+#include "base/threading/sequence_bound.h"
 #include "gpu/command_buffer/service/mailbox_manager.h"
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "media/base/status.h"
@@ -22,6 +25,7 @@
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_image_dxgi.h"
 #include "ui/gl/gl_surface_egl.h"
+#include "ui/gl/hdr_metadata.h"
 #include "ui/gl/scoped_binders.h"
 
 namespace media {
@@ -41,15 +45,21 @@ class MEDIA_GPU_EXPORT Texture2DWrapper {
   virtual ~Texture2DWrapper();
 
   // Initialize the wrapper.
-  virtual bool Init(GetCommandBufferHelperCB get_helper_cb) = 0;
+  virtual Status Init(
+      scoped_refptr<base::SingleThreadTaskRunner> gpu_task_runner,
+      GetCommandBufferHelperCB get_helper_cb,
+      ComD3D11Texture2D texture,
+      size_t array_size) = 0;
 
   // Import |texture|, |array_slice| and return the mailbox(es) that can be
   // used to refer to it.
-  virtual bool ProcessTexture(ComD3D11Texture2D texture,
-                              size_t array_slice,
-                              const gfx::ColorSpace& input_color_space,
-                              MailboxHolderArray* mailbox_dest_out,
-                              gfx::ColorSpace* output_color_space) = 0;
+  virtual Status ProcessTexture(const gfx::ColorSpace& input_color_space,
+                                MailboxHolderArray* mailbox_dest_out,
+                                gfx::ColorSpace* output_color_space) = 0;
+
+  virtual void SetStreamHDRMetadata(const gl::HDRMetadata& stream_metadata) = 0;
+  virtual void SetDisplayHDRMetadata(
+      const DXGI_HDR_METADATA_HDR10& dxgi_display_metadata) = 0;
 };
 
 // The default texture wrapper that uses GPUResources to talk to hardware
@@ -58,18 +68,28 @@ class MEDIA_GPU_EXPORT Texture2DWrapper {
 // instance for each concurrently outstanding texture.
 class MEDIA_GPU_EXPORT DefaultTexture2DWrapper : public Texture2DWrapper {
  public:
+  // Error callback for GpuResource to notify us of errors.
+  using OnErrorCB = base::OnceCallback<void(Status)>;
+
   // While the specific texture instance can change on every call to
   // ProcessTexture, the dxgi format must be the same for all of them.
-  DefaultTexture2DWrapper(const gfx::Size& size, DXGI_FORMAT dxgi_format);
+  DefaultTexture2DWrapper(const gfx::Size& size,
+                          DXGI_FORMAT dxgi_format,
+                          VideoPixelFormat pixel_format);
   ~DefaultTexture2DWrapper() override;
 
-  bool Init(GetCommandBufferHelperCB get_helper_cb) override;
+  Status Init(scoped_refptr<base::SingleThreadTaskRunner> gpu_task_runner,
+              GetCommandBufferHelperCB get_helper_cb,
+              ComD3D11Texture2D in_texture,
+              size_t array_slice) override;
 
-  bool ProcessTexture(ComD3D11Texture2D texture,
-                      size_t array_slice,
-                      const gfx::ColorSpace& input_color_space,
-                      MailboxHolderArray* mailbox_dest,
-                      gfx::ColorSpace* output_color_space) override;
+  Status ProcessTexture(const gfx::ColorSpace& input_color_space,
+                        MailboxHolderArray* mailbox_dest,
+                        gfx::ColorSpace* output_color_space) override;
+
+  void SetStreamHDRMetadata(const gl::HDRMetadata& stream_metadata) override;
+  void SetDisplayHDRMetadata(
+      const DXGI_HDR_METADATA_HDR10& dxgi_display_metadata) override;
 
  private:
   // Things that are to be accessed / freed only on the main thread.  In
@@ -78,32 +98,56 @@ class MEDIA_GPU_EXPORT DefaultTexture2DWrapper : public Texture2DWrapper {
   // can use the mailbox.
   class GpuResources {
    public:
-    GpuResources();
+    GpuResources(OnErrorCB on_error_cb);
     ~GpuResources();
 
-    bool Init(GetCommandBufferHelperCB get_helper_cb,
-              const std::vector<gpu::Mailbox> mailboxes,
-              GLenum target,
-              gfx::Size size,
-              int textures_per_picture);
-
-    // Push a new |texture|, |array_slice| to |gl_image_|.
-    Status PushNewTexture(ComD3D11Texture2D texture, size_t array_slice);
+    void Init(
+        GetCommandBufferHelperCB get_helper_cb,
+        const std::vector<gpu::Mailbox> mailboxes,
+        GLenum target,
+        gfx::Size size,
+        size_t textures_per_picture,
+        std::array<viz::ResourceFormat, VideoFrame::kMaxPlanes> texture_formats,
+        VideoPixelFormat pixel_format,
+        ComD3D11Texture2D texture,
+        size_t array_slice);
 
     std::vector<uint32_t> service_ids_;
 
    private:
+    // Push a new |texture|, |array_slice| to |gl_image_|.
+    // Both |texture| and |array_slice| were set by Init.
+    void PushNewTexture();
+
+    // Notify our wrapper about |status|, if we haven't before.
+    void NotifyError(Status status);
+
+    // May be empty if we've already sent an error.
+    OnErrorCB on_error_cb_;
+
     scoped_refptr<CommandBufferHelper> helper_;
     scoped_refptr<gl::GLImageDXGI> gl_image_;
     EGLStreamKHR stream_;
 
+    std::vector<std::unique_ptr<gpu::SharedImageRepresentationFactoryRef>>
+        shared_images_;
+
     DISALLOW_COPY_AND_ASSIGN(GpuResources);
   };
 
+  // Receive an error from |gpu_resources_| and store it in |received_error_|.
+  void OnError(Status status);
+
+  // The first error status that we've received from |gpu_resources_|, if any.
+  base::Optional<Status> received_error_;
+
   gfx::Size size_;
-  std::unique_ptr<GpuResources> gpu_resources_;
+  base::SequenceBound<GpuResources> gpu_resources_;
   MailboxHolderArray mailbox_holders_;
   DXGI_FORMAT dxgi_format_;
+  VideoPixelFormat pixel_format_;
+
+  base::WeakPtrFactory<DefaultTexture2DWrapper> weak_factory_{this};
 };
 
 }  // namespace media

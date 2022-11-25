@@ -55,7 +55,6 @@ class WebContentDecryptionModule;
 class MediaKeys : public ScriptWrappable,
                   public ActiveScriptWrappable<MediaKeys>,
                   public ExecutionContextLifecycleObserver {
-  USING_GARBAGE_COLLECTED_MIXIN(MediaKeys);
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -95,7 +94,7 @@ class MediaKeys : public ScriptWrappable,
 
   WebContentDecryptionModule* ContentDecryptionModule();
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   // ExecutionContextLifecycleObserver implementation.
   // FIXME: This class could derive from ExecutionContextLifecycleObserver

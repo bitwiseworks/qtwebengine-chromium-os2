@@ -10,6 +10,7 @@
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
+#include "base/optional.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_command_line.h"
 #include "base/test/scoped_feature_list.h"
@@ -34,12 +35,19 @@
 #include "ui/base/dragdrop/os_exchange_data_provider_win.h"
 #endif
 
+#if defined(USE_X11)
+#include "ui/base/ui_base_features.h"
+#endif
+
 namespace content {
 
 namespace {
 constexpr gfx::Rect kBounds = gfx::Rect(0, 0, 20, 20);
 constexpr gfx::PointF kClientPt = {5, 10};
+
+#if !defined(USE_OZONE) || defined(OS_WIN) || defined(USE_X11)
 constexpr gfx::PointF kScreenPt = {17, 3};
+#endif
 
 // Runs a specified callback when a ui::MouseEvent is received.
 class RunCallbackOnActivation : public WebContentsDelegate {
@@ -178,12 +186,10 @@ TEST_F(WebContentsViewAuraTest, WebContentsDestroyedDuringClick) {
                              0);
   ui::EventHandler* event_handler = GetView();
   event_handler->OnMouseEvent(&mouse_event);
-#if defined(USE_X11)
-  // The web-content is not activated during mouse-press on X11.
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+  // The web-content is not activated during mouse-press on Linux.
   // See comment in WebContentsViewAura::OnMouseEvent() for more details.
   EXPECT_NE(web_contents(), nullptr);
-#else
-  EXPECT_EQ(web_contents(), nullptr);
 #endif
 }
 
@@ -198,6 +204,20 @@ TEST_F(WebContentsViewAuraTest, OccludeView) {
   EXPECT_EQ(web_contents()->GetVisibility(), Visibility::VISIBLE);
 }
 
+#if !defined(USE_OZONE) && !defined(OS_CHROMEOS)
+// TODO(crbug.com/1070483): Enable this test on Ozone.
+//
+// The expectations for the X11 implementation differ from other ones because
+// the GetString() method of the X11 data provider returns an empty string
+// if file data is also present, which is not the same for other
+// implementations.  (See the code under USE_X11 in the body of the test.)
+//
+// Ozone spawns the platform at run time, which would require this test to query
+// Ozone about the current platform, which would pull the Ozone platform as the
+// dependency here.
+//
+// Another solution could be fixing the X11 platform implementation so it
+// would behave the same way as other Ozone platforms do.
 TEST_F(WebContentsViewAuraTest, DragDropFiles) {
   WebContentsViewAura* view = GetView();
   auto data = std::make_unique<ui::OSExchangeData>();
@@ -234,12 +254,16 @@ TEST_F(WebContentsViewAuraTest, DragDropFiles) {
   ASSERT_NE(nullptr, view->current_drop_data_);
 
 #if defined(USE_X11)
-  // By design, OSExchangeDataProviderAuraX11::GetString returns an empty string
+  // By design, OSExchangeDataProviderX11::GetString returns an empty string
   // if file data is also present.
-  EXPECT_TRUE(view->current_drop_data_->text.string().empty());
-#else
-  EXPECT_EQ(string_data, view->current_drop_data_->text.string());
+  if (!features::IsUsingOzonePlatform()) {
+    EXPECT_TRUE(!view->current_drop_data_->text ||
+                view->current_drop_data_->text->empty());
+  } else
 #endif
+  {
+    EXPECT_EQ(string_data, view->current_drop_data_->text);
+  }
 
   std::vector<ui::FileInfo> retrieved_file_infos =
       view->current_drop_data_->filenames;
@@ -264,12 +288,16 @@ TEST_F(WebContentsViewAuraTest, DragDropFiles) {
   CheckDropData(view);
 
 #if defined(USE_X11)
-  // By design, OSExchangeDataProviderAuraX11::GetString returns an empty string
+  // By design, OSExchangeDataProviderX11::GetString returns an empty string
   // if file data is also present.
-  EXPECT_TRUE(drop_complete_data_->drop_data.text.string().empty());
-#else
-  EXPECT_EQ(string_data, drop_complete_data_->drop_data.text.string());
+  if (!features::IsUsingOzonePlatform()) {
+    EXPECT_TRUE(!drop_complete_data_->drop_data.text ||
+                drop_complete_data_->drop_data.text->empty());
+  } else
 #endif
+  {
+    EXPECT_EQ(string_data, drop_complete_data_->drop_data.text);
+  }
 
   retrieved_file_infos = drop_complete_data_->drop_data.filenames;
   ASSERT_EQ(test_file_infos.size(), retrieved_file_infos.size());
@@ -280,8 +308,15 @@ TEST_F(WebContentsViewAuraTest, DragDropFiles) {
   }
 }
 
+#endif  // !defined(USE_OZONE) && !defined(OS_CHROMEOS)
+
 #if defined(OS_WIN) || defined(USE_X11)
 TEST_F(WebContentsViewAuraTest, DragDropFilesOriginateFromRenderer) {
+#if defined(USE_X11)
+  // TODO(https://crbug.com/1109695): enable for Ozone/Linux.
+  if (features::IsUsingOzonePlatform())
+    return;
+#endif
   WebContentsViewAura* view = GetView();
   auto data = std::make_unique<ui::OSExchangeData>();
 
@@ -321,11 +356,12 @@ TEST_F(WebContentsViewAuraTest, DragDropFilesOriginateFromRenderer) {
   ASSERT_NE(nullptr, view->current_drop_data_);
 
 #if defined(USE_X11)
-  // By design, OSExchangeDataProviderAuraX11::GetString returns an empty string
+  // By design, OSExchangeDataProviderX11::GetString returns an empty string
   // if file data is also present.
-  EXPECT_TRUE(view->current_drop_data_->text.string().empty());
+  EXPECT_TRUE(!view->current_drop_data_->text ||
+              view->current_drop_data_->text->empty());
 #else
-  EXPECT_EQ(string_data, view->current_drop_data_->text.string());
+  EXPECT_EQ(string_data, view->current_drop_data_->text);
 #endif
 
   ASSERT_TRUE(view->current_drop_data_->filenames.empty());
@@ -344,11 +380,12 @@ TEST_F(WebContentsViewAuraTest, DragDropFilesOriginateFromRenderer) {
   CheckDropData(view);
 
 #if defined(USE_X11)
-  // By design, OSExchangeDataProviderAuraX11::GetString returns an empty string
+  // By design, OSExchangeDataProviderX11::GetString returns an empty string
   // if file data is also present.
-  EXPECT_TRUE(drop_complete_data_->drop_data.text.string().empty());
+  EXPECT_TRUE(!drop_complete_data_->drop_data.text ||
+              drop_complete_data_->drop_data.text->empty());
 #else
-  EXPECT_EQ(string_data, drop_complete_data_->drop_data.text.string());
+  EXPECT_EQ(string_data, drop_complete_data_->drop_data.text);
 #endif
 
   ASSERT_TRUE(drop_complete_data_->drop_data.filenames.empty());
@@ -385,7 +422,7 @@ TEST_F(WebContentsViewAuraTest, DragDropVirtualFiles) {
   view->OnDragEntered(event);
   ASSERT_NE(nullptr, view->current_drop_data_);
 
-  EXPECT_EQ(string_data, view->current_drop_data_->text.string());
+  EXPECT_EQ(string_data, view->current_drop_data_->text);
 
   const base::FilePath path_placeholder(FILE_PATH_LITERAL("temp.tmp"));
   std::vector<ui::FileInfo> retrieved_file_infos =
@@ -411,7 +448,7 @@ TEST_F(WebContentsViewAuraTest, DragDropVirtualFiles) {
 
   CheckDropData(view);
 
-  EXPECT_EQ(string_data, drop_complete_data_->drop_data.text.string());
+  EXPECT_EQ(string_data, drop_complete_data_->drop_data.text);
 
   std::string read_contents;
   base::FilePath temp_dir;
@@ -468,7 +505,7 @@ TEST_F(WebContentsViewAuraTest, DragDropVirtualFilesOriginateFromRenderer) {
   view->OnDragEntered(event);
   ASSERT_NE(nullptr, view->current_drop_data_);
 
-  EXPECT_EQ(string_data, view->current_drop_data_->text.string());
+  EXPECT_EQ(string_data, view->current_drop_data_->text);
 
   ASSERT_TRUE(view->current_drop_data_->filenames.empty());
 
@@ -486,7 +523,7 @@ TEST_F(WebContentsViewAuraTest, DragDropVirtualFilesOriginateFromRenderer) {
 
   CheckDropData(view);
 
-  EXPECT_EQ(string_data, drop_complete_data_->drop_data.text.string());
+  EXPECT_EQ(string_data, drop_complete_data_->drop_data.text);
 
   ASSERT_TRUE(drop_complete_data_->drop_data.filenames.empty());
 }

@@ -14,7 +14,6 @@
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_binding.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "v8/include/v8.h"
 
@@ -41,19 +40,13 @@ TEST(WritableStreamTest, GetWriter) {
   ASSERT_TRUE(stream);
 
   EXPECT_FALSE(stream->locked());
-  EXPECT_EQ(stream->IsLocked(script_state, ASSERT_NO_EXCEPTION),
-            base::make_optional(false));
 
   stream->getWriter(script_state, ASSERT_NO_EXCEPTION);
 
   EXPECT_TRUE(stream->locked());
-  EXPECT_EQ(stream->IsLocked(script_state, ASSERT_NO_EXCEPTION),
-            base::make_optional(true));
 }
 
 TEST(WritableStreamTest, Serialize) {
-  ScopedTransferableStreamsForTest enable_transferable_streams(true);
-
   V8TestingScope scope;
   auto* script_state = scope.GetScriptState();
 

@@ -7,7 +7,7 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_node.h"
-#include "third_party/blink/renderer/core/layout/ng/inline/ng_line_box_fragment_builder.h"
+#include "third_party/blink/renderer/core/layout/ng/inline/ng_logical_line_item.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_box_fragment_builder.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_constraint_space_builder.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_layout_algorithm.h"
@@ -47,24 +47,17 @@ class CORE_EXPORT NGInlineLayoutAlgorithm final
 
   void CreateLine(const NGLineLayoutOpportunity&,
                   NGLineInfo*,
+                  NGLogicalLineItems* line_box,
                   NGExclusionSpace*);
 
   scoped_refptr<const NGLayoutResult> Layout() override;
 
+  MinMaxSizesResult ComputeMinMaxSizes(const MinMaxSizesInput&) const override {
+    NOTREACHED();
+    return {MinMaxSizes(), true};
+  }
+
  private:
-  enum class TruncateType {
-    // Indicates default behavior. The default truncates if the text doesn't
-    // fit and ShouldTruncateOverflowingText() returns true.
-    kDefault,
-
-    // Truncate if NGLineInfo has more lines.
-    kIfNotLastLine,
-
-    // Forces truncation. This is used when line-clamp is set and there are
-    // blocks after this.
-    kAlways,
-  };
-
   unsigned PositionLeadingFloats(NGExclusionSpace*, NGPositionedFloatVector*);
   NGPositionedFloat PositionFloat(LayoutUnit origin_block_bfc_offset,
                                   LayoutObject* floating_object,
@@ -82,51 +75,52 @@ class CORE_EXPORT NGInlineLayoutAlgorithm final
 
   NGInlineBoxState* HandleOpenTag(const NGInlineItem&,
                                   const NGInlineItemResult&,
-                                  NGLineBoxFragmentBuilder::ChildList*,
+                                  NGLogicalLineItems*,
                                   NGInlineLayoutStateStack*) const;
   NGInlineBoxState* HandleCloseTag(const NGInlineItem&,
                                    const NGInlineItemResult&,
+                                   NGLogicalLineItems* line_box,
                                    NGInlineBoxState*);
 
-  void BidiReorder(TextDirection base_direction);
+  void BidiReorder(TextDirection base_direction, NGLogicalLineItems* line_box);
 
   void PlaceControlItem(const NGInlineItem&,
                         const NGLineInfo&,
                         NGInlineItemResult*,
+                        NGLogicalLineItems* line_box,
                         NGInlineBoxState*);
   void PlaceHyphen(const NGInlineItemResult&,
                    LayoutUnit hyphen_inline_size,
+                   NGLogicalLineItems* line_box,
                    NGInlineBoxState*);
   NGInlineBoxState* PlaceAtomicInline(const NGInlineItem&,
                                       const NGLineInfo&,
-                                      NGInlineItemResult*);
+                                      NGInlineItemResult*,
+                                      NGLogicalLineItems* line_box);
   void PlaceLayoutResult(NGInlineItemResult*,
+                         NGLogicalLineItems* line_box,
                          NGInlineBoxState*,
                          LayoutUnit inline_offset = LayoutUnit());
-  void PlaceOutOfFlowObjects(const NGLineInfo&, const NGLineHeightMetrics&);
+  void PlaceOutOfFlowObjects(const NGLineInfo&,
+                             const FontHeight&,
+                             NGLogicalLineItems* line_box);
   void PlaceFloatingObjects(const NGLineInfo&,
-                            const NGLineHeightMetrics&,
+                            const FontHeight&,
                             const NGLineLayoutOpportunity&,
+                            NGLogicalLineItems* line_box,
                             NGExclusionSpace*);
+  void PlaceRelativePositionedItems(NGLogicalLineItems* line_box);
   void PlaceListMarker(const NGInlineItem&,
                        NGInlineItemResult*,
                        const NGLineInfo&);
 
   LayoutUnit ApplyTextAlign(NGLineInfo*);
-  bool ApplyJustify(LayoutUnit space, NGLineInfo*);
+  base::Optional<LayoutUnit> ApplyJustify(LayoutUnit space, NGLineInfo*);
 
   LayoutUnit ComputeContentSize(const NGLineInfo&,
                                 const NGExclusionSpace&,
                                 LayoutUnit line_height);
 
-  static TruncateType TruncateTypeFromConstraintSpace(
-      const NGConstraintSpace& space);
-
-  // Returns true if truncuation should happen as a result of line-clamp for
-  // |line_info|.
-  bool ShouldTruncateForLineClamp(const NGLineInfo& line_info) const;
-
-  NGLineBoxFragmentBuilder::ChildList line_box_;
   NGInlineLayoutStateStack* box_states_;
   NGInlineChildLayoutContext* context_;
 
@@ -134,7 +128,6 @@ class CORE_EXPORT NGInlineLayoutAlgorithm final
 
   unsigned is_horizontal_writing_mode_ : 1;
   unsigned quirks_mode_ : 1;
-  unsigned truncate_type_ : 2;
 
 #if DCHECK_IS_ON()
   // True if |box_states_| is taken from |context_|, to check the |box_states_|

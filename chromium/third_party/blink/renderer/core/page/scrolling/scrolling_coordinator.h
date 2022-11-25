@@ -65,7 +65,7 @@ class CORE_EXPORT ScrollingCoordinator final
  public:
   explicit ScrollingCoordinator(Page*);
   ~ScrollingCoordinator() override;
-  void Trace(Visitor*);
+  void Trace(Visitor*) const;
 
   // The LocalFrameView argument is optional, nullptr causes the the scrolling
   // animation host and timeline to be owned by the ScrollingCoordinator. When
@@ -90,13 +90,6 @@ class CORE_EXPORT ScrollingCoordinator final
 
   // Should be called whenever the root layer for the given frame view changes.
   void FrameViewRootLayerDidChange(LocalFrameView*);
-
-  scoped_refptr<cc::ScrollbarLayerBase> CreateSolidColorScrollbarLayer(
-      ScrollbarOrientation,
-      int thumb_thickness,
-      int track_start,
-      bool is_left_side_vertical_scrollbar,
-      cc::ElementId);
 
   void WillDestroyScrollableArea(ScrollableArea*);
 
@@ -144,6 +137,7 @@ class CORE_EXPORT ScrollingCoordinator final
   void DidChangeScrollbarsHidden(CompositorElementId, bool hidden) override;
 
   base::WeakPtr<ScrollingCoordinator> GetWeakPtr() {
+    DCHECK(page_);
     return weak_ptr_factory_.GetWeakPtr();
   }
 
@@ -162,7 +156,7 @@ class CORE_EXPORT ScrollingCoordinator final
   bool should_scroll_on_main_thread_dirty_;
 
  private:
-  void AddScrollbarLayer(ScrollableArea*,
+  void SetScrollbarLayer(ScrollableArea*,
                          ScrollbarOrientation,
                          scoped_refptr<cc::ScrollbarLayerBase>);
   cc::ScrollbarLayerBase* GetScrollbarLayer(ScrollableArea*,

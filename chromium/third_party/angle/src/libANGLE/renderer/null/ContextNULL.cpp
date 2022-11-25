@@ -99,6 +99,7 @@ ContextNULL::ContextNULL(const gl::State &state,
     mExtensions.eglImageOES                 = true;
     mExtensions.eglImageExternalOES         = true;
     mExtensions.eglImageExternalEssl3OES    = true;
+    mExtensions.eglImageArray               = true;
     mExtensions.eglStreamConsumerExternalNV = true;
 
     const gl::Version maxClientVersion(3, 1);
@@ -237,6 +238,71 @@ angle::Result ContextNULL::drawElementsIndirect(const gl::Context *context,
                                                 gl::PrimitiveMode mode,
                                                 gl::DrawElementsType type,
                                                 const void *indirect)
+{
+    return angle::Result::Continue;
+}
+
+angle::Result ContextNULL::multiDrawArrays(const gl::Context *context,
+                                           gl::PrimitiveMode mode,
+                                           const GLint *firsts,
+                                           const GLsizei *counts,
+                                           GLsizei drawcount)
+{
+    return angle::Result::Continue;
+}
+
+angle::Result ContextNULL::multiDrawArraysInstanced(const gl::Context *context,
+                                                    gl::PrimitiveMode mode,
+                                                    const GLint *firsts,
+                                                    const GLsizei *counts,
+                                                    const GLsizei *instanceCounts,
+                                                    GLsizei drawcount)
+{
+    return angle::Result::Continue;
+}
+
+angle::Result ContextNULL::multiDrawElements(const gl::Context *context,
+                                             gl::PrimitiveMode mode,
+                                             const GLsizei *counts,
+                                             gl::DrawElementsType type,
+                                             const GLvoid *const *indices,
+                                             GLsizei drawcount)
+{
+    return angle::Result::Continue;
+}
+
+angle::Result ContextNULL::multiDrawElementsInstanced(const gl::Context *context,
+                                                      gl::PrimitiveMode mode,
+                                                      const GLsizei *counts,
+                                                      gl::DrawElementsType type,
+                                                      const GLvoid *const *indices,
+                                                      const GLsizei *instanceCounts,
+                                                      GLsizei drawcount)
+{
+    return angle::Result::Continue;
+}
+
+angle::Result ContextNULL::multiDrawArraysInstancedBaseInstance(const gl::Context *context,
+                                                                gl::PrimitiveMode mode,
+                                                                const GLint *firsts,
+                                                                const GLsizei *counts,
+                                                                const GLsizei *instanceCounts,
+                                                                const GLuint *baseInstances,
+                                                                GLsizei drawcount)
+{
+    return angle::Result::Continue;
+}
+
+angle::Result ContextNULL::multiDrawElementsInstancedBaseVertexBaseInstance(
+    const gl::Context *context,
+    gl::PrimitiveMode mode,
+    const GLsizei *counts,
+    gl::DrawElementsType type,
+    const GLvoid *const *indices,
+    const GLsizei *instanceCounts,
+    const GLint *baseVertices,
+    const GLuint *baseInstances,
+    GLsizei drawcount)
 {
     return angle::Result::Continue;
 }

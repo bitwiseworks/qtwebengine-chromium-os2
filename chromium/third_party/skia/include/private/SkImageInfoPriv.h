@@ -11,19 +11,6 @@
 #include "include/core/SkColor.h"
 #include "include/core/SkImageInfo.h"
 
-enum SkColorChannelFlag : uint32_t {
-    kRed_SkColorChannelFlag    = 1 << static_cast<uint32_t>(SkColorChannel::kR),
-    kGreen_SkColorChannelFlag  = 1 << static_cast<uint32_t>(SkColorChannel::kG),
-    kBlue_SkColorChannelFlag   = 1 << static_cast<uint32_t>(SkColorChannel::kB),
-    kAlpha_SkColorChannelFlag  = 1 << static_cast<uint32_t>(SkColorChannel::kA),
-    kGray_SkColorChannelFlag   = 0x10,
-    // Convenience values
-    kRG_SkColorChannelFlags    = kRed_SkColorChannelFlag | kGreen_SkColorChannelFlag,
-    kRGB_SkColorChannelFlags   = kRG_SkColorChannelFlags | kBlue_SkColorChannelFlag,
-    kRGBA_SkColorChannelFlags  = kRGB_SkColorChannelFlags | kAlpha_SkColorChannelFlag,
-};
-static_assert(0 == (kGray_SkColorChannelFlag & kRGBA_SkColorChannelFlags), "bitfield conflict");
-
 static inline uint32_t SkColorTypeChannelFlags(SkColorType ct) {
     switch (ct) {
         case kUnknown_SkColorType:            return 0;
@@ -87,7 +74,7 @@ static int SkColorTypeShiftPerPixel(SkColorType ct) {
 }
 
 static inline size_t SkColorTypeMinRowBytes(SkColorType ct, int width) {
-    return width * SkColorTypeBytesPerPixel(ct);
+    return (size_t)(width * SkColorTypeBytesPerPixel(ct));
 }
 
 static inline bool SkColorTypeIsValid(unsigned value) {
@@ -98,7 +85,7 @@ static inline size_t SkColorTypeComputeOffset(SkColorType ct, int x, int y, size
     if (kUnknown_SkColorType == ct) {
         return 0;
     }
-    return y * rowBytes + (x << SkColorTypeShiftPerPixel(ct));
+    return (size_t)y * rowBytes + ((size_t)x << SkColorTypeShiftPerPixel(ct));
 }
 
 static inline bool SkColorTypeIsNormalized(SkColorType ct) {

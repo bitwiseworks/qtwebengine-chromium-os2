@@ -7,7 +7,7 @@
 #include <memory>
 #include <utility>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/no_destructor.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/events/devices/device_data_manager.h"
@@ -18,7 +18,6 @@
 namespace ui {
 
 namespace {
-
 OzonePlatform* g_instance = nullptr;
 
 void EnsureInstance() {
@@ -37,12 +36,24 @@ void EnsureInstance() {
 
 }  // namespace
 
+OzonePlatform::PlatformProperties::PlatformProperties() = default;
+OzonePlatform::PlatformProperties::~PlatformProperties() = default;
+
 OzonePlatform::OzonePlatform() {
   DCHECK(!g_instance) << "There should only be a single OzonePlatform.";
   g_instance = this;
 }
 
 OzonePlatform::~OzonePlatform() = default;
+
+// static
+void OzonePlatform::PreEarlyInitialization() {
+  EnsureInstance();
+  if (g_instance->prearly_initialized_)
+    return;
+  g_instance->prearly_initialized_ = true;
+  g_instance->PreEarlyInitialize();
+}
 
 // static
 void OzonePlatform::InitializeForUI(const InitParams& args) {
@@ -78,13 +89,18 @@ const char* OzonePlatform::GetPlatformName() {
   return GetOzonePlatformName();
 }
 
-IPC::MessageFilter* OzonePlatform::GetGpuMessageFilter() {
-  return nullptr;
-}
-
 PlatformClipboard* OzonePlatform::GetPlatformClipboard() {
   // Platforms that support system clipboard must override this method.
   return nullptr;
+}
+
+PlatformGLEGLUtility* OzonePlatform::GetPlatformGLEGLUtility() {
+  return nullptr;
+}
+
+int OzonePlatform::GetKeyModifiers() const {
+  // Platform may override this to provide the current state of modifier keys.
+  return 0;
 }
 
 bool OzonePlatform::IsNativePixmapConfigSupported(
@@ -114,5 +130,12 @@ void OzonePlatform::AfterSandboxEntry() {
   // This should not be called in single-process mode.
   DCHECK(!single_process_);
 }
+
+void OzonePlatform::PostMainMessageLoopStart(
+    base::OnceCallback<void()> shutdown_cb) {}
+
+void OzonePlatform::PostMainMessageLoopRun() {}
+
+void OzonePlatform::PreEarlyInitialize() {}
 
 }  // namespace ui

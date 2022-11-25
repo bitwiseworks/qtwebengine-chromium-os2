@@ -15,13 +15,12 @@
 #include "fpdfsdk/pwl/cpwl_scroll_bar.h"
 #include "fpdfsdk/pwl/cpwl_wnd.h"
 #include "public/fpdf_fwlevent.h"
-#include "third_party/base/ptr_util.h"
 
 CPWL_EditCtrl::CPWL_EditCtrl(
     const CreateParams& cp,
     std::unique_ptr<IPWL_SystemHandler::PerWindowData> pAttachedData)
     : CPWL_Wnd(cp, std::move(pAttachedData)),
-      m_pEdit(pdfium::MakeUnique<CPWL_EditImpl>()) {
+      m_pEdit(std::make_unique<CPWL_EditImpl>()) {
   GetCreationParams()->eCursorType = FXCT_VBEAM;
 }
 
@@ -50,6 +49,11 @@ WideString CPWL_EditCtrl::GetSelectedText() {
 
 void CPWL_EditCtrl::ReplaceSelection(const WideString& text) {
   m_pEdit->ReplaceSelection(text);
+}
+
+bool CPWL_EditCtrl::SelectAllText() {
+  m_pEdit->SelectAll();
+  return true;
 }
 
 bool CPWL_EditCtrl::RePosChildWnd() {
@@ -83,10 +87,10 @@ void CPWL_EditCtrl::CreateEditCaret(const CreateParams& cp) {
   CreateParams ecp = cp;
   ecp.dwFlags = PWS_CHILD | PWS_NOREFRESHCLIP;
   ecp.dwBorderWidth = 0;
-  ecp.nBorderStyle = BorderStyle::SOLID;
+  ecp.nBorderStyle = BorderStyle::kSolid;
   ecp.rcRectWnd = CFX_FloatRect();
 
-  auto pCaret = pdfium::MakeUnique<CPWL_Caret>(ecp, CloneAttachedData());
+  auto pCaret = std::make_unique<CPWL_Caret>(ecp, CloneAttachedData());
   m_pEditCaret = pCaret.get();
   m_pEditCaret->SetInvalidRect(GetClientRect());
   AddChild(std::move(pCaret));
@@ -207,7 +211,7 @@ bool CPWL_EditCtrl::OnChar(uint16_t nChar, uint32_t nFlag) {
         CutText();
         return true;
       case 'A' - 'A' + 1:
-        SelectAll();
+        SelectAllText();
         return true;
       case 'Z' - 'A' + 1:
         if (bShift)
@@ -246,8 +250,8 @@ bool CPWL_EditCtrl::OnChar(uint16_t nChar, uint32_t nFlag) {
   return true;
 }
 
-bool CPWL_EditCtrl::OnLButtonDown(const CFX_PointF& point, uint32_t nFlag) {
-  CPWL_Wnd::OnLButtonDown(point, nFlag);
+bool CPWL_EditCtrl::OnLButtonDown(uint32_t nFlag, const CFX_PointF& point) {
+  CPWL_Wnd::OnLButtonDown(nFlag, point);
 
   if (ClientHitTest(point)) {
     if (m_bMouseDown && !InvalidateRect(nullptr))
@@ -262,8 +266,8 @@ bool CPWL_EditCtrl::OnLButtonDown(const CFX_PointF& point, uint32_t nFlag) {
   return true;
 }
 
-bool CPWL_EditCtrl::OnLButtonUp(const CFX_PointF& point, uint32_t nFlag) {
-  CPWL_Wnd::OnLButtonUp(point, nFlag);
+bool CPWL_EditCtrl::OnLButtonUp(uint32_t nFlag, const CFX_PointF& point) {
+  CPWL_Wnd::OnLButtonUp(nFlag, point);
 
   if (m_bMouseDown) {
     // can receive keybord message
@@ -277,8 +281,8 @@ bool CPWL_EditCtrl::OnLButtonUp(const CFX_PointF& point, uint32_t nFlag) {
   return true;
 }
 
-bool CPWL_EditCtrl::OnMouseMove(const CFX_PointF& point, uint32_t nFlag) {
-  CPWL_Wnd::OnMouseMove(point, nFlag);
+bool CPWL_EditCtrl::OnMouseMove(uint32_t nFlag, const CFX_PointF& point) {
+  CPWL_Wnd::OnMouseMove(nFlag, point);
 
   if (m_bMouseDown)
     m_pEdit->OnMouseMove(point, false, false);
@@ -340,17 +344,13 @@ void CPWL_EditCtrl::SetSelection(int32_t nStartChar, int32_t nEndChar) {
   m_pEdit->SetSelection(nStartChar, nEndChar);
 }
 
-void CPWL_EditCtrl::GetSelection(int32_t& nStartChar, int32_t& nEndChar) const {
-  m_pEdit->GetSelection(nStartChar, nEndChar);
+std::pair<int32_t, int32_t> CPWL_EditCtrl::GetSelection() const {
+  return m_pEdit->GetSelection();
 }
 
 void CPWL_EditCtrl::ClearSelection() {
   if (!IsReadOnly())
     m_pEdit->ClearSelection();
-}
-
-void CPWL_EditCtrl::SelectAll() {
-  m_pEdit->SelectAll();
 }
 
 void CPWL_EditCtrl::SetScrollPos(const CFX_PointF& point) {

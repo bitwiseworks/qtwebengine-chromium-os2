@@ -33,9 +33,9 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_EXPORTED_WEB_PLUGIN_CONTAINER_IMPL_H_
 
 #include "base/memory/scoped_refptr.h"
+#include "third_party/blink/public/common/input/web_coalesced_input_event.h"
 #include "third_party/blink/public/common/input/web_touch_event.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink-forward.h"
-#include "third_party/blink/public/platform/web_coalesced_input_event.h"
 #include "third_party/blink/public/web/web_plugin_container.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
@@ -72,7 +72,6 @@ class CORE_EXPORT WebPluginContainerImpl final
       public EmbeddedContentView,
       public WebPluginContainer,
       public ExecutionContextClient {
-  USING_GARBAGE_COLLECTED_MIXIN(WebPluginContainerImpl);
   USING_PRE_FINALIZER(WebPluginContainerImpl, PreFinalize);
 
  public:
@@ -134,6 +133,7 @@ class CORE_EXPORT WebPluginContainerImpl final
   void SetWantsWheelEvents(bool) override;
   gfx::Point RootFrameToLocalPoint(const gfx::Point&) override;
   gfx::Point LocalToRootFramePoint(const gfx::Point&) override;
+  bool WasTargetForLastMouseEvent() override;
 
   // Non-Oilpan, this cannot be null. With Oilpan, it will be
   // null when in a disposed state, pending finalization during the next GC.
@@ -186,7 +186,7 @@ class CORE_EXPORT WebPluginContainerImpl final
   void DidFinishLoading();
   void DidFailLoading(const ResourceError&);
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
   // USING_PRE_FINALIZER does not allow for virtual dispatch from the finalizer
   // method. Here we call Dispose() which does the correct virtual dispatch.
   void PreFinalize() { Dispose(); }

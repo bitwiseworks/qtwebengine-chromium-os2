@@ -8,8 +8,9 @@
 #include <stdint.h>
 
 #include <limits>
+#include <ostream>
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/macros.h"
 #include "sandbox/linux/bpf_dsl/bpf_dsl_impl.h"
 #include "sandbox/linux/bpf_dsl/errorcode.h"
@@ -32,7 +33,8 @@ class ReturnResultExprImpl : public internal::ResultExprImpl {
   bool IsAllow() const override { return IsAction(SECCOMP_RET_ALLOW); }
 
   bool IsDeny() const override {
-    return IsAction(SECCOMP_RET_ERRNO) || IsAction(SECCOMP_RET_KILL);
+    return IsAction(SECCOMP_RET_ERRNO) || IsAction(SECCOMP_RET_KILL) ||
+           IsAction(SECCOMP_RET_USER_NOTIF);
   }
 
  private:
@@ -259,6 +261,10 @@ ResultExpr Trap(TrapRegistry::TrapFnc trap_func, const void* aux) {
 ResultExpr UnsafeTrap(TrapRegistry::TrapFnc trap_func, const void* aux) {
   return std::make_shared<TrapResultExprImpl>(trap_func, aux,
                                               false /* unsafe */);
+}
+
+ResultExpr UserNotify() {
+  return std::make_shared<ReturnResultExprImpl>(SECCOMP_RET_USER_NOTIF);
 }
 
 BoolExpr BoolConst(bool value) {

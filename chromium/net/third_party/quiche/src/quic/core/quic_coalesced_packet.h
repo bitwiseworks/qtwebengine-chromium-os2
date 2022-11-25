@@ -27,6 +27,9 @@ class QUIC_EXPORT_PRIVATE QuicCoalescedPacket {
   // Clears this coalesced packet.
   void Clear();
 
+  // Clears all state associated with initial_packet_.
+  void NeuterInitialPacket();
+
   // Copies encrypted_buffers_ to |buffer| and sets |length_copied| to the
   // copied amount. Returns false if copy fails (i.e., |buffer_len| is not
   // enough).
@@ -35,6 +38,13 @@ class QUIC_EXPORT_PRIVATE QuicCoalescedPacket {
                             size_t* length_copied) const;
 
   std::string ToString(size_t serialized_length) const;
+
+  // Returns true if this coalesced packet contains packet of |level|.
+  bool ContainsPacketOfEncryptionLevel(EncryptionLevel level) const;
+
+  // Returns transmission type of packet of |level|. This should only be called
+  // when this coalesced packet contains packet of |level|.
+  TransmissionType TransmissionTypeOfPacket(EncryptionLevel level) const;
 
   const SerializedPacket* initial_packet() const {
     return initial_packet_.get();
@@ -49,9 +59,6 @@ class QUIC_EXPORT_PRIVATE QuicCoalescedPacket {
   QuicPacketLength max_packet_length() const { return max_packet_length_; }
 
  private:
-  // Returns true if this coalesced packet contains packet of |level|.
-  bool ContainsPacketOfEncryptionLevel(EncryptionLevel level) const;
-
   // self/peer addresses are set when trying to coalesce the first packet.
   // Packets with different self/peer addresses cannot be coalesced.
   QuicSocketAddress self_address_;
@@ -64,6 +71,8 @@ class QUIC_EXPORT_PRIVATE QuicCoalescedPacket {
   // Copies of packets' encrypted buffers according to different encryption
   // levels.
   std::string encrypted_buffers_[NUM_ENCRYPTION_LEVELS];
+  // Recorded transmission type according to different encryption levels.
+  TransmissionType transmission_types_[NUM_ENCRYPTION_LEVELS];
 
   // A copy of ENCRYPTION_INITIAL packet if this coalesced packet contains one.
   // Null otherwise. Please note, the encrypted_buffer field is not copied. The

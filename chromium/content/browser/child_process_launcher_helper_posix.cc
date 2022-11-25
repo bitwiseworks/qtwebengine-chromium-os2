@@ -11,14 +11,13 @@
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "content/browser/posix_file_descriptor_info_impl.h"
+#include "content/common/shared_file_util.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_descriptor_keys.h"
 #include "content/public/common/content_descriptors.h"
 #include "content/public/common/content_switches.h"
 #include "mojo/public/cpp/platform/platform_channel_endpoint.h"
-#include "services/service_manager/embedder/shared_file_util.h"
-#include "services/service_manager/embedder/switches.h"
 
 namespace content {
 namespace internal {
@@ -57,17 +56,17 @@ std::unique_ptr<PosixFileDescriptorInfo> CreateDefaultPosixFilesToMap(
   std::unique_ptr<PosixFileDescriptorInfo> files_to_register(
       PosixFileDescriptorInfoImpl::Create());
 
-#if !defined(OS_MACOSX)
+#if !defined(OS_MAC)
 #if !defined(OS_OS2)
   // Mac and OS/2 shared memory doesn't use file descriptors.
   int fd = base::FieldTrialList::GetFieldTrialDescriptor();
   if (fd != -1)
-    files_to_register->Share(service_manager::kFieldTrialDescriptor, fd);
+    files_to_register->Share(kFieldTrialDescriptor, fd);
 #endif
 
   DCHECK(mojo_channel_remote_endpoint.is_valid());
   files_to_register->Share(
-      service_manager::kMojoIPCChannel,
+      kMojoIPCChannel,
       mojo_channel_remote_endpoint.platform_handle().GetFD().get());
 
   // TODO(jcivelli): remove this "if defined" by making
@@ -78,7 +77,7 @@ std::unique_ptr<PosixFileDescriptorInfo> CreateDefaultPosixFilesToMap(
 
   // Also include the files specified explicitly by |files_to_preload|.
   base::GlobalDescriptors::Key key = kContentDynamicDescriptorStart;
-  service_manager::SharedFileSwitchValueBuilder file_switch_value_builder;
+  SharedFileSwitchValueBuilder file_switch_value_builder;
   for (const auto& key_path_iter : files_to_preload) {
 #if !defined(V8_USE_EXTERNAL_STARTUP_DATA)
     if (key_path_iter.first == content::kV8SnapshotDataDescriptor ||
@@ -98,7 +97,7 @@ std::unique_ptr<PosixFileDescriptorInfo> CreateDefaultPosixFilesToMap(
     key++;
     DCHECK(key < kContentDynamicDescriptorMax);
   }
-  command_line->AppendSwitchASCII(service_manager::switches::kSharedFiles,
+  command_line->AppendSwitchASCII(switches::kSharedFiles,
                                   file_switch_value_builder.switch_value());
 
 

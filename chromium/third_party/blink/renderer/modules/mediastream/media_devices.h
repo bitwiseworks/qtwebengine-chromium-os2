@@ -34,7 +34,6 @@ class MODULES_EXPORT MediaDevices final
       public ActiveScriptWrappable<MediaDevices>,
       public ExecutionContextLifecycleObserver,
       public mojom::blink::MediaDevicesListener {
-  USING_GARBAGE_COLLECTED_MIXIN(MediaDevices);
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -90,7 +89,7 @@ class MODULES_EXPORT MediaDevices final
     device_change_test_callback_ = std::move(test_callback);
   }
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   DEFINE_ATTRIBUTE_EVENT_LISTENER(devicechange, kDevicechange)
 
@@ -121,7 +120,7 @@ class MODULES_EXPORT MediaDevices final
   TaskHandle dispatch_scheduled_events_task_handle_;
   HeapVector<Member<Event>> scheduled_events_;
   mojo::Remote<mojom::blink::MediaDevicesDispatcherHost> dispatcher_host_;
-  HeapMojoReceiver<mojom::blink::MediaDevicesListener> receiver_;
+  HeapMojoReceiver<mojom::blink::MediaDevicesListener, MediaDevices> receiver_;
   HeapHashSet<Member<ScriptPromiseResolver>> requests_;
 
   EnumerateDevicesTestCallback enumerate_devices_test_callback_;

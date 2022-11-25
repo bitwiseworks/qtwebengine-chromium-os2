@@ -45,8 +45,7 @@ AbstractWorker::~AbstractWorker() = default;
 // static
 KURL AbstractWorker::ResolveURL(ExecutionContext* execution_context,
                                 const String& url,
-                                ExceptionState& exception_state,
-                                mojom::RequestContextType request_context) {
+                                ExceptionState& exception_state) {
   KURL script_url = execution_context->CompleteURL(url);
   if (!script_url.IsValid()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kSyntaxError,
@@ -67,8 +66,7 @@ KURL AbstractWorker::ResolveURL(ExecutionContext* execution_context,
 
   if (ContentSecurityPolicy* csp =
           execution_context->GetContentSecurityPolicy()) {
-    if (!csp->AllowRequestWithoutIntegrity(request_context, script_url, script_url, RedirectStatus::kNoRedirect) ||
-        !csp->AllowWorkerContextFromSource(script_url)) {
+    if (!csp->AllowWorkerContextFromSource(script_url)) {
       exception_state.ThrowSecurityError(
           "Access to the script at '" + script_url.ElidedString() +
           "' is denied by the document's Content Security Policy.");
@@ -79,7 +77,7 @@ KURL AbstractWorker::ResolveURL(ExecutionContext* execution_context,
   return script_url;
 }
 
-void AbstractWorker::Trace(Visitor* visitor) {
+void AbstractWorker::Trace(Visitor* visitor) const {
   EventTargetWithInlineData::Trace(visitor);
   ExecutionContextLifecycleObserver::Trace(visitor);
 }

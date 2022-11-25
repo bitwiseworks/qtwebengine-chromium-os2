@@ -1004,11 +1004,11 @@ function put_neon
         b.gt            2b
         ret
 4:
-        ld1             {v0.8b}, [x2], x3
-        ld1             {v1.8b}, [x2], x3
+        ld1             {v0.4h}, [x2], x3
+        ld1             {v1.4h}, [x2], x3
         subs            w5,  w5,  #2
-        st1             {v0.8b}, [x0], x1
-        st1             {v1.8b}, [x0], x1
+        st1             {v0.4h}, [x0], x1
+        st1             {v1.4h}, [x0], x1
         b.gt            4b
         ret
 80:
@@ -1017,11 +1017,11 @@ function put_neon
         add             x9,  x2,  x3
         lsl             x3,  x3,  #1
 8:
-        ld1             {v0.16b}, [x2], x3
-        ld1             {v1.16b}, [x9], x3
+        ld1             {v0.8h}, [x2], x3
+        ld1             {v1.8h}, [x9], x3
         subs            w5,  w5,  #2
-        st1             {v0.16b}, [x0], x1
-        st1             {v1.16b}, [x8], x1
+        st1             {v0.8h}, [x0], x1
+        st1             {v1.8h}, [x8], x1
         b.gt            8b
         ret
 16:
@@ -2039,7 +2039,6 @@ L(\type\()_8tap_hv):
         sxtl            v0.8h,   v0.8b
         sxtl            v1.8h,   v1.8b
         mov             x15, x30
-        sxtl            v1.4s,   v1.4h
 
         ld1             {v27.8h}, [\src], \s_strd
         ext             v28.16b, v27.16b, v27.16b, #2
@@ -2049,19 +2048,23 @@ L(\type\()_8tap_hv):
         addp            v16.4s,  v27.4s,  v27.4s
         srshl           v16.2s,  v16.2s,  v30.2s // -(6-intermediate_bits)
         bl              L(\type\()_8tap_filter_2)
+        // The intermediates from the horizontal pass fit in 16 bit without
+        // any bias; we could just as well keep them as .4s, but narrowing
+        // them to .4h gives a significant speedup on out of order cores
+        // (at the cost of a smaller slowdown on in-order cores such as A53).
+        xtn             v16.4h,  v16.4s
 
-        trn1            v16.2d,  v16.2d,  v24.2d
-        mov             v17.16b, v24.16b
+        trn1            v16.2s,  v16.2s,  v24.2s
+        mov             v17.8b,  v24.8b
 
 2:
         bl              L(\type\()_8tap_filter_2)
 
-        ext             v18.16b, v17.16b, v24.16b, #8
-        mov             v19.16b, v24.16b
-        mul             v2.4s,   v16.4s,  v1.s[0]
-        mla             v2.4s,   v17.4s,  v1.s[1]
-        mla             v2.4s,   v18.4s,  v1.s[2]
-        mla             v2.4s,   v19.4s,  v1.s[3]
+        ext             v18.8b,  v17.8b,  v24.8b,  #4
+        smull           v2.4s,   v16.4h,  v1.h[0]
+        smlal           v2.4s,   v17.4h,  v1.h[1]
+        smlal           v2.4s,   v18.4h,  v1.h[2]
+        smlal           v2.4s,   v24.4h,  v1.h[3]
 
         srshl           v2.4s,   v2.4s,   v29.4s // -(6+intermediate_bits)
         sqxtun          v2.4h,   v2.4s
@@ -2070,8 +2073,8 @@ L(\type\()_8tap_hv):
         st1             {v2.s}[0], [\dst], \d_strd
         st1             {v2.s}[1], [\ds2], \d_strd
         b.le            0f
-        mov             v16.16b, v18.16b
-        mov             v17.16b, v19.16b
+        mov             v16.8b,  v18.8b
+        mov             v17.8b,  v24.8b
         b               2b
 
 280:    // 2x8, 2x16, 2x32 hv
@@ -2085,8 +2088,6 @@ L(\type\()_8tap_hv):
         sxtl            v0.8h,   v0.8b
         sxtl            v1.8h,   v1.8b
         mov             x15, x30
-        sxtl2           v2.4s,   v1.8h
-        sxtl            v1.4s,   v1.4h
 
         ld1             {v27.8h}, [\src], \s_strd
         ext             v28.16b, v27.16b, v27.16b, #2
@@ -2095,29 +2096,33 @@ L(\type\()_8tap_hv):
         addp            v27.4s,  v27.4s,  v28.4s
         addp            v16.4s,  v27.4s,  v27.4s
         srshl           v16.2s,  v16.2s,  v30.2s // -(6-intermediate_bits)
+        // The intermediates from the horizontal pass fit in 16 bit without
+        // any bias; we could just as well keep them as .4s, but narrowing
+        // them to .4h gives a significant speedup on out of order cores
+        // (at the cost of a smaller slowdown on in-order cores such as A53).
 
         bl              L(\type\()_8tap_filter_2)
-        trn1            v16.2d,  v16.2d,  v24.2d
-        mov             v17.16b, v24.16b
+        xtn             v16.4h,  v16.4s
+        trn1            v16.2s,  v16.2s,  v24.2s
+        mov             v17.8b,  v24.8b
         bl              L(\type\()_8tap_filter_2)
-        ext             v18.16b, v17.16b, v24.16b, #8
-        mov             v19.16b, v24.16b
+        ext             v18.8b,  v17.8b,  v24.8b,  #4
+        mov             v19.8b,  v24.8b
         bl              L(\type\()_8tap_filter_2)
-        ext             v20.16b, v19.16b, v24.16b, #8
-        mov             v21.16b, v24.16b
+        ext             v20.8b,  v19.8b,  v24.8b,  #4
+        mov             v21.8b,  v24.8b
 
 28:
         bl              L(\type\()_8tap_filter_2)
-        ext             v22.16b, v21.16b, v24.16b, #8
-        mov             v23.16b, v24.16b
-        mul             v3.4s,   v16.4s,  v1.s[0]
-        mla             v3.4s,   v17.4s,  v1.s[1]
-        mla             v3.4s,   v18.4s,  v1.s[2]
-        mla             v3.4s,   v19.4s,  v1.s[3]
-        mla             v3.4s,   v20.4s,  v2.s[0]
-        mla             v3.4s,   v21.4s,  v2.s[1]
-        mla             v3.4s,   v22.4s,  v2.s[2]
-        mla             v3.4s,   v23.4s,  v2.s[3]
+        ext             v22.8b,  v21.8b,  v24.8b,  #4
+        smull           v3.4s,   v16.4h,  v1.h[0]
+        smlal           v3.4s,   v17.4h,  v1.h[1]
+        smlal           v3.4s,   v18.4h,  v1.h[2]
+        smlal           v3.4s,   v19.4h,  v1.h[3]
+        smlal           v3.4s,   v20.4h,  v1.h[4]
+        smlal           v3.4s,   v21.4h,  v1.h[5]
+        smlal           v3.4s,   v22.4h,  v1.h[6]
+        smlal           v3.4s,   v24.4h,  v1.h[7]
 
         srshl           v3.4s,   v3.4s,   v29.4s // -(6+intermediate_bits)
         sqxtun          v3.4h,   v3.4s
@@ -2126,12 +2131,12 @@ L(\type\()_8tap_hv):
         st1             {v3.s}[0], [\dst], \d_strd
         st1             {v3.s}[1], [\ds2], \d_strd
         b.le            0f
-        mov             v16.16b, v18.16b
-        mov             v17.16b, v19.16b
-        mov             v18.16b, v20.16b
-        mov             v19.16b, v21.16b
-        mov             v20.16b, v22.16b
-        mov             v21.16b, v23.16b
+        mov             v16.8b,  v18.8b
+        mov             v17.8b,  v19.8b
+        mov             v18.8b,  v20.8b
+        mov             v19.8b,  v21.8b
+        mov             v20.8b,  v22.8b
+        mov             v21.8b,  v24.8b
         b               28b
 
 0:
@@ -2151,6 +2156,7 @@ L(\type\()_8tap_filter_2):
         smlal           v24.4s,  v27.4h,  v0.h[2]
         smlal           v24.4s,  v28.4h,  v0.h[3]
         srshl           v24.4s,  v24.4s,  v30.4s // -(6-intermediate_bits)
+        xtn             v24.4h,  v24.4s
         ret
 .endif
 
@@ -3407,3 +3413,163 @@ endfunc
 
 warp
 warp t
+
+// void dav1d_emu_edge_16bpc_neon(
+//         const intptr_t bw, const intptr_t bh,
+//         const intptr_t iw, const intptr_t ih,
+//         const intptr_t x, const intptr_t y,
+//         pixel *dst, const ptrdiff_t dst_stride,
+//         const pixel *ref, const ptrdiff_t ref_stride)
+function emu_edge_16bpc_neon, export=1
+        ldp             x8,  x9,  [sp]
+
+        // ref += iclip(y, 0, ih - 1) * PXSTRIDE(ref_stride)
+        // ref += iclip(x, 0, iw - 1)
+        sub             x12, x3,  #1           // ih - 1
+        cmp             x5,  x3
+        sub             x13, x2,  #1           // iw - 1
+        csel            x12, x12, x5,  ge      // min(y, ih - 1)
+        cmp             x4,  x2
+        bic             x12, x12, x12, asr #63 // max(min(y, ih - 1), 0)
+        csel            x13, x13, x4,  ge      // min(x, iw - 1)
+        bic             x13, x13, x13, asr #63 // max(min(x, iw - 1), 0)
+        madd            x8,  x12, x9,  x8      // ref += iclip() * stride
+        add             x8,  x8,  x13, lsl #1  // ref += iclip()
+
+        // bottom_ext = iclip(y + bh - ih, 0, bh - 1)
+        // top_ext = iclip(-y, 0, bh - 1)
+        add             x10, x5,  x1           // y + bh
+        neg             x5,  x5                // -y
+        sub             x10, x10, x3           // y + bh - ih
+        sub             x12, x1,  #1           // bh - 1
+        cmp             x10, x1
+        bic             x5,  x5,  x5,  asr #63 // max(-y, 0)
+        csel            x10, x10, x12, lt      // min(y + bh - ih, bh-1)
+        cmp             x5,  x1
+        bic             x10, x10, x10, asr #63 // max(min(y + bh - ih, bh-1), 0)
+        csel            x5,  x5,  x12, lt      // min(max(-y, 0), bh-1)
+
+        // right_ext = iclip(x + bw - iw, 0, bw - 1)
+        // left_ext = iclip(-x, 0, bw - 1)
+        add             x11, x4,  x0           // x + bw
+        neg             x4,  x4                // -x
+        sub             x11, x11, x2           // x + bw - iw
+        sub             x13, x0,  #1           // bw - 1
+        cmp             x11, x0
+        bic             x4,  x4,  x4,  asr #63 // max(-x, 0)
+        csel            x11, x11, x13, lt      // min(x + bw - iw, bw-1)
+        cmp             x4,  x0
+        bic             x11, x11, x11, asr #63 // max(min(x + bw - iw, bw-1), 0)
+        csel            x4,  x4,  x13, lt      // min(max(-x, 0), bw - 1)
+
+        // center_h = bh - top_ext - bottom_ext
+        // dst += top_ext * PXSTRIDE(dst_stride)
+        // center_w = bw - left_ext - right_ext
+        sub             x1,  x1,  x5           // bh - top_ext
+        madd            x6,  x5,  x7,  x6
+        sub             x2,  x0,  x4           // bw - left_ext
+        sub             x1,  x1,  x10          // center_h = bh - top_ext - bottom_ext
+        sub             x2,  x2,  x11          // center_w = bw - left_ext - right_ext
+
+        mov             x14, x6                // backup of dst
+
+.macro v_loop need_left, need_right
+0:
+.if \need_left
+        ld1r            {v0.8h}, [x8]
+        mov             x12, x6                // out = dst
+        mov             x3,  x4
+        mov             v1.16b,  v0.16b
+1:
+        subs            x3,  x3,  #16
+        st1             {v0.8h, v1.8h}, [x12], #32
+        b.gt            1b
+.endif
+        mov             x13, x8
+        add             x12, x6,  x4, lsl #1   // out = dst + left_ext
+        mov             x3,  x2
+1:
+        ld1             {v0.8h, v1.8h, v2.8h, v3.8h}, [x13], #64
+        subs            x3,  x3,  #32
+        st1             {v0.8h, v1.8h, v2.8h, v3.8h}, [x12], #64
+        b.gt            1b
+.if \need_right
+        add             x3,  x8,  x2, lsl #1   // in + center_w
+        sub             x3,  x3,  #2           // in + center_w - 1
+        add             x12, x6,  x4, lsl #1   // dst + left_ext
+        ld1r            {v0.8h}, [x3]
+        add             x12, x12, x2, lsl #1   // out = dst + left_ext + center_w
+        mov             x3,  x11
+        mov             v1.16b,  v0.16b
+1:
+        subs            x3,  x3,  #16
+        st1             {v0.8h, v1.8h}, [x12], #32
+        b.gt            1b
+.endif
+
+        subs            x1,  x1,  #1           // center_h--
+        add             x6,  x6,  x7
+        add             x8,  x8,  x9
+        b.gt            0b
+.endm
+
+        cbz             x4,  2f
+        // need_left
+        cbz             x11, 3f
+        // need_left + need_right
+        v_loop          1,   1
+        b               5f
+
+2:
+        // !need_left
+        cbz             x11, 4f
+        // !need_left + need_right
+        v_loop          0,   1
+        b               5f
+
+3:
+        // need_left + !need_right
+        v_loop          1,   0
+        b               5f
+
+4:
+        // !need_left + !need_right
+        v_loop          0,   0
+
+5:
+
+        cbz             x10, 3f
+        // need_bottom
+        sub             x8,  x6,  x7           // ref = dst - stride
+        mov             x4,  x0
+1:
+        ld1             {v0.8h, v1.8h, v2.8h, v3.8h}, [x8], #64
+        mov             x3,  x10
+2:
+        subs            x3,  x3,  #1
+        st1             {v0.8h, v1.8h, v2.8h, v3.8h}, [x6], x7
+        b.gt            2b
+        msub            x6,  x7,  x10,  x6     // dst -= bottom_ext * stride
+        subs            x4,  x4,  #32          // bw -= 32
+        add             x6,  x6,  #64          // dst += 32
+        b.gt            1b
+
+3:
+        cbz             x5,  3f
+        // need_top
+        msub            x6,  x7,  x5,  x14     // dst = stored_dst - top_ext * stride
+1:
+        ld1             {v0.8h, v1.8h, v2.8h, v3.8h}, [x14], #64
+        mov             x3,  x5
+2:
+        subs            x3,  x3,  #1
+        st1             {v0.8h, v1.8h, v2.8h, v3.8h}, [x6], x7
+        b.gt            2b
+        msub            x6,  x7,  x5,  x6      // dst -= top_ext * stride
+        subs            x0,  x0,  #32          // bw -= 32
+        add             x6,  x6,  #64          // dst += 32
+        b.gt            1b
+
+3:
+        ret
+endfunc

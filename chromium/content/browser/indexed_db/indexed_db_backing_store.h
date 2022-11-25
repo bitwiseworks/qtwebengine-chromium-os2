@@ -25,6 +25,8 @@
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "components/services/storage/indexed_db/scopes/scope_lock.h"
+#include "components/services/storage/public/cpp/filesystem/filesystem_proxy.h"
+#include "components/services/storage/public/mojom/blob_storage_context.mojom-forward.h"
 #include "components/services/storage/public/mojom/native_file_system_context.mojom-forward.h"
 #include "content/browser/indexed_db/indexed_db.h"
 #include "content/browser/indexed_db/indexed_db_external_object.h"
@@ -32,7 +34,6 @@
 #include "content/browser/indexed_db/indexed_db_leveldb_coding.h"
 #include "content/common/content_export.h"
 #include "storage/browser/blob/blob_data_handle.h"
-#include "storage/browser/blob/mojom/blob_storage_context.mojom-forward.h"
 #include "storage/common/file_system/file_system_mount_option.h"
 #include "third_party/blink/public/common/indexeddb/indexeddb_key.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
@@ -50,6 +51,7 @@ struct IndexedDBDatabaseMetadata;
 }  // namespace blink
 
 namespace content {
+class AutoDidCommitTransaction;
 class IndexedDBActiveBlobRegistry;
 class LevelDBWriteBatch;
 class TransactionalLevelDBDatabase;
@@ -262,6 +264,7 @@ class CONTENT_EXPORT IndexedDBBackingStore {
     bool Advance(uint32_t count, leveldb::Status*);
     bool FirstSeek(leveldb::Status*);
 
+    // Clone may return a nullptr if cloning fails for any reason.
     virtual std::unique_ptr<Cursor> Clone() const = 0;
     virtual const blink::IndexedDBKey& primary_key() const;
     virtual IndexedDBValue* value() = 0;
@@ -272,7 +275,12 @@ class CONTENT_EXPORT IndexedDBBackingStore {
     Cursor(base::WeakPtr<Transaction> transaction,
            int64_t database_id,
            const CursorOptions& cursor_options);
-    explicit Cursor(const IndexedDBBackingStore::Cursor* other);
+    explicit Cursor(const IndexedDBBackingStore::Cursor* other,
+                    std::unique_ptr<TransactionalLevelDBIterator> iterator);
+
+    // May return nullptr.
+    static std::unique_ptr<TransactionalLevelDBIterator> CloneIterator(
+        const IndexedDBBackingStore::Cursor* other);
 
     virtual std::string EncodeKey(const blink::IndexedDBKey& key) = 0;
     virtual std::string EncodeKey(const blink::IndexedDBKey& key,
@@ -340,6 +348,7 @@ class CONTENT_EXPORT IndexedDBBackingStore {
       std::unique_ptr<TransactionalLevelDBDatabase> db,
       storage::mojom::BlobStorageContext* blob_storage_context,
       storage::mojom::NativeFileSystemContext* native_file_system_context,
+      std::unique_ptr<storage::FilesystemProxy> filesystem_proxy,
       BlobFilesCleanedCallback blob_files_cleaned,
       ReportOutstandingBlobsCallback report_outstanding_blobs,
       scoped_refptr<base::SequencedTaskRunner> idb_task_runner,
@@ -493,6 +502,9 @@ class CONTENT_EXPORT IndexedDBBackingStore {
     return num_aggregated_journal_cleaning_requests_;
   }
 #endif
+  void SetExecuteJournalCleaningOnNoTransactionsForTesting() {
+    execute_journal_cleaning_on_no_txns_ = true;
+  }
 
   // Stops the journal_cleaning_timer_ and runs its pending task.
   void ForceRunBlobCleanup();
@@ -550,6 +562,8 @@ class CONTENT_EXPORT IndexedDBBackingStore {
   void CleanRecoveryJournalIgnoreReturn();
 
  private:
+  friend class AutoDidCommitTransaction;
+
   leveldb::Status FindKeyInIndex(
       IndexedDBBackingStore::Transaction* transaction,
       int64_t database_id,
@@ -592,6 +606,9 @@ class CONTENT_EXPORT IndexedDBBackingStore {
   // IndexedDBContextImpl.
   storage::mojom::BlobStorageContext* blob_storage_context_;
   storage::mojom::NativeFileSystemContext* native_file_system_context_;
+
+  // Filesystem proxy to use for file operations.  nullptr if in memory.
+  std::unique_ptr<storage::FilesystemProxy> filesystem_proxy_;
 
   // The origin identifier is a key prefix unique to the origin used in the
   // leveldb backing store to partition data by origin. It is a normalized

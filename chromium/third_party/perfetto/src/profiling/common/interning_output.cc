@@ -78,6 +78,8 @@ void InterningOutputTracker::WriteMap(const Interned<Mapping> map,
 
 void InterningOutputTracker::WriteFrame(Interned<Frame> frame,
                                         protos::pbzero::InternedData* out) {
+  // Trace processor depends on the map being written before the
+  // frame. See StackProfileTracker::AddFrame.
   WriteMap(frame->mapping, out);
   WriteFunctionNameString(frame->function_name, out);
   bool inserted;
@@ -159,6 +161,13 @@ void InterningOutputTracker::WriteCallstack(GlobalCallstackTrie::Node* node,
       callstack->add_frame_ids(frame.id());
     }
   }
+}
+
+void InterningOutputTracker::ClearHistory() {
+  dumped_strings_.clear();
+  dumped_frames_.clear();
+  dumped_mappings_.clear();
+  dumped_callstacks_.clear();
 }
 
 }  // namespace profiling

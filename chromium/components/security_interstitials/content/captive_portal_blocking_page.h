@@ -16,7 +16,6 @@
 #include "url/gurl.h"
 
 namespace content {
-class NavigationEntry;
 class WebContents;
 }  // namespace content
 
@@ -68,13 +67,11 @@ class CaptivePortalBlockingPage : public SSLBlockingPageBase {
   std::string GetWiFiSSID() const;
 
   // SecurityInterstitialPage methods:
-  bool ShouldCreateNewNavigation() const override;
   void PopulateInterstitialStrings(
       base::DictionaryValue* load_time_data) override;
 
-  // InterstitialPageDelegate method:
+  // SecurityInterstitialPage method:
   void CommandReceived(const std::string& command) override;
-  void OverrideEntry(content::NavigationEntry* entry) override;
 
   OpenLoginCallback open_login_callback_;
 

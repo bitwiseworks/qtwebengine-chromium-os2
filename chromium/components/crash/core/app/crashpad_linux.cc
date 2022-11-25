@@ -18,8 +18,8 @@
 #include "build/branding_buildflags.h"
 #include "components/crash/core/app/crash_reporter_client.h"
 #include "components/crash/core/app/crash_switches.h"
+#include "content/public/common/content_descriptors.h"
 #include "sandbox/linux/services/namespace_sandbox.h"
-#include "services/service_manager/embedder/descriptors.h"
 #include "third_party/crashpad/crashpad/client/crashpad_client.h"
 
 namespace crash_reporter {
@@ -120,9 +120,8 @@ base::FilePath PlatformCrashpadInitialization(
     // to ChromeOS's /sbin/crash_reporter which in turn passes the dump to
     // crash_sender which handles the upload.
     std::string url;
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING) && defined(OFFICIAL_BUILD) && \
-    !defined(OS_CHROMEOS)
-    url = "https://clients2.google.com/cr/report";
+#if !defined(OS_CHROMEOS)
+    url = crash_reporter_client->GetUploadUrl();
 #else
     url = std::string();
 #endif
@@ -176,8 +175,7 @@ base::FilePath PlatformCrashpadInitialization(
     return database_path;
   }
 
-  int fd = base::GlobalDescriptors::GetInstance()->Get(
-      service_manager::kCrashDumpSignal);
+  int fd = base::GlobalDescriptors::GetInstance()->Get(kCrashDumpSignal);
 
   pid_t pid = 0;
   if (!sandbox::NamespaceSandbox::InNewUserNamespace()) {

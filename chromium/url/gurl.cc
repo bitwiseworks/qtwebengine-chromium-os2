@@ -10,7 +10,7 @@
 #include <ostream>
 #include <utility>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/no_destructor.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
@@ -289,7 +289,7 @@ GURL GURL::GetOrigin() const {
 }
 
 GURL GURL::GetAsReferrer() const {
-  if (!SchemeIsValidForReferrer())
+  if (!is_valid() || !IsReferrerScheme(spec_.data(), parsed_.scheme))
     return GURL();
 
   if (!has_ref() && !has_username() && !has_password())
@@ -357,10 +357,6 @@ bool GURL::SchemeIs(base::StringPiece lower_ascii_scheme) const {
 
 bool GURL::SchemeIsHTTPOrHTTPS() const {
   return SchemeIs(url::kHttpScheme) || SchemeIs(url::kHttpsScheme);
-}
-
-bool GURL::SchemeIsValidForReferrer() const {
-  return is_valid_ && IsReferrerScheme(spec_.data(), parsed_.scheme);
 }
 
 bool GURL::SchemeIsWSOrWSS() const {
@@ -494,7 +490,7 @@ bool GURL::IsAboutUrl(base::StringPiece allowed_path) const {
   if (has_host() || has_username() || has_password() || has_port())
     return false;
 
-  if (!path_piece().starts_with(allowed_path))
+  if (!base::StartsWith(path_piece(), allowed_path))
     return false;
 
   if (path_piece().size() == allowed_path.size()) {
@@ -524,7 +520,9 @@ bool operator!=(const GURL& x, const GURL& y) {
 }
 
 bool operator==(const GURL& x, const base::StringPiece& spec) {
-  DCHECK_EQ(GURL(spec).possibly_invalid_spec(), spec);
+  DCHECK_EQ(GURL(spec).possibly_invalid_spec(), spec)
+      << "Comparisons of GURLs and strings must ensure as a precondition that "
+         "the string is fully canonicalized.";
   return x.possibly_invalid_spec() == spec;
 }
 

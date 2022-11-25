@@ -12,13 +12,14 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
-#include "base/task/post_task.h"
 #include "components/keyed_service/core/simple_key_map.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/resource_context.h"
 #include "fuchsia/engine/browser/web_engine_net_log_observer.h"
 #include "fuchsia/engine/browser/web_engine_permission_delegate.h"
+#include "media/capabilities/in_memory_video_decode_stats_db_impl.h"
+#include "media/mojo/services/video_decode_perf_history.h"
 #include "services/network/public/cpp/network_switches.h"
 
 class WebEngineBrowserContext::ResourceContext
@@ -58,7 +59,6 @@ WebEngineBrowserContext::WebEngineBrowserContext(bool force_incognito)
   simple_factory_key_ =
       std::make_unique<SimpleFactoryKey>(GetPath(), IsOffTheRecord());
   SimpleKeyMap::GetInstance()->Associate(this, simple_factory_key_.get());
-  BrowserContext::Initialize(this, data_dir_path_);
 }
 
 WebEngineBrowserContext::~WebEngineBrowserContext() {
@@ -66,8 +66,8 @@ WebEngineBrowserContext::~WebEngineBrowserContext() {
   NotifyWillBeDestroyed(this);
 
   if (resource_context_) {
-    base::DeleteSoon(FROM_HERE, {content::BrowserThread::IO},
-                     std::move(resource_context_));
+    content::GetIOThreadTaskRunner({})->DeleteSoon(
+        FROM_HERE, std::move(resource_context_));
   }
 
   ShutdownStoragePartitions();
@@ -146,4 +146,34 @@ WebEngineBrowserContext::GetBackgroundSyncController() {
 content::BrowsingDataRemoverDelegate*
 WebEngineBrowserContext::GetBrowsingDataRemoverDelegate() {
   return nullptr;
+}
+
+media::VideoDecodePerfHistory*
+WebEngineBrowserContext::GetVideoDecodePerfHistory() {
+  if (IsOffTheRecord())
+    return GetInMemoryVideoDecodePerfHistory();
+
+  // Delegate to the base class for stateful VideoDecodePerfHistory DB
+  // creation.
+  return BrowserContext::GetVideoDecodePerfHistory();
+}
+
+media::VideoDecodePerfHistory*
+WebEngineBrowserContext::GetInMemoryVideoDecodePerfHistory() {
+  constexpr char kUserDataKeyName[] = "video-decode-perf-history";
+  auto* decode_history = static_cast<media::VideoDecodePerfHistory*>(
+      GetUserData(kUserDataKeyName));
+
+  // Get, and potentially lazily create, the in-memory VideoDecodePerfHistory
+  // DB.
+  if (!decode_history) {
+    auto owned_decode_history = std::make_unique<media::VideoDecodePerfHistory>(
+        std::make_unique<media::InMemoryVideoDecodeStatsDBImpl>(
+            nullptr /* seed_db_provider */),
+        media::learning::FeatureProviderFactoryCB());
+    decode_history = owned_decode_history.get();
+    SetUserData(kUserDataKeyName, std::move(owned_decode_history));
+  }
+
+  return decode_history;
 }

@@ -74,7 +74,8 @@ LIBOBJ+= vdbe.o parse.o \
          table.o threads.o tokenize.o treeview.o trigger.o \
          update.o upsert.o userauth.o util.o vacuum.o \
          vdbeapi.o vdbeaux.o vdbeblob.o vdbemem.o vdbesort.o \
-	 vdbetrace.o wal.o walker.o where.o wherecode.o whereexpr.o \
+	 vdbetrace.o vdbevtab.o \
+         wal.o walker.o where.o wherecode.o whereexpr.o \
          utf.o vtab.o window.o
 
 LIBOBJ += sqlite3session.o
@@ -173,6 +174,7 @@ SRC = \
   $(TOP)/src/vdbemem.c \
   $(TOP)/src/vdbesort.c \
   $(TOP)/src/vdbetrace.c \
+  $(TOP)/src/vdbevtab.c \
   $(TOP)/src/vdbeInt.h \
   $(TOP)/src/vtab.c \
   $(TOP)/src/vxworks.h \
@@ -358,9 +360,12 @@ TESTSRC = \
 #
 TESTSRC += \
   $(TOP)/ext/misc/amatch.c \
+  $(TOP)/ext/misc/appendvfs.c \
   $(TOP)/ext/misc/carray.c \
+  $(TOP)/ext/misc/cksumvfs.c \
   $(TOP)/ext/misc/closure.c \
   $(TOP)/ext/misc/csv.c \
+  $(TOP)/ext/misc/decimal.c \
   $(TOP)/ext/misc/eval.c \
   $(TOP)/ext/misc/explain.c \
   $(TOP)/ext/misc/fileio.c \
@@ -421,6 +426,7 @@ TESTSRC2 = \
   $(TOP)/src/vdbeaux.c \
   $(TOP)/src/vdbe.c \
   $(TOP)/src/vdbemem.c \
+  $(TOP)/src/vdbevtab.c \
   $(TOP)/src/where.c \
   $(TOP)/src/wherecode.c \
   $(TOP)/src/whereexpr.c \
@@ -526,6 +532,7 @@ SHELL_OPT += -DSQLITE_ENABLE_UNKNOWN_SQL_FUNCTION
 SHELL_OPT += -DSQLITE_ENABLE_STMTVTAB
 SHELL_OPT += -DSQLITE_ENABLE_DBPAGE_VTAB
 SHELL_OPT += -DSQLITE_ENABLE_DBSTAT_VTAB
+SHELL_OPT += -DSQLITE_ENABLE_BYTECODE_VTAB
 SHELL_OPT += -DSQLITE_ENABLE_OFFSET_SQL_FUNC
 FUZZERSHELL_OPT = -DSQLITE_ENABLE_JSON1
 FUZZCHECK_OPT = -DSQLITE_ENABLE_JSON1 -DSQLITE_ENABLE_MEMSYS5
@@ -536,6 +543,7 @@ FUZZCHECK_OPT += -DSQLITE_ENABLE_FTS4
 FUZZCHECK_OPT += -DSQLITE_ENABLE_RTREE
 FUZZCHECK_OPT += -DSQLITE_ENABLE_GEOPOLY
 FUZZCHECK_OPT += -DSQLITE_ENABLE_DBSTAT_VTAB
+FUZZCHECK_OPT += -DSQLITE_ENABLE_BYTECODE_VTAB
 DBFUZZ_OPT =
 KV_OPT = -DSQLITE_THREADSAFE=0 -DSQLITE_DIRECT_OVERFLOW_READ
 ST_OPT = -DSQLITE_THREADSAFE=0
@@ -543,13 +551,13 @@ ST_OPT = -DSQLITE_THREADSAFE=0
 # This is the default Makefile target.  The objects listed here
 # are what get build when you type just "make" with no arguments.
 #
-all:	sqlite3.h libsqlite3.a sqlite3$(EXE)
+all:	sqlite3.h sqlite3ext.h libsqlite3.a sqlite3$(EXE)
 
-libsqlite3.a:	$(LIBOBJ)
+libsqlite3.a: sqlite3.h	$(LIBOBJ)
 	$(AR) libsqlite3.a $(LIBOBJ)
 	$(RANLIB) libsqlite3.a
 
-sqlite3$(EXE):	shell.c libsqlite3.a sqlite3.h
+sqlite3$(EXE):	sqlite3.h libsqlite3.a shell.c
 	$(TCCX) $(READLINE_FLAGS) -o sqlite3$(EXE) $(SHELL_OPT) \
 		shell.c libsqlite3.a $(LIBREADLINE) $(TLIBS) $(THREADLIB)
 
@@ -586,6 +594,7 @@ DBFUZZ2_OPTS = \
   -DSQLITE_ENABLE_DESERIALIZE \
   -DSQLITE_DEBUG \
   -DSQLITE_ENABLE_DBSTAT_VTAB \
+  -DSQLITE_ENABLE_BYTECODE_VTAB \
   -DSQLITE_ENABLE_RTREE \
   -DSQLITE_ENABLE_FTS4 \
   -DSQLITE_ENABLE_FTS5
@@ -721,6 +730,12 @@ parse.c:	$(TOP)/src/parse.y lemon
 sqlite3.h:	$(TOP)/src/sqlite.h.in $(TOP)/manifest mksourceid $(TOP)/VERSION $(TOP)/ext/rtree/sqlite3rtree.h
 	tclsh $(TOP)/tool/mksqlite3h.tcl $(TOP) >sqlite3.h
 
+sqlite3rc.h:	$(TOP)/src/sqlite3.rc $(TOP)/VERSION
+	echo '#ifndef SQLITE_RESOURCE_VERSION' >$@
+	echo -n '#define SQLITE_RESOURCE_VERSION ' >>$@
+	cat $(TOP)/VERSION | tclsh $(TOP)/tool/replace.tcl exact . , >>$@
+	echo '#endif' >>sqlite3rc.h
+
 keywordhash.h:	$(TOP)/tool/mkkeywordhash.c
 	$(BCC) -o mkkeywordhash $(OPTS) $(TOP)/tool/mkkeywordhash.c
 	./mkkeywordhash >keywordhash.h
@@ -729,10 +744,13 @@ keywordhash.h:	$(TOP)/tool/mkkeywordhash.c
 SHELL_SRC = \
 	$(TOP)/src/shell.c.in \
         $(TOP)/ext/misc/appendvfs.c \
-	$(TOP)/ext/misc/shathree.c \
-	$(TOP)/ext/misc/fileio.c \
 	$(TOP)/ext/misc/completion.c \
+        $(TOP)/ext/misc/decimal.c \
+	$(TOP)/ext/misc/fileio.c \
+        $(TOP)/ext/misc/ieee754.c \
+	$(TOP)/ext/misc/shathree.c \
 	$(TOP)/ext/misc/sqlar.c \
+        $(TOP)/ext/misc/uint.c \
 	$(TOP)/ext/expert/sqlite3expert.c \
 	$(TOP)/ext/expert/sqlite3expert.h \
 	$(TOP)/ext/misc/zipfile.c \
@@ -807,13 +825,13 @@ fts3_unicode2.o:	$(TOP)/ext/fts3/fts3_unicode2.c $(HDR) $(EXTHDR)
 fts3_write.o:	$(TOP)/ext/fts3/fts3_write.c $(HDR) $(EXTHDR)
 	$(TCCX) -DSQLITE_CORE -c $(TOP)/ext/fts3/fts3_write.c
 
-fts5.o:	fts5.c
+fts5.o:	fts5.c  sqlite3ext.h sqlite3.h
 	$(TCCX) -DSQLITE_CORE -c fts5.c
 
-json1.o:	$(TOP)/ext/misc/json1.c
+json1.o:	$(TOP)/ext/misc/json1.c sqlite3ext.h sqlite3.h
 	$(TCCX) -DSQLITE_CORE -c $(TOP)/ext/misc/json1.c
 
-stmt.o:	$(TOP)/ext/misc/stmt.c
+stmt.o:	$(TOP)/ext/misc/stmt.c sqlite3ext.h sqlite3.h
 	$(TCCX) -DSQLITE_CORE -c $(TOP)/ext/misc/stmt.c
 
 rtree.o:	$(TOP)/ext/rtree/rtree.c $(HDR) $(EXTHDR)
@@ -894,7 +912,9 @@ TESTFIXTURE_FLAGS += -DSQLITE_SERIES_CONSTRAINT_VERIFY=1
 TESTFIXTURE_FLAGS += -DSQLITE_DEFAULT_PAGE_SIZE=1024
 TESTFIXTURE_FLAGS += -DSQLITE_ENABLE_STMTVTAB
 TESTFIXTURE_FLAGS += -DSQLITE_ENABLE_DBPAGE_VTAB
+TESTFIXTURE_FLAGS += -DSQLITE_ENABLE_BYTECODE_VTAB
 TESTFIXTURE_FLAGS += -DTCLSH_INIT_PROC=sqlite3TestInit
+TESTFIXTURE_FLAGS += -DSQLITE_CKSUMVFS_STATIC
 
 testfixture$(EXE): $(TESTSRC2) libsqlite3.a $(TESTSRC) $(TOP)/src/tclsqlite.c
 	$(TCCX) $(TCL_FLAGS) $(TESTFIXTURE_FLAGS)                            \
@@ -935,7 +955,7 @@ fuzztest:	fuzzcheck$(EXE) $(FUZZDATA) sessionfuzz$(EXE) $(TOP)/test/sessionfuzz-
 	./sessionfuzz run $(TOP)/test/sessionfuzz-data1.db
 
 valgrindfuzz:	fuzzcheck$(EXE) $(FUZZDATA) sessionfuzz$(EXE) $(TOP)/test/sessionfuzz-data1.db
-	valgrind ./fuzzcheck$(EXE) --cell-size-check --limit-mem 10M --timeout 600 $(FUZZDATA)
+	valgrind ./fuzzcheck$(EXE) --cell-size-check --limit-mem 10M $(FUZZDATA)
 	valgrind ./sessionfuzz run $(TOP)/test/sessionfuzz-data1.db
 
 # The veryquick.test TCL tests.
@@ -966,6 +986,9 @@ valgrindtest:	$(TESTPROGS) valgrindfuzz
 #
 smoketest:	$(TESTPROGS) fuzzcheck$(EXE)
 	./testfixture$(EXE) $(TOP)/test/main.test $(TESTOPTS)
+
+shelltest: $(TESTPROGS)
+	./testfixture$(EXT) $(TOP)/test/permutations.test shell
 
 # The next two rules are used to support the "threadtest" target. Building
 # threadtest runs a few thread-safety tests that are implemented in C. This
@@ -1068,10 +1091,10 @@ checksymbols: sqlite3.o
 # a tarball named for the version number.  Ex:  sqlite-autoconf-3110000.tar.gz.
 # The snapshot-tarball target builds a tarball named by the SHA1 hash
 #
-amalgamation-tarball: sqlite3.c
+amalgamation-tarball: sqlite3.c sqlite3rc.h
 	TOP=$(TOP) sh $(TOP)/tool/mkautoconfamal.sh --normal
 
-snapshot-tarball: sqlite3.c
+snapshot-tarball: sqlite3.c sqlite3rc.h
 	TOP=$(TOP) sh $(TOP)/tool/mkautoconfamal.sh --snapshot
 
 

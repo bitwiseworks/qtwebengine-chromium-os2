@@ -7,7 +7,9 @@ import("//third_party/widevine/cdm/widevine.gni")
 
 static_library("gpu") {
   deps = [
+    "//chrome/common/profiler",
     "//components/metrics:child_call_stack_profile_builder",
+    "//content/public/child",
     "//content/public/common",
     "//content/public/gpu",
     "//third_party/widevine/cdm:buildflags",
@@ -20,27 +22,9 @@ static_library("gpu") {
     "chrome_content_gpu_client.h",
   ]
 
-  if (enable_cdm_proxy) {
-    deps += [
-      "//media/cdm:cdm_paths",
-      "//media/cdm/library_cdm/clear_key_cdm:clear_key_cdm_proxy",
-    ]
-
-    if (enable_widevine && is_win) {
-      sources += [
-        "widevine_cdm_proxy_factory.cc",
-        "widevine_cdm_proxy_factory.h",
-      ]
-      deps += [
-        "//media",
-        "//media/gpu",
-      ]
-      libs = [ "d3d11.lib" ]
-    }
-  }
-
   if (is_chromeos) {
     deps += [
+      "//chromeos/components/cdm_factory_daemon:cdm_factory_daemon_gpu",
       "//components/arc/mojom:media",
       "//components/arc/video_accelerator",
       "//gpu/command_buffer/service",

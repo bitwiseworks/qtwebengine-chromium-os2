@@ -7,10 +7,14 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "absl/strings/string_view.h"
+#include "absl/types/optional.h"
+#include "cast/common/public/message_port.h"
 #include "cast/streaming/answer_messages.h"
-#include "cast/streaming/message_port.h"
+#include "cast/streaming/capture_configs.h"
 #include "cast/streaming/offer_messages.h"
 #include "cast/streaming/receiver_packet_router.h"
 #include "cast/streaming/session_config.h"
@@ -19,17 +23,14 @@
 namespace openscreen {
 namespace cast {
 
-class CastSocket;
 class Environment;
 class Receiver;
-class VirtualConnectionRouter;
-class VirtualConnection;
 
 class ReceiverSession final : public MessagePort::Client {
  public:
-  // A small helper struct that contains all of the information necessary for
-  // a configured receiver, including a receiver, its session config, and the
-  // stream selected from the OFFER message to instantiate the receiver.
+  // DEPRECATED.
+  // TODO(crbug.com/1132097): Remove deprecated ConfiguredReceiver fields after
+  // downstream migration
   template <typename T>
   struct ConfiguredReceiver {
     Receiver* receiver;
@@ -44,13 +45,23 @@ class ReceiverSession final : public MessagePort::Client {
     // on if the device supports audio and video, and if we were able to
     // successfully negotiate a receiver configuration.
 
-    // NOTES ON LIFETIMES: The audio and video receiver pointers are expected
-    // to be valid until the OnConfiguredReceiversDestroyed event is fired, at
-    // which point they become invalid and need to replaced by the results of
-    // the ensuing OnNegotiated call.
+    // NOTES ON LIFETIMES: The audio and video Receiver pointers are owned by
+    // ReceiverSession, not the Client, and references to these pointers must be
+    // cleared before a call to Client::OnReceiversDestroying() returns.
 
-    // If the receiver is audio- or video-only, either of the receivers
-    // may be nullptr. However, in the majority of cases they will be populated.
+    // If the receiver is audio- or video-only, or we failed to negotiate
+    // an acceptable session configuration with the sender, then either of the
+    // receivers may be nullptr. In this case, the associated config is default
+    // initialized and should be ignored.
+    Receiver* audio_receiver;
+    AudioCaptureConfig audio_config;
+
+    Receiver* video_receiver;
+    VideoCaptureConfig video_config;
+
+    // DEPRECATED
+    // TODO(crbug.com/1132097): Remove deprecated ConfiguredReceiver fields
+    // after downstream migration
     absl::optional<ConfiguredReceiver<AudioStream>> audio;
     absl::optional<ConfiguredReceiver<VideoStream>> video;
   };
@@ -59,22 +70,28 @@ class ReceiverSession final : public MessagePort::Client {
   // When a connection is established, the OnNegotiated callback is called.
   class Client {
    public:
-    // This method is called when a new set of receivers has been negotiated.
+    enum ReceiversDestroyingReason { kEndOfSession, kRenegotiated };
+
+    // Called when a new set of receivers has been negotiated. This may be
+    // called multiple times during a session, as renegotiations occur.
     virtual void OnNegotiated(const ReceiverSession* session,
                               ConfiguredReceivers receivers) = 0;
 
-    // This method is called immediately preceding the invalidation of
-    // this session's receivers.
-    virtual void OnConfiguredReceiversDestroyed(
-        const ReceiverSession* session) = 0;
+    // Called immediately preceding the destruction of this session's receivers.
+    // If |reason| is |kEndOfSession|, OnNegotiated() will never be called
+    // again; if it is |kRenegotiated|, OnNegotiated() will be called again
+    // soon with a new set of Receivers to use.
+    //
+    // Before returning, the implementation must ensure that all references to
+    // the Receivers, from the last call to OnNegotiated(), have been cleared.
+    virtual void OnReceiversDestroying(const ReceiverSession* session,
+                                       ReceiversDestroyingReason reason) = 0;
 
     virtual void OnError(const ReceiverSession* session, Error error) = 0;
-  };
 
-  // The embedder has the option of providing a list of prioritized
-  // preferences for selecting from the offer.
-  enum class AudioCodec : int { kAac, kOpus };
-  enum class VideoCodec : int { kH264, kVp8, kHevc, kVp9 };
+   protected:
+    virtual ~Client();
+  };
 
   // Note: embedders are required to implement the following
   // codecs to be Cast V2 compliant: H264, VP8, AAC, Opus.
@@ -113,9 +130,9 @@ class ReceiverSession final : public MessagePort::Client {
   ~ReceiverSession();
 
   // MessagePort::Client overrides
-  void OnMessage(absl::string_view sender_id,
-                 absl::string_view message_namespace,
-                 absl::string_view message) override;
+  void OnMessage(const std::string& sender_id,
+                 const std::string& message_namespace,
+                 const std::string& message) override;
   void OnError(Error error) override;
 
  private:
@@ -126,33 +143,33 @@ class ReceiverSession final : public MessagePort::Client {
     Json::Value body;
   };
 
-  // Message handlers
+  // Specific message type handler methods.
   void OnOffer(Message* message);
 
-  std::pair<SessionConfig, std::unique_ptr<Receiver>> ConstructReceiver(
-      const Stream& stream);
+  // Used by SpawnReceivers to generate a receiver for a specific stream.
+  std::unique_ptr<Receiver> ConstructReceiver(const Stream& stream);
 
-  // Either stream input to this method may be null, however if both
-  // are null this method returns error.
-  ErrorOr<ConfiguredReceivers> TrySpawningReceivers(const AudioStream* audio,
-                                                    const VideoStream* video);
+  // Creates a set of configured receivers from a given pair of audio and
+  // video streams. NOTE: either audio or video may be null, but not both.
+  ConfiguredReceivers SpawnReceivers(const AudioStream* audio,
+                                     const VideoStream* video);
 
   // Callers of this method should ensure at least one stream is non-null.
   Answer ConstructAnswer(Message* message,
                          const AudioStream* audio,
                          const VideoStream* video);
 
+  // Sends a message over the message port.
   void SendMessage(Message* message);
 
   // Handles resetting receivers and notifying the client.
-  void ResetReceivers();
+  void ResetReceivers(Client::ReceiversDestroyingReason reason);
 
   Client* const client_;
   Environment* const environment_;
   MessagePort* const message_port_;
   const Preferences preferences_;
 
-  CastMode cast_mode_;
   bool supports_wifi_status_reporting_ = false;
   ReceiverPacketRouter packet_router_;
 

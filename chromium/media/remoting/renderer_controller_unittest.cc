@@ -5,6 +5,7 @@
 #include "media/remoting/renderer_controller.h"
 
 #include <memory>
+#include <string>
 
 #include "base/callback.h"
 #include "base/run_loop.h"
@@ -12,13 +13,11 @@
 #include "base/test/task_environment.h"
 #include "build/build_config.h"
 #include "media/base/audio_decoder_config.h"
-#include "media/base/cdm_config.h"
 #include "media/base/limits.h"
 #include "media/base/media_util.h"
 #include "media/base/test_helpers.h"
 #include "media/base/video_decoder_config.h"
 #include "media/remoting/fake_remoter.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace media {
@@ -36,13 +35,12 @@ PipelineMetadata DefaultMetadata(VideoCodec codec) {
   return data;
 }
 
-const std::string kDefaultReceiver = "TestingChromeCast";
+const char kDefaultReceiver[] = "TestingChromeCast";
 
 mojom::RemotingSinkMetadata GetDefaultSinkMetadata(bool enable) {
   mojom::RemotingSinkMetadata metadata;
   if (enable) {
     metadata.features.push_back(mojom::RemotingSinkFeature::RENDERING);
-    metadata.features.push_back(mojom::RemotingSinkFeature::CONTENT_DECRYPTION);
   } else {
     metadata.features.clear();
   }
@@ -89,9 +87,9 @@ class RendererControllerTest : public ::testing::Test,
 
   unsigned DecodedFrameCount() const override { return decoded_frames_; }
 
-  void UpdateRemotePlaybackCompatibility(bool is_compatibe) override {}
-
-  void CreateCdm(bool is_remoting) { is_remoting_cdm_ = is_remoting; }
+  void UpdateRemotePlaybackCompatibility(bool is_compatible) override {
+    is_remote_playback_compatible_ = is_compatible;
+  }
 
   void InitializeControllerAndBecomeDominant(
       const PipelineMetadata& pipeline_metadata,
@@ -161,8 +159,8 @@ class RendererControllerTest : public ::testing::Test,
 
  protected:
   bool is_rendering_remotely_ = false;
-  bool is_remoting_cdm_ = false;
   bool disable_pipeline_suspend_ = false;
+  bool is_remote_playback_compatible_ = false;
   size_t decoded_bytes_ = 0;
   unsigned decoded_frames_ = 0;
   base::SimpleTestTickClock clock_;
@@ -396,6 +394,25 @@ TEST_F(RendererControllerTest, SetClientNullptr) {
   RunUntilIdle();
   ExpectInLocalRendering();
 }
+
+#if defined(OS_ANDROID)
+TEST_F(RendererControllerTest, RemotePlaybackHlsCompatibility) {
+  controller_ = FakeRemoterFactory::CreateController(true);
+  controller_->SetClient(this);
+
+  controller_->OnDataSourceInitialized(GURL("http://example.com/foo.m3u8"));
+
+  PipelineMetadata incompatible_metadata;
+  incompatible_metadata.has_video = false;
+  incompatible_metadata.has_audio = false;
+  controller_->OnMetadataChanged(incompatible_metadata);
+  EXPECT_FALSE(is_remote_playback_compatible_);
+
+  // HLS is compatible with RemotePlayback regardless of the metadata we have.
+  controller_->OnHlsManifestDetected();
+  EXPECT_TRUE(is_remote_playback_compatible_);
+}
+#endif
 
 }  // namespace remoting
 }  // namespace media

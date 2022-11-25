@@ -14,6 +14,7 @@
 
 class SkMatrix;
 class SkSVGRenderContext;
+class SkSVGStop;
 
 class SkSVGGradient : public SkSVGHiddenContainer {
 public:
@@ -38,12 +39,13 @@ private:
     using StopPositionArray = SkSTArray<2, SkScalar, true>;
     using    StopColorArray = SkSTArray<2,  SkColor, true>;
     void collectColorStops(const SkSVGRenderContext&, StopPositionArray*, StopColorArray*) const;
+    SkColor resolveStopColor(const SkSVGRenderContext&, const SkSVGStop&) const;
 
     SkSVGStringType    fHref;
     SkSVGTransformType fGradientTransform = SkSVGTransformType(SkMatrix::I());
     SkSVGSpreadMethod  fSpreadMethod = SkSVGSpreadMethod(SkSVGSpreadMethod::Type::kPad);
 
-    typedef SkSVGHiddenContainer INHERITED;
+    using INHERITED = SkSVGHiddenContainer;
 };
 
 #endif // SkSVGGradient_DEFINED

@@ -8,7 +8,7 @@
 #ifndef GrSimpleMeshDrawOpHelper_DEFINED
 #define GrSimpleMeshDrawOpHelper_DEFINED
 
-#include "include/private/GrRecordingContext.h"
+#include "include/gpu/GrRecordingContext.h"
 #include "src/gpu/GrMemoryPool.h"
 #include "src/gpu/GrOpFlushState.h"
 #include "src/gpu/GrPipeline.h"
@@ -36,7 +36,7 @@ public:
      * which is public or made accessible via 'friend'.
      */
     template <typename Op, typename... OpArgs>
-    static std::unique_ptr<GrDrawOp> FactoryHelper(GrRecordingContext*, GrPaint&&, OpArgs...);
+    static std::unique_ptr<GrDrawOp> FactoryHelper(GrRecordingContext*, GrPaint&&, OpArgs&&...);
 
     // Here we allow callers to specify a subset of the GrPipeline::InputFlags upon creation.
     enum class InputFlags : uint8_t {
@@ -114,7 +114,7 @@ public:
         }
     }
 
-#ifdef SK_DEBUG
+#if GR_TEST_UTILS
     SkString dumpInfo() const;
 #endif
     GrAAType aaType() const { return static_cast<GrAAType>(fAAType); }
@@ -126,37 +126,45 @@ public:
     static const GrPipeline* CreatePipeline(
                                 const GrCaps*,
                                 SkArenaAlloc*,
-                                GrSwizzle outputViewSwizzle,
+                                GrSwizzle writeViewSwizzle,
                                 GrAppliedClip&&,
                                 const GrXferProcessor::DstProxyView&,
                                 GrProcessorSet&&,
-                                GrPipeline::InputFlags pipelineFlags,
-                                const GrUserStencilSettings* = &GrUserStencilSettings::kUnused);
+                                GrPipeline::InputFlags pipelineFlags);
     static const GrPipeline* CreatePipeline(
                                 GrOpFlushState*,
                                 GrProcessorSet&&,
-                                GrPipeline::InputFlags pipelineFlags,
-                                const GrUserStencilSettings* = &GrUserStencilSettings::kUnused);
+                                GrPipeline::InputFlags pipelineFlags);
 
     const GrPipeline* createPipeline(GrOpFlushState* flushState);
 
+    const GrPipeline* createPipeline(const GrCaps*,
+                                     SkArenaAlloc*,
+                                     GrSwizzle writeViewSwizzle,
+                                     GrAppliedClip&&,
+                                     const GrXferProcessor::DstProxyView&);
+
     static GrProgramInfo* CreateProgramInfo(SkArenaAlloc*,
                                             const GrPipeline*,
-                                            const GrSurfaceProxyView* outputView,
+                                            const GrSurfaceProxyView* writeView,
                                             GrGeometryProcessor*,
-                                            GrPrimitiveType);
+                                            GrPrimitiveType,
+                                            GrXferBarrierFlags renderPassXferBarriers,
+                                            const GrUserStencilSettings*
+                                                                = &GrUserStencilSettings::kUnused);
 
     // Create a programInfo with the following properties:
     //     its primitive processor uses no textures
     //     it has no dynamic state besides the scissor clip
     static GrProgramInfo* CreateProgramInfo(const GrCaps*,
                                             SkArenaAlloc*,
-                                            const GrSurfaceProxyView* outputView,
+                                            const GrSurfaceProxyView* writeView,
                                             GrAppliedClip&&,
                                             const GrXferProcessor::DstProxyView&,
                                             GrGeometryProcessor*,
                                             GrProcessorSet&&,
                                             GrPrimitiveType,
+                                            GrXferBarrierFlags renderPassXferBarriers,
                                             GrPipeline::InputFlags pipelineFlags
                                                                 = GrPipeline::InputFlags::kNone,
                                             const GrUserStencilSettings*
@@ -164,11 +172,12 @@ public:
 
     GrProgramInfo* createProgramInfo(const GrCaps*,
                                      SkArenaAlloc*,
-                                     const GrSurfaceProxyView* outputView,
+                                     const GrSurfaceProxyView* writeView,
                                      GrAppliedClip&&,
                                      const GrXferProcessor::DstProxyView&,
                                      GrGeometryProcessor*,
-                                     GrPrimitiveType);
+                                     GrPrimitiveType,
+                                     GrXferBarrierFlags renderPassXferBarriers);
 
     GrProcessorSet detachProcessorSet() {
         return fProcessors ? std::move(*fProcessors) : GrProcessorSet::MakeEmptySet();
@@ -194,7 +203,7 @@ protected:
 template <typename Op, typename... OpArgs>
 std::unique_ptr<GrDrawOp> GrSimpleMeshDrawOpHelper::FactoryHelper(GrRecordingContext* context,
                                                                   GrPaint&& paint,
-                                                                  OpArgs... opArgs) {
+                                                                  OpArgs&&... opArgs) {
     GrOpMemoryPool* pool = context->priv().opMemoryPool();
 
     MakeArgs makeArgs;

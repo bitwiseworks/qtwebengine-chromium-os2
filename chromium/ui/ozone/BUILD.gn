@@ -32,8 +32,8 @@ if (ozone_platform_headless) {
   ozone_platform_deps += [ "platform/headless" ]
 }
 
-if (ozone_platform_gbm) {
-  ozone_platforms += [ "gbm" ]
+if (ozone_platform_drm) {
+  ozone_platforms += [ "drm" ]
   ozone_platform_deps += [ "platform/drm:gbm" ]
   ozone_platform_test_deps += [ "platform/drm:gbm_unittests" ]
 }
@@ -66,8 +66,6 @@ constructor_list_cc_file = "$target_gen_dir/constructor_list.cc"
 
 jumbo_component("ozone_base") {
   sources = [
-    "public/cursor_factory_ozone.cc",
-    "public/cursor_factory_ozone.h",
     "public/gl_ozone.h",
     "public/gpu_platform_support_host.cc",
     "public/gpu_platform_support_host.h",
@@ -85,6 +83,7 @@ jumbo_component("ozone_base") {
     "public/ozone_switches.cc",
     "public/ozone_switches.h",
     "public/platform_clipboard.h",
+    "public/platform_gl_egl_utility.h",
     "public/platform_screen.cc",
     "public/platform_screen.h",
     "public/platform_window_surface.h",
@@ -104,7 +103,6 @@ jumbo_component("ozone_base") {
     "//ipc",
     "//skia",
     "//ui/base/clipboard:clipboard_types",
-    "//ui/base/mojom:cursor_type",
     "//ui/display",
     "//ui/display/types",
     "//ui/display/util",
@@ -124,17 +122,22 @@ jumbo_component("ozone_base") {
     public_deps += [ "//gpu/vulkan" ]
   }
 
+  if (is_fuchsia) {
+    public_deps += [ "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.images" ]
+  }
+
   visibility += [
     # Everyone should depend on //ui/ozone instead except a handful of
     # things that would otherwise create a cycle.
-    "//ui/base",
-    "//ui/base/cursor",
+    "//chromeos/system:system",
+    "//ui/base/ime/chromeos/*",
     "//ui/events/ozone/*",
     "//ui/ozone/common/*",
-    "//ui/ozone/public/mojom",
     "//ui/ozone/platform/*",
-    "//ui/base/ime/chromeos/*",
+    "//ui/ozone/public/mojom",
   ]
+
+  configs += [ "//third_party/khronos:khronos_headers" ]
 
   # Out of tree platforms can depend on this.
   visibility += ozone_external_platform_visibility
@@ -171,6 +174,7 @@ source_set("platform") {
     "//ipc",
     "//services/service_manager/public/cpp",
     "//skia",
+    "//ui/base:data_exchange",
     "//ui/display/types",
     "//ui/events",
     "//ui/events/devices",
@@ -290,6 +294,8 @@ test("ozone_unittests") {
 # backend.
 if (ozone_platform_x11) {
   test("ozone_x11_unittests") {
+    use_xvfb = true
+
     deps = [ ":test_support" ]
 
     deps += [ "platform/x11:x11_unittests" ]
@@ -303,4 +309,22 @@ if (ozone_platform_x11) {
 buildflag_header("buildflags") {
   header = "buildflags.h"
   flags = [ "OZONE_PLATFORM_X11=$ozone_platform_x11" ]
+}
+
+group("unittests") {
+  testonly = true
+
+  visibility += [ "*" ]
+
+  deps = [
+    ":ozone_unittests",
+    "//ui/ozone/gl:ozone_gl_unittests",
+  ]
+
+  if (ozone_platform_x11) {
+    deps += [
+      "//ui/ozone:ozone_x11_unittests",
+      "//ui/platform_window/x11:x11_unittests",
+    ]
+  }
 }
