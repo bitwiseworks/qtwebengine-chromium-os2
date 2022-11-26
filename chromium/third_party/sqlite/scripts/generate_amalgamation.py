@@ -56,7 +56,7 @@ def _icu_cpp_flags():
     """Return the libicu C++ flags."""
     cmd = ['icu-config', '--cppflags']
     try:
-        return subprocess.check_output(cmd)
+        return subprocess.check_output(cmd, text=True).strip()
     except Exception:
         return ''
 
@@ -65,7 +65,7 @@ def _icu_ld_flags():
     """Return the libicu linker flags."""
     cmd = ['icu-config', '--ldflags']
     try:
-        return subprocess.check_output(cmd)
+        return subprocess.check_output(cmd, text=True).strip()
     except Exception:
         return ''
 
