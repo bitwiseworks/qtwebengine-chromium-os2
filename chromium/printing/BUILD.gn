@@ -255,7 +255,6 @@ component("printing") {
         "printing_context_chromeos.h",
         ipp_handler_map_path,
       ]
-      set_sources_assignment_filter(sources_assignment_filter)
     } else if (!is_os2) {
       # TODO(crbug.com/1062136): Remove the original CUPS backend for macOS
       # when Cloud Print support is terminated. Follow up after Jan 1, 2021.

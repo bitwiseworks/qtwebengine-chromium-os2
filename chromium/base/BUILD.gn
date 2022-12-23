@@ -1925,7 +1925,6 @@ jumbo_component("base") {
       "nix/xdg_util.cc",
       "nix/xdg_util.h",
       "process/memory_os2.cc",
-      "profiler/module_cache_stub.cc",
       "rand_util_os2.cc",
       "system/sys_info_os2.cc",
     ]

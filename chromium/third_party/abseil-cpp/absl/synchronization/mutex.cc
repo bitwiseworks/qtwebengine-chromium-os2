@@ -22,7 +22,9 @@
 #else
 #include <fcntl.h>
 #include <pthread.h>
+#ifndef __OS2__
 #include <sched.h>
+#endif
 #include <sys/time.h>
 #endif
 

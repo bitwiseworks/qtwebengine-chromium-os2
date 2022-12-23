@@ -13,7 +13,11 @@
 #if defined(WEBRTC_WIN)
 #include <windows.h>
 #else
+#if defined(WEBRTC_OS2)
+#include <pthread.h>
+#else
 #include <sched.h>
+#endif
 #include <time.h>
 #endif
 
@@ -24,6 +28,9 @@ void YieldCurrentThread() {
   // sleep for yielding.
 #if defined(WEBRTC_WIN)
   ::Sleep(0);
+#elif defined(WEBRTC_OS2)
+  // This calls DosSleep(0)
+  pthread_yield();
 #elif defined(WEBRTC_MAC) && defined(RTC_USE_NATIVE_MUTEX_ON_MAC) && \
     !RTC_USE_NATIVE_MUTEX_ON_MAC
   sched_yield();

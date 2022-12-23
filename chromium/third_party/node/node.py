@@ -18,7 +18,7 @@ def which(cmd):
     return None
 
 def GetBinaryPath():
-  if sys.platform == 'win32':
+  if sys.platform == 'win32' or os.name == 'os2':
     nodejs = which('node.exe')
     if nodejs:
       return nodejs
@@ -34,6 +34,7 @@ def GetBinaryPath():
     'Darwin': ('mac', 'node-darwin-x64', 'bin', 'node'),
     'Linux': ('linux', 'node-linux-x64', 'bin', 'node'),
     'Windows': ('win', 'node.exe'),
+    'OS/2': ('os2', 'node.exe'),
   }[platform.system()])
 
 

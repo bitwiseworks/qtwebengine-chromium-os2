@@ -2428,7 +2428,7 @@ jumbo_static_library("browser") {
       sources += [
         "renderer_host/pepper/pepper_truetype_font_linux.cc",
       ]
-      set_sources_assignment_filter(sources_assignment_filter)
+      set_sources_assignment_filter(deprecated_default_sources_assignment_filter)
     }
   }
 
